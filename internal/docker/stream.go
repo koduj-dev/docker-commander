@@ -46,6 +46,25 @@ func (m *Manager) StreamStats(ctx context.Context, hostID int64, id string, emit
 	}
 }
 
+// SampleStats fetches a single (non-streaming) stats frame and computes one
+// sample. Used by the monitor for periodic polling and the Prometheus exporter.
+func (m *Manager) SampleStats(ctx context.Context, hostID int64, id string) (StatsSample, error) {
+	cli, err := m.Client(ctx, hostID)
+	if err != nil {
+		return StatsSample{}, err
+	}
+	resp, err := cli.ContainerStats(ctx, id, false)
+	if err != nil {
+		return StatsSample{}, err
+	}
+	defer resp.Body.Close()
+	var raw container.StatsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return StatsSample{}, err
+	}
+	return computeSample(id, &raw), nil
+}
+
 // computeSample converts a raw Docker stats frame into a flat StatsSample,
 // applying the standard CPU/memory percentage formulas used by `docker stats`.
 func computeSample(id string, s *container.StatsResponse) StatsSample {

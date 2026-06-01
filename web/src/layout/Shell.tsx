@@ -1,19 +1,32 @@
 import { NavLink, useNavigate } from "react-router-dom";
-import type { ReactNode } from "react";
-import { Boxes, Container, LayoutDashboard, Network, ScrollText, LogOut } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { Bell, Boxes, Container, LayoutDashboard, Network, ScrollText, Share2, Terminal, LogOut } from "lucide-react";
 import clsx from "clsx";
 import { useAuth } from "../auth/AuthContext";
+import { api } from "../lib/api";
 
 const nav = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/containers", label: "Containers", icon: Boxes },
   { to: "/networks", label: "Networks", icon: Network },
+  { to: "/topology", label: "Topology", icon: Share2 },
+  { to: "/logs", label: "Logs", icon: Terminal },
+  { to: "/alerts", label: "Alerts", icon: Bell },
   { to: "/audit", label: "Audit log", icon: ScrollText },
 ];
 
 export function Shell({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const [unread, setUnread] = useState(0);
+
+  // Poll the unread alert count to badge the Alerts nav item.
+  useEffect(() => {
+    const load = () => api.alerts().then((r) => setUnread(r.unread)).catch(() => {});
+    load();
+    const t = setInterval(load, 8000);
+    return () => clearInterval(t);
+  }, []);
 
   return (
     <div className="h-full grid grid-cols-[240px_1fr]">
@@ -38,7 +51,12 @@ export function Shell({ children }: { children: ReactNode }) {
               }
             >
               <n.icon className="h-4 w-4" />
-              {n.label}
+              <span className="flex-1">{n.label}</span>
+              {n.to === "/alerts" && unread > 0 && (
+                <span className="text-[10px] font-semibold bg-danger text-white rounded-full px-1.5 py-0.5 min-w-[18px] text-center">
+                  {unread > 99 ? "99+" : unread}
+                </span>
+              )}
             </NavLink>
           ))}
         </nav>

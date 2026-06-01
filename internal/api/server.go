@@ -15,24 +15,30 @@ import (
 	"github.com/koduj-dev/docker-commander/internal/auth"
 	"github.com/koduj-dev/docker-commander/internal/config"
 	"github.com/koduj-dev/docker-commander/internal/docker"
+	"github.com/koduj-dev/docker-commander/internal/monitor"
 	"github.com/koduj-dev/docker-commander/internal/store"
 	"github.com/koduj-dev/docker-commander/internal/ws"
 )
 
 // Server bundles all dependencies needed to serve HTTP.
 type Server struct {
-	cfg    config.Config
-	store  *store.Store
-	auth   *auth.Service
-	mw     *auth.Middleware
-	docker *docker.Manager
-	hub    *ws.Hub
-	webFS  fs.FS // built SPA assets, or nil in dev mode
+	cfg          config.Config
+	store        *store.Store
+	auth         *auth.Service
+	mw           *auth.Middleware
+	docker       *docker.Manager
+	hub          *ws.Hub
+	monitor      *monitor.Monitor
+	metricsToken string
+	webFS        fs.FS // built SPA assets, or nil in dev mode
 }
 
 // NewServer constructs the API server.
-func NewServer(cfg config.Config, st *store.Store, authSvc *auth.Service, mw *auth.Middleware, dm *docker.Manager, hub *ws.Hub, webFS fs.FS) *Server {
-	return &Server{cfg: cfg, store: st, auth: authSvc, mw: mw, docker: dm, hub: hub, webFS: webFS}
+func NewServer(cfg config.Config, st *store.Store, authSvc *auth.Service, mw *auth.Middleware, dm *docker.Manager, hub *ws.Hub, mon *monitor.Monitor, webFS fs.FS) *Server {
+	return &Server{
+		cfg: cfg, store: st, auth: authSvc, mw: mw, docker: dm, hub: hub,
+		monitor: mon, metricsToken: cfg.MetricsToken, webFS: webFS,
+	}
 }
 
 // Handler builds the root http.Handler with all routes mounted.
@@ -71,13 +77,28 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/containers/{id}/{action}", s.handleContainerAction)
 
 			r.Get("/networks", s.handleListNetworks)
+			r.Get("/topology", s.handleTopology)
 			r.Get("/system", s.handleSystemInfo)
 			r.Get("/audit", s.handleAudit)
+
+			// Alerting: webhooks, rules, and the in-app event feed.
+			r.Get("/webhooks", s.handleListWebhooks)
+			r.Post("/webhooks", s.handleCreateWebhook)
+			r.Delete("/webhooks/{id}", s.handleDeleteWebhook)
+			r.Get("/alert-rules", s.handleListAlertRules)
+			r.Post("/alert-rules", s.handleCreateAlertRule)
+			r.Patch("/alert-rules/{id}", s.handleToggleAlertRule)
+			r.Delete("/alert-rules/{id}", s.handleDeleteAlertRule)
+			r.Get("/alerts", s.handleListAlertEvents)
+			r.Post("/alerts/{id}/ack", s.handleAckAlertEvent)
 
 			// WebSocket for live stats/logs.
 			r.Get("/ws", s.handleWebSocket)
 		})
 	})
+
+	// Prometheus exporter (own optional-token auth; Prometheus can't do cookies).
+	r.Get("/metrics", s.handleMetrics)
 
 	// Everything else serves the embedded single-page app (if present).
 	if s.webFS != nil {

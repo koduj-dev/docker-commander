@@ -20,6 +20,9 @@ type Config struct {
 	SessionTTL time.Duration
 	// Dev enables developer conveniences (e.g. permissive CORS for Vite).
 	Dev bool
+	// MetricsToken, when set, requires a bearer token to scrape /metrics.
+	// Empty means the endpoint is open (fine for loopback-only use).
+	MetricsToken string
 }
 
 // DBPath is the path to the SQLite database file.
@@ -34,6 +37,7 @@ func Load() (Config, error) {
 	flag.StringVar(&c.DataDir, "data-dir", envOr("DC_DATA_DIR", def), "directory for the database and secrets")
 	ttl := flag.Duration("session-ttl", 12*time.Hour, "session token lifetime")
 	flag.BoolVar(&c.Dev, "dev", os.Getenv("DC_DEV") == "1", "enable development mode (permissive CORS)")
+	flag.StringVar(&c.MetricsToken, "metrics-token", os.Getenv("DC_METRICS_TOKEN"), "require this bearer token to scrape /metrics (empty = open)")
 	flag.Parse()
 
 	c.SessionTTL = *ttl

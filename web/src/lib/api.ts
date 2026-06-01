@@ -2,12 +2,16 @@
 // just send credentials and never touch the token in JS.
 
 import type {
+  AlertEvent,
+  AlertRule,
   AuditEntry,
   ContainerDetail,
   ContainerSummary,
   NetworkSummary,
   SystemInfo,
+  Topology,
   User,
+  Webhook,
 } from "./types";
 
 export class ApiError extends Error {
@@ -65,6 +69,30 @@ export const api = {
     req<{ ok: boolean }>("POST", `/api/containers/${id}/${action}`),
 
   networks: () => req<NetworkSummary[]>("GET", "/api/networks"),
+  topology: () => req<Topology>("GET", "/api/topology"),
   system: () => req<SystemInfo>("GET", "/api/system"),
   audit: () => req<AuditEntry[]>("GET", "/api/audit"),
+
+  // Alerting
+  webhooks: () => req<Webhook[]>("GET", "/api/webhooks"),
+  createWebhook: (w: Partial<Webhook>) => req<{ id: number }>("POST", "/api/webhooks", w),
+  deleteWebhook: (id: number) => req<{ ok: boolean }>("DELETE", `/api/webhooks/${id}`),
+
+  alertRules: () => req<AlertRule[]>("GET", "/api/alert-rules"),
+  createAlertRule: (body: {
+    name: string;
+    enabled: boolean;
+    type: string;
+    target: string;
+    config: unknown;
+    severity: string;
+    webhookId: number | null;
+    cooldownSec: number;
+  }) => req<{ id: number }>("POST", "/api/alert-rules", body),
+  toggleAlertRule: (id: number, enabled: boolean) =>
+    req<{ ok: boolean }>("PATCH", `/api/alert-rules/${id}`, { enabled }),
+  deleteAlertRule: (id: number) => req<{ ok: boolean }>("DELETE", `/api/alert-rules/${id}`),
+
+  alerts: () => req<{ events: AlertEvent[]; unread: number }>("GET", "/api/alerts"),
+  ackAlert: (id: number) => req<{ ok: boolean }>("POST", `/api/alerts/${id}/ack`),
 };

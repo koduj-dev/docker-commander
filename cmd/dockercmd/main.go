@@ -19,6 +19,7 @@ import (
 	"github.com/koduj-dev/docker-commander/internal/auth"
 	"github.com/koduj-dev/docker-commander/internal/config"
 	"github.com/koduj-dev/docker-commander/internal/docker"
+	"github.com/koduj-dev/docker-commander/internal/monitor"
 	"github.com/koduj-dev/docker-commander/internal/store"
 	"github.com/koduj-dev/docker-commander/internal/ws"
 	"github.com/koduj-dev/docker-commander/web"
@@ -60,20 +61,25 @@ func run() error {
 	defer dm.Close()
 	hub := ws.NewHub(dm)
 
+	// Graceful shutdown on SIGINT/SIGTERM (declared early so the monitor binds
+	// to the same lifecycle as the HTTP server).
+	shutdownCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Start the alerting engine in the background.
+	mon := monitor.New(st, dm)
+	go mon.Run(shutdownCtx)
+
 	// Serve the embedded SPA unless running in dev mode (Vite serves the UI).
 	webFS := serveWebFS(cfg)
 
-	srv := api.NewServer(cfg, st, authSvc, mw, dm, hub, webFS)
+	srv := api.NewServer(cfg, st, authSvc, mw, dm, hub, mon, webFS)
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		// No WriteTimeout: WebSocket streams are long-lived.
 	}
-
-	// Graceful shutdown on SIGINT/SIGTERM.
-	shutdownCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	go func() {
 		<-shutdownCtx.Done()

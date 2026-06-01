@@ -15,9 +15,18 @@ from a single binary you download, build, and run.
 - **Real-time monitoring** — live CPU / memory graphs streamed over WebSockets.
 - **Container control** — start, stop, restart, pause, kill.
 - **Live logs** — follow `stdout`/`stderr`, filter by substring, toggle streams.
+- **Aggregated logs** — a global Logs view streaming many containers at once,
+  color-coded by source with automatic log-level detection and level filtering.
 - **Container detail** — image, command, env vars, mounts, ports, networks,
   health, restart policy.
-- **Networks** — drivers, subnets, scope, and attached container counts.
+- **Networks & topology** — networks with drivers/subnets/scope, plus an
+  interactive **connectivity graph** (containers ↔ networks) you can pan/zoom.
+- **Alerting** — user-defined rules on container **state changes**, **resource
+  thresholds** (CPU/MEM), **log patterns** (substring/regex), and **restart /
+  crash loops**, with per-rule severity and cooldown.
+- **Notifications & export** — fire alerts to **generic webhooks** (Slack,
+  Discord, Grafana alerting, n8n…) with Go-template payloads, an **in-app alert
+  feed**, and a **Prometheus `/metrics`** exporter for Grafana dashboards.
 - **Audit log** — every privileged action is recorded (who, what, when, from where).
 - **Security first** — password login with **Argon2id**, **mandatory TOTP 2FA**,
   signed session cookies, login rate limiting, strict security headers.
@@ -76,9 +85,30 @@ All options have flags and environment-variable equivalents:
 | `-data-dir`     | `DC_DATA_DIR`   | OS user config dir | Stores the SQLite DB and signing secret. |
 | `-session-ttl`  | —               | `12h`              | Session token lifetime.                  |
 | `-dev`          | `DC_DEV=1`      | off                | Dev mode: API only + permissive CORS for Vite. |
+| `-metrics-token`| `DC_METRICS_TOKEN` | (empty/open)    | If set, `/metrics` requires `Authorization: Bearer <token>` (or `?token=`). |
 
 The Docker connection honours standard `DOCKER_HOST` / `DOCKER_CERT_PATH`
 environment variables.
+
+## 📈 Monitoring & alerting
+
+Define alert rules in the **Alerts** screen. Each rule has a type:
+
+| Type       | Fires when… | Config |
+|------------|-------------|--------|
+| `state`    | a container emits a lifecycle event | which events (die, kill, oom, stop, unhealthy) |
+| `resource` | CPU% or MEM% crosses a threshold for N seconds | metric, operator, threshold, duration |
+| `log`      | a log line matches | substring or regular expression |
+| `restart`  | a container restarts too often | count within a time window (crash-loop) |
+
+Rules target containers by name substring (blank = all), carry a severity and a
+cooldown, and can attach a **webhook**. Webhook bodies are Go templates with
+`{{.RuleName}} {{.Severity}} {{.Type}} {{.Container}} {{.Message}} {{.Value}}
+{{.Time}}`; with no template the alert is sent as JSON.
+
+**Grafana / Prometheus:** scrape `http://<host>:<port>/metrics` to graph
+`dockercmd_container_cpu_percent`, `_mem_bytes`, `_mem_percent`, and
+`_container_running` (labelled by container `id` and `name`).
 
 ## 🧑‍💻 Development
 
@@ -108,10 +138,13 @@ make vet
 
 ## 🗺️ Roadmap
 
+- [x] Connectivity topology graph (containers ↔ networks)
+- [x] Aggregated multi-container log view with level detection
+- [x] Alerting (state / resource / log / restart) + webhooks + Prometheus export
 - [ ] Remote host management UI (TCP+TLS, SSH)
-- [ ] Connectivity topology graph (containers ↔ networks)
-- [ ] Historical metrics & alerting
-- [ ] Log parsing rules / structured log views
+- [ ] Historical metrics storage & charts (beyond live + Prometheus)
+- [ ] Email/SMTP notification channel
+- [ ] Structured log views & saved parsing rules
 
 ## 📄 License
 

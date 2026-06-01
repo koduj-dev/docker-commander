@@ -70,6 +70,34 @@ export interface NetworkSummary {
   containers: string[] | null;
 }
 
+export interface TopoNetwork {
+  id: string;
+  name: string;
+  driver: string;
+  scope: string;
+  internal: boolean;
+  subnets: string[] | null;
+}
+
+export interface TopoContainer {
+  id: string;
+  name: string;
+  image: string;
+  state: string;
+}
+
+export interface TopoLink {
+  containerId: string;
+  networkId: string;
+  ipAddress: string;
+}
+
+export interface Topology {
+  networks: TopoNetwork[] | null;
+  containers: TopoContainer[] | null;
+  links: TopoLink[] | null;
+}
+
 export interface SystemInfo {
   hostName: string;
   serverVersion: string;
@@ -100,6 +128,46 @@ export interface LogLine {
   stream: "stdout" | "stderr";
   message: string;
   timestamp?: string;
+}
+
+export interface Webhook {
+  id: number;
+  name: string;
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  bodyTemplate: string;
+  createdAt: string;
+}
+
+export type AlertType = "state" | "resource" | "log" | "restart";
+export type Severity = "info" | "warning" | "critical";
+
+export interface AlertRule {
+  id: number;
+  name: string;
+  enabled: boolean;
+  type: AlertType;
+  target: string;
+  config: string; // raw JSON
+  severity: Severity;
+  webhookId: number | null;
+  cooldownSec: number;
+  createdAt: string;
+}
+
+export interface AlertEvent {
+  id: number;
+  ruleId: number;
+  ruleName: string;
+  type: string;
+  severity: Severity;
+  containerId: string;
+  containerName: string;
+  message: string;
+  value: number | null;
+  acknowledged: boolean;
+  createdAt: string;
 }
 
 export interface AuditEntry {

@@ -86,6 +86,20 @@ func (s *Server) handleListNetworks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, nets)
 }
 
+func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	top, err := s.docker.Topology(r.Context(), hostID)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "docker error: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, top)
+}
+
 func (s *Server) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
 	hostID, err := s.resolveHostID(r)
 	if err != nil {

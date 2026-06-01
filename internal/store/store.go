@@ -91,6 +91,44 @@ CREATE TABLE IF NOT EXISTS settings (
 	key   TEXT PRIMARY KEY,
 	value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS webhooks (
+	id            INTEGER PRIMARY KEY AUTOINCREMENT,
+	name          TEXT NOT NULL,
+	url           TEXT NOT NULL,
+	method        TEXT NOT NULL DEFAULT 'POST',
+	headers       TEXT NOT NULL DEFAULT '{}',   -- JSON object
+	body_template TEXT NOT NULL DEFAULT '',
+	created_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS alert_rules (
+	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	name        TEXT NOT NULL,
+	enabled     INTEGER NOT NULL DEFAULT 1,
+	type        TEXT NOT NULL,                  -- state | resource | log | restart
+	target      TEXT NOT NULL DEFAULT '',       -- container name substring; '' or '*' = all
+	config      TEXT NOT NULL DEFAULT '{}',     -- type-specific JSON
+	severity    TEXT NOT NULL DEFAULT 'warning',
+	webhook_id  INTEGER,
+	cooldown_sec INTEGER NOT NULL DEFAULT 60,
+	created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS alert_events (
+	id             INTEGER PRIMARY KEY AUTOINCREMENT,
+	rule_id        INTEGER,
+	rule_name      TEXT NOT NULL DEFAULT '',
+	type           TEXT NOT NULL DEFAULT '',
+	severity       TEXT NOT NULL DEFAULT 'warning',
+	container_id   TEXT NOT NULL DEFAULT '',
+	container_name TEXT NOT NULL DEFAULT '',
+	message        TEXT NOT NULL DEFAULT '',
+	value          REAL,
+	acknowledged   INTEGER NOT NULL DEFAULT 0,
+	created_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_alert_events_created ON alert_events(id DESC);
 `
 	_, err := s.db.ExecContext(ctx, schema)
 	return err

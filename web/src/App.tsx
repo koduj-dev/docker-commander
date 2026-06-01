@@ -9,6 +9,9 @@ import { Dashboard } from "./pages/Dashboard";
 import { Containers } from "./pages/Containers";
 import { ContainerDetail } from "./pages/ContainerDetail";
 import { Networks } from "./pages/Networks";
+import { Topology } from "./pages/Topology";
+import { Logs } from "./pages/Logs";
+import { Alerts } from "./pages/Alerts";
 import { Audit } from "./pages/Audit";
 
 export default function App() {
@@ -36,6 +39,9 @@ export default function App() {
         <Route path="/containers" element={<Containers />} />
         <Route path="/containers/:id" element={<ContainerDetail />} />
         <Route path="/networks" element={<Networks />} />
+        <Route path="/topology" element={<Topology />} />
+        <Route path="/logs" element={<Logs />} />
+        <Route path="/alerts" element={<Alerts />} />
         <Route path="/audit" element={<Audit />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
