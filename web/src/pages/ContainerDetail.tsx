@@ -41,11 +41,15 @@ export function ContainerDetail() {
     });
 
     // Flush buffered log lines on an interval to avoid re-rendering per line.
+    // Capture and clear the buffer up-front: the setState updater must close
+    // over a stable snapshot, never read the mutable ref (it runs after this
+    // tick — and twice under StrictMode — so reading logBuf.current would lose
+    // lines once we reset it).
     const flush = setInterval(() => {
-      if (logBuf.current.length) {
-        setLogs((prev) => [...prev, ...logBuf.current].slice(-MAX_LOGS));
-        logBuf.current = [];
-      }
+      if (logBuf.current.length === 0) return;
+      const pending = logBuf.current;
+      logBuf.current = [];
+      setLogs((prev) => [...prev, ...pending].slice(-MAX_LOGS));
     }, 250);
 
     return () => {

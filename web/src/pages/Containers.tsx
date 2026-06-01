@@ -8,17 +8,20 @@ import { StateBadge, EmptyState, Spinner } from "../components/ui";
 import { PageHeader } from "../layout/Shell";
 
 // ContainerTable is shared by the dashboard and the dedicated Containers page.
-export function ContainerTable() {
+// With runningOnly it hides stopped containers (handy on the dashboard when a
+// host has many idle containers).
+export function ContainerTable({ runningOnly = false }: { runningOnly?: boolean }) {
   const [list, setList] = useState<ContainerSummary[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      setList(await api.containers());
+      const all = await api.containers();
+      setList(runningOnly ? all.filter((c) => c.state === "running") : all);
     } catch {
       setList([]);
     }
-  }, []);
+  }, [runningOnly]);
 
   useEffect(() => {
     void load();
@@ -37,7 +40,13 @@ export function ContainerTable() {
   };
 
   if (!list) return <div className="flex items-center gap-2 text-muted"><Spinner /> Loading…</div>;
-  if (list.length === 0) return <EmptyState title="No containers found" hint="Start a container on this host to see it here." />;
+  if (list.length === 0)
+    return (
+      <EmptyState
+        title={runningOnly ? "No running containers" : "No containers found"}
+        hint={runningOnly ? "Nothing is running on this host right now." : "Start a container on this host to see it here."}
+      />
+    );
 
   return (
     <div className="card overflow-hidden">

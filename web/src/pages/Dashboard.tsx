@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { Cpu, HardDrive, Layers, Play, Server, Square } from "lucide-react";
 import { api } from "../lib/api";
 import type { SystemInfo } from "../lib/types";
@@ -34,8 +35,11 @@ export function Dashboard() {
         )}
 
         <div>
-          <h2 className="text-sm font-semibold text-muted mb-3">Containers</h2>
-          <ContainerTable />
+          <div className="flex items-baseline justify-between mb-3">
+            <h2 className="text-sm font-semibold text-muted">Running containers</h2>
+            <Link to="/containers" className="text-xs text-accent hover:underline">View all →</Link>
+          </div>
+          <ContainerTable runningOnly />
         </div>
       </div>
     </>

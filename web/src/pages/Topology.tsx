@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Background,
@@ -8,6 +8,8 @@ import {
   MiniMap,
   Position,
   ReactFlow,
+  useEdgesState,
+  useNodesState,
   type Edge,
   type Node,
   type NodeProps,
@@ -149,13 +151,22 @@ function layout(topo: Topo): { nodes: Node[]; edges: Edge[] } {
 
 export function Topology() {
   const [topo, setTopo] = useState<Topo | null>(null);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const navigate = useNavigate();
 
   useEffect(() => {
     api.topology().then(setTopo).catch(() => setTopo({ networks: [], containers: [], links: [] }));
   }, []);
 
-  const { nodes, edges } = useMemo(() => (topo ? layout(topo) : { nodes: [], edges: [] }), [topo]);
+  // Compute the dagre layout once per topology load, then hand the nodes to
+  // React Flow's state so the user can freely drag them around afterwards.
+  useEffect(() => {
+    if (!topo) return;
+    const { nodes: n, edges: e } = layout(topo);
+    setNodes(n);
+    setEdges(e);
+  }, [topo, setNodes, setEdges]);
 
   const onNodeClick = useCallback(
     (_: unknown, node: Node) => {
@@ -180,6 +191,8 @@ export function Topology() {
             <ReactFlow
               nodes={nodes}
               edges={edges}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
               nodeTypes={nodeTypes}
               onNodeClick={onNodeClick}
               fitView

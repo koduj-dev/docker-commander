@@ -43,10 +43,12 @@ export function Logs() {
   // Flush buffered lines periodically to keep rendering smooth under load.
   useEffect(() => {
     const t = setInterval(() => {
-      if (buf.current.length) {
-        setEntries((prev) => [...prev, ...buf.current].slice(-MAX_LINES));
-        buf.current = [];
-      }
+      if (buf.current.length === 0) return;
+      // Snapshot then clear: the updater runs later (twice under StrictMode),
+      // so it must close over `pending`, not read the mutable ref.
+      const pending = buf.current;
+      buf.current = [];
+      setEntries((prev) => [...prev, ...pending].slice(-MAX_LINES));
     }, 250);
     return () => clearInterval(t);
   }, []);
