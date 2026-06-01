@@ -1,0 +1,22 @@
+# Go
+/dockercmd
+/dist-bin/
+*.test
+*.out
+
+# Frontend
+web/node_modules/
+# NOTE: web/dist (the built SPA) is committed on purpose so that `go build`
+# produces a fully working binary even without Node installed. Rebuild it with
+# `npm run build` (or `make ui`) whenever the frontend changes, then commit.
+
+# Local data / secrets
+*.db
+*.db-wal
+*.db-shm
+.docker-commander/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

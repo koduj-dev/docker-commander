@@ -1,0 +1,136 @@
+import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { Play, RotateCw, Square, Pause } from "lucide-react";
+import { api } from "../lib/api";
+import type { ContainerSummary } from "../lib/types";
+import { shortId } from "../lib/format";
+import { StateBadge, EmptyState, Spinner } from "../components/ui";
+import { PageHeader } from "../layout/Shell";
+
+// ContainerTable is shared by the dashboard and the dedicated Containers page.
+export function ContainerTable() {
+  const [list, setList] = useState<ContainerSummary[] | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setList(await api.containers());
+    } catch {
+      setList([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+    const t = setInterval(load, 4000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  const act = async (id: string, action: string) => {
+    setBusyId(id);
+    try {
+      await api.containerAction(id, action);
+      await load();
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  if (!list) return <div className="flex items-center gap-2 text-muted"><Spinner /> Loading…</div>;
+  if (list.length === 0) return <EmptyState title="No containers found" hint="Start a container on this host to see it here." />;
+
+  return (
+    <div className="card overflow-hidden">
+      <table className="w-full text-sm">
+        <thead className="text-muted text-xs uppercase tracking-wide">
+          <tr className="border-b border-border">
+            <th className="text-left font-medium px-4 py-3">Name</th>
+            <th className="text-left font-medium px-4 py-3">State</th>
+            <th className="text-left font-medium px-4 py-3 hidden lg:table-cell">Image</th>
+            <th className="text-left font-medium px-4 py-3 hidden md:table-cell">Ports</th>
+            <th className="text-left font-medium px-4 py-3 hidden xl:table-cell">Networks</th>
+            <th className="text-right font-medium px-4 py-3">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {list.map((c) => {
+            const running = c.state === "running";
+            return (
+              <tr key={c.id} className="border-b border-border/50 hover:bg-panel2/40">
+                <td className="px-4 py-3">
+                  <Link to={`/containers/${c.id}`} className="font-medium hover:text-accent">
+                    {c.name}
+                  </Link>
+                  <div className="text-xs text-muted font-mono">{shortId(c.id)}</div>
+                </td>
+                <td className="px-4 py-3">
+                  <StateBadge state={c.state} />
+                  <div className="text-xs text-muted mt-0.5">{c.status}</div>
+                </td>
+                <td className="px-4 py-3 hidden lg:table-cell text-muted">{c.image}</td>
+                <td className="px-4 py-3 hidden md:table-cell">
+                  <div className="flex flex-wrap gap-1">
+                    {(c.ports ?? [])
+                      .filter((p) => p.publicPort)
+                      .map((p, i) => (
+                        <span key={i} className="text-xs font-mono bg-panel2 rounded px-1.5 py-0.5">
+                          {p.publicPort}:{p.privatePort}
+                        </span>
+                      ))}
+                  </div>
+                </td>
+                <td className="px-4 py-3 hidden xl:table-cell">
+                  <div className="flex flex-wrap gap-1">
+                    {(c.networks ?? []).map((n) => (
+                      <span key={n} className="text-xs bg-panel2 rounded px-1.5 py-0.5 text-muted">{n}</span>
+                    ))}
+                  </div>
+                </td>
+                <td className="px-4 py-3">
+                  <div className="flex items-center justify-end gap-1">
+                    {busyId === c.id ? (
+                      <Spinner className="h-4 w-4" />
+                    ) : running ? (
+                      <>
+                        <IconBtn title="Restart" onClick={() => act(c.id, "restart")}><RotateCw className="h-4 w-4" /></IconBtn>
+                        <IconBtn title="Pause" onClick={() => act(c.id, "pause")}><Pause className="h-4 w-4" /></IconBtn>
+                        <IconBtn title="Stop" danger onClick={() => act(c.id, "stop")}><Square className="h-4 w-4" /></IconBtn>
+                      </>
+                    ) : c.state === "paused" ? (
+                      <IconBtn title="Unpause" onClick={() => act(c.id, "unpause")}><Play className="h-4 w-4" /></IconBtn>
+                    ) : (
+                      <IconBtn title="Start" onClick={() => act(c.id, "start")}><Play className="h-4 w-4" /></IconBtn>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function IconBtn({ children, onClick, title, danger }: { children: React.ReactNode; onClick: () => void; title: string; danger?: boolean }) {
+  return (
+    <button
+      title={title}
+      onClick={onClick}
+      className={`p-1.5 rounded-md transition-colors ${danger ? "text-danger hover:bg-danger/15" : "text-muted hover:bg-panel2 hover:text-text"}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+export function Containers() {
+  return (
+    <>
+      <PageHeader title="Containers" />
+      <div className="p-6">
+        <ContainerTable />
+      </div>
+    </>
+  );
+}

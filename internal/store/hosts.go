@@ -1,0 +1,99 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"time"
+)
+
+// Host describes a Docker engine endpoint the app can connect to.
+//
+// Kind is one of:
+//   - "local": the local daemon (unix socket / windows named pipe)
+//   - "tcp":   a remote daemon over TCP, optionally TLS-secured
+//   - "ssh":   a remote daemon reached through an SSH tunnel
+type Host struct {
+	ID        int64
+	Name      string
+	Kind      string
+	Address   string
+	TLSCA     string
+	TLSCert   string
+	TLSKey    string
+	CreatedAt time.Time
+}
+
+// ListHosts returns all configured hosts ordered by name.
+func (s *Store) ListHosts(ctx context.Context) ([]Host, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, name, kind, address, tls_ca, tls_cert, tls_key, created_at
+		FROM hosts ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Host
+	for rows.Next() {
+		var h Host
+		var created string
+		if err := rows.Scan(&h.ID, &h.Name, &h.Kind, &h.Address, &h.TLSCA, &h.TLSCert, &h.TLSKey, &created); err != nil {
+			return nil, err
+		}
+		h.CreatedAt, _ = time.Parse(time.RFC3339, created)
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
+// HostByID returns a single host or ErrNotFound.
+func (s *Store) HostByID(ctx context.Context, id int64) (*Host, error) {
+	var h Host
+	var created string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, name, kind, address, tls_ca, tls_cert, tls_key, created_at
+		FROM hosts WHERE id = ?`, id).
+		Scan(&h.ID, &h.Name, &h.Kind, &h.Address, &h.TLSCA, &h.TLSCert, &h.TLSKey, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	h.CreatedAt, _ = time.Parse(time.RFC3339, created)
+	return &h, nil
+}
+
+// CreateHost inserts a new host and returns its ID.
+func (s *Store) CreateHost(ctx context.Context, h *Host) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `
+		INSERT INTO hosts (name, kind, address, tls_ca, tls_cert, tls_key, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		h.Name, h.Kind, h.Address, h.TLSCA, h.TLSCert, h.TLSKey,
+		time.Now().UTC().Format(time.RFC3339))
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// DeleteHost removes a host by ID.
+func (s *Store) DeleteHost(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM hosts WHERE id = ?`, id)
+	return err
+}
+
+// EnsureLocalHost guarantees a "local" host row exists so the app is usable
+// immediately on first run without manual host configuration.
+func (s *Store) EnsureLocalHost(ctx context.Context) error {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM hosts WHERE kind = 'local'`).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	_, err := s.CreateHost(ctx, &Host{Name: "local", Kind: "local"})
+	return err
+}

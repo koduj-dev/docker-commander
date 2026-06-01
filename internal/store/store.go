@@ -1,0 +1,97 @@
+// Package store provides a pure-Go SQLite-backed persistence layer.
+//
+// It uses modernc.org/sqlite which is a CGO-free SQLite implementation,
+// so the whole application can be cross-compiled to a single static binary
+// for Windows/Linux/macOS without a C toolchain.
+package store
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+// ErrNotFound is returned when a lookup yields no row.
+var ErrNotFound = errors.New("store: not found")
+
+// Store wraps the database handle and exposes typed queries.
+type Store struct {
+	db *sql.DB
+}
+
+// Open opens (creating if necessary) the SQLite database at path and runs
+// all pending migrations. A path of ":memory:" yields an ephemeral DB.
+func Open(path string) (*Store, error) {
+	// _pragma options enable WAL for better concurrency and enforce FKs.
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)", path)
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open db: %w", err)
+	}
+	// SQLite handles one writer at a time; keep the pool small and predictable.
+	db.SetMaxOpenConns(1)
+
+	s := &Store{db: db}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := s.migrate(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
+	return s, nil
+}
+
+// Close releases the underlying database handle.
+func (s *Store) Close() error { return s.db.Close() }
+
+// migrate applies the schema. Each statement is idempotent (IF NOT EXISTS),
+// which keeps the first iteration simple; a versioned migration table can be
+// introduced later without breaking existing databases.
+func (s *Store) migrate(ctx context.Context) error {
+	const schema = `
+CREATE TABLE IF NOT EXISTS users (
+	id            INTEGER PRIMARY KEY AUTOINCREMENT,
+	username      TEXT NOT NULL UNIQUE,
+	password_hash TEXT NOT NULL,
+	role          TEXT NOT NULL DEFAULT 'admin',
+	totp_secret   TEXT NOT NULL DEFAULT '',
+	totp_enabled  INTEGER NOT NULL DEFAULT 0,
+	created_at    TEXT NOT NULL,
+	last_login_at TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS hosts (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	name       TEXT NOT NULL UNIQUE,
+	kind       TEXT NOT NULL,            -- 'local' | 'tcp' | 'ssh'
+	address    TEXT NOT NULL DEFAULT '', -- socket path, tcp host:port, or ssh target
+	tls_ca     TEXT NOT NULL DEFAULT '',
+	tls_cert   TEXT NOT NULL DEFAULT '',
+	tls_key    TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	user_id    INTEGER,
+	username   TEXT NOT NULL DEFAULT '',
+	action     TEXT NOT NULL,
+	target     TEXT NOT NULL DEFAULT '',
+	detail     TEXT NOT NULL DEFAULT '',
+	ip         TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
+
+CREATE TABLE IF NOT EXISTS settings (
+	key   TEXT PRIMARY KEY,
+	value TEXT NOT NULL
+);
+`
+	_, err := s.db.ExecContext(ctx, schema)
+	return err
+}

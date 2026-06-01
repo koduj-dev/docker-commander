@@ -1,0 +1,118 @@
+# 🐳 Docker Commander
+
+A self-hosted, open-source **Docker monitoring & control panel** with an
+enterprise-grade UI. Monitor containers in real time, control their lifecycle,
+stream and filter logs, watch live resource graphs, and inspect networks — all
+from a single binary you download, build, and run.
+
+> One Go binary with the web UI embedded. No external database, no runtime
+> dependencies, CGO-free. Runs on **Linux, macOS, and Windows**.
+
+---
+
+## ✨ Features
+
+- **Real-time monitoring** — live CPU / memory graphs streamed over WebSockets.
+- **Container control** — start, stop, restart, pause, kill.
+- **Live logs** — follow `stdout`/`stderr`, filter by substring, toggle streams.
+- **Container detail** — image, command, env vars, mounts, ports, networks,
+  health, restart policy.
+- **Networks** — drivers, subnets, scope, and attached container counts.
+- **Audit log** — every privileged action is recorded (who, what, when, from where).
+- **Security first** — password login with **Argon2id**, **mandatory TOTP 2FA**,
+  signed session cookies, login rate limiting, strict security headers.
+- **Multi-host ready** — connect to the local daemon today; remote TCP+TLS hosts
+  are modeled in the data layer for upcoming releases.
+
+## 🏗️ Architecture
+
+```
+React + TypeScript SPA  ──REST──▶  Go backend  ──Docker Engine API──▶  dockerd
+   (Tailwind, Recharts)  ◀─WebSocket (live stats + logs)─┘
+```
+
+The Go server embeds the built SPA (`go:embed`) and serves everything from one
+origin, so the production artifact is a single executable.
+
+| Layer    | Technology |
+|----------|------------|
+| Backend  | Go, [chi](https://github.com/go-chi/chi), [coder/websocket](https://github.com/coder/websocket), official Docker SDK |
+| Storage  | SQLite via [modernc.org/sqlite](https://modernc.org/sqlite) (pure Go, no CGO) |
+| Auth     | Argon2id, TOTP ([pquerna/otp](https://github.com/pquerna/otp)), JWT |
+| Frontend | React, TypeScript, Vite, Tailwind CSS, Recharts |
+
+## 🚀 Quick start
+
+### Prerequisites
+- Go ≥ 1.25
+- Node.js ≥ 18 (only to build the UI)
+- A running Docker daemon (access to `/var/run/docker.sock`)
+
+### Build & run
+
+```bash
+git clone <your-fork-url> docker-commander
+cd docker-commander
+make build      # builds the UI, then the binary with the UI embedded
+./dockercmd     # serves on http://127.0.0.1:8080
+```
+
+Open <http://127.0.0.1:8080>, create the admin account, and scan the QR code to
+enable 2FA. Done.
+
+### Cross-compile for release
+
+```bash
+make release    # static binaries for linux/macos/windows in dist-bin/
+```
+
+## ⚙️ Configuration
+
+All options have flags and environment-variable equivalents:
+
+| Flag            | Env             | Default            | Description                              |
+|-----------------|-----------------|--------------------|------------------------------------------|
+| `-addr`         | `DC_ADDR`       | `127.0.0.1:8080`   | Listen address. Bind beyond loopback only deliberately. |
+| `-data-dir`     | `DC_DATA_DIR`   | OS user config dir | Stores the SQLite DB and signing secret. |
+| `-session-ttl`  | —               | `12h`              | Session token lifetime.                  |
+| `-dev`          | `DC_DEV=1`      | off                | Dev mode: API only + permissive CORS for Vite. |
+
+The Docker connection honours standard `DOCKER_HOST` / `DOCKER_CERT_PATH`
+environment variables.
+
+## 🧑‍💻 Development
+
+Run the backend in dev mode and the Vite dev server side by side:
+
+```bash
+# terminal 1 — API on :8080
+make dev
+
+# terminal 2 — UI on :5173 (proxies /api to :8080)
+cd web && npm install && npm run dev
+```
+
+Run the tests and static checks:
+
+```bash
+make test
+make vet
+```
+
+## 🔒 Security notes
+
+- Designed for **local installation by default** (binds to loopback).
+- If you expose it on a server, put it behind TLS (reverse proxy) — the session
+  cookie is `HttpOnly` + `SameSite=Strict`, and 2FA is mandatory.
+- The JWT signing secret is generated on first run and persisted in the data dir.
+
+## 🗺️ Roadmap
+
+- [ ] Remote host management UI (TCP+TLS, SSH)
+- [ ] Connectivity topology graph (containers ↔ networks)
+- [ ] Historical metrics & alerting
+- [ ] Log parsing rules / structured log views
+
+## 📄 License
+
+MIT (suggested) — add a `LICENSE` file for your chosen license.
