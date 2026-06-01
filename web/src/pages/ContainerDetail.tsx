@@ -8,6 +8,7 @@ import { shortId } from "../lib/format";
 import { StateBadge, Spinner } from "../components/ui";
 import { StatsCharts } from "../components/StatsChart";
 import { LogViewer } from "../components/LogViewer";
+import { Terminal } from "../components/Terminal";
 
 const MAX_SAMPLES = 60;
 const MAX_LOGS = 2000;
@@ -17,7 +18,7 @@ export function ContainerDetail() {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [samples, setSamples] = useState<StatsSample[]>([]);
   const [logs, setLogs] = useState<LogLine[]>([]);
-  const [tab, setTab] = useState<"overview" | "logs" | "env">("overview");
+  const [tab, setTab] = useState<"overview" | "logs" | "console" | "env">("overview");
   const logBuf = useRef<LogLine[]>([]);
 
   const load = () => api.container(id).then(setDetail).catch(() => {});
@@ -97,7 +98,7 @@ export function ContainerDetail() {
         <StatsCharts data={samples} />
 
         <div className="flex gap-1 border-b border-border">
-          {(["overview", "logs", "env"] as const).map((t) => (
+          {(["overview", "logs", "console", "env"] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -112,6 +113,7 @@ export function ContainerDetail() {
 
         {tab === "overview" && <Overview detail={detail} />}
         {tab === "logs" && <LogViewer lines={logs} />}
+        {tab === "console" && (running ? <Terminal containerId={id} /> : <div className="text-sm text-muted">Container is not running — start it to open a shell.</div>)}
         {tab === "env" && <EnvList env={detail.env ?? []} />}
       </div>
     </>

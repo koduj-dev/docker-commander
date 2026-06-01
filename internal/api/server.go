@@ -94,6 +94,8 @@ func (s *Server) Handler() http.Handler {
 
 			// WebSocket for live stats/logs.
 			r.Get("/ws", s.handleWebSocket)
+			// WebSocket for an interactive container shell (exec TTY).
+			r.Get("/containers/{id}/exec", s.handleExec)
 		})
 	})
 
