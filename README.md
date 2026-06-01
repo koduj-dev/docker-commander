@@ -151,9 +151,14 @@ make vet
 - [x] Interactive container console (exec)
 - [x] Remote host management UI (TCP+TLS, SSH) + host switcher
 - [x] Historical metrics storage & charts (Redis or in-memory)
+- [ ] **SSH known_hosts verification** (currently trusts on first connect) — required before exposing remote hosts
+- [ ] Images management (list / pull / remove / prune)
+- [ ] Volumes management + inspector, and which containers use them
+- [ ] Data transfer to/from containers (`docker cp` up/download)
 - [ ] Email/SMTP notification channel
 - [ ] Structured log views & saved parsing rules
-- [ ] known_hosts verification for SSH (currently trusts on first connect)
+
+> Working notes & "continue here" plan: see [NEXT.md](./NEXT.md).
 
 ## 📄 License
 

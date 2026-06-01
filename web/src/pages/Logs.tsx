@@ -18,7 +18,20 @@ interface Entry {
   stream: "stdout" | "stderr";
   level: Level;
   timestamp?: string;
+  t: number; // epoch ms, for chronological interleaving across sources
   message: string;
+}
+
+// parseTs converts Docker's RFC3339Nano timestamp to epoch ms. The 9-digit
+// fraction is trimmed to 3 so Date.parse stays happy; missing/invalid → now.
+let arrivalSeq = 0;
+function parseTs(ts?: string): number {
+  if (ts) {
+    const ms = Date.parse(ts.replace(/(\.\d{3})\d+/, "$1"));
+    if (!Number.isNaN(ms)) return ms;
+  }
+  // Keep relative order for lines without a usable timestamp.
+  return Date.now() + (arrivalSeq++ % 1000) / 1000;
 }
 
 const LEVELS: Level[] = ["error", "warn", "info", "debug", "other"];
@@ -71,7 +84,9 @@ export function Logs() {
       if (pausedRef.current || buf.current.length === 0) return;
       const pending = buf.current;
       buf.current = [];
-      setEntries((prev) => [...prev, ...pending].slice(-MAX_LINES));
+      // Merge and keep chronological order so multiple sources interleave by
+      // time rather than clumping per container (backlog arrives in bursts).
+      setEntries((prev) => [...prev, ...pending].sort((a, b) => a.t - b.t).slice(-MAX_LINES));
     }, 250);
     return () => clearInterval(t);
   }, []);
@@ -95,7 +110,7 @@ export function Logs() {
       live.subscribeLogs(`glog:${id}`, id, "100", (f) => {
         if (f.type === "log") {
           const l = f.data as LogLine;
-          buf.current.push({ containerId: id, source: name, color, stream: l.stream, level: detectLevel(l.message), timestamp: l.timestamp, message: l.message });
+          buf.current.push({ containerId: id, source: name, color, stream: l.stream, level: detectLevel(l.message), timestamp: l.timestamp, t: parseTs(l.timestamp), message: l.message });
         }
       });
     }
