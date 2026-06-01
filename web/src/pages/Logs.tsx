@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Search, X } from "lucide-react";
+import { Pause, Play, Search, X } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import type { ContainerSummary, LogLine } from "../lib/types";
@@ -9,8 +9,10 @@ import { PageHeader } from "../layout/Shell";
 import { Spinner } from "../components/ui";
 
 const MAX_LINES = 3000;
+const STORAGE_KEY = "dc.logs.selected";
 
 interface Entry {
+  containerId: string;
   source: string;
   color: string;
   stream: "stdout" | "stderr";
@@ -21,31 +23,52 @@ interface Entry {
 
 const LEVELS: Level[] = ["error", "warn", "info", "debug", "other"];
 
+function loadSelected(): Set<string> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch {
+    return new Set();
+  }
+}
+
 // Aggregates live logs from several containers into one searchable, level-aware
-// stream. Each source gets a stable color so lines are easy to scan.
+// stream. Each source gets a stable color; the selection persists across visits.
 export function Logs() {
   const [containers, setContainers] = useState<ContainerSummary[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(loadSelected);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [filter, setFilter] = useState("");
   const [activeLevels, setActiveLevels] = useState<Set<Level>>(new Set(LEVELS));
+  const [paused, setPaused] = useState(false);
   const [stick, setStick] = useState(true);
 
   const buf = useRef<Entry[]>([]);
   const boxRef = useRef<HTMLDivElement>(null);
   const colorOf = useRef<Map<string, string>>(new Map());
+  const subscribed = useRef<Set<string>>(new Set());
+  const pausedRef = useRef(false);
+  pausedRef.current = paused;
 
   useEffect(() => {
     api.containers().then((cs) => setContainers(cs.filter((c) => c.state === "running"))).catch(() => {});
     ensureLive();
   }, []);
 
-  // Flush buffered lines periodically to keep rendering smooth under load.
+  // Persist the selection so it survives navigation / reloads.
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify([...selected]));
+    } catch {
+      /* ignore quota errors */
+    }
+  }, [selected]);
+
+  // Flush buffered lines into the view (unless paused). Snapshot-then-clear so
+  // the state updater never reads the mutable ref after we reset it.
   useEffect(() => {
     const t = setInterval(() => {
-      if (buf.current.length === 0) return;
-      // Snapshot then clear: the updater runs later (twice under StrictMode),
-      // so it must close over `pending`, not read the mutable ref.
+      if (pausedRef.current || buf.current.length === 0) return;
       const pending = buf.current;
       buf.current = [];
       setEntries((prev) => [...prev, ...pending].slice(-MAX_LINES));
@@ -53,34 +76,46 @@ export function Logs() {
     return () => clearInterval(t);
   }, []);
 
-  // Reconcile subscriptions with the selected set.
+  // Reconcile subscriptions incrementally: only (un)subscribe the containers
+  // that actually changed, so re-selecting never re-streams existing sources.
   useEffect(() => {
+    const runningIds = new Set(containers.map((c) => c.id));
     const byName = new Map(containers.map((c) => [c.id, c.name]));
-    for (const id of selected) {
-      const subId = `glog:${id}`;
-      const name = byName.get(id) ?? id.slice(0, 12);
+    const desired = new Set([...selected].filter((id) => runningIds.has(id)));
+
+    // Subscribe newly added sources.
+    for (const id of desired) {
+      if (subscribed.current.has(id)) continue;
       if (!colorOf.current.has(id)) {
         colorOf.current.set(id, sourcePalette[colorOf.current.size % sourcePalette.length]);
       }
       const color = colorOf.current.get(id)!;
-      live.subscribeLogs(subId, id, "100", (f) => {
+      const name = byName.get(id) ?? id.slice(0, 12);
+      subscribed.current.add(id);
+      live.subscribeLogs(`glog:${id}`, id, "100", (f) => {
         if (f.type === "log") {
           const l = f.data as LogLine;
-          buf.current.push({
-            source: name,
-            color,
-            stream: l.stream,
-            level: detectLevel(l.message),
-            timestamp: l.timestamp,
-            message: l.message,
-          });
+          buf.current.push({ containerId: id, source: name, color, stream: l.stream, level: detectLevel(l.message), timestamp: l.timestamp, message: l.message });
         }
       });
     }
-    return () => {
-      for (const id of selected) live.unsubscribe(`glog:${id}`);
-    };
+    // Unsubscribe removed sources and drop their lines.
+    for (const id of [...subscribed.current]) {
+      if (desired.has(id)) continue;
+      live.unsubscribe(`glog:${id}`);
+      subscribed.current.delete(id);
+      buf.current = buf.current.filter((e) => e.containerId !== id);
+      setEntries((prev) => prev.filter((e) => e.containerId !== id));
+    }
   }, [selected, containers]);
+
+  // Tear everything down on unmount.
+  useEffect(() => {
+    return () => {
+      for (const id of subscribed.current) live.unsubscribe(`glog:${id}`);
+      subscribed.current.clear();
+    };
+  }, []);
 
   const toggle = (id: string) =>
     setSelected((prev) => {
@@ -98,21 +133,19 @@ export function Logs() {
 
   const filtered = useMemo(() => {
     const f = filter.toLowerCase();
-    return entries.filter(
-      (e) => activeLevels.has(e.level) && (f === "" || e.message.toLowerCase().includes(f))
-    );
+    return entries.filter((e) => activeLevels.has(e.level) && (f === "" || e.message.toLowerCase().includes(f)));
   }, [entries, filter, activeLevels]);
 
   useEffect(() => {
-    if (stick && boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight;
-  }, [filtered, stick]);
+    if (stick && !paused && boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight;
+  }, [filtered, stick, paused]);
 
   return (
     <>
       <PageHeader title="Logs" />
-      <div className="p-6 grid grid-cols-[220px_1fr] gap-4 h-[calc(100vh-4rem)]">
+      <div className="p-6 grid grid-cols-[220px_1fr] gap-4 h-[calc(100vh-4rem)] min-h-0">
         {/* Source picker */}
-        <div className="card p-3 overflow-auto">
+        <div className="card p-3 overflow-auto min-h-0">
           <div className="text-xs uppercase tracking-wide text-muted mb-2">Sources</div>
           {containers.length === 0 ? (
             <div className="text-sm text-muted flex items-center gap-2"><Spinner className="h-4 w-4" /> Loading…</div>
@@ -142,9 +175,18 @@ export function Logs() {
         </div>
 
         {/* Log stream */}
-        <div className="card flex flex-col min-w-0">
+        <div className="card flex flex-col min-w-0 min-h-0">
           <div className="flex items-center gap-3 p-3 border-b border-border flex-wrap">
-            <div className="relative flex-1 min-w-[200px]">
+            {/* live / pause indicator */}
+            <button
+              onClick={() => setPaused((v) => !v)}
+              className={clsx("inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-md font-medium", paused ? "bg-panel2 text-muted" : "bg-ok/15 text-ok")}
+              title={paused ? "Resume live tail" : "Pause live tail"}
+            >
+              {paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
+              {paused ? "Paused" : <><span className="h-2 w-2 rounded-full bg-ok animate-pulse" /> Live</>}
+            </button>
+            <div className="relative flex-1 min-w-[160px]">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted" />
               <input className="input pl-8 py-1.5" placeholder="Search logs…" value={filter} onChange={(e) => setFilter(e.target.value)} />
             </div>
@@ -152,10 +194,7 @@ export function Logs() {
               <button
                 key={lvl}
                 onClick={() => toggleLevel(lvl)}
-                className={clsx(
-                  "text-xs px-2 py-1 rounded-md font-medium capitalize transition-colors",
-                  activeLevels.has(lvl) ? levelBadge[lvl] : "bg-panel2 text-muted/50"
-                )}
+                className={clsx("text-xs px-2 py-1 rounded-md font-medium capitalize transition-colors", activeLevels.has(lvl) ? levelBadge[lvl] : "bg-panel2 text-muted/50")}
               >
                 {lvl}
               </button>
@@ -170,7 +209,7 @@ export function Logs() {
               const el = e.currentTarget;
               setStick(el.scrollHeight - el.scrollTop - el.clientHeight < 40);
             }}
-            className="flex-1 overflow-auto font-mono text-xs leading-relaxed p-3 space-y-0.5"
+            className="flex-1 min-h-0 overflow-auto font-mono text-xs leading-relaxed p-3 space-y-0.5"
           >
             {selected.size === 0 ? (
               <div className="text-muted">Select one or more sources on the left to start streaming.</div>

@@ -81,13 +81,17 @@ function NetworkModal({ net, topo, onClose }: { net: NetworkSummary; topo: Topol
       .filter(Boolean) as { id: string; name: string; state: string; ip: string }[];
   }, [topo, net.id]);
 
-  // Star layout geometry.
-  const W = 720, H = 460, cx = W / 2, cy = H / 2;
-  const r = Math.min(180, 90 + members.length * 8);
-  const CARD_W = 150, CARD_H = 46;
+  // Star layout geometry. Radius is derived from the count so neighbouring
+  // cards never overlap (chord between adjacent cards >= card width + gap).
+  const CARD_W = 168, CARD_H = 48;
+  const n = Math.max(members.length, 2);
+  const r = Math.max(150, Math.ceil((CARD_W + 28) / (2 * Math.sin(Math.PI / n))));
+  const W = 2 * r + CARD_W + 80;
+  const H = 2 * r + CARD_H + 100;
+  const cx = W / 2, cy = H / 2;
 
   const positions = members.map((_, i) => {
-    const angle = (i / Math.max(members.length, 1)) * Math.PI * 2 - Math.PI / 2;
+    const angle = (i / members.length) * Math.PI * 2 - Math.PI / 2;
     return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
   });
 
@@ -111,22 +115,12 @@ function NetworkModal({ net, topo, onClose }: { net: NetworkSummary; topo: Topol
           ) : members.length === 0 ? (
             <EmptyState title="No containers attached" hint="This network has no connected containers." />
           ) : (
-            <div className="relative mx-auto" style={{ width: W, height: H, maxWidth: "100%" }}>
-              {/* edges */}
+            <div className="relative mx-auto max-h-[70vh] overflow-auto">
+             <div className="relative" style={{ width: W, height: H }}>
+              {/* edges (IP is shown on each container card, so no edge labels) */}
               <svg className="absolute inset-0" width={W} height={H}>
                 {positions.map((p, i) => (
-                  <g key={i}>
-                    <line x1={cx} y1={cy} x2={p.x} y2={p.y} stroke="#243047" strokeWidth={2} />
-                    <text
-                      x={(cx + p.x) / 2}
-                      y={(cy + p.y) / 2 - 4}
-                      fill="#8b97ad"
-                      fontSize={10}
-                      textAnchor="middle"
-                    >
-                      {members[i].ip}
-                    </text>
-                  </g>
+                  <line key={i} x1={cx} y1={cy} x2={p.x} y2={p.y} stroke="#243047" strokeWidth={2} />
                 ))}
               </svg>
 
@@ -164,6 +158,7 @@ function NetworkModal({ net, topo, onClose }: { net: NetworkSummary; topo: Topol
                   <div className="text-[10px] text-muted font-mono truncate">{m.ip || "—"}</div>
                 </Link>
               ))}
+             </div>
             </div>
           )}
         </div>
