@@ -95,4 +95,10 @@ export const api = {
 
   alerts: () => req<{ events: AlertEvent[]; unread: number }>("GET", "/api/alerts"),
   ackAlert: (id: number) => req<{ ok: boolean }>("POST", `/api/alerts/${id}/ack`),
+
+  metricsHistory: (container: string, metric: string, range: string) =>
+    req<{ metric: string; points: { t: number; v: number }[] }>(
+      "GET",
+      `/api/metrics/history?container=${encodeURIComponent(container)}&metric=${metric}&range=${range}`
+    ),
 };

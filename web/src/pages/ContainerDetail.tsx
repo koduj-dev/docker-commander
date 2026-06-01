@@ -7,6 +7,7 @@ import { live, ensureLive } from "../lib/live";
 import { shortId } from "../lib/format";
 import { StateBadge, Spinner } from "../components/ui";
 import { StatsCharts } from "../components/StatsChart";
+import { MetricsHistory } from "../components/MetricsHistory";
 import { LogViewer } from "../components/LogViewer";
 import { Terminal } from "../components/Terminal";
 
@@ -96,6 +97,7 @@ export function ContainerDetail() {
 
       <div className="p-6 space-y-6">
         <StatsCharts data={samples} />
+        <MetricsHistory containerId={id} />
 
         <div className="flex gap-1 border-b border-border">
           {(["overview", "logs", "console", "env"] as const).map((t) => (

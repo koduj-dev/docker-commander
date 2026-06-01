@@ -15,6 +15,7 @@ import (
 	"github.com/koduj-dev/docker-commander/internal/auth"
 	"github.com/koduj-dev/docker-commander/internal/config"
 	"github.com/koduj-dev/docker-commander/internal/docker"
+	"github.com/koduj-dev/docker-commander/internal/history"
 	"github.com/koduj-dev/docker-commander/internal/monitor"
 	"github.com/koduj-dev/docker-commander/internal/store"
 	"github.com/koduj-dev/docker-commander/internal/ws"
@@ -29,15 +30,16 @@ type Server struct {
 	docker       *docker.Manager
 	hub          *ws.Hub
 	monitor      *monitor.Monitor
+	history      history.Store
 	metricsToken string
 	webFS        fs.FS // built SPA assets, or nil in dev mode
 }
 
 // NewServer constructs the API server.
-func NewServer(cfg config.Config, st *store.Store, authSvc *auth.Service, mw *auth.Middleware, dm *docker.Manager, hub *ws.Hub, mon *monitor.Monitor, webFS fs.FS) *Server {
+func NewServer(cfg config.Config, st *store.Store, authSvc *auth.Service, mw *auth.Middleware, dm *docker.Manager, hub *ws.Hub, mon *monitor.Monitor, hist history.Store, webFS fs.FS) *Server {
 	return &Server{
 		cfg: cfg, store: st, auth: authSvc, mw: mw, docker: dm, hub: hub,
-		monitor: mon, metricsToken: cfg.MetricsToken, webFS: webFS,
+		monitor: mon, history: hist, metricsToken: cfg.MetricsToken, webFS: webFS,
 	}
 }
 
@@ -79,6 +81,7 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/networks", s.handleListNetworks)
 			r.Get("/topology", s.handleTopology)
 			r.Get("/system", s.handleSystemInfo)
+			r.Get("/metrics/history", s.handleMetricsHistory)
 			r.Get("/audit", s.handleAudit)
 
 			// Alerting: webhooks, rules, and the in-app event feed.

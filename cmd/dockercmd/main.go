@@ -19,6 +19,7 @@ import (
 	"github.com/koduj-dev/docker-commander/internal/auth"
 	"github.com/koduj-dev/docker-commander/internal/config"
 	"github.com/koduj-dev/docker-commander/internal/docker"
+	"github.com/koduj-dev/docker-commander/internal/history"
 	"github.com/koduj-dev/docker-commander/internal/monitor"
 	"github.com/koduj-dev/docker-commander/internal/store"
 	"github.com/koduj-dev/docker-commander/internal/ws"
@@ -66,14 +67,23 @@ func run() error {
 	shutdownCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Metrics history store (Redis if configured, else in-memory).
+	hist := history.Open(shutdownCtx, history.Config{
+		RedisAddr:     cfg.RedisAddr,
+		RedisPassword: cfg.RedisPassword,
+		RedisDB:       cfg.RedisDB,
+		Retention:     cfg.MetricsRetention,
+	})
+	defer hist.Close()
+
 	// Start the alerting engine in the background.
-	mon := monitor.New(st, dm)
+	mon := monitor.New(st, dm, hist)
 	go mon.Run(shutdownCtx)
 
 	// Serve the embedded SPA unless running in dev mode (Vite serves the UI).
 	webFS := serveWebFS(cfg)
 
-	srv := api.NewServer(cfg, st, authSvc, mw, dm, hub, mon, webFS)
+	srv := api.NewServer(cfg, st, authSvc, mw, dm, hub, mon, hist, webFS)
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           srv.Handler(),

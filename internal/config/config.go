@@ -6,6 +6,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
@@ -23,6 +24,12 @@ type Config struct {
 	// MetricsToken, when set, requires a bearer token to scrape /metrics.
 	// Empty means the endpoint is open (fine for loopback-only use).
 	MetricsToken string
+
+	// Metrics history backend. RedisAddr empty → in-memory ring buffer.
+	RedisAddr        string
+	RedisPassword    string
+	RedisDB          int
+	MetricsRetention time.Duration
 }
 
 // DBPath is the path to the SQLite database file.
@@ -38,8 +45,13 @@ func Load() (Config, error) {
 	ttl := flag.Duration("session-ttl", 12*time.Hour, "session token lifetime")
 	flag.BoolVar(&c.Dev, "dev", os.Getenv("DC_DEV") == "1", "enable development mode (permissive CORS)")
 	flag.StringVar(&c.MetricsToken, "metrics-token", os.Getenv("DC_METRICS_TOKEN"), "require this bearer token to scrape /metrics (empty = open)")
+	flag.StringVar(&c.RedisAddr, "redis-addr", os.Getenv("DC_REDIS_ADDR"), "Redis address (host:port) for metrics history; empty = in-memory")
+	flag.StringVar(&c.RedisPassword, "redis-password", os.Getenv("DC_REDIS_PASSWORD"), "Redis password")
+	retention := flag.Duration("metrics-retention", envDuration("DC_METRICS_RETENTION", 6*time.Hour), "how long to keep metric history")
 	flag.Parse()
 
+	c.RedisDB = envInt("DC_REDIS_DB", 0)
+	c.MetricsRetention = *retention
 	c.SessionTTL = *ttl
 	if err := os.MkdirAll(c.DataDir, 0o700); err != nil {
 		return c, err
@@ -58,6 +70,24 @@ func defaultDataDir() string {
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return def
+}
+
+func envInt(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
+func envDuration(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
 	}
 	return def
 }

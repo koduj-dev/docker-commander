@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/koduj-dev/docker-commander/internal/docker"
+	"github.com/koduj-dev/docker-commander/internal/history"
 	"github.com/koduj-dev/docker-commander/internal/store"
 )
 
@@ -34,8 +35,9 @@ type ContainerStat struct {
 
 // Monitor is the long-running alert engine.
 type Monitor struct {
-	store  *store.Store
-	docker *docker.Manager
+	store   *store.Store
+	docker  *docker.Manager
+	history history.Store
 
 	mu       sync.RWMutex
 	snapshot map[string]ContainerStat
@@ -52,11 +54,12 @@ type Monitor struct {
 	dispatcher *dispatcher
 }
 
-// New builds a Monitor.
-func New(st *store.Store, dm *docker.Manager) *Monitor {
+// New builds a Monitor. hist may be nil to disable history recording.
+func New(st *store.Store, dm *docker.Manager, hist history.Store) *Monitor {
 	return &Monitor{
 		store:      st,
 		docker:     dm,
+		history:    hist,
 		snapshot:   make(map[string]ContainerStat),
 		restarts:   make(map[string][]time.Time),
 		logCancels: make(map[string]context.CancelFunc),
@@ -143,7 +146,31 @@ func (m *Monitor) pollStats(ctx context.Context) {
 	m.snapshot = next
 	m.mu.Unlock()
 
+	m.recordHistory(ctx, next)
 	m.evalResourceRules(ctx, next)
+}
+
+// recordHistory persists the running containers' samples for charting.
+func (m *Monitor) recordHistory(ctx context.Context, snap map[string]ContainerStat) {
+	if m.history == nil {
+		return
+	}
+	now := time.Now()
+	samples := make([]history.Sample, 0, len(snap))
+	for _, cs := range snap {
+		if cs.State != "running" {
+			continue
+		}
+		samples = append(samples, history.Sample{
+			ContainerID: cs.ID, Time: now,
+			CPU: cs.CPUPercent, MemPercent: cs.MemPercent, MemBytes: float64(cs.MemBytes),
+		})
+	}
+	if len(samples) > 0 {
+		if err := m.history.Record(ctx, samples); err != nil {
+			log.Printf("monitor: record history: %v", err)
+		}
+	}
 }
 
 func (m *Monitor) evalResourceRules(ctx context.Context, snap map[string]ContainerStat) {

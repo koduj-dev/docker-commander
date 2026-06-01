@@ -86,6 +86,9 @@ All options have flags and environment-variable equivalents:
 | `-session-ttl`  | —               | `12h`              | Session token lifetime.                  |
 | `-dev`          | `DC_DEV=1`      | off                | Dev mode: API only + permissive CORS for Vite. |
 | `-metrics-token`| `DC_METRICS_TOKEN` | (empty/open)    | If set, `/metrics` requires `Authorization: Bearer <token>` (or `?token=`). |
+| `-redis-addr`   | `DC_REDIS_ADDR` | (empty)            | Redis `host:port` for metric history; empty uses an in-memory ring buffer. |
+| `-redis-password` | `DC_REDIS_PASSWORD` | (empty)       | Redis password (if required). `DC_REDIS_DB` selects the DB index. |
+| `-metrics-retention` | `DC_METRICS_RETENTION` | `6h`     | How long to keep metric history (e.g. `30m`, `24h`). |
 
 The Docker connection honours standard `DOCKER_HOST` / `DOCKER_CERT_PATH`
 environment variables.
