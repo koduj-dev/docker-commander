@@ -1,9 +1,11 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import { useEffect, useState, type ReactNode } from "react";
-import { Bell, Boxes, Container, LayoutDashboard, Network, ScrollText, Share2, Terminal, LogOut } from "lucide-react";
+import { Bell, Boxes, Container, LayoutDashboard, Network, ScrollText, Server, Share2, Terminal, LogOut } from "lucide-react";
 import clsx from "clsx";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../lib/api";
+import type { Host } from "../lib/types";
+import { getHostId, setHostId } from "../lib/host";
 
 const nav = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
@@ -12,8 +14,37 @@ const nav = [
   { to: "/topology", label: "Topology", icon: Share2 },
   { to: "/logs", label: "Logs", icon: Terminal },
   { to: "/alerts", label: "Alerts", icon: Bell },
+  { to: "/hosts", label: "Hosts", icon: Server },
   { to: "/audit", label: "Audit log", icon: ScrollText },
 ];
+
+// HostSwitcher selects the active Docker host. Changing it reloads the app so
+// every view and WebSocket re-binds to the new host cleanly.
+function HostSwitcher() {
+  const [hosts, setHosts] = useState<Host[]>([]);
+  useEffect(() => {
+    api.hosts().then(setHosts).catch(() => {});
+  }, []);
+  if (hosts.length <= 1) return null;
+  const current = getHostId() ?? hosts.find((h) => h.kind === "local")?.id ?? hosts[0]?.id;
+  return (
+    <div className="px-3 py-2 border-b border-border">
+      <label className="text-[10px] uppercase tracking-wide text-muted px-1">Host</label>
+      <select
+        className="input py-1.5 mt-1"
+        value={current}
+        onChange={(e) => {
+          setHostId(Number(e.target.value));
+          window.location.reload();
+        }}
+      >
+        {hosts.map((h) => (
+          <option key={h.id} value={h.id}>{h.name} ({h.kind})</option>
+        ))}
+      </select>
+    </div>
+  );
+}
 
 export function Shell({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
@@ -37,6 +68,7 @@ export function Shell({ children }: { children: ReactNode }) {
           </div>
           <div className="font-semibold text-sm">Docker Commander</div>
         </div>
+        <HostSwitcher />
         <nav className="flex-1 p-3 space-y-1">
           {nav.map((n) => (
             <NavLink

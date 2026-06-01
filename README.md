@@ -14,6 +14,10 @@ from a single binary you download, build, and run.
 
 - **Real-time monitoring** — live CPU / memory graphs streamed over WebSockets.
 - **Container control** — start, stop, restart, pause, kill.
+- **Interactive console** — a real shell (xterm.js) into any running container,
+  streamed over a WebSocket; works the same on local and remote hosts.
+- **Multi-host** — manage local, **TCP(+TLS)** and **SSH** Docker hosts and
+  switch between them; every view and stream rebinds to the selected host.
 - **Live logs** — follow `stdout`/`stderr`, filter by substring, toggle streams.
 - **Aggregated logs** — a global Logs view streaming many containers at once,
   color-coded by source with automatic log-level detection and level filtering.
@@ -46,9 +50,9 @@ origin, so the production artifact is a single executable.
 | Layer    | Technology |
 |----------|------------|
 | Backend  | Go, [chi](https://github.com/go-chi/chi), [coder/websocket](https://github.com/coder/websocket), official Docker SDK |
-| Storage  | SQLite via [modernc.org/sqlite](https://modernc.org/sqlite) (pure Go, no CGO) |
+| Storage  | SQLite via [modernc.org/sqlite](https://modernc.org/sqlite) (pure Go, no CGO); metric history in Redis or memory |
 | Auth     | Argon2id, TOTP ([pquerna/otp](https://github.com/pquerna/otp)), JWT |
-| Frontend | React, TypeScript, Vite, Tailwind CSS, Recharts |
+| Frontend | React, TypeScript, Vite, Tailwind CSS, Recharts, React Flow, xterm.js |
 
 ## 🚀 Quick start
 
@@ -144,10 +148,12 @@ make vet
 - [x] Connectivity topology graph (containers ↔ networks)
 - [x] Aggregated multi-container log view with level detection
 - [x] Alerting (state / resource / log / restart) + webhooks + Prometheus export
-- [ ] Remote host management UI (TCP+TLS, SSH)
-- [ ] Historical metrics storage & charts (beyond live + Prometheus)
+- [x] Interactive container console (exec)
+- [x] Remote host management UI (TCP+TLS, SSH) + host switcher
+- [x] Historical metrics storage & charts (Redis or in-memory)
 - [ ] Email/SMTP notification channel
 - [ ] Structured log views & saved parsing rules
+- [ ] known_hosts verification for SSH (currently trusts on first connect)
 
 ## 📄 License
 

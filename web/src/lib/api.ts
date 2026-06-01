@@ -7,12 +7,14 @@ import type {
   AuditEntry,
   ContainerDetail,
   ContainerSummary,
+  Host,
   NetworkSummary,
   SystemInfo,
   Topology,
   User,
   Webhook,
 } from "./types";
+import { hostParam } from "./host";
 
 export class ApiError extends Error {
   status: number;
@@ -63,14 +65,21 @@ export const api = {
   totpSetup: () => req<Enrollment>("POST", "/api/auth/totp/setup"),
   totpEnable: (code: string) => req<{ ok: boolean }>("POST", "/api/auth/totp/enable", { code }),
 
-  containers: () => req<ContainerSummary[]>("GET", "/api/containers"),
-  container: (id: string) => req<ContainerDetail>("GET", `/api/containers/${id}`),
-  containerAction: (id: string, action: string) =>
-    req<{ ok: boolean }>("POST", `/api/containers/${id}/${action}`),
+  // Host management
+  hosts: () => req<Host[]>("GET", "/api/hosts"),
+  createHost: (h: Partial<Host> & { tlsCa?: string; tlsCert?: string; tlsKey?: string }) =>
+    req<{ id: number }>("POST", "/api/hosts", h),
+  deleteHost: (id: number) => req<{ ok: boolean }>("DELETE", `/api/hosts/${id}`),
+  testHost: (id: number) => req<{ ok: boolean; error?: string; serverVersion?: string; containersRunning?: number }>("GET", `/api/hosts/${id}/test`),
 
-  networks: () => req<NetworkSummary[]>("GET", "/api/networks"),
-  topology: () => req<Topology>("GET", "/api/topology"),
-  system: () => req<SystemInfo>("GET", "/api/system"),
+  containers: () => req<ContainerSummary[]>("GET", `/api/containers${hostParam()}`),
+  container: (id: string) => req<ContainerDetail>("GET", `/api/containers/${id}${hostParam()}`),
+  containerAction: (id: string, action: string) =>
+    req<{ ok: boolean }>("POST", `/api/containers/${id}/${action}${hostParam()}`),
+
+  networks: () => req<NetworkSummary[]>("GET", `/api/networks${hostParam()}`),
+  topology: () => req<Topology>("GET", `/api/topology${hostParam()}`),
+  system: () => req<SystemInfo>("GET", `/api/system${hostParam()}`),
   audit: () => req<AuditEntry[]>("GET", "/api/audit"),
 
   // Alerting
@@ -99,6 +108,6 @@ export const api = {
   metricsHistory: (container: string, metric: string, range: string) =>
     req<{ metric: string; points: { t: number; v: number }[] }>(
       "GET",
-      `/api/metrics/history?container=${encodeURIComponent(container)}&metric=${metric}&range=${range}`
+      `/api/metrics/history?container=${encodeURIComponent(container)}&metric=${metric}&range=${range}${hostParam("&")}`
     ),
 };

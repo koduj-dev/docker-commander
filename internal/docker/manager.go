@@ -76,6 +76,17 @@ func (m *Manager) defaultHostID(ctx context.Context) (int64, error) {
 	return 0, store.ErrNotFound
 }
 
+// Disconnect drops the cached client for a host (e.g. after it is deleted or
+// reconfigured), so the next use reconnects with fresh settings.
+func (m *Manager) Disconnect(hostID int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if c, ok := m.clients[hostID]; ok {
+		_ = c.Close()
+		delete(m.clients, hostID)
+	}
+}
+
 // Close disconnects all cached clients.
 func (m *Manager) Close() {
 	m.mu.Lock()
@@ -113,9 +124,7 @@ func buildClient(h *store.Host) (*client.Client, error) {
 		}
 
 	case "ssh":
-		// SSH transport requires a helper connection; tracked for a later
-		// iteration. The host model already persists everything needed.
-		return nil, errors.New("ssh hosts are not yet supported")
+		return buildSSHClient(h)
 
 	default:
 		return nil, fmt.Errorf("unknown host kind %q", h.Kind)

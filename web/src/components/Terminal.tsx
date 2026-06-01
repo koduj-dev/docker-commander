@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
+import { hostParam } from "../lib/host";
 
 // Terminal opens an interactive shell into the container over a WebSocket.
 // Browser → server: binary frames carry stdin, text frames carry resize control.
@@ -24,7 +25,7 @@ export function Terminal({ containerId }: { containerId: string }) {
     fit.fit();
 
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${proto}://${location.host}/api/containers/${containerId}/exec`);
+    const ws = new WebSocket(`${proto}://${location.host}/api/containers/${containerId}/exec${hostParam()}`);
     ws.binaryType = "arraybuffer";
     const enc = new TextEncoder();
 

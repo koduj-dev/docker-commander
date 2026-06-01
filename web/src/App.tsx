@@ -12,6 +12,7 @@ import { Networks } from "./pages/Networks";
 import { Topology } from "./pages/Topology";
 import { Logs } from "./pages/Logs";
 import { Alerts } from "./pages/Alerts";
+import { Hosts } from "./pages/Hosts";
 import { Audit } from "./pages/Audit";
 
 export default function App() {
@@ -42,6 +43,7 @@ export default function App() {
         <Route path="/topology" element={<Topology />} />
         <Route path="/logs" element={<Logs />} />
         <Route path="/alerts" element={<Alerts />} />
+        <Route path="/hosts" element={<Hosts />} />
         <Route path="/audit" element={<Audit />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -7,6 +7,13 @@ export interface User {
   totpEnabled: boolean;
 }
 
+export interface Host {
+  id: number;
+  name: string;
+  kind: string; // local | tcp | ssh
+  address: string;
+}
+
 export interface PortMapping {
   ip?: string;
   privatePort: number;

@@ -1,0 +1,146 @@
+import { useCallback, useEffect, useState } from "react";
+import { Plus, Trash2, Server, CheckCircle2, XCircle, Loader2 } from "lucide-react";
+import clsx from "clsx";
+import { api } from "../lib/api";
+import type { Host } from "../lib/types";
+import { PageHeader } from "../layout/Shell";
+import { EmptyState, Spinner } from "../components/ui";
+
+type TestState = { ok: boolean; text: string } | "loading" | undefined;
+
+export function Hosts() {
+  const [hosts, setHosts] = useState<Host[] | null>(null);
+  const [tests, setTests] = useState<Record<number, TestState>>({});
+  const [showForm, setShowForm] = useState(false);
+
+  const load = useCallback(() => {
+    api.hosts().then(setHosts).catch(() => setHosts([]));
+  }, []);
+  useEffect(() => load(), [load]);
+
+  const test = async (id: number) => {
+    setTests((t) => ({ ...t, [id]: "loading" }));
+    try {
+      const r = await api.testHost(id);
+      setTests((t) => ({ ...t, [id]: { ok: r.ok, text: r.ok ? `OK · Docker ${r.serverVersion} · ${r.containersRunning} running` : (r.error ?? "unreachable") } }));
+    } catch {
+      setTests((t) => ({ ...t, [id]: { ok: false, text: "request failed" } }));
+    }
+  };
+
+  const del = async (id: number) => {
+    await api.deleteHost(id);
+    load();
+  };
+
+  if (!hosts) return (<><PageHeader title="Hosts" /><div className="p-6 flex items-center gap-2 text-muted"><Spinner /> Loading…</div></>);
+
+  return (
+    <>
+      <PageHeader title="Hosts" actions={<button className="btn-primary" onClick={() => setShowForm((v) => !v)}><Plus className="h-4 w-4" /> Add host</button>} />
+      <div className="p-6 space-y-4">
+        {showForm && <HostForm onDone={() => { setShowForm(false); load(); }} />}
+        {hosts.length === 0 ? (
+          <EmptyState title="No hosts" />
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {hosts.map((h) => {
+              const t = tests[h.id];
+              return (
+                <div key={h.id} className="card p-4">
+                  <div className="flex items-start justify-between">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 font-medium">
+                        <Server className="h-4 w-4 text-accent" /> {h.name}
+                        <span className="text-xs bg-panel2 rounded px-1.5 py-0.5 text-muted">{h.kind}</span>
+                      </div>
+                      <div className="text-xs text-muted font-mono mt-1 break-all">{h.address || "(local socket)"}</div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button className="btn-ghost px-2 py-1 text-xs" onClick={() => test(h.id)}>Test</button>
+                      {h.kind !== "local" && (
+                        <button className="btn-ghost px-2 py-1 text-danger" title="Delete" onClick={() => del(h.id)}><Trash2 className="h-4 w-4" /></button>
+                      )}
+                    </div>
+                  </div>
+                  {t && (
+                    <div className={clsx("mt-3 text-xs flex items-center gap-1.5", t === "loading" ? "text-muted" : t.ok ? "text-ok" : "text-danger")}>
+                      {t === "loading" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : t.ok ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
+                      {t === "loading" ? "Testing…" : t.text}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <p className="text-xs text-muted">
+          <strong>SSH hosts</strong> use the address <code>user@host[:port]</code> and authenticate with the
+          server's SSH agent or <code>~/.ssh</code> keys (no keys are stored here). <strong>TCP</strong> hosts use
+          <code> tcp://host:2376</code> with optional TLS material.
+        </p>
+      </div>
+    </>
+  );
+}
+
+function HostForm({ onDone }: { onDone: () => void }) {
+  const [name, setName] = useState("");
+  const [kind, setKind] = useState<"tcp" | "ssh">("ssh");
+  const [address, setAddress] = useState("");
+  const [tlsCa, setTlsCa] = useState("");
+  const [tlsCert, setTlsCert] = useState("");
+  const [tlsKey, setTlsKey] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErr(""); setBusy(true);
+    try {
+      await api.createHost({ name, kind, address, tlsCa, tlsCert, tlsKey });
+      onDone();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="card p-5 space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div>
+          <label className="label">Name</label>
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} required />
+        </div>
+        <div>
+          <label className="label">Type</label>
+          <select className="input" value={kind} onChange={(e) => setKind(e.target.value as "tcp" | "ssh")}>
+            <option value="ssh">SSH</option>
+            <option value="tcp">TCP (+TLS)</option>
+          </select>
+        </div>
+        <div>
+          <label className="label">Address</label>
+          <input className="input" value={address} onChange={(e) => setAddress(e.target.value)} placeholder={kind === "ssh" ? "user@host" : "tcp://host:2376"} required />
+        </div>
+      </div>
+      {kind === "tcp" && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {[["CA cert", tlsCa, setTlsCa], ["Client cert", tlsCert, setTlsCert], ["Client key", tlsKey, setTlsKey]].map(([lbl, val, set]) => (
+            <div key={lbl as string}>
+              <label className="label">{lbl as string} (PEM, optional)</label>
+              <textarea className="input font-mono text-[10px] h-20" value={val as string} onChange={(e) => (set as (s: string) => void)(e.target.value)} placeholder="-----BEGIN…" />
+            </div>
+          ))}
+        </div>
+      )}
+      {err && <p className="text-sm text-danger">{err}</p>}
+      <div className="flex justify-end gap-2">
+        <button type="button" className="btn-ghost" onClick={onDone}>Cancel</button>
+        <button className="btn-primary" disabled={busy}>{busy ? "Saving…" : "Add host"}</button>
+      </div>
+    </form>
+  );
+}

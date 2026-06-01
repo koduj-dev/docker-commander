@@ -73,6 +73,9 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/auth/totp/enable", s.handleTOTPEnable)
 
 			r.Get("/hosts", s.handleListHosts)
+			r.Post("/hosts", s.handleCreateHost)
+			r.Delete("/hosts/{id}", s.handleDeleteHost)
+			r.Get("/hosts/{id}/test", s.handleTestHost)
 
 			r.Get("/containers", s.handleListContainers)
 			r.Get("/containers/{id}", s.handleInspectContainer)

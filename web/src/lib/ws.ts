@@ -1,6 +1,8 @@
 // Multiplexed WebSocket client matching the Go hub protocol. One socket carries
 // many subscriptions (stats/logs), each identified by a caller-chosen subId.
 
+import { hostIdOrZero } from "./host";
+
 type Frame =
   | { type: "stats"; subId: string; data: unknown }
   | { type: "log"; subId: string; data: unknown }
@@ -62,14 +64,14 @@ export class LiveSocket {
 
   subscribeStats(subId: string, containerId: string, onFrame: Handler) {
     this.handlers.set(subId, onFrame);
-    const msg = { type: "subscribe", channel: "stats", subId, containerId };
+    const msg = { type: "subscribe", channel: "stats", subId, containerId, hostId: hostIdOrZero() };
     this.resubscribe.set(subId, msg);
     this.send(msg);
   }
 
   subscribeLogs(subId: string, containerId: string, tail: string, onFrame: Handler) {
     this.handlers.set(subId, onFrame);
-    const msg = { type: "subscribe", channel: "logs", subId, containerId, tail };
+    const msg = { type: "subscribe", channel: "logs", subId, containerId, tail, hostId: hostIdOrZero() };
     this.resubscribe.set(subId, msg);
     this.send(msg);
   }
