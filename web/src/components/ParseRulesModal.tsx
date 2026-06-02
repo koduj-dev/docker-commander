@@ -4,6 +4,7 @@ import clsx from "clsx";
 import { api } from "../lib/api";
 import type { ParseRule } from "../lib/types";
 import { compileRule, groupNames } from "../lib/parse";
+import { PARSE_PRESETS } from "../lib/parsePresets";
 
 // ParseRulesModal manages saved log-parsing rules: list, delete, and add with a
 // live validation/preview against a sample line.
@@ -59,7 +60,21 @@ export function ParseRulesModal({ sample, onClose, onChanged }: { sample: string
           )}
 
           <form onSubmit={add} className="space-y-3 border-t border-border pt-4">
-            <div className="text-xs uppercase tracking-wide text-muted">New rule</div>
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-muted">New rule</div>
+              <select
+                className="input py-1 w-44 text-xs"
+                value=""
+                onChange={(e) => {
+                  const p = PARSE_PRESETS.find((x) => x.name === e.target.value);
+                  if (p) { setName(p.name); setPattern(p.pattern); }
+                }}
+                title="Start from a preset"
+              >
+                <option value="">Start from preset…</option>
+                {PARSE_PRESETS.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
+              </select>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
                 <label className="label">Name</label>
