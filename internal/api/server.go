@@ -146,6 +146,7 @@ func (s *Server) Handler() http.Handler {
 			r.Delete("/webhooks/{id}", s.handleDeleteWebhook)
 			r.Get("/alert-rules", s.handleListAlertRules)
 			r.Post("/alert-rules", s.handleCreateAlertRule)
+			r.Put("/alert-rules/{id}", s.handleUpdateAlertRule)
 			r.Patch("/alert-rules/{id}", s.handleToggleAlertRule)
 			r.Delete("/alert-rules/{id}", s.handleDeleteAlertRule)
 			r.Get("/alerts", s.handleListAlertEvents)

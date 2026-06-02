@@ -277,6 +277,10 @@ export const api = {
     email: boolean;
     cooldownSec: number;
   }) => req<{ id: number }>("POST", "/api/alert-rules", body),
+  updateAlertRule: (
+    id: number,
+    body: { name: string; type: string; target: string; config: unknown; severity: string; webhookId: number | null; email: boolean; cooldownSec: number }
+  ) => req<{ ok: boolean }>("PUT", `/api/alert-rules/${id}`, body),
   toggleAlertRule: (id: number, enabled: boolean) =>
     req<{ ok: boolean }>("PATCH", `/api/alert-rules/${id}`, { enabled }),
   deleteAlertRule: (id: number) => req<{ ok: boolean }>("DELETE", `/api/alert-rules/${id}`),

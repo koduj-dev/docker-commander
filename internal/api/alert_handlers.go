@@ -108,6 +108,35 @@ func (s *Server) handleCreateAlertRule(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]int64{"id": id})
 }
 
+// handleUpdateAlertRule replaces a rule's fields (PUT). Toggling enabled keeps
+// using PATCH.
+func (s *Server) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	var b alertRuleBody
+	if err := decodeJSON(r, &b); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if b.Name == "" || b.Type == "" {
+		writeErr(w, http.StatusBadRequest, "name and type are required")
+		return
+	}
+	cfg := string(b.Config)
+	if cfg == "" {
+		cfg = "{}"
+	}
+	rule := &store.AlertRule{
+		Name: b.Name, Type: b.Type, Target: b.Target, Config: cfg,
+		Severity: b.Severity, WebhookID: b.WebhookID, Email: b.Email, CooldownSec: b.CooldownSec,
+	}
+	if err := s.store.UpdateAlertRule(r.Context(), id, rule); err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not update rule")
+		return
+	}
+	s.audit(r, "alert_rule.update", b.Name, b.Type)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func (s *Server) handleToggleAlertRule(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	var body struct {

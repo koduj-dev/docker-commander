@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Plus, Trash2, Webhook as WebhookIcon, Check, Mail, Loader2, Send } from "lucide-react";
+import { Plus, Trash2, Webhook as WebhookIcon, Check, Mail, Loader2, Send, Pencil } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import type { AlertEvent, AlertRule, AlertType, Severity, SmtpConfig, Webhook } from "../lib/types";
@@ -119,6 +119,7 @@ function Rules() {
   const [rules, setRules] = useState<AlertRule[] | null>(null);
   const [hooks, setHooks] = useState<Webhook[]>([]);
   const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<AlertRule | null>(null);
 
   const load = useCallback(() => {
     api.alertRules().then(setRules).catch(() => setRules([]));
@@ -140,11 +141,18 @@ function Rules() {
   return (
     <div className="space-y-4">
       <div className="flex justify-end">
-        <button className="btn-primary" onClick={() => setShowForm((v) => !v)}>
+        <button className="btn-primary" onClick={() => { setEditing(null); setShowForm((v) => !v); }}>
           <Plus className="h-4 w-4" /> New rule
         </button>
       </div>
-      {showForm && <RuleForm hooks={hooks} onDone={() => { setShowForm(false); load(); }} />}
+      {(showForm || editing) && (
+        <RuleForm
+          key={editing?.id ?? "new"}
+          hooks={hooks}
+          existing={editing}
+          onDone={() => { setShowForm(false); setEditing(null); load(); }}
+        />
+      )}
       {rules.length === 0 ? (
         <EmptyState title="No alert rules" hint="Create a rule to start monitoring." />
       ) : (
@@ -175,9 +183,10 @@ function Rules() {
                     </button>
                   </td>
                   <td className="px-4 py-2.5 text-right">
-                    <button className="btn-ghost px-2 py-1 text-danger" title="Delete" onClick={() => del(r.id)}>
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    <div className="flex items-center justify-end gap-1">
+                      <button className="btn-ghost px-2 py-1" title="Edit" onClick={() => { setShowForm(false); setEditing(r); }}><Pencil className="h-4 w-4" /></button>
+                      <button className="btn-ghost px-2 py-1 text-danger" title="Delete" onClick={() => del(r.id)}><Trash2 className="h-4 w-4" /></button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -189,25 +198,27 @@ function Rules() {
   );
 }
 
-function RuleForm({ hooks, onDone }: { hooks: Webhook[]; onDone: () => void }) {
-  const [name, setName] = useState("");
-  const [type, setType] = useState<AlertType>("state");
-  const [target, setTarget] = useState("");
-  const [severity, setSeverity] = useState<Severity>("warning");
-  const [webhookId, setWebhookId] = useState<number | null>(null);
-  const [email, setEmail] = useState(false);
-  const [cooldown, setCooldown] = useState(60);
+function RuleForm({ hooks, existing, onDone }: { hooks: Webhook[]; existing?: AlertRule | null; onDone: () => void }) {
+  // Prefill from an existing rule when editing (config is a raw JSON string).
+  const cfg: Record<string, unknown> = (() => { try { return existing ? JSON.parse(existing.config) : {}; } catch { return {}; } })();
+  const [name, setName] = useState(existing?.name ?? "");
+  const [type, setType] = useState<AlertType>(existing?.type ?? "state");
+  const [target, setTarget] = useState(existing?.target ?? "");
+  const [severity, setSeverity] = useState<Severity>(existing?.severity ?? "warning");
+  const [webhookId, setWebhookId] = useState<number | null>(existing?.webhookId ?? null);
+  const [email, setEmail] = useState(existing?.email ?? false);
+  const [cooldown, setCooldown] = useState(existing?.cooldownSec ?? 60);
 
   // type-specific
-  const [events, setEvents] = useState<Set<string>>(new Set(["die"]));
-  const [metric, setMetric] = useState<"cpu" | "mem">("cpu");
-  const [op, setOp] = useState<">" | "<">(">");
-  const [threshold, setThreshold] = useState(80);
-  const [duration, setDuration] = useState(30);
-  const [pattern, setPattern] = useState("");
-  const [isRegex, setIsRegex] = useState(false);
-  const [windowSec, setWindowSec] = useState(60);
-  const [count, setCount] = useState(3);
+  const [events, setEvents] = useState<Set<string>>(new Set((cfg.events as string[]) ?? ["die"]));
+  const [metric, setMetric] = useState<"cpu" | "mem">((cfg.metric as "cpu" | "mem") ?? "cpu");
+  const [op, setOp] = useState<">" | "<">((cfg.op as ">" | "<") ?? ">");
+  const [threshold, setThreshold] = useState((cfg.threshold as number) ?? 80);
+  const [duration, setDuration] = useState((cfg.durationSec as number) ?? 30);
+  const [pattern, setPattern] = useState((cfg.pattern as string) ?? "");
+  const [isRegex, setIsRegex] = useState((cfg.isRegex as boolean) ?? false);
+  const [windowSec, setWindowSec] = useState((cfg.windowSec as number) ?? 60);
+  const [count, setCount] = useState((cfg.count as number) ?? 3);
   const [busy, setBusy] = useState(false);
 
   const buildConfig = (): unknown => {
@@ -227,10 +238,9 @@ function RuleForm({ hooks, onDone }: { hooks: Webhook[]; onDone: () => void }) {
     e.preventDefault();
     setBusy(true);
     try {
-      await api.createAlertRule({
-        name, enabled: true, type, target, config: buildConfig(),
-        severity, webhookId, email, cooldownSec: cooldown,
-      });
+      const body = { name, type, target, config: buildConfig(), severity, webhookId, email, cooldownSec: cooldown };
+      if (existing) await api.updateAlertRule(existing.id, body);
+      else await api.createAlertRule({ ...body, enabled: true });
       onDone();
     } finally {
       setBusy(false);
@@ -365,7 +375,7 @@ function RuleForm({ hooks, onDone }: { hooks: Webhook[]; onDone: () => void }) {
 
       <div className="flex justify-end gap-2">
         <button type="button" className="btn-ghost" onClick={onDone}>Cancel</button>
-        <button className="btn-primary" disabled={busy}>{busy ? "Saving…" : "Create rule"}</button>
+        <button className="btn-primary" disabled={busy}>{busy ? "Saving…" : existing ? "Save changes" : "Create rule"}</button>
       </div>
     </form>
   );

@@ -131,6 +131,18 @@ func (s *Store) SetAlertRuleEnabled(ctx context.Context, id int64, enabled bool)
 	return err
 }
 
+// UpdateAlertRule replaces a rule's mutable fields (enabled is managed
+// separately via SetAlertRuleEnabled).
+func (s *Store) UpdateAlertRule(ctx context.Context, id int64, r *AlertRule) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE alert_rules
+		SET name = ?, type = ?, target = ?, config = ?, severity = ?, webhook_id = ?, cooldown_sec = ?, email = ?
+		WHERE id = ?`,
+		r.Name, r.Type, r.Target, orDefault(r.Config, "{}"), orDefault(r.Severity, "warning"),
+		r.WebhookID, defaultInt(r.CooldownSec, 60), boolToInt(r.Email), id)
+	return err
+}
+
 func (s *Store) DeleteAlertRule(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM alert_rules WHERE id = ?`, id)
 	return err
