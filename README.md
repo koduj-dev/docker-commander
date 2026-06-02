@@ -8,7 +8,11 @@ problems, and administer it all from one binary.
 > **One Go binary** with the web UI embedded. No external database, no runtime
 > dependencies, CGO-free. Runs on **Linux, macOS and Windows**.
 
-<!-- Add badges here once CI/releases are live, e.g. build status + latest release. -->
+[![CI](https://github.com/koduj-dev/docker-commander/actions/workflows/ci.yml/badge.svg)](https://github.com/koduj-dev/docker-commander/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/koduj-dev/docker-commander?sort=semver)](https://github.com/koduj-dev/docker-commander/releases)
+[![Go Report Card](https://goreportcard.com/badge/github.com/koduj-dev/docker-commander)](https://goreportcard.com/report/github.com/koduj-dev/docker-commander)
+[![Go version](https://img.shields.io/github/go-mod/go-version/koduj-dev/docker-commander)](go.mod)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ---
 
