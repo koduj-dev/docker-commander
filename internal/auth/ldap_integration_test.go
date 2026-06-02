@@ -30,6 +30,9 @@ userPassword: secret123
 // returns a config pointing at it. Skipped when Docker/the image is absent.
 func startOpenLDAP(t *testing.T) store.LDAPConfig {
 	t.Helper()
+	if testing.Short() {
+		t.Skip("ldap integration test; skipped under -short")
+	}
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker CLI not available")
 	}

@@ -167,6 +167,14 @@ make dev                       # API on :8080 (dev mode)
 cd web && npm install && npm run dev   # UI on :5173, proxies /api → :8080
 ```
 
+### Tests
+
+```bash
+go test -short ./...   # fast unit tests (what CI runs)
+go test ./...          # + integration tests — needs a local Docker daemon
+                       #   (spins throwaway Redis / OpenLDAP / MailHog containers)
+```
+
 ## 📈 Monitoring & alerting
 
 Define rules on the **Alerts** screen:

@@ -14,6 +14,9 @@ import (
 // code path in CI where Docker is present.
 func startRedis(t *testing.T) string {
 	t.Helper()
+	if testing.Short() {
+		t.Skip("redis integration test; skipped under -short")
+	}
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker CLI not available")
 	}

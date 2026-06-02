@@ -19,6 +19,9 @@ import (
 // skipping the test if no Docker daemon is reachable.
 func newManager(t *testing.T) (*Manager, context.Context) {
 	t.Helper()
+	if testing.Short() {
+		t.Skip("docker integration test; skipped under -short")
+	}
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)

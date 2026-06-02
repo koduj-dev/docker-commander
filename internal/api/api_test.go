@@ -214,6 +214,9 @@ func TestAPIAuthAndAdminEndpoints(t *testing.T) {
 func TestAPIDockerBackedReads(t *testing.T) {
 	a := newAPI(t)
 	_, _ = a.do("POST", "/api/auth/setup", map[string]string{"username": "admin", "password": "correcthorse123"})
+	if testing.Short() {
+		t.Skip("docker integration test; skipped under -short")
+	}
 	// Skip cleanly if there's no Docker daemon (handlers would 502).
 	if code, _ := a.do("GET", "/api/system", nil); code != 200 {
 		t.Skipf("docker daemon not available (GET /api/system → %d)", code)
@@ -231,6 +234,9 @@ func TestAPIDockerBackedReads(t *testing.T) {
 func TestAPIContainerDetailHandlers(t *testing.T) {
 	a := newAPI(t)
 	_, _ = a.do("POST", "/api/auth/setup", map[string]string{"username": "admin", "password": "correcthorse123"})
+	if testing.Short() {
+		t.Skip("docker integration test; skipped under -short")
+	}
 	if code, _ := a.do("GET", "/api/system", nil); code != 200 {
 		t.Skipf("docker daemon not available (%d)", code)
 	}
@@ -275,6 +281,9 @@ func TestAPIContainerDetailHandlers(t *testing.T) {
 func TestAPIDockerBackedWrites(t *testing.T) {
 	a := newAPI(t)
 	_, _ = a.do("POST", "/api/auth/setup", map[string]string{"username": "admin", "password": "correcthorse123"})
+	if testing.Short() {
+		t.Skip("docker integration test; skipped under -short")
+	}
 	if code, _ := a.do("GET", "/api/system", nil); code != 200 {
 		t.Skipf("docker daemon not available (%d)", code)
 	}
@@ -405,6 +414,9 @@ func TestAPIDockerBackedWrites(t *testing.T) {
 func TestAPIWebSockets(t *testing.T) {
 	a := newAPI(t)
 	_, _ = a.do("POST", "/api/auth/setup", map[string]string{"username": "admin", "password": "correcthorse123"})
+	if testing.Short() {
+		t.Skip("docker integration test; skipped under -short")
+	}
 	if code, _ := a.do("GET", "/api/system", nil); code != 200 {
 		t.Skipf("docker daemon not available (%d)", code)
 	}

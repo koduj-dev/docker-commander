@@ -15,6 +15,9 @@ import (
 // Skipped when Docker/the image is unavailable.
 func startMailhog(t *testing.T) (string, int) {
 	t.Helper()
+	if testing.Short() {
+		t.Skip("smtp integration test; skipped under -short")
+	}
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker CLI not available")
 	}

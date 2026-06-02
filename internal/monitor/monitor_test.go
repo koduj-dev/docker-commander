@@ -16,6 +16,9 @@ import (
 
 func newMonitor(t *testing.T) (*Monitor, *docker.Manager, *store.Store, context.Context) {
 	t.Helper()
+	if testing.Short() {
+		t.Skip("docker integration test; skipped under -short")
+	}
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)

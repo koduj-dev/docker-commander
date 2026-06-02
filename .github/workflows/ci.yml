@@ -26,6 +26,11 @@ jobs:
       - run: make ui
       - run: gofmt -l $(git ls-files '*.go') | tee /tmp/fmt && test ! -s /tmp/fmt
       - run: go vet ./...
-      - run: go test -coverprofile=coverage.out ./...
-      - run: go tool cover -func=coverage.out | tail -1   # total coverage (informational)
+      # -short skips the Docker/Redis/LDAP/SMTP integration tests: they need
+      # live backends, are subject to Docker Hub rate limits on shared CI IPs,
+      # and have hit a go1.25 + modernc-sqlite connection-pool stall on hosted
+      # runners. They run locally via a plain `go test ./...`. The timeout is a
+      # backstop so the job never hangs for the full budget.
+      - run: go test -short -timeout=120s -coverprofile=coverage.out ./...
+      - run: go tool cover -func=coverage.out | tail -1   # unit coverage (informational)
       - run: go build ./...
