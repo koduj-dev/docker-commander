@@ -12,6 +12,22 @@ problems, and administer it all from one binary.
 
 ---
 
+## 📸 Screenshots
+
+**Dashboard** — host overview, disk usage, and running containers at a glance.
+
+![Dashboard](docs/images/dashboard.png)
+
+**Container detail** — live CPU / memory with history, and tabs for logs, an
+interactive console, processes, the file browser, filesystem changes and env.
+
+![Container detail](docs/images/container_detail.png)
+
+**Aggregated logs** — many containers in one stream, color-coded by source with
+level filters, regex search and structured parsing.
+
+![Aggregated logs](docs/images/logs.png)
+
 ## ✨ Features
 
 **Monitor**
