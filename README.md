@@ -37,6 +37,8 @@ from a single binary you download, build, and run.
   color-coded by source with automatic log-level detection and level filtering.
 - **Container detail** — image, command, env vars, mounts, ports, networks,
   health, restart policy.
+- **Volumes** — list with driver/scope/mountpoint, see **which containers use
+  each volume**, raw inspect, create, remove (force fallback), and prune unused.
 - **Networks & topology** — networks with drivers/subnets/scope and an
   internal/external flag, raw inspect and removal of user-defined networks,
   plus an interactive **connectivity graph** (containers ↔ networks) you can
@@ -180,7 +182,7 @@ make vet
 - [x] Registry & build: push / private pull (encrypted stored creds), tag, and image build with context upload
 - [ ] Container lifecycle: create/run, rename, update limits, commit, restart-policy
 - [ ] Image transfer: tag, save/load (tar), import, container export
-- [ ] Volumes management + inspector, and which containers use them
+- [x] Volumes management + inspector, and which containers use them
 - [ ] Data transfer to/from containers (`docker cp` up/download)
 - [ ] Email/SMTP notification channel
 - [ ] Structured log views & saved parsing rules

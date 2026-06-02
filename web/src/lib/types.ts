@@ -134,6 +134,16 @@ export interface EventMsg {
   attr?: Record<string, string>;
 }
 
+export interface VolumeSummary {
+  name: string;
+  driver: string;
+  mountpoint: string;
+  scope: string;
+  createdAt: string;
+  labels: Record<string, string> | null;
+  inUseBy: string[] | null;
+}
+
 export interface NetworkSummary {
   id: string;
   name: string;

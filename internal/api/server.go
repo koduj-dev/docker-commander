@@ -106,6 +106,11 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/networks", s.handleListNetworks)
 			r.Delete("/networks/{id}", s.handleRemoveNetwork)
 			r.Get("/topology", s.handleTopology)
+
+			r.Get("/volumes", s.handleListVolumes)
+			r.Post("/volumes", s.handleCreateVolume)
+			r.Post("/volumes/prune", s.handlePruneVolumes)
+			r.Delete("/volumes/{name}", s.handleRemoveVolume)
 			r.Get("/system", s.handleSystemInfo)
 			r.Get("/system/df", s.handleDiskUsage)
 			r.Get("/metrics/history", s.handleMetricsHistory)

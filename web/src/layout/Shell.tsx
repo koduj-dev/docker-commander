@@ -1,6 +1,6 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import { useEffect, useState, type ReactNode } from "react";
-import { Activity, Bell, Boxes, Container, KeyRound, Layers, LayoutDashboard, Network, ScrollText, Server, Share2, Terminal, LogOut } from "lucide-react";
+import { Activity, Bell, Boxes, Container, Database, KeyRound, Layers, LayoutDashboard, Network, ScrollText, Server, Share2, Terminal, LogOut } from "lucide-react";
 import clsx from "clsx";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../lib/api";
@@ -19,6 +19,7 @@ const navGroups: { title: string; items: { to: string; label: string; icon: type
     items: [
       { to: "/containers", label: "Containers", icon: Boxes },
       { to: "/images", label: "Images", icon: Layers },
+      { to: "/volumes", label: "Volumes", icon: Database },
     ],
   },
   {

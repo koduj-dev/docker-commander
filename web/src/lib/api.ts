@@ -15,6 +15,7 @@ import type {
   NetworkSummary,
   Registry,
   SystemInfo,
+  VolumeSummary,
   TopResult,
   Topology,
   User,
@@ -141,6 +142,19 @@ export const api = {
 
   networks: () => req<NetworkSummary[]>("GET", `/api/networks${hostParam()}`),
   deleteNetwork: (id: string) => req<{ ok: boolean; error?: string }>("DELETE", `/api/networks/${id}${hostParam()}`),
+
+  volumes: () => req<VolumeSummary[]>("GET", `/api/volumes${hostParam()}`),
+  createVolume: (b: { name: string; driver?: string }) =>
+    req<{ ok: boolean; error?: string }>("POST", `/api/volumes${hostParam()}`, b),
+  deleteVolume: (name: string, force = false) => {
+    const params = new URLSearchParams();
+    const h = getHostId();
+    if (h != null) params.set("host", String(h));
+    if (force) params.set("force", "1");
+    const qs = params.toString();
+    return req<{ ok: boolean; error?: string }>("DELETE", `/api/volumes/${encodeURIComponent(name)}${qs ? `?${qs}` : ""}`);
+  },
+  pruneVolumes: () => req<{ deleted: string[] | null; spaceReclaimed: number }>("POST", `/api/volumes/prune${hostParam()}`),
   topology: () => req<Topology>("GET", `/api/topology${hostParam()}`),
   system: () => req<SystemInfo>("GET", `/api/system${hostParam()}`),
   audit: () => req<AuditEntry[]>("GET", "/api/audit"),
