@@ -394,6 +394,9 @@ func (m *Monitor) fire(ctx context.Context, r store.AlertRule, cid, name, messag
 	if r.WebhookID != nil {
 		m.dispatcher.dispatch(*r.WebhookID, ev)
 	}
+	if r.Email {
+		m.emailNotify(ev)
+	}
 }
 
 // ---- helpers ----------------------------------------------------------------

@@ -16,6 +16,7 @@ import type {
   ImageSummary,
   NetworkSummary,
   Registry,
+  SmtpConfig,
   SystemInfo,
   VolumeSummary,
   TopResult,
@@ -247,6 +248,7 @@ export const api = {
     config: unknown;
     severity: string;
     webhookId: number | null;
+    email: boolean;
     cooldownSec: number;
   }) => req<{ id: number }>("POST", "/api/alert-rules", body),
   toggleAlertRule: (id: number, enabled: boolean) =>
@@ -255,6 +257,11 @@ export const api = {
 
   alerts: () => req<{ events: AlertEvent[]; unread: number }>("GET", "/api/alerts"),
   ackAlert: (id: number) => req<{ ok: boolean }>("POST", `/api/alerts/${id}/ack`),
+
+  // Email (SMTP) alert channel
+  smtp: () => req<SmtpConfig>("GET", "/api/smtp"),
+  setSmtp: (c: SmtpConfig & { password?: string }) => req<{ ok: boolean }>("PUT", "/api/smtp", c),
+  testSmtp: (c?: SmtpConfig & { password?: string }) => req<{ ok: boolean; error?: string }>("POST", "/api/smtp/test", c ?? {}),
 
   metricsHistory: (container: string, metric: string, range: string) =>
     req<{ metric: string; points: { t: number; v: number }[] }>(

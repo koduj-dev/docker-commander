@@ -121,6 +121,7 @@ CREATE TABLE IF NOT EXISTS alert_rules (
 	severity    TEXT NOT NULL DEFAULT 'warning',
 	webhook_id  INTEGER,
 	cooldown_sec INTEGER NOT NULL DEFAULT 60,
+	email       INTEGER NOT NULL DEFAULT 0,
 	created_at  TEXT NOT NULL
 );
 
@@ -156,6 +157,7 @@ CREATE TABLE IF NOT EXISTS registries (
 	// duplicate-column error that older-or-newer DBs harmlessly raise.
 	for _, alter := range []string{
 		`ALTER TABLE hosts ADD COLUMN host_key TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE alert_rules ADD COLUMN email INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := s.db.ExecContext(ctx, alter); err != nil && !isDuplicateColumn(err) {
 			return err

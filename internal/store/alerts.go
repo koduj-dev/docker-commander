@@ -29,6 +29,7 @@ type AlertRule struct {
 	Config      string    `json:"config"`   // raw JSON, interpreted by the engine
 	Severity    string    `json:"severity"` // info | warning | critical
 	WebhookID   *int64    `json:"webhookId"`
+	Email       bool      `json:"email"` // also send to the configured SMTP recipient
 	CooldownSec int       `json:"cooldownSec"`
 	CreatedAt   time.Time `json:"createdAt"`
 }
@@ -95,7 +96,7 @@ func (s *Store) DeleteWebhook(ctx context.Context, id int64) error {
 
 func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, enabled, type, target, config, severity, webhook_id, cooldown_sec, created_at
+		SELECT id, name, enabled, type, target, config, severity, webhook_id, cooldown_sec, email, created_at
 		FROM alert_rules ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -114,10 +115,10 @@ func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 
 func (s *Store) CreateAlertRule(ctx context.Context, r *AlertRule) (int64, error) {
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO alert_rules (name, enabled, type, target, config, severity, webhook_id, cooldown_sec, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO alert_rules (name, enabled, type, target, config, severity, webhook_id, cooldown_sec, email, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.Name, boolToInt(r.Enabled), r.Type, r.Target, orDefault(r.Config, "{}"),
-		orDefault(r.Severity, "warning"), r.WebhookID, defaultInt(r.CooldownSec, 60),
+		orDefault(r.Severity, "warning"), r.WebhookID, defaultInt(r.CooldownSec, 60), boolToInt(r.Email),
 		time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		return 0, err
@@ -214,11 +215,11 @@ func scanWebhook(r scanner) (*Webhook, error) {
 
 func scanRule(r scanner) (*AlertRule, error) {
 	var rule AlertRule
-	var enabled int
+	var enabled, email int
 	var created string
 	var webhookID sql.NullInt64
 	err := r.Scan(&rule.ID, &rule.Name, &enabled, &rule.Type, &rule.Target, &rule.Config,
-		&rule.Severity, &webhookID, &rule.CooldownSec, &created)
+		&rule.Severity, &webhookID, &rule.CooldownSec, &email, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -226,6 +227,7 @@ func scanRule(r scanner) (*AlertRule, error) {
 		return nil, err
 	}
 	rule.Enabled = enabled != 0
+	rule.Email = email != 0
 	if webhookID.Valid {
 		rule.WebhookID = &webhookID.Int64
 	}

@@ -264,8 +264,19 @@ export interface AlertRule {
   config: string; // raw JSON
   severity: Severity;
   webhookId: number | null;
+  email: boolean;
   cooldownSec: number;
   createdAt: string;
+}
+
+export interface SmtpConfig {
+  host: string;
+  port: number;
+  username: string;
+  from: string;
+  to: string;
+  tls: boolean;
+  hasPassword?: boolean;
 }
 
 export interface AlertEvent {

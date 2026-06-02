@@ -65,6 +65,7 @@ type alertRuleBody struct {
 	Config      json.RawMessage `json:"config"`
 	Severity    string          `json:"severity"`
 	WebhookID   *int64          `json:"webhookId"`
+	Email       bool            `json:"email"`
 	CooldownSec int             `json:"cooldownSec"`
 }
 
@@ -96,7 +97,7 @@ func (s *Server) handleCreateAlertRule(w http.ResponseWriter, r *http.Request) {
 	}
 	rule := &store.AlertRule{
 		Name: b.Name, Enabled: b.Enabled, Type: b.Type, Target: b.Target,
-		Config: cfg, Severity: b.Severity, WebhookID: b.WebhookID, CooldownSec: b.CooldownSec,
+		Config: cfg, Severity: b.Severity, WebhookID: b.WebhookID, Email: b.Email, CooldownSec: b.CooldownSec,
 	}
 	id, err := s.store.CreateAlertRule(r.Context(), rule)
 	if err != nil {

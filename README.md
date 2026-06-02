@@ -57,8 +57,9 @@ from a single binary you download, build, and run.
   thresholds** (CPU/MEM), **log patterns** (substring/regex), and **restart /
   crash loops**, with per-rule severity and cooldown.
 - **Notifications & export** — fire alerts to **generic webhooks** (Slack,
-  Discord, Grafana alerting, n8n…) with Go-template payloads, an **in-app alert
-  feed**, and a **Prometheus `/metrics`** exporter for Grafana dashboards.
+  Discord, Grafana alerting, n8n…) with Go-template payloads, **email** via your
+  own SMTP server (password encrypted at rest), an **in-app alert feed**, and a
+  **Prometheus `/metrics`** exporter for Grafana dashboards.
 - **Audit log** — every privileged action is recorded (who, what, when, from where).
 - **Security first** — password login with **Argon2id**, **mandatory TOTP 2FA**,
   signed session cookies, login rate limiting, strict security headers, and
@@ -191,7 +192,7 @@ make vet
 - [x] Container lifecycle: create/run, rename, update limits, commit, restart-policy
 - [x] Volumes management + inspector, and which containers use them
 - [x] File browser inside containers — list / download / upload / delete (`docker cp`)
-- [ ] Email/SMTP notification channel
+- [x] Email/SMTP notification channel
 - [ ] Structured log views & saved parsing rules
 
 > Working notes & "continue here" plan: see [NEXT.md](./NEXT.md).

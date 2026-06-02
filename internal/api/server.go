@@ -140,6 +140,10 @@ func (s *Server) Handler() http.Handler {
 			r.Delete("/alert-rules/{id}", s.handleDeleteAlertRule)
 			r.Get("/alerts", s.handleListAlertEvents)
 			r.Post("/alerts/{id}/ack", s.handleAckAlertEvent)
+			// Email (SMTP) alert channel config.
+			r.Get("/smtp", s.handleGetSMTP)
+			r.Put("/smtp", s.handleSetSMTP)
+			r.Post("/smtp/test", s.handleTestSMTP)
 
 			// WebSocket for live stats/logs.
 			r.Get("/ws", s.handleWebSocket)
