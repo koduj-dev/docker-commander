@@ -269,6 +269,13 @@ export interface AlertRule {
   createdAt: string;
 }
 
+export interface ParseRule {
+  id: number;
+  name: string;
+  pattern: string;
+  createdAt: string;
+}
+
 export interface SmtpConfig {
   host: string;
   port: number;

@@ -140,6 +140,13 @@ CREATE TABLE IF NOT EXISTS alert_events (
 );
 CREATE INDEX IF NOT EXISTS idx_alert_events_created ON alert_events(id DESC);
 
+CREATE TABLE IF NOT EXISTS parse_rules (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	name       TEXT NOT NULL,
+	pattern    TEXT NOT NULL,            -- regex with (?<name>…) capture groups
+	created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS registries (
 	id         INTEGER PRIMARY KEY AUTOINCREMENT,
 	name       TEXT NOT NULL,

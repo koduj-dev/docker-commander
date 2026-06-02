@@ -118,8 +118,23 @@ Goal: expose the rest of the Docker Engine API. **All of A–E DONE (2026-06-02)
   a file or a directory (tar), upload into the current dir, delete paths.
   Verified backend + UI against a live alpine container.
 
-What's left from the original roadmap: email/SMTP alert channel, structured
-log parsing rules.
+- **Email/SMTP alert channel — DONE 2026-06-02.** Encrypted SMTP config
+  (`store/smtp.go`), `monitor/email.go` (STARTTLS/implicit TLS), per-rule email
+  flag, Email tab + test. Verified via mailpit.
+- **Structured log parsing — DONE 2026-06-02.** Saved parse rules (regex with
+  `(?<name>…)` groups; `store/parse_rules.go`), applied client-side
+  (`lib/parse.ts`) to render a column view on the Logs page + a manage modal
+  with live preview. Verified via puppeteer (INFO/path/status → columns).
+
+The full roadmap is now complete. Possible future polish: per-host SMTP, log
+parsing presets library, alert rule editing (currently create/delete only).
+
+## ⚠️ Gotcha worth remembering
+
+`internal/api/respond.go` `decodeJSON` sets `DisallowUnknownFields()`, so request
+bodies must contain ONLY fields the Go struct declares. The SMTP UI initially
+sent the read-only `hasPassword` field back on save and got a silent 400 — strip
+derived/read-only fields before PUT/POST (see `smtpPayload` in `web/src/lib/api.ts`).
 
 ## ▶️ Next up (priority order)
 

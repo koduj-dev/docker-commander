@@ -41,7 +41,9 @@ from a single binary you download, build, and run.
   first connect); a changed key is refused as a possible MITM.
 - **Live logs** — follow `stdout`/`stderr`, filter by substring, toggle streams.
 - **Aggregated logs** — a global Logs view streaming many containers at once,
-  color-coded by source with automatic log-level detection and level filtering.
+  color-coded by source with automatic log-level detection, level filtering,
+  and **regex search**. Save **parsing rules** (regex with named groups) to
+  view logs as **structured columns**.
 - **Container detail** — image, command, env vars, mounts, ports, networks,
   health, restart policy.
 - **Volumes** — list with driver/scope/mountpoint, see **which containers use
@@ -193,7 +195,7 @@ make vet
 - [x] Volumes management + inspector, and which containers use them
 - [x] File browser inside containers — list / download / upload / delete (`docker cp`)
 - [x] Email/SMTP notification channel
-- [ ] Structured log views & saved parsing rules
+- [x] Structured log views & saved parsing rules
 
 > Working notes & "continue here" plan: see [NEXT.md](./NEXT.md).
 

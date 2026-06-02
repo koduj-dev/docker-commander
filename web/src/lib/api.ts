@@ -15,6 +15,7 @@ import type {
   Host,
   ImageSummary,
   NetworkSummary,
+  ParseRule,
   Registry,
   SmtpConfig,
   SystemInfo,
@@ -47,6 +48,14 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
     throw new ApiError(res.status, data?.error ?? res.statusText);
   }
   return data as T;
+}
+
+// smtpPayload strips read-only/derived fields (hasPassword) the API rejects.
+function smtpPayload(c: SmtpConfig & { password?: string }) {
+  return {
+    host: c.host, port: c.port, username: c.username,
+    password: c.password ?? "", from: c.from, to: c.to, tls: c.tls,
+  };
 }
 
 // uploadTar POSTs a tar file as a raw body (not JSON) for load/import.
@@ -258,10 +267,17 @@ export const api = {
   alerts: () => req<{ events: AlertEvent[]; unread: number }>("GET", "/api/alerts"),
   ackAlert: (id: number) => req<{ ok: boolean }>("POST", `/api/alerts/${id}/ack`),
 
-  // Email (SMTP) alert channel
+  // Saved log parsing rules (applied client-side in the Logs view)
+  parseRules: () => req<ParseRule[]>("GET", "/api/parse-rules"),
+  createParseRule: (name: string, pattern: string) => req<{ id: number }>("POST", "/api/parse-rules", { name, pattern }),
+  deleteParseRule: (id: number) => req<{ ok: boolean }>("DELETE", `/api/parse-rules/${id}`),
+
+  // Email (SMTP) alert channel. Send only the server-known fields (the API
+  // rejects unknown ones like the read-only `hasPassword`).
   smtp: () => req<SmtpConfig>("GET", "/api/smtp"),
-  setSmtp: (c: SmtpConfig & { password?: string }) => req<{ ok: boolean }>("PUT", "/api/smtp", c),
-  testSmtp: (c?: SmtpConfig & { password?: string }) => req<{ ok: boolean; error?: string }>("POST", "/api/smtp/test", c ?? {}),
+  setSmtp: (c: SmtpConfig & { password?: string }) => req<{ ok: boolean }>("PUT", "/api/smtp", smtpPayload(c)),
+  testSmtp: (c?: SmtpConfig & { password?: string }) =>
+    req<{ ok: boolean; error?: string }>("POST", "/api/smtp/test", c ? smtpPayload(c) : {}),
 
   metricsHistory: (container: string, metric: string, range: string) =>
     req<{ metric: string; points: { t: number; v: number }[] }>(

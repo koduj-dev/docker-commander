@@ -140,6 +140,10 @@ func (s *Server) Handler() http.Handler {
 			r.Delete("/alert-rules/{id}", s.handleDeleteAlertRule)
 			r.Get("/alerts", s.handleListAlertEvents)
 			r.Post("/alerts/{id}/ack", s.handleAckAlertEvent)
+			// Saved log parsing rules (applied client-side in the Logs view).
+			r.Get("/parse-rules", s.handleListParseRules)
+			r.Post("/parse-rules", s.handleCreateParseRule)
+			r.Delete("/parse-rules/{id}", s.handleDeleteParseRule)
 			// Email (SMTP) alert channel config.
 			r.Get("/smtp", s.handleGetSMTP)
 			r.Put("/smtp", s.handleSetSMTP)

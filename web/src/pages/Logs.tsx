@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Pause, Play, Search, X } from "lucide-react";
+import { Pause, Play, Search, X, Table2, Settings2 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
-import type { ContainerSummary, LogLine } from "../lib/types";
+import type { ContainerSummary, LogLine, ParseRule } from "../lib/types";
 import { live, ensureLive } from "../lib/live";
 import { detectLevel, levelBadge, levelClass, sourcePalette, type Level } from "../lib/loglevel";
+import { compileRule, groupNames } from "../lib/parse";
+import { ParseRulesModal } from "../components/ParseRulesModal";
 import { PageHeader } from "../layout/Shell";
 import { Spinner } from "../components/ui";
 
@@ -56,6 +58,9 @@ export function Logs() {
   const [activeLevels, setActiveLevels] = useState<Set<Level>>(new Set(LEVELS));
   const [paused, setPaused] = useState(false);
   const [stick, setStick] = useState(true);
+  const [parseRules, setParseRules] = useState<ParseRule[]>([]);
+  const [parseRuleId, setParseRuleId] = useState<number | null>(null);
+  const [manageOpen, setManageOpen] = useState(false);
 
   const buf = useRef<Entry[]>([]);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -66,8 +71,14 @@ export function Logs() {
 
   useEffect(() => {
     api.containers().then((cs) => setContainers(cs.filter((c) => c.state === "running"))).catch(() => {});
+    api.parseRules().then(setParseRules).catch(() => {});
     ensureLive();
   }, []);
+
+  // Active parse rule → compiled regex + column names (structured table view).
+  const activeRule = parseRules.find((r) => r.id === parseRuleId) ?? null;
+  const parseRegex = useMemo(() => (activeRule ? compileRule(activeRule.pattern) : null), [activeRule]);
+  const parseCols = useMemo(() => (activeRule ? groupNames(activeRule.pattern) : []), [activeRule]);
 
   // Persist the selection so it survives navigation / reloads.
   useEffect(() => {
@@ -247,6 +258,20 @@ export function Logs() {
                 {lvl}
               </button>
             ))}
+            {/* structured parsing rule selector */}
+            <div className="flex items-center gap-1">
+              <Table2 className="h-3.5 w-3.5 text-muted" />
+              <select
+                className="input py-1 w-32 text-xs"
+                value={parseRuleId ?? ""}
+                onChange={(e) => setParseRuleId(e.target.value ? Number(e.target.value) : null)}
+                title="Parse logs into columns with a saved rule"
+              >
+                <option value="">Raw</option>
+                {parseRules.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </select>
+              <button className="btn-ghost px-1.5 py-1.5" title="Manage parse rules" onClick={() => setManageOpen(true)}><Settings2 className="h-4 w-4" /></button>
+            </div>
             <button className="btn-ghost px-2 py-1.5" title="Clear" onClick={() => { setEntries([]); buf.current = []; }}>
               <X className="h-4 w-4" />
             </button>
@@ -263,6 +288,31 @@ export function Logs() {
               <div className="text-muted">Select one or more sources on the left to start streaming.</div>
             ) : filtered.length === 0 ? (
               <div className="text-muted">Waiting for log lines…</div>
+            ) : parseRegex && parseCols.length > 0 ? (
+              // Structured view: extract named groups into columns.
+              <table className="w-full">
+                <thead className="text-muted/70 text-left sticky top-0 bg-panel">
+                  <tr>
+                    <th className="font-medium pr-3 pb-1">source</th>
+                    {parseCols.map((c) => <th key={c} className="font-medium pr-3 pb-1">{c}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((e, i) => {
+                    const g = parseRegex.exec(e.message)?.groups;
+                    return (
+                      <tr key={i} className="align-top">
+                        <td className="pr-3 font-medium whitespace-nowrap" style={{ color: e.color }}>{e.source}</td>
+                        {g ? (
+                          parseCols.map((c) => <td key={c} className="pr-3 break-all text-text/80">{g[c] ?? "—"}</td>)
+                        ) : (
+                          <td colSpan={parseCols.length} className="pr-3 break-all text-muted/60">{e.message}</td>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             ) : (
               filtered.map((e, i) => (
                 <div key={i} className="flex gap-2">
@@ -277,6 +327,13 @@ export function Logs() {
           </div>
         </div>
       </div>
+      {manageOpen && (
+        <ParseRulesModal
+          sample={filtered.length > 0 ? filtered[filtered.length - 1].message : ""}
+          onClose={() => setManageOpen(false)}
+          onChanged={() => api.parseRules().then(setParseRules).catch(() => {})}
+        />
+      )}
     </>
   );
 }
