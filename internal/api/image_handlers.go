@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 
@@ -169,6 +170,68 @@ func (s *Server) handleTagImage(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r, "image.tag", b.Source, b.Target)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleSaveImage streams one or more images as a downloadable tar archive
+// (docker save format). Multiple ?ref= params bundle several images.
+func (s *Server) handleSaveImage(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	refs := r.URL.Query()["ref"]
+	if len(refs) == 0 {
+		writeErr(w, http.StatusBadRequest, "ref is required")
+		return
+	}
+	rc, err := s.docker.SaveImage(r.Context(), hostID, refs)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "docker error: "+err.Error())
+		return
+	}
+	defer rc.Close()
+	s.audit(r, "image.save", strings.Join(refs, ","), "")
+	w.Header().Set("Content-Type", "application/x-tar")
+	w.Header().Set("Content-Disposition", `attachment; filename="images.tar"`)
+	_, _ = io.Copy(w, rc)
+}
+
+// handleLoadImage loads images from an uploaded tar (docker save format).
+func (s *Server) handleLoadImage(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	out, err := s.docker.LoadImage(r.Context(), hostID, r.Body)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	s.audit(r, "image.load", "", "")
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out})
+}
+
+// handleImportImage imports a filesystem tarball as a new image tagged ?ref=.
+func (s *Server) handleImportImage(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	ref := r.URL.Query().Get("ref")
+	if ref == "" {
+		writeErr(w, http.StatusBadRequest, "ref is required")
+		return
+	}
+	out, err := s.docker.ImportImage(r.Context(), hostID, r.Body, ref)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	s.audit(r, "image.import", ref, "")
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out})
 }
 
 // handleBuildImage builds an image from an uploaded tar context (the request

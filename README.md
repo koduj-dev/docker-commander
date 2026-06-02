@@ -21,6 +21,9 @@ from a single binary you download, build, and run.
 - **Registries & build** — store registry credentials (**encrypted at rest**),
   pull **private** images and **push** with live progress, **tag** images, and
   **build** from an uploaded tar context with streamed build output.
+- **Transfer** — **save** images to a tar download, **load** a docker-save
+  archive, **import** a filesystem tarball as an image, and **export** a
+  container's filesystem as a tar.
 - **Inspect & observe everything** — raw JSON **inspect** for containers,
   images, networks and volumes; container **diff** (filesystem changes) and
   **top** (live process list); a live **events** feed streaming every daemon
@@ -180,8 +183,8 @@ make vet
 - [x] Images management (list / pull with live progress / remove / prune)
 - [x] Inspect & observe: raw inspect (any object), container diff/top, image history, live events feed, disk usage (df)
 - [x] Registry & build: push / private pull (encrypted stored creds), tag, and image build with context upload
+- [x] Image transfer: save / load (tar), import, container export
 - [ ] Container lifecycle: create/run, rename, update limits, commit, restart-policy
-- [ ] Image transfer: tag, save/load (tar), import, container export
 - [x] Volumes management + inspector, and which containers use them
 - [ ] Data transfer to/from containers (`docker cp` up/download)
 - [ ] Email/SMTP notification channel

@@ -46,6 +46,20 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
   return data as T;
 }
 
+// uploadTar POSTs a tar file as a raw body (not JSON) for load/import.
+async function uploadTar(path: string, file: File): Promise<{ ok: boolean; error?: string; output?: string }> {
+  const res = await fetch(path, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/x-tar" },
+    body: file,
+  });
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText);
+  return data;
+}
+
 export interface Enrollment {
   secret: string;
   otpauthUrl: string;
@@ -132,6 +146,23 @@ export const api = {
   },
   tagImage: (source: string, target: string) =>
     req<{ ok: boolean; error?: string }>("POST", `/api/images/tag${hostParam()}`, { source, target }),
+
+  // Image/container transfer. Save/export are downloads (same-origin GET, cookie
+  // auth) so we expose URLs the UI hands to an <a download>.
+  saveImageUrl: (ref: string) => {
+    const p = new URLSearchParams({ ref });
+    const h = getHostId();
+    if (h != null) p.set("host", String(h));
+    return `/api/images/save?${p.toString()}`;
+  },
+  exportContainerUrl: (id: string) => `/api/containers/${id}/export${hostParam()}`,
+  loadImage: (file: File) => uploadTar(`/api/images/load${hostParam()}`, file),
+  importImage: (ref: string, file: File) => {
+    const p = new URLSearchParams({ ref });
+    const h = getHostId();
+    if (h != null) p.set("host", String(h));
+    return uploadTar(`/api/images/import?${p.toString()}`, file);
+  },
 
   // Registry credentials
   registries: () => req<Registry[]>("GET", "/api/registries"),

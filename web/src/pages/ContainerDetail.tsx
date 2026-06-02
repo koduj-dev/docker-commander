@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, FileSearch, Play, RotateCw, Square } from "lucide-react";
+import { ArrowLeft, Download, FileSearch, Play, RotateCw, Square } from "lucide-react";
 import { api } from "../lib/api";
 import type { ContainerDetail as Detail, DiffEntry, LogLine, StatsSample, TopResult } from "../lib/types";
 import { live, ensureLive } from "../lib/live";
@@ -11,6 +11,7 @@ import { MetricsHistory } from "../components/MetricsHistory";
 import { LogViewer } from "../components/LogViewer";
 import { Terminal } from "../components/Terminal";
 import { InspectModal } from "../components/InspectModal";
+import { triggerDownload } from "../components/LoadModal";
 
 const MAX_SAMPLES = 60;
 const MAX_LOGS = 2000;
@@ -86,6 +87,7 @@ export function ContainerDetail() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <button className="btn-ghost" onClick={() => triggerDownload(api.exportContainerUrl(id))} title="Export filesystem (download tar)"><Download className="h-4 w-4" /> Export</button>
           <button className="btn-ghost" onClick={() => setInspecting(true)}><FileSearch className="h-4 w-4" /> Inspect</button>
           {running ? (
             <>

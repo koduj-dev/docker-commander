@@ -1,6 +1,7 @@
 package api
 
 import (
+	"io"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -153,6 +154,26 @@ func (s *Server) handleInspect(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(raw)
+}
+
+// handleExportContainer streams a container's filesystem as a downloadable tar.
+func (s *Server) handleExportContainer(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	rc, err := s.docker.ExportContainer(r.Context(), hostID, id)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "docker error: "+err.Error())
+		return
+	}
+	defer rc.Close()
+	s.audit(r, "container.export", id, "")
+	w.Header().Set("Content-Type", "application/x-tar")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+id[:min(12, len(id))]+`.tar"`)
+	_, _ = io.Copy(w, rc)
 }
 
 func (s *Server) handleContainerDiff(w http.ResponseWriter, r *http.Request) {

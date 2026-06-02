@@ -82,10 +82,14 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/containers/{id}", s.handleInspectContainer)
 			r.Get("/containers/{id}/diff", s.handleContainerDiff)
 			r.Get("/containers/{id}/top", s.handleContainerTop)
+			r.Get("/containers/{id}/export", s.handleExportContainer)
 			r.Post("/containers/{id}/{action}", s.handleContainerAction)
 
 			r.Get("/images", s.handleListImages)
 			r.Get("/images/history", s.handleImageHistory)
+			r.Get("/images/save", s.handleSaveImage)
+			r.Post("/images/load", s.handleLoadImage)
+			r.Post("/images/import", s.handleImportImage)
 			r.Post("/images/tag", s.handleTagImage)
 			r.Post("/images/build", s.handleBuildImage)
 			// ref is a query param, not a path segment: image references contain

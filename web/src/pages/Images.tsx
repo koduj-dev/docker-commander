@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Download, Trash2, Layers, Loader2, X, Boxes, Eraser, FileSearch, History, Upload, Hammer } from "lucide-react";
+import { Download, Trash2, Layers, Loader2, X, Boxes, Eraser, FileSearch, History, Upload, Hammer, HardDriveDownload } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import type { HistoryEntry, ImageSummary, PullProgress } from "../lib/types";
@@ -10,6 +10,7 @@ import { EmptyState, Spinner } from "../components/ui";
 import { InspectModal } from "../components/InspectModal";
 import { PushModal } from "../components/PushModal";
 import { BuildModal } from "../components/BuildModal";
+import { LoadModal, triggerDownload } from "../components/LoadModal";
 import { useListControls, SearchBar, Pager } from "../components/ListControls";
 
 function matchImage(img: ImageSummary, q: string): boolean {
@@ -30,6 +31,7 @@ export function Images() {
   const [history, setHistory] = useState<ImageSummary | null>(null);
   const [push, setPush] = useState<ImageSummary | null>(null);
   const [showBuild, setShowBuild] = useState(false);
+  const [showLoad, setShowLoad] = useState(false);
 
   const load = useCallback(() => {
     api.images().then(setImages).catch(() => setImages([]));
@@ -81,6 +83,9 @@ export function Images() {
         title="Images"
         actions={
           <>
+            <button className="btn-ghost" onClick={() => setShowLoad(true)} title="Load or import an image from a tar">
+              <HardDriveDownload className="h-4 w-4" /> Load
+            </button>
             <button className="btn-ghost" onClick={() => setShowBuild(true)} title="Build an image from a tar context">
               <Hammer className="h-4 w-4" /> Build
             </button>
@@ -131,6 +136,7 @@ export function Images() {
                     )}
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
+                    <button className="btn-ghost px-2 py-1" title="Save (download tar)" onClick={() => triggerDownload(api.saveImageUrl(tags[0] || img.id))}><Download className="h-4 w-4" /></button>
                     <button className="btn-ghost px-2 py-1" title="Push to registry" onClick={() => setPush(img)}><Upload className="h-4 w-4" /></button>
                     <button className="btn-ghost px-2 py-1" title="Layer history" onClick={() => setHistory(img)}><History className="h-4 w-4" /></button>
                     <button className="btn-ghost px-2 py-1" title="Inspect (raw JSON)" onClick={() => setInspect(img)}><FileSearch className="h-4 w-4" /></button>
@@ -162,6 +168,9 @@ export function Images() {
       )}
       {showBuild && (
         <BuildModal onClose={() => setShowBuild(false)} onDone={load} />
+      )}
+      {showLoad && (
+        <LoadModal onClose={() => setShowLoad(false)} onDone={load} />
       )}
     </>
   );
