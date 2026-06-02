@@ -26,22 +26,22 @@ type PortMapping struct {
 
 // ContainerDetail is the full inspect view shown on the detail page.
 type ContainerDetail struct {
-	ID           string            `json:"id"`
-	Name         string            `json:"name"`
-	Image        string            `json:"image"`
-	State        string            `json:"state"`
-	Status       string            `json:"status"`
-	Health       string            `json:"health,omitempty"`
-	Created      string            `json:"created"`
-	StartedAt    string            `json:"startedAt,omitempty"`
-	RestartCount int               `json:"restartCount"`
-	Command      []string          `json:"command"`
-	Env          []string          `json:"env"`
-	Labels       map[string]string `json:"labels"`
-	Mounts       []MountInfo       `json:"mounts"`
-	Ports        []PortMapping     `json:"ports"`
-	Networks     []NetworkAttach   `json:"networks"`
-	RestartPolicy string           `json:"restartPolicy,omitempty"`
+	ID            string            `json:"id"`
+	Name          string            `json:"name"`
+	Image         string            `json:"image"`
+	State         string            `json:"state"`
+	Status        string            `json:"status"`
+	Health        string            `json:"health,omitempty"`
+	Created       string            `json:"created"`
+	StartedAt     string            `json:"startedAt,omitempty"`
+	RestartCount  int               `json:"restartCount"`
+	Command       []string          `json:"command"`
+	Env           []string          `json:"env"`
+	Labels        map[string]string `json:"labels"`
+	Mounts        []MountInfo       `json:"mounts"`
+	Ports         []PortMapping     `json:"ports"`
+	Networks      []NetworkAttach   `json:"networks"`
+	RestartPolicy string            `json:"restartPolicy,omitempty"`
 }
 
 // MountInfo describes a volume or bind mount.

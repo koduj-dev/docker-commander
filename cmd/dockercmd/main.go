@@ -27,6 +27,9 @@ import (
 	"github.com/koduj-dev/docker-commander/web"
 )
 
+// version is set at build time via -ldflags "-X main.version=…"; "dev" otherwise.
+var version = "dev"
+
 func main() {
 	if err := run(); err != nil {
 		log.Fatalf("fatal: %v", err)
@@ -157,7 +160,7 @@ func serveWebFS(cfg config.Config) fs.FS {
 }
 
 func logStartup(cfg config.Config) {
-	log.Printf("Docker Commander listening on http://%s", cfg.Addr)
+	log.Printf("Docker Commander %s listening on http://%s", version, cfg.Addr)
 	log.Printf("data dir: %s", cfg.DataDir)
 	if cfg.Dev {
 		log.Printf("dev mode: serving API only; run the Vite dev server for the UI")

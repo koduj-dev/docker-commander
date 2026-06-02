@@ -8,7 +8,7 @@ BINARY := dockercmd
 PKG    := ./cmd/dockercmd
 OUT    := dist-bin
 VERSION ?= dev
-LDFLAGS := -s -w
+LDFLAGS := -s -w -X main.version=$(VERSION)
 
 .PHONY: all build ui run dev test vet clean release
 
@@ -50,4 +50,6 @@ release: ui
 	GOOS=darwin  GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o $(OUT)/$(BINARY)-darwin-amd64      $(PKG)
 	GOOS=darwin  GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o $(OUT)/$(BINARY)-darwin-arm64      $(PKG)
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o $(OUT)/$(BINARY)-windows-amd64.exe $(PKG)
-	@echo "binaries written to $(OUT)/"
+	GOOS=windows GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o $(OUT)/$(BINARY)-windows-arm64.exe $(PKG)
+	@cd $(OUT) && sha256sum $(BINARY)-* > SHA256SUMS
+	@echo "binaries + SHA256SUMS written to $(OUT)/ (version $(VERSION))"

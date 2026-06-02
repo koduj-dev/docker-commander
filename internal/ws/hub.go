@@ -38,9 +38,9 @@ func NewHub(d Streamer) *Hub { return &Hub{docker: d} }
 
 // clientMsg is an inbound control message from the browser.
 type clientMsg struct {
-	Type        string `json:"type"`        // "subscribe" | "unsubscribe" | "ping"
-	SubID       string `json:"subId"`       // client-chosen subscription id
-	Channel     string `json:"channel"`     // "stats" | "logs"
+	Type        string `json:"type"`    // "subscribe" | "unsubscribe" | "ping"
+	SubID       string `json:"subId"`   // client-chosen subscription id
+	Channel     string `json:"channel"` // "stats" | "logs"
 	HostID      int64  `json:"hostId"`
 	ContainerID string `json:"containerId"`
 	Tail        string `json:"tail"`
@@ -48,7 +48,7 @@ type clientMsg struct {
 
 // serverMsg is an outbound frame to the browser.
 type serverMsg struct {
-	Type    string `json:"type"`              // "stats" | "log" | "error" | "pong" | "end"
+	Type    string `json:"type"` // "stats" | "log" | "error" | "pong" | "end"
 	SubID   string `json:"subId"`
 	Data    any    `json:"data,omitempty"`
 	Message string `json:"message,omitempty"`

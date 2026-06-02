@@ -45,7 +45,7 @@ type Store interface {
 
 // Config selects and configures the backend.
 type Config struct {
-	RedisAddr     string        // empty → in-memory
+	RedisAddr     string // empty → in-memory
 	RedisPassword string
 	RedisDB       int
 	Retention     time.Duration // how long to keep points

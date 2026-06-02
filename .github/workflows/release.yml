@@ -1,0 +1,38 @@
+name: Release
+
+# Tag a commit `vX.Y.Z` and push the tag to build cross-platform binaries and
+# publish them on the Releases page:
+#   git tag v1.0.0 && git push origin v1.0.0
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # create the GitHub release + upload assets
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # Cross-compile linux/macos/windows (amd64+arm64) with the tag stamped in,
+      # producing dist-bin/<binary>-<os>-<arch>[.exe] and SHA256SUMS.
+      - name: Build release binaries
+        run: VERSION="${GITHUB_REF_NAME}" make release
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" dist-bin/* --title "${GITHUB_REF_NAME}" --generate-notes
