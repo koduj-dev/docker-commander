@@ -48,3 +48,21 @@
     @apply block text-xs font-medium text-muted mb-1.5;
   }
 }
+
+/* React Flow zoom/fit controls: the default light theme renders dark icons on
+   dark panels (invisible). Recolor buttons + icons for our dark UI. */
+.dc-flow-controls.react-flow__controls {
+  @apply rounded-lg overflow-hidden shadow-lg border border-border;
+}
+.dc-flow-controls .react-flow__controls-button {
+  @apply bg-panel2 border-b border-border;
+  fill: #e6ebf4; /* the chevron/plus/minus icons */
+}
+.dc-flow-controls .react-flow__controls-button:hover {
+  @apply bg-border;
+}
+.dc-flow-controls .react-flow__controls-button svg {
+  fill: #e6ebf4;
+  max-width: 14px;
+  max-height: 14px;
+}

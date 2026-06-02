@@ -96,6 +96,7 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/inspect/{kind}", s.handleInspect)
 
 			r.Get("/networks", s.handleListNetworks)
+			r.Delete("/networks/{id}", s.handleRemoveNetwork)
 			r.Get("/topology", s.handleTopology)
 			r.Get("/system", s.handleSystemInfo)
 			r.Get("/system/df", s.handleDiskUsage)

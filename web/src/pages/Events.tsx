@@ -72,8 +72,8 @@ export function Events() {
   return (
     <>
       <PageHeader title="Events" />
-      <div className="p-6 h-[calc(100vh-4rem)] min-h-0">
-        <div className="card flex flex-col h-full min-h-0">
+      <div className="p-6 flex flex-col h-[calc(100vh-4rem)] min-h-0">
+        <div className="card flex flex-col flex-1 min-h-0">
           <div className="flex items-center gap-3 p-3 border-b border-border">
             <button
               onClick={() => setPaused((v) => !v)}
@@ -93,14 +93,24 @@ export function Events() {
             {filtered.length === 0 ? (
               <div className="text-muted">Waiting for Docker events…</div>
             ) : (
-              filtered.map((e) => (
-                <div key={e.seq} className="flex gap-3">
-                  <span className="text-muted/60 shrink-0 w-16">{e.time ? new Date(e.time * 1000).toLocaleTimeString() : ""}</span>
-                  <span className={clsx("shrink-0 w-20", typeColor[e.type] ?? "text-text")}>{e.type}</span>
-                  <span className={clsx("shrink-0 w-28 font-medium", dangerActions.has(e.action) && "text-danger")}>{e.action}</span>
-                  <span className="break-all text-text/80">{e.name || e.id.slice(0, 12)}</span>
+              filtered.map((e) => {
+                // Exec events pack the whole command into the action string
+                // ("exec_start: python -c …"). Split it: the verb gets its own
+                // column, the command spans the rest of the width on one line
+                // (white-space collapses its newlines). Full text on hover.
+                const colon = e.action.indexOf(":");
+                const verb = colon >= 0 ? e.action.slice(0, colon) : e.action;
+                const detail = colon >= 0 ? e.action.slice(colon + 1).trim() : "";
+                return (
+                <div key={e.seq} className="flex gap-3 items-baseline whitespace-nowrap">
+                  <span className="text-muted/60 shrink-0 w-24">{e.time ? new Date(e.time * 1000).toLocaleTimeString() : ""}</span>
+                  <span className={clsx("shrink-0 w-20 truncate", typeColor[e.type] ?? "text-text")}>{e.type}</span>
+                  <span className={clsx("shrink-0 w-28 truncate font-medium", dangerActions.has(verb) && "text-danger")}>{verb}</span>
+                  <span className="shrink-0 w-48 truncate text-text/90" title={e.name || e.id}>{e.name || (e.id ? e.id.slice(0, 12) : "—")}</span>
+                  {detail && <span className="flex-1 min-w-0 truncate text-muted" title={detail}>{detail}</span>}
                 </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

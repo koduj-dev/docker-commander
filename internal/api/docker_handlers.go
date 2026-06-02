@@ -86,6 +86,23 @@ func (s *Server) handleListNetworks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, nets)
 }
 
+func (s *Server) handleRemoveNetwork(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	if err := s.docker.RemoveNetwork(r.Context(), hostID, id); err != nil {
+		// The daemon rejects predefined or in-use networks; surface that text
+		// so the UI can explain why instead of failing opaquely.
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	s.audit(r, "network.remove", id, "")
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
 	hostID, err := s.resolveHostID(r)
 	if err != nil {

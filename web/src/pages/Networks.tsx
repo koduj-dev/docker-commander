@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Boxes, FileSearch, Network as NetworkIcon, X } from "lucide-react";
+import { Boxes, FileSearch, Network as NetworkIcon, Trash2, X } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import type { NetworkSummary, Topology } from "../lib/types";
@@ -9,15 +9,19 @@ import { EmptyState, Spinner } from "../components/ui";
 import { InspectModal } from "../components/InspectModal";
 import { shortId } from "../lib/format";
 
+// Predefined networks the daemon won't let you remove.
+const PREDEFINED = new Set(["bridge", "host", "none"]);
+
 export function Networks() {
   const [nets, setNets] = useState<NetworkSummary[] | null>(null);
   const [topo, setTopo] = useState<Topology | null>(null);
   const [active, setActive] = useState<NetworkSummary | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     api.networks().then(setNets).catch(() => setNets([]));
     api.topology().then(setTopo).catch(() => setTopo(null));
   }, []);
+  useEffect(() => load(), [load]);
 
   return (
     <>
@@ -35,11 +39,18 @@ export function Networks() {
                 onClick={() => setActive(n)}
                 className="card p-4 text-left hover:border-accent/50 transition-colors"
               >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 font-medium">
-                    <NetworkIcon className="h-4 w-4 text-accent" /> {n.name}
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 font-medium min-w-0">
+                    <NetworkIcon className="h-4 w-4 text-accent shrink-0" /> <span className="truncate">{n.name}</span>
                   </div>
-                  <span className="text-xs bg-panel2 rounded px-2 py-0.5 text-muted">{n.driver}</span>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {n.internal ? (
+                      <span className="text-[10px] bg-warn/15 text-warn rounded px-1.5 py-0.5">internal</span>
+                    ) : (
+                      <span className="text-[10px] bg-ok/15 text-ok rounded px-1.5 py-0.5">external</span>
+                    )}
+                    <span className="text-xs bg-panel2 rounded px-2 py-0.5 text-muted">{n.driver}</span>
+                  </div>
                 </div>
                 <div className="text-xs text-muted font-mono mt-1">{shortId(n.id)}</div>
                 <div className="mt-3 space-y-1 text-sm">
@@ -53,7 +64,7 @@ export function Networks() {
           </div>
         )}
       </div>
-      {active && <NetworkModal net={active} topo={topo} onClose={() => setActive(null)} />}
+      {active && <NetworkModal net={active} topo={topo} onClose={() => setActive(null)} onChanged={() => { setActive(null); load(); }} />}
     </>
   );
 }
@@ -69,8 +80,26 @@ function Row({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
 
 // NetworkModal renders a star graph: the network in the centre with its attached
 // containers around it, joined by edges labelled with the container's IP.
-function NetworkModal({ net, topo, onClose }: { net: NetworkSummary; topo: Topology | null; onClose: () => void }) {
+function NetworkModal({ net, topo, onClose, onChanged }: { net: NetworkSummary; topo: Topology | null; onClose: () => void; onChanged: () => void }) {
   const [inspecting, setInspecting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [delErr, setDelErr] = useState("");
+  const isPredefined = PREDEFINED.has(net.name);
+
+  const del = async () => {
+    setDeleting(true);
+    setDelErr("");
+    try {
+      const r = await api.deleteNetwork(net.id);
+      if (r.ok) onChanged();
+      else setDelErr(r.error ?? "could not remove network");
+    } catch {
+      setDelErr("request failed");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const members = useMemo(() => {
     if (!topo) return [];
     const byId = new Map((topo.containers ?? []).map((c) => [c.id, c]));
@@ -110,9 +139,20 @@ function NetworkModal({ net, topo, onClose }: { net: NetworkSummary; topo: Topol
           </div>
           <div className="flex items-center gap-1">
             <button className="btn-ghost px-2 py-1.5" title="Inspect (raw JSON)" onClick={() => setInspecting(true)}><FileSearch className="h-4 w-4" /></button>
+            {!isPredefined && (
+              <button
+                className="btn-ghost px-2 py-1.5 text-danger"
+                title={members.length > 0 ? "Disconnect all containers first" : "Remove network"}
+                disabled={deleting}
+                onClick={del}
+              >
+                {deleting ? <Spinner className="h-4 w-4" /> : <Trash2 className="h-4 w-4" />}
+              </button>
+            )}
             <button className="btn-ghost px-2 py-1.5" onClick={onClose}><X className="h-4 w-4" /></button>
           </div>
         </div>
+        {delErr && <div className="px-5 py-2 text-xs text-danger border-b border-border break-all">{delErr}</div>}
         {inspecting && <InspectModal kind="network" id={net.id} title={net.name} onClose={() => setInspecting(false)} />}
 
         <div className="p-4">
@@ -130,9 +170,9 @@ function NetworkModal({ net, topo, onClose }: { net: NetworkSummary; topo: Topol
                 ))}
               </svg>
 
-              {/* centre: the network */}
+              {/* centre: the network — opaque bg so edges never show through it */}
               <div
-                className="absolute rounded-xl border border-accent/50 bg-accent/15 grid place-items-center text-center"
+                className="absolute rounded-xl border-2 border-accent/60 bg-panel shadow-lg grid place-items-center text-center z-10"
                 style={{ width: 130, height: 56, left: cx - 65, top: cy - 28 }}
               >
                 <div>

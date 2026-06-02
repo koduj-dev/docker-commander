@@ -51,15 +51,26 @@ func (m *Manager) Topology(ctx context.Context, hostID int64) (*Topology, error)
 	if err != nil {
 		return nil, err
 	}
-	// Track which containers actually exist so we never emit a dangling edge.
-	known := make(map[string]bool, len(rawContainers))
-
 	top := &Topology{}
+	// Build links from each container's own network settings rather than from
+	// the network's endpoint list: a network only reports *active* endpoints,
+	// so stopped/exited containers would vanish from the graph. The container
+	// list carries every container's configured networks regardless of state.
 	for _, c := range rawContainers {
-		known[c.ID] = true
 		top.Containers = append(top.Containers, TopoContainer{
 			ID: c.ID, Name: cleanName(c.Names), Image: c.Image, State: string(c.State),
 		})
+		if c.NetworkSettings == nil {
+			continue
+		}
+		for _, ep := range c.NetworkSettings.Networks {
+			if ep == nil || ep.NetworkID == "" {
+				continue
+			}
+			top.Links = append(top.Links, TopoLink{
+				ContainerID: c.ID, NetworkID: ep.NetworkID, IPAddress: ep.IPAddress,
+			})
+		}
 	}
 
 	nets, err := cli.NetworkList(ctx, network.ListOptions{})
@@ -81,15 +92,6 @@ func (m *Manager) Topology(ctx context.Context, hostID int64) (*Topology, error)
 			}
 		}
 		top.Networks = append(top.Networks, tn)
-
-		for cid, ep := range full.Containers {
-			if !known[cid] {
-				continue // endpoint for a container not in our list (e.g. removed)
-			}
-			top.Links = append(top.Links, TopoLink{
-				ContainerID: cid, NetworkID: full.ID, IPAddress: ep.IPv4Address,
-			})
-		}
 	}
 	return top, nil
 }

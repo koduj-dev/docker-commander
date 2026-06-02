@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Background,
@@ -16,12 +16,18 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import dagre from "@dagrejs/dagre";
-import { Boxes, Network as NetworkIcon } from "lucide-react";
+import { Boxes, Maximize2, Network as NetworkIcon } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import type { Topology as Topo } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { Spinner, EmptyState } from "../components/ui";
+import { FloatingEdge } from "../components/FloatingEdge";
+
+interface TopoFilters {
+  hideEmptyNetworks: boolean;
+  showStopped: boolean;
+}
 
 const NET_W = 200;
 const NET_H = 64;
@@ -37,7 +43,7 @@ function NetworkNode({ data }: NodeProps) {
       className="rounded-xl border border-accent/40 bg-accent/10 px-3 py-2 shadow-lg"
       style={{ width: NET_W, height: NET_H }}
     >
-      <Handle type="source" position={Position.Right} className="!bg-accent" />
+      <Handle type="source" position={Position.Right} className="!opacity-0" />
       <div className="flex items-center gap-2">
         <NetworkIcon className="h-4 w-4 text-accent shrink-0" />
         <div className="min-w-0">
@@ -62,7 +68,7 @@ function ContainerNode({ data }: NodeProps) {
       )}
       style={{ width: CON_W, height: CON_H }}
     >
-      <Handle type="target" position={Position.Left} className="!bg-muted" />
+      <Handle type="target" position={Position.Left} className="!opacity-0" />
       <div className="flex items-center gap-2">
         <span
           className={clsx(
@@ -81,21 +87,27 @@ function ContainerNode({ data }: NodeProps) {
 }
 
 const nodeTypes = { network: NetworkNode, container: ContainerNode };
+const edgeTypes = { floating: FloatingEdge };
 
 // ---- Layout -----------------------------------------------------------------
 
-function layout(topo: Topo): { nodes: Node[]; edges: Edge[] } {
+function layout(topo: Topo, filters: TopoFilters): { nodes: Node[]; edges: Edge[] } {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: "LR", nodesep: 24, ranksep: 140, marginx: 20, marginy: 20 });
 
-  const networks = topo.networks ?? [];
-  const containers = topo.containers ?? [];
-  const links = topo.links ?? [];
+  const containers = (topo.containers ?? []).filter((c) => filters.showStopped || c.state === "running");
+  const visibleContainerIds = new Set(containers.map((c) => c.id));
+  // Keep only links whose container is visible after the state filter.
+  const links = (topo.links ?? []).filter((l) => visibleContainerIds.has(l.containerId));
 
   // Only show containers that are actually attached to something — isolated
   // containers add noise to a connectivity diagram.
   const linkedContainers = new Set(links.map((l) => l.containerId));
+  // A network with no visible attached containers is "empty"; optionally hide.
+  const linkedNetworks = new Set(links.map((l) => l.networkId));
+  const networks = (topo.networks ?? []).filter((n) => !filters.hideEmptyNetworks || linkedNetworks.has(n.id));
+  const visibleNetworkIds = new Set(networks.map((n) => n.id));
 
   for (const n of networks) {
     g.setNode(`n:${n.id}`, { width: NET_W, height: NET_H });
@@ -104,7 +116,7 @@ function layout(topo: Topo): { nodes: Node[]; edges: Edge[] } {
     if (linkedContainers.has(c.id)) g.setNode(`c:${c.id}`, { width: CON_W, height: CON_H });
   }
   for (const l of links) {
-    if (linkedContainers.has(l.containerId)) g.setEdge(`n:${l.networkId}`, `c:${l.containerId}`);
+    if (visibleNetworkIds.has(l.networkId)) g.setEdge(`n:${l.networkId}`, `c:${l.containerId}`);
   }
 
   dagre.layout(g);
@@ -132,16 +144,14 @@ function layout(topo: Topo): { nodes: Node[]; edges: Edge[] } {
   }
 
   const edges: Edge[] = links
-    .filter((l) => linkedContainers.has(l.containerId))
+    .filter((l) => visibleNetworkIds.has(l.networkId))
     .map((l, i) => ({
       id: `e:${i}`,
+      type: "floating",
       source: `n:${l.networkId}`,
       target: `c:${l.containerId}`,
-      label: l.ipAddress || undefined,
       animated: true,
-      style: { stroke: "#243047" },
-      labelStyle: { fill: "#8b97ad", fontSize: 10 },
-      labelBgStyle: { fill: "#0b0f17" },
+      style: { stroke: "#3a4a66", strokeWidth: 1.5 },
     }));
 
   return { nodes, edges };
@@ -153,20 +163,22 @@ export function Topology() {
   const [topo, setTopo] = useState<Topo | null>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const [filters, setFilters] = useState<TopoFilters>({ hideEmptyNetworks: false, showStopped: true });
   const navigate = useNavigate();
+  const wrapRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     api.topology().then(setTopo).catch(() => setTopo({ networks: [], containers: [], links: [] }));
   }, []);
 
-  // Compute the dagre layout once per topology load, then hand the nodes to
-  // React Flow's state so the user can freely drag them around afterwards.
+  // Recompute the dagre layout whenever the topology or filters change, then
+  // hand the nodes to React Flow's state so the user can drag them afterwards.
   useEffect(() => {
     if (!topo) return;
-    const { nodes: n, edges: e } = layout(topo);
+    const { nodes: n, edges: e } = layout(topo, filters);
     setNodes(n);
     setEdges(e);
-  }, [topo, setNodes, setEdges]);
+  }, [topo, filters, setNodes, setEdges]);
 
   const onNodeClick = useCallback(
     (_: unknown, node: Node) => {
@@ -178,29 +190,52 @@ export function Topology() {
     [navigate]
   );
 
+  const toggleFullscreen = () => {
+    const el = wrapRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) document.exitFullscreen();
+    else el.requestFullscreen?.();
+  };
+
   return (
     <>
-      <PageHeader title="Topology" />
+      <PageHeader
+        title="Topology"
+        actions={
+          <div className="flex items-center gap-2">
+            <FilterToggle label="Hide empty networks" active={filters.hideEmptyNetworks} onClick={() => setFilters((f) => ({ ...f, hideEmptyNetworks: !f.hideEmptyNetworks }))} />
+            <FilterToggle label="Show stopped" active={filters.showStopped} onClick={() => setFilters((f) => ({ ...f, showStopped: !f.showStopped }))} />
+          </div>
+        }
+      />
       <div className="p-6">
         {!topo ? (
           <div className="flex items-center gap-2 text-muted"><Spinner /> Building graph…</div>
         ) : nodes.length === 0 ? (
-          <EmptyState title="Nothing to show" hint="No networks with attached containers were found." />
+          <EmptyState title="Nothing to show" hint="No networks with attached containers match the current filters." />
         ) : (
-          <div className="card overflow-hidden" style={{ height: "calc(100vh - 9rem)" }}>
+          <div ref={wrapRef} className="card overflow-hidden relative bg-bg" style={{ height: "calc(100vh - 9rem)" }}>
+            <button
+              className="btn-ghost absolute top-3 right-3 z-10 px-2 py-1.5"
+              title="Toggle fullscreen"
+              onClick={toggleFullscreen}
+            >
+              <Maximize2 className="h-4 w-4" />
+            </button>
             <ReactFlow
               nodes={nodes}
               edges={edges}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
               onNodeClick={onNodeClick}
               fitView
               proOptions={{ hideAttribution: true }}
               minZoom={0.2}
             >
               <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#243047" />
-              <Controls className="!bg-panel2 !border-border" />
+              <Controls className="dc-flow-controls" />
               <MiniMap
                 pannable
                 zoomable
@@ -213,5 +248,19 @@ export function Topology() {
         )}
       </div>
     </>
+  );
+}
+
+function FilterToggle({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={clsx(
+        "text-xs px-2.5 py-1.5 rounded-md font-medium border transition-colors",
+        active ? "bg-accent/15 text-accent border-accent/40" : "bg-panel2 text-muted border-border hover:text-text"
+      )}
+    >
+      {label}
+    </button>
   );
 }

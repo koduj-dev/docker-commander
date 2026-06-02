@@ -52,6 +52,7 @@ export function Logs() {
   const [selected, setSelected] = useState<Set<string>>(loadSelected);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [filter, setFilter] = useState("");
+  const [useRegex, setUseRegex] = useState(false);
   const [activeLevels, setActiveLevels] = useState<Set<Level>>(new Set(LEVELS));
   const [paused, setPaused] = useState(false);
   const [stick, setStick] = useState(true);
@@ -146,10 +147,27 @@ export function Logs() {
       return next;
     });
 
-  const filtered = useMemo(() => {
+  // Build the message matcher: substring (case-insensitive) or, when regex mode
+  // is on, a compiled RegExp. An invalid pattern matches nothing and flags an
+  // error rather than throwing.
+  const { match, regexError } = useMemo(() => {
+    if (filter === "") return { match: () => true, regexError: "" };
+    if (useRegex) {
+      try {
+        const re = new RegExp(filter, "i");
+        return { match: (m: string) => re.test(m), regexError: "" };
+      } catch (e) {
+        return { match: () => false, regexError: e instanceof Error ? e.message : "invalid regex" };
+      }
+    }
     const f = filter.toLowerCase();
-    return entries.filter((e) => activeLevels.has(e.level) && (f === "" || e.message.toLowerCase().includes(f)));
-  }, [entries, filter, activeLevels]);
+    return { match: (m: string) => m.toLowerCase().includes(f), regexError: "" };
+  }, [filter, useRegex]);
+
+  const filtered = useMemo(
+    () => entries.filter((e) => activeLevels.has(e.level) && match(e.message)),
+    [entries, activeLevels, match]
+  );
 
   useEffect(() => {
     if (stick && !paused && boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight;
@@ -203,7 +221,22 @@ export function Logs() {
             </button>
             <div className="relative flex-1 min-w-[160px]">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted" />
-              <input className="input pl-8 py-1.5" placeholder="Search logs…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+              <input
+                className={clsx("input pl-8 pr-12 py-1.5", regexError && "ring-2 ring-danger/60")}
+                placeholder={useRegex ? "Search logs by regex…" : "Search logs…"}
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+              />
+              <button
+                onClick={() => setUseRegex((v) => !v)}
+                title={useRegex ? "Regex mode on" : "Use regular expression"}
+                className={clsx(
+                  "absolute right-1.5 top-1 px-1.5 py-1 rounded text-[11px] font-mono font-semibold transition-colors",
+                  useRegex ? "bg-accent/20 text-accent" : "text-muted hover:bg-panel2"
+                )}
+              >
+                .*
+              </button>
             </div>
             {LEVELS.map((lvl) => (
               <button

@@ -34,8 +34,13 @@ from a single binary you download, build, and run.
   color-coded by source with automatic log-level detection and level filtering.
 - **Container detail** — image, command, env vars, mounts, ports, networks,
   health, restart policy.
-- **Networks & topology** — networks with drivers/subnets/scope, plus an
-  interactive **connectivity graph** (containers ↔ networks) you can pan/zoom.
+- **Networks & topology** — networks with drivers/subnets/scope and an
+  internal/external flag, raw inspect and removal of user-defined networks,
+  plus an interactive **connectivity graph** (containers ↔ networks) you can
+  pan/zoom/fullscreen, with floating edges, filters (hide empty networks, show
+  stopped containers) and stopped containers included.
+- **Search & paginate** — Containers and Images have client-side search and
+  page-size controls (10/20/50/100); Logs supports **regex** search.
 - **Alerting** — user-defined rules on container **state changes**, **resource
   thresholds** (CPU/MEM), **log patterns** (substring/regex), and **restart /
   crash loops**, with per-rule severity and cooldown.

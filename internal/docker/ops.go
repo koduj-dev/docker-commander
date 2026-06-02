@@ -156,6 +156,17 @@ func (m *Manager) ListNetworks(ctx context.Context, hostID int64) ([]NetworkSumm
 	return out, nil
 }
 
+// RemoveNetwork deletes a user-defined network. The daemon refuses to remove
+// predefined networks (bridge/host/none) or ones with attached endpoints, and
+// that error is surfaced to the caller.
+func (m *Manager) RemoveNetwork(ctx context.Context, hostID int64, id string) error {
+	cli, err := m.Client(ctx, hostID)
+	if err != nil {
+		return err
+	}
+	return cli.NetworkRemove(ctx, id)
+}
+
 // SystemInfo returns a summary of the Docker host.
 func (m *Manager) SystemInfo(ctx context.Context, hostID int64) (*SystemInfo, error) {
 	cli, err := m.Client(ctx, hostID)

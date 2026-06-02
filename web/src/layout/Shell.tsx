@@ -7,17 +7,42 @@ import { api } from "../lib/api";
 import type { Host } from "../lib/types";
 import { getHostId, setHostId } from "../lib/host";
 
-const nav = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
-  { to: "/containers", label: "Containers", icon: Boxes },
-  { to: "/images", label: "Images", icon: Layers },
-  { to: "/networks", label: "Networks", icon: Network },
-  { to: "/topology", label: "Topology", icon: Share2 },
-  { to: "/logs", label: "Logs", icon: Terminal },
-  { to: "/events", label: "Events", icon: Activity },
-  { to: "/alerts", label: "Alerts", icon: Bell },
-  { to: "/hosts", label: "Hosts", icon: Server },
-  { to: "/audit", label: "Audit log", icon: ScrollText },
+// Navigation grouped into sections so the sidebar stays scannable as the
+// feature set grows.
+const navGroups: { title: string; items: { to: string; label: string; icon: typeof Boxes; end?: boolean }[] }[] = [
+  {
+    title: "",
+    items: [{ to: "/", label: "Dashboard", icon: LayoutDashboard, end: true }],
+  },
+  {
+    title: "Compute",
+    items: [
+      { to: "/containers", label: "Containers", icon: Boxes },
+      { to: "/images", label: "Images", icon: Layers },
+    ],
+  },
+  {
+    title: "Network",
+    items: [
+      { to: "/networks", label: "Networks", icon: Network },
+      { to: "/topology", label: "Topology", icon: Share2 },
+    ],
+  },
+  {
+    title: "Observability",
+    items: [
+      { to: "/logs", label: "Logs", icon: Terminal },
+      { to: "/events", label: "Events", icon: Activity },
+      { to: "/alerts", label: "Alerts", icon: Bell },
+    ],
+  },
+  {
+    title: "System",
+    items: [
+      { to: "/hosts", label: "Hosts", icon: Server },
+      { to: "/audit", label: "Audit log", icon: ScrollText },
+    ],
+  },
 ];
 
 // HostSwitcher selects the active Docker host. Changing it reloads the app so
@@ -71,27 +96,34 @@ export function Shell({ children }: { children: ReactNode }) {
           <div className="font-semibold text-sm">Docker Commander</div>
         </div>
         <HostSwitcher />
-        <nav className="flex-1 p-3 space-y-1">
-          {nav.map((n) => (
-            <NavLink
-              key={n.to}
-              to={n.to}
-              end={n.end}
-              className={({ isActive }) =>
-                clsx(
-                  "flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors",
-                  isActive ? "bg-accent/15 text-accent" : "text-muted hover:bg-panel2 hover:text-text"
-                )
-              }
-            >
-              <n.icon className="h-4 w-4" />
-              <span className="flex-1">{n.label}</span>
-              {n.to === "/alerts" && unread > 0 && (
-                <span className="text-[10px] font-semibold bg-danger text-white rounded-full px-1.5 py-0.5 min-w-[18px] text-center">
-                  {unread > 99 ? "99+" : unread}
-                </span>
+        <nav className="flex-1 p-3 space-y-3 overflow-y-auto">
+          {navGroups.map((group, gi) => (
+            <div key={gi} className="space-y-1">
+              {group.title && (
+                <div className="px-3 pt-2 pb-0.5 text-[10px] uppercase tracking-wider text-muted/60 font-semibold">{group.title}</div>
               )}
-            </NavLink>
+              {group.items.map((n) => (
+                <NavLink
+                  key={n.to}
+                  to={n.to}
+                  end={n.end}
+                  className={({ isActive }) =>
+                    clsx(
+                      "flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors",
+                      isActive ? "bg-accent/15 text-accent" : "text-muted hover:bg-panel2 hover:text-text"
+                    )
+                  }
+                >
+                  <n.icon className="h-4 w-4" />
+                  <span className="flex-1">{n.label}</span>
+                  {n.to === "/alerts" && unread > 0 && (
+                    <span className="text-[10px] font-semibold bg-danger text-white rounded-full px-1.5 py-0.5 min-w-[18px] text-center">
+                      {unread > 99 ? "99+" : unread}
+                    </span>
+                  )}
+                </NavLink>
+              ))}
+            </div>
           ))}
         </nav>
         <div className="p-3 border-t border-border">

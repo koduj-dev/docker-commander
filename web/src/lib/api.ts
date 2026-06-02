@@ -130,6 +130,7 @@ export const api = {
   },
 
   networks: () => req<NetworkSummary[]>("GET", `/api/networks${hostParam()}`),
+  deleteNetwork: (id: string) => req<{ ok: boolean; error?: string }>("DELETE", `/api/networks/${id}${hostParam()}`),
   topology: () => req<Topology>("GET", `/api/topology${hostParam()}`),
   system: () => req<SystemInfo>("GET", `/api/system${hostParam()}`),
   audit: () => req<AuditEntry[]>("GET", "/api/audit"),

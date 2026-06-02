@@ -8,6 +8,15 @@ import { bytes, relTime, shortId } from "../lib/format";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
 import { InspectModal } from "../components/InspectModal";
+import { useListControls, SearchBar, Pager } from "../components/ListControls";
+
+function matchImage(img: ImageSummary, q: string): boolean {
+  if ((img.repoTags ?? []).some((t) => t.toLowerCase().includes(q))) return true;
+  if (img.id.toLowerCase().includes(q)) return true;
+  if (q === "dangling" && img.dangling) return true;
+  if ((q === "in use" || q === "inuse") && img.inUse) return true;
+  return false;
+}
 
 export function Images() {
   const [images, setImages] = useState<ImageSummary[] | null>(null);
@@ -22,6 +31,8 @@ export function Images() {
     api.images().then(setImages).catch(() => setImages([]));
   }, []);
   useEffect(() => load(), [load]);
+
+  const controls = useListControls(images ?? [], matchImage);
 
   const remove = async (img: ImageSummary, force = false) => {
     const id = img.id;
@@ -77,8 +88,10 @@ export function Images() {
         {images.length === 0 ? (
           <EmptyState title="No images" hint="Pull one above to get started." />
         ) : (
+          <>
+          <SearchBar controls={controls} placeholder="Search images by tag or id…" />
           <div className="card divide-y divide-border">
-            {images.map((img) => {
+            {controls.pageItems.map((img) => {
               const tags = (img.repoTags ?? []).filter((t) => t && t !== "<none>:<none>");
               const e = err[img.id];
               return (
@@ -124,6 +137,8 @@ export function Images() {
               );
             })}
           </div>
+          <Pager controls={controls} />
+          </>
         )}
       </div>
       {inspect && (

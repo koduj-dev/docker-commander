@@ -6,11 +6,22 @@ import type { ContainerSummary } from "../lib/types";
 import { shortId } from "../lib/format";
 import { StateBadge, EmptyState, Spinner } from "../components/ui";
 import { PageHeader } from "../layout/Shell";
+import { useListControls, SearchBar, Pager } from "../components/ListControls";
+
+function matchContainer(c: ContainerSummary, q: string): boolean {
+  return (
+    c.name.toLowerCase().includes(q) ||
+    c.image.toLowerCase().includes(q) ||
+    c.id.toLowerCase().includes(q) ||
+    c.state.toLowerCase().includes(q) ||
+    (c.status ?? "").toLowerCase().includes(q)
+  );
+}
 
 // ContainerTable is shared by the dashboard and the dedicated Containers page.
 // With runningOnly it hides stopped containers (handy on the dashboard when a
-// host has many idle containers).
-export function ContainerTable({ runningOnly = false }: { runningOnly?: boolean }) {
+// host has many idle containers); withControls adds search + pagination.
+export function ContainerTable({ runningOnly = false, withControls = false }: { runningOnly?: boolean; withControls?: boolean }) {
   const [list, setList] = useState<ContainerSummary[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -28,6 +39,8 @@ export function ContainerTable({ runningOnly = false }: { runningOnly?: boolean 
     const t = setInterval(load, 4000);
     return () => clearInterval(t);
   }, [load]);
+
+  const controls = useListControls(list ?? [], matchContainer);
 
   const act = async (id: string, action: string) => {
     setBusyId(id);
@@ -48,7 +61,11 @@ export function ContainerTable({ runningOnly = false }: { runningOnly?: boolean 
       />
     );
 
+  const rows = withControls ? controls.pageItems : list;
+
   return (
+   <div className="space-y-3">
+    {withControls && <SearchBar controls={controls} placeholder="Search containers by name, image, id, state…" />}
     <div className="card overflow-hidden">
       <table className="w-full text-sm">
         <thead className="text-muted text-xs uppercase tracking-wide">
@@ -62,7 +79,7 @@ export function ContainerTable({ runningOnly = false }: { runningOnly?: boolean 
           </tr>
         </thead>
         <tbody>
-          {list.map((c) => {
+          {rows.map((c) => {
             const running = c.state === "running";
             return (
               <tr key={c.id} className="border-b border-border/50 hover:bg-panel2/40">
@@ -118,6 +135,8 @@ export function ContainerTable({ runningOnly = false }: { runningOnly?: boolean 
         </tbody>
       </table>
     </div>
+    {withControls && <Pager controls={controls} />}
+   </div>
   );
 }
 
@@ -138,7 +157,7 @@ export function Containers() {
     <>
       <PageHeader title="Containers" />
       <div className="p-6">
-        <ContainerTable />
+        <ContainerTable withControls />
       </div>
     </>
   );

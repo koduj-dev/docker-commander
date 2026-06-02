@@ -60,6 +60,20 @@ against the local `red2_*` stack (headless Chrome + Go/WS probes).
   (`GET /api/system/df`) cards on the dashboard. Verified end-to-end: backend
   via a Node API harness, UI via a puppeteer smoke test (TOTP bypass).
 
+- **Polish round (2026-06-02).** Sidebar nav grouped into sections
+  (Compute / Network / Observability / System). Reusable
+  `components/ListControls.tsx` (search + 10/20/50/100 pagination) applied to
+  Containers and Images. Networks: internal/**external** badge, raw inspect,
+  **remove** (`DELETE /api/networks/{id}`; predefined bridge/host/none guarded,
+  daemon errors surfaced), and the topology modal's centre node made opaque so
+  edges no longer show through. Topology: **floating edges**
+  (`components/FloatingEdge.tsx`, anchor to node boundary — fixes the drag
+  "spider" tangle), filter toggles (hide empty networks / show stopped),
+  **stopped containers now included** (topology links built from each
+  container's NetworkSettings, not the network's active-endpoint list), dark-
+  themed zoom controls + a working **fullscreen** button. Logs: **regex**
+  search toggle. Events: full-height flex layout. All verified via puppeteer.
+
 ## 🧭 "Control everything" plan (decided 2026-06-02 with a colleague)
 
 Goal: expose the rest of the Docker Engine API. Agreed order: **A done** (above),
