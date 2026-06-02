@@ -41,6 +41,8 @@ type AlertEvent struct {
 	RuleName      string    `json:"ruleName"`
 	Type          string    `json:"type"`
 	Severity      string    `json:"severity"`
+	HostID        int64     `json:"hostId"`
+	HostName      string    `json:"hostName"`
 	ContainerID   string    `json:"containerId"`
 	ContainerName string    `json:"containerName"`
 	Message       string    `json:"message"`
@@ -152,9 +154,9 @@ func (s *Store) DeleteAlertRule(ctx context.Context, id int64) error {
 
 func (s *Store) InsertAlertEvent(ctx context.Context, e *AlertEvent) (int64, error) {
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO alert_events (rule_id, rule_name, type, severity, container_id, container_name, message, value, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.RuleID, e.RuleName, e.Type, e.Severity, e.ContainerID, e.ContainerName, e.Message, e.Value,
+		INSERT INTO alert_events (rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name, message, value, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.RuleID, e.RuleName, e.Type, e.Severity, e.HostID, e.HostName, e.ContainerID, e.ContainerName, e.Message, e.Value,
 		time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		return 0, err
@@ -167,7 +169,7 @@ func (s *Store) ListAlertEvents(ctx context.Context, limit int) ([]AlertEvent, e
 		limit = 200
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, rule_id, rule_name, type, severity, container_id, container_name, message, value, acknowledged, created_at
+		SELECT id, rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name, message, value, acknowledged, created_at
 		FROM alert_events ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -179,7 +181,7 @@ func (s *Store) ListAlertEvents(ctx context.Context, limit int) ([]AlertEvent, e
 		var created string
 		var value sql.NullFloat64
 		var ack int
-		if err := rows.Scan(&e.ID, &e.RuleID, &e.RuleName, &e.Type, &e.Severity, &e.ContainerID,
+		if err := rows.Scan(&e.ID, &e.RuleID, &e.RuleName, &e.Type, &e.Severity, &e.HostID, &e.HostName, &e.ContainerID,
 			&e.ContainerName, &e.Message, &value, &ack, &created); err != nil {
 			return nil, err
 		}

@@ -31,6 +31,7 @@ export interface Host {
   name: string;
   kind: string; // local | tcp | ssh
   address: string;
+  alertEmail?: string;
 }
 
 export interface PortSpec {
@@ -311,6 +312,8 @@ export interface AlertEvent {
   ruleName: string;
   type: string;
   severity: Severity;
+  hostId: number;
+  hostName: string;
   containerId: string;
   containerName: string;
   message: string;

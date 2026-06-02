@@ -19,11 +19,20 @@ func (m *Monitor) emailNotify(ev *store.AlertEvent) {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		cfg, err := m.store.GetSMTP(ctx)
-		if err != nil || !cfg.Configured() {
+		if err != nil || cfg.Host == "" || cfg.From == "" {
 			if err != nil {
 				log.Printf("monitor: smtp config: %v", err)
 			}
 			return
+		}
+		// Per-host recipient override: a host may route its alerts elsewhere.
+		if ev.HostID != 0 {
+			if h, err := m.store.HostByID(ctx, ev.HostID); err == nil && h.AlertEmail != "" {
+				cfg.To = h.AlertEmail
+			}
+		}
+		if cfg.To == "" {
+			return // no global or per-host recipient
 		}
 		subject := fmt.Sprintf("[%s] %s — %s", strings.ToUpper(ev.Severity), ev.RuleName, ev.ContainerName)
 		body := fmt.Sprintf("Rule: %s\nType: %s\nSeverity: %s\nContainer: %s (%s)\nMessage: %s\nTime: %s\n",

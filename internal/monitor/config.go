@@ -104,4 +104,4 @@ func parseLog(s string) (logMatcher, error) {
 
 // small formatting helpers used by the engine
 func sprintf(format string, a ...any) string { return fmt.Sprintf(format, a...) }
-func itoa(n int64) string                     { return strconv.FormatInt(n, 10) }
+func itoa(n int64) string                    { return strconv.FormatInt(n, 10) }

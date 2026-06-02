@@ -26,14 +26,14 @@ func newDispatcher(st *store.Store) *dispatcher {
 // payload is the data made available to a webhook's body template, and the
 // default JSON body when no template is configured.
 type payload struct {
-	RuleName  string   `json:"ruleName"`
-	Type      string   `json:"type"`
-	Severity  string   `json:"severity"`
-	Container string   `json:"container"`
-	ContainerID string `json:"containerId"`
-	Message   string   `json:"message"`
-	Value     *float64 `json:"value,omitempty"`
-	Time      string   `json:"time"`
+	RuleName    string   `json:"ruleName"`
+	Type        string   `json:"type"`
+	Severity    string   `json:"severity"`
+	Container   string   `json:"container"`
+	ContainerID string   `json:"containerId"`
+	Message     string   `json:"message"`
+	Value       *float64 `json:"value,omitempty"`
+	Time        string   `json:"time"`
 }
 
 // dispatch loads the webhook and POSTs the rendered payload. Runs in its own

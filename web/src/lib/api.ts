@@ -120,6 +120,8 @@ export const api = {
   createHost: (h: Partial<Host> & { tlsCa?: string; tlsCert?: string; tlsKey?: string }) =>
     req<{ id: number }>("POST", "/api/hosts", h),
   deleteHost: (id: number) => req<{ ok: boolean }>("DELETE", `/api/hosts/${id}`),
+  updateHostAlertEmail: (id: number, alertEmail: string) =>
+    req<{ ok: boolean }>("PATCH", `/api/hosts/${id}`, { alertEmail }),
   testHost: (id: number) =>
     req<{
       ok: boolean;

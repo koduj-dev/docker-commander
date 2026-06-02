@@ -75,6 +75,7 @@ function Feed() {
             <th className="text-left font-medium px-4 py-3">Time</th>
             <th className="text-left font-medium px-4 py-3">Severity</th>
             <th className="text-left font-medium px-4 py-3">Rule</th>
+            <th className="text-left font-medium px-4 py-3 hidden lg:table-cell">Host</th>
             <th className="text-left font-medium px-4 py-3">Container</th>
             <th className="text-left font-medium px-4 py-3">Message</th>
             <th className="px-4 py-3"></th>
@@ -88,6 +89,7 @@ function Feed() {
                 <span className={clsx("text-xs px-2 py-0.5 rounded-md font-medium capitalize", sevBadge[e.severity])}>{e.severity}</span>
               </td>
               <td className="px-4 py-2.5">{e.ruleName}</td>
+              <td className="px-4 py-2.5 hidden lg:table-cell text-xs text-muted">{e.hostName || "—"}</td>
               <td className="px-4 py-2.5 font-mono text-xs">{e.containerName}</td>
               <td className="px-4 py-2.5 text-muted">{e.message}</td>
               <td className="px-4 py-2.5 text-right">

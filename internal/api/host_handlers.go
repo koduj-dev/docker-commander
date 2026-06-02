@@ -15,12 +15,13 @@ import (
 
 // hostBody is the create payload for a Docker host.
 type hostBody struct {
-	Name    string `json:"name"`
-	Kind    string `json:"kind"`    // local | tcp | ssh
-	Address string `json:"address"` // tcp://host:2376  |  user@host[:port]
-	TLSCA   string `json:"tlsCa"`
-	TLSCert string `json:"tlsCert"`
-	TLSKey  string `json:"tlsKey"`
+	Name       string `json:"name"`
+	Kind       string `json:"kind"`    // local | tcp | ssh
+	Address    string `json:"address"` // tcp://host:2376  |  user@host[:port]
+	TLSCA      string `json:"tlsCa"`
+	TLSCert    string `json:"tlsCert"`
+	TLSKey     string `json:"tlsKey"`
+	AlertEmail string `json:"alertEmail"`
 }
 
 func (s *Server) handleCreateHost(w http.ResponseWriter, r *http.Request) {
@@ -47,7 +48,7 @@ func (s *Server) handleCreateHost(w http.ResponseWriter, r *http.Request) {
 
 	id, err := s.store.CreateHost(r.Context(), &store.Host{
 		Name: b.Name, Kind: b.Kind, Address: b.Address,
-		TLSCA: b.TLSCA, TLSCert: b.TLSCert, TLSKey: b.TLSKey,
+		TLSCA: b.TLSCA, TLSCert: b.TLSCert, TLSKey: b.TLSKey, AlertEmail: b.AlertEmail,
 	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not create host")
@@ -55,6 +56,24 @@ func (s *Server) handleCreateHost(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r, "host.create", b.Name, b.Kind+" "+b.Address)
 	writeJSON(w, http.StatusOK, map[string]int64{"id": id})
+}
+
+// handleUpdateHost updates a host's per-host alert email override.
+func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	var b struct {
+		AlertEmail string `json:"alertEmail"`
+	}
+	if err := decodeJSON(r, &b); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if err := s.store.SetHostAlertEmail(r.Context(), id, b.AlertEmail); err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not update host")
+		return
+	}
+	s.audit(r, "host.update", chi.URLParam(r, "id"), b.AlertEmail)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleDeleteHost(w http.ResponseWriter, r *http.Request) {

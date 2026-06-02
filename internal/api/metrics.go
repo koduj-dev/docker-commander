@@ -28,22 +28,22 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		if c.State == "running" {
 			running = 1
 		}
-		fmt.Fprintf(&b, "dockercmd_container_running{id=%q,name=%q}  %d\n", short(c.ID), c.Name, running)
+		fmt.Fprintf(&b, "dockercmd_container_running{id=%q,name=%q,host=%q}  %d\n", short(c.ID), c.Name, c.HostName, running)
 	}
 
 	writeMetricHeader(&b, "dockercmd_container_cpu_percent", "gauge", "Container CPU usage percent (host-relative)")
 	forRunning(s.monitor, func(c monitor.ContainerStat) {
-		fmt.Fprintf(&b, "dockercmd_container_cpu_percent{id=%q,name=%q}  %g\n", short(c.ID), c.Name, c.CPUPercent)
+		fmt.Fprintf(&b, "dockercmd_container_cpu_percent{id=%q,name=%q,host=%q}  %g\n", short(c.ID), c.Name, c.HostName, c.CPUPercent)
 	})
 
 	writeMetricHeader(&b, "dockercmd_container_mem_bytes", "gauge", "Container memory usage in bytes")
 	forRunning(s.monitor, func(c monitor.ContainerStat) {
-		fmt.Fprintf(&b, "dockercmd_container_mem_bytes{id=%q,name=%q}  %d\n", short(c.ID), c.Name, c.MemBytes)
+		fmt.Fprintf(&b, "dockercmd_container_mem_bytes{id=%q,name=%q,host=%q}  %d\n", short(c.ID), c.Name, c.HostName, c.MemBytes)
 	})
 
 	writeMetricHeader(&b, "dockercmd_container_mem_percent", "gauge", "Container memory usage percent of limit")
 	forRunning(s.monitor, func(c monitor.ContainerStat) {
-		fmt.Fprintf(&b, "dockercmd_container_mem_percent{id=%q,name=%q}  %g\n", short(c.ID), c.Name, c.MemPercent)
+		fmt.Fprintf(&b, "dockercmd_container_mem_percent{id=%q,name=%q,host=%q}  %g\n", short(c.ID), c.Name, c.HostName, c.MemPercent)
 	})
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")

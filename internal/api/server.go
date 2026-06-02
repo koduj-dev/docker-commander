@@ -84,6 +84,7 @@ func (s *Server) Handler() http.Handler {
 
 			r.Get("/hosts", s.handleListHosts)
 			r.Post("/hosts", s.handleCreateHost)
+			r.Patch("/hosts/{id}", s.handleUpdateHost)
 			r.Delete("/hosts/{id}", s.handleDeleteHost)
 			r.Get("/hosts/{id}/test", s.handleTestHost)
 			r.Post("/hosts/{id}/trust", s.handleTrustHost)

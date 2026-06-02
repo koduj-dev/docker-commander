@@ -98,6 +98,7 @@ export function Hosts() {
                       )}
                     </div>
                   </div>
+                  <HostAlertEmail host={h} onSaved={load} />
                   {t === "loading" ? (
                     <div className="mt-3 text-xs flex items-center gap-1.5 text-muted">
                       <Loader2 className="h-3.5 w-3.5 animate-spin" /> Testing…
@@ -165,6 +166,29 @@ export function Hosts() {
   );
 }
 
+// HostAlertEmail is an inline editor for a host's per-host alert recipient.
+function HostAlertEmail({ host, onSaved }: { host: Host; onSaved: () => void }) {
+  const [value, setValue] = useState(host.alertEmail ?? "");
+  const [busy, setBusy] = useState(false);
+  const dirty = value !== (host.alertEmail ?? "");
+  const save = async () => {
+    setBusy(true);
+    try { await api.updateHostAlertEmail(host.id, value.trim()); onSaved(); } finally { setBusy(false); }
+  };
+  return (
+    <div className="mt-3 flex items-center gap-2">
+      <label className="text-[11px] text-muted shrink-0">Alert email</label>
+      <input
+        className="input py-1 text-xs"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder="(use global SMTP recipient)"
+      />
+      {dirty && <button className="btn-primary px-2 py-1 text-xs" disabled={busy} onClick={save}>{busy ? "…" : "Save"}</button>}
+    </div>
+  );
+}
+
 function HostForm({ onDone }: { onDone: () => void }) {
   const [name, setName] = useState("");
   const [kind, setKind] = useState<"tcp" | "ssh">("ssh");
@@ -172,6 +196,7 @@ function HostForm({ onDone }: { onDone: () => void }) {
   const [tlsCa, setTlsCa] = useState("");
   const [tlsCert, setTlsCert] = useState("");
   const [tlsKey, setTlsKey] = useState("");
+  const [alertEmail, setAlertEmail] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -179,7 +204,7 @@ function HostForm({ onDone }: { onDone: () => void }) {
     e.preventDefault();
     setErr(""); setBusy(true);
     try {
-      await api.createHost({ name, kind, address, tlsCa, tlsCert, tlsKey });
+      await api.createHost({ name, kind, address, tlsCa, tlsCert, tlsKey, alertEmail });
       onDone();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "failed");
@@ -217,6 +242,10 @@ function HostForm({ onDone }: { onDone: () => void }) {
           ))}
         </div>
       )}
+      <div>
+        <label className="label">Alert email (optional — overrides global SMTP recipient for this host)</label>
+        <input className="input" value={alertEmail} onChange={(e) => setAlertEmail(e.target.value)} placeholder="ops-prod@example.com" />
+      </div>
       {err && <p className="text-sm text-danger">{err}</p>}
       <div className="flex justify-end gap-2">
         <button type="button" className="btn-ghost" onClick={onDone}>Cancel</button>

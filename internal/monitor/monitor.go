@@ -25,12 +25,24 @@ const (
 
 // ContainerStat is the cached per-container snapshot used by the exporter.
 type ContainerStat struct {
+	HostID     int64
+	HostName   string
 	ID         string
 	Name       string
 	State      string
 	CPUPercent float64
 	MemBytes   uint64
 	MemPercent float64
+}
+
+// monitoredHosts returns the hosts the engine should watch (all configured
+// hosts; falls back to the default local host id 0 if listing fails).
+func (m *Monitor) monitoredHosts(ctx context.Context) []store.Host {
+	hosts, err := m.store.ListHosts(ctx)
+	if err != nil || len(hosts) == 0 {
+		return []store.Host{{ID: 0, Name: "local"}}
+	}
+	return hosts
 }
 
 // Monitor is the long-running alert engine.
@@ -72,7 +84,7 @@ func (m *Monitor) Run(ctx context.Context) {
 	var wg sync.WaitGroup
 	wg.Add(3)
 	go func() { defer wg.Done(); m.statsLoop(ctx) }()
-	go func() { defer wg.Done(); m.eventsLoop(ctx) }()
+	go func() { defer wg.Done(); m.watchManagerLoop(ctx) }()
 	go func() { defer wg.Done(); m.logReconcileLoop(ctx) }()
 	wg.Wait()
 }
@@ -105,40 +117,42 @@ func (m *Monitor) statsLoop(ctx context.Context) {
 }
 
 func (m *Monitor) pollStats(ctx context.Context) {
-	containers, err := m.docker.ListContainers(ctx, 0)
-	if err != nil {
-		return
-	}
-
-	next := make(map[string]ContainerStat, len(containers))
+	next := make(map[string]ContainerStat)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 8) // bound concurrent stats calls
 
-	for _, c := range containers {
-		cs := ContainerStat{ID: c.ID, Name: c.Name, State: c.State}
-		if c.State != "running" {
-			mu.Lock()
-			next[c.ID] = cs
-			mu.Unlock()
+	// Sample every configured host so alerts and history cover them all.
+	for _, h := range m.monitoredHosts(ctx) {
+		containers, err := m.docker.ListContainers(ctx, h.ID)
+		if err != nil {
 			continue
 		}
-		wg.Add(1)
-		go func(cs ContainerStat) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			sctx, cancel := context.WithTimeout(ctx, 4*time.Second)
-			defer cancel()
-			if s, err := m.docker.SampleStats(sctx, 0, cs.ID); err == nil {
-				cs.CPUPercent = s.CPUPercent
-				cs.MemBytes = s.MemUsage
-				cs.MemPercent = s.MemPercent
+		for _, c := range containers {
+			cs := ContainerStat{HostID: h.ID, HostName: h.Name, ID: c.ID, Name: c.Name, State: c.State}
+			if c.State != "running" {
+				mu.Lock()
+				next[cs.ID] = cs
+				mu.Unlock()
+				continue
 			}
-			mu.Lock()
-			next[cs.ID] = cs
-			mu.Unlock()
-		}(cs)
+			wg.Add(1)
+			go func(cs ContainerStat) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				sctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+				defer cancel()
+				if s, err := m.docker.SampleStats(sctx, cs.HostID, cs.ID); err == nil {
+					cs.CPUPercent = s.CPUPercent
+					cs.MemBytes = s.MemUsage
+					cs.MemPercent = s.MemPercent
+				}
+				mu.Lock()
+				next[cs.ID] = cs
+				mu.Unlock()
+			}(cs)
+		}
 	}
 	wg.Wait()
 
@@ -199,7 +213,7 @@ func (m *Monitor) evalResourceRules(ctx context.Context, snap map[string]Contain
 				since, _ := m.overSince.LoadOrStore(key, time.Now())
 				if time.Since(since.(time.Time)) >= time.Duration(cfg.DurationSec)*time.Second {
 					v := val
-					m.fire(ctx, r, cs.ID, cs.Name,
+					m.fire(ctx, r, cs.HostID, cs.HostName, cs.ID, cs.Name,
 						sprintf("%s %.1f%% %s %.0f%% for %ds", strings.ToUpper(cfg.Metric), val, cfg.Op, cfg.Threshold, cfg.DurationSec), &v)
 				}
 			} else {
@@ -211,22 +225,59 @@ func (m *Monitor) evalResourceRules(ctx context.Context, snap map[string]Contain
 
 // ---- docker events: state + restart rules -----------------------------------
 
-func (m *Monitor) eventsLoop(ctx context.Context) {
+// watchManagerLoop keeps one Docker-events watcher per configured host alive,
+// starting watchers for newly added hosts and stopping them for removed ones.
+func (m *Monitor) watchManagerLoop(ctx context.Context) {
+	watchers := make(map[int64]context.CancelFunc) // hostID -> cancel
+	defer func() {
+		for _, cancel := range watchers {
+			cancel()
+		}
+	}()
+	t := time.NewTicker(logReconcileInt)
+	defer t.Stop()
+	for {
+		hosts := m.monitoredHosts(ctx)
+		seen := make(map[int64]bool, len(hosts))
+		for _, h := range hosts {
+			seen[h.ID] = true
+			if _, ok := watchers[h.ID]; !ok {
+				wctx, cancel := context.WithCancel(ctx)
+				watchers[h.ID] = cancel
+				go m.watchHost(wctx, h.ID, h.Name)
+			}
+		}
+		for id, cancel := range watchers {
+			if !seen[id] {
+				cancel()
+				delete(watchers, id)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+// watchHost streams one host's Docker events until its context is cancelled.
+func (m *Monitor) watchHost(ctx context.Context, hostID int64, hostName string) {
 	for ctx.Err() == nil {
-		err := m.docker.WatchEvents(ctx, 0, func(e docker.Event) {
-			m.handleEvent(ctx, e)
+		err := m.docker.WatchEvents(ctx, hostID, func(e docker.Event) {
+			m.handleEvent(ctx, hostID, hostName, e)
 		})
 		if ctx.Err() != nil {
 			return
 		}
 		if err != nil {
-			log.Printf("monitor: events stream ended: %v; retrying", err)
+			log.Printf("monitor: events stream for host %d ended: %v; retrying", hostID, err)
 		}
 		time.Sleep(2 * time.Second) // reconnect backoff
 	}
 }
 
-func (m *Monitor) handleEvent(ctx context.Context, e docker.Event) {
+func (m *Monitor) handleEvent(ctx context.Context, hostID int64, hostName string, e docker.Event) {
 	if e.Action == "start" || e.Action == "restart" {
 		m.recordRestart(e.ContainerID)
 	}
@@ -242,7 +293,7 @@ func (m *Monitor) handleEvent(ctx context.Context, e docker.Event) {
 		case "state":
 			cfg, err := parseState(r.Config)
 			if err == nil && cfg.matches(e.Action) {
-				m.fire(ctx, r, e.ContainerID, e.ContainerName, "container event: "+e.Action, nil)
+				m.fire(ctx, r, hostID, hostName, e.ContainerID, e.ContainerName, "container event: "+e.Action, nil)
 			}
 		case "restart":
 			if e.Action == "start" || e.Action == "restart" {
@@ -250,7 +301,7 @@ func (m *Monitor) handleEvent(ctx context.Context, e docker.Event) {
 				if err == nil {
 					if n := m.restartCount(e.ContainerID, cfg.WindowSec); n >= cfg.Count {
 						v := float64(n)
-						m.fire(ctx, r, e.ContainerID, e.ContainerName,
+						m.fire(ctx, r, hostID, hostName, e.ContainerID, e.ContainerName,
 							sprintf("restarted %d times in %ds (possible crash loop)", n, cfg.WindowSec), &v)
 					}
 				}
@@ -301,27 +352,39 @@ func (m *Monitor) reconcileLogFollowers(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	containers, err := m.docker.ListContainers(ctx, 0)
-	if err != nil {
-		return
+	// Collect log rules once; then walk every host's running containers.
+	type logRule struct {
+		r   store.AlertRule
+		cfg logMatcher
 	}
-
-	want := make(map[string]struct{}) // keys that should be running
+	var logRules []logRule
 	for _, r := range rules {
 		if !r.Enabled || r.Type != "log" {
 			continue
 		}
-		cfg, err := parseLog(r.Config)
+		if cfg, err := parseLog(r.Config); err == nil {
+			logRules = append(logRules, logRule{r, cfg})
+		}
+	}
+
+	want := make(map[string]struct{}) // keys that should be running
+	for _, h := range m.monitoredHosts(ctx) {
+		if len(logRules) == 0 {
+			break
+		}
+		containers, err := m.docker.ListContainers(ctx, h.ID)
 		if err != nil {
 			continue
 		}
-		for _, c := range containers {
-			if c.State != "running" || !matchTarget(r.Target, c.Name) {
-				continue
+		for _, lr := range logRules {
+			for _, c := range containers {
+				if c.State != "running" || !matchTarget(lr.r.Target, c.Name) {
+					continue
+				}
+				key := ruleKey(lr.r.ID, c.ID)
+				want[key] = struct{}{}
+				m.ensureFollower(ctx, key, lr.r, lr.cfg, h.ID, h.Name, c.ID, c.Name)
 			}
-			key := ruleKey(r.ID, c.ID)
-			want[key] = struct{}{}
-			m.ensureFollower(ctx, key, r, cfg, c.ID, c.Name)
 		}
 	}
 
@@ -336,7 +399,7 @@ func (m *Monitor) reconcileLogFollowers(ctx context.Context) {
 	m.logMu.Unlock()
 }
 
-func (m *Monitor) ensureFollower(ctx context.Context, key string, r store.AlertRule, cfg logMatcher, cid, name string) {
+func (m *Monitor) ensureFollower(ctx context.Context, key string, r store.AlertRule, cfg logMatcher, hostID int64, hostName, cid, name string) {
 	m.logMu.Lock()
 	if _, ok := m.logCancels[key]; ok {
 		m.logMu.Unlock()
@@ -353,9 +416,9 @@ func (m *Monitor) ensureFollower(ctx context.Context, key string, r store.AlertR
 			m.logMu.Unlock()
 		}()
 		// tail "0": only match new lines, never the historical backlog.
-		_ = m.docker.StreamLogs(fctx, 0, cid, true, "0", func(l docker.LogLine) {
+		_ = m.docker.StreamLogs(fctx, hostID, cid, true, "0", func(l docker.LogLine) {
 			if cfg.match(l.Message) {
-				m.fire(fctx, r, cid, name, "log match: "+truncate(l.Message, 200), nil)
+				m.fire(fctx, r, hostID, hostName, cid, name, "log match: "+truncate(l.Message, 200), nil)
 			}
 		})
 	}()
@@ -372,7 +435,7 @@ func (m *Monitor) stopAllFollowers() {
 
 // ---- firing -----------------------------------------------------------------
 
-func (m *Monitor) fire(ctx context.Context, r store.AlertRule, cid, name, message string, value *float64) {
+func (m *Monitor) fire(ctx context.Context, r store.AlertRule, hostID int64, hostName, cid, name, message string, value *float64) {
 	key := ruleKey(r.ID, cid)
 	cooldown := time.Duration(r.CooldownSec) * time.Second
 	if last, ok := m.cooldowns.Load(key); ok {
@@ -384,6 +447,7 @@ func (m *Monitor) fire(ctx context.Context, r store.AlertRule, cid, name, messag
 
 	ev := &store.AlertEvent{
 		RuleID: r.ID, RuleName: r.Name, Type: r.Type, Severity: r.Severity,
+		HostID: hostID, HostName: hostName,
 		ContainerID: cid, ContainerName: name, Message: message, Value: value,
 	}
 	wctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

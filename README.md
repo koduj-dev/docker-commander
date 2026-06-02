@@ -57,7 +57,9 @@ from a single binary you download, build, and run.
   page-size controls (10/20/50/100); Logs supports **regex** search.
 - **Alerting** — user-defined rules on container **state changes**, **resource
   thresholds** (CPU/MEM), **log patterns** (substring/regex), and **restart /
-  crash loops**, with per-rule severity and cooldown.
+  crash loops**, with per-rule severity and cooldown, editable in place. The
+  engine watches **all configured hosts**, and email alerts can be routed
+  **per host** (each host can override the global recipient).
 - **Notifications & export** — fire alerts to **generic webhooks** (Slack,
   Discord, Grafana alerting, n8n…) with Go-template payloads, **email** via your
   own SMTP server (password encrypted at rest), an **in-app alert feed**, and a
