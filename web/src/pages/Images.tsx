@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Download, Trash2, Layers, Loader2, X, Boxes, Eraser, FileSearch, History } from "lucide-react";
+import { Download, Trash2, Layers, Loader2, X, Boxes, Eraser, FileSearch, History, Upload, Hammer } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import type { HistoryEntry, ImageSummary, PullProgress } from "../lib/types";
@@ -8,6 +8,8 @@ import { bytes, relTime, shortId } from "../lib/format";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
 import { InspectModal } from "../components/InspectModal";
+import { PushModal } from "../components/PushModal";
+import { BuildModal } from "../components/BuildModal";
 import { useListControls, SearchBar, Pager } from "../components/ListControls";
 
 function matchImage(img: ImageSummary, q: string): boolean {
@@ -26,6 +28,8 @@ export function Images() {
   const [pruning, setPruning] = useState(false);
   const [inspect, setInspect] = useState<ImageSummary | null>(null);
   const [history, setHistory] = useState<ImageSummary | null>(null);
+  const [push, setPush] = useState<ImageSummary | null>(null);
+  const [showBuild, setShowBuild] = useState(false);
 
   const load = useCallback(() => {
     api.images().then(setImages).catch(() => setImages([]));
@@ -76,10 +80,15 @@ export function Images() {
       <PageHeader
         title="Images"
         actions={
-          <button className="btn-ghost" onClick={prune} disabled={pruning || danglingCount === 0} title="Remove dangling (untagged) images">
-            {pruning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eraser className="h-4 w-4" />}
-            Prune {danglingCount > 0 ? `(${danglingCount})` : ""}
-          </button>
+          <>
+            <button className="btn-ghost" onClick={() => setShowBuild(true)} title="Build an image from a tar context">
+              <Hammer className="h-4 w-4" /> Build
+            </button>
+            <button className="btn-ghost" onClick={prune} disabled={pruning || danglingCount === 0} title="Remove dangling (untagged) images">
+              {pruning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eraser className="h-4 w-4" />}
+              Prune {danglingCount > 0 ? `(${danglingCount})` : ""}
+            </button>
+          </>
         }
       />
       <div className="p-6 space-y-4">
@@ -122,6 +131,7 @@ export function Images() {
                     )}
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
+                    <button className="btn-ghost px-2 py-1" title="Push to registry" onClick={() => setPush(img)}><Upload className="h-4 w-4" /></button>
                     <button className="btn-ghost px-2 py-1" title="Layer history" onClick={() => setHistory(img)}><History className="h-4 w-4" /></button>
                     <button className="btn-ghost px-2 py-1" title="Inspect (raw JSON)" onClick={() => setInspect(img)}><FileSearch className="h-4 w-4" /></button>
                     <button
@@ -146,6 +156,12 @@ export function Images() {
       )}
       {history && (
         <ImageHistoryModal img={history} onClose={() => setHistory(null)} />
+      )}
+      {push && (
+        <PushModal image={push} onClose={() => setPush(null)} onDone={load} />
+      )}
+      {showBuild && (
+        <BuildModal onClose={() => setShowBuild(false)} onDone={load} />
       )}
     </>
   );

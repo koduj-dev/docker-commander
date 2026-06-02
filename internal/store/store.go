@@ -14,6 +14,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/koduj-dev/docker-commander/internal/crypto"
 )
 
 // ErrNotFound is returned when a lookup yields no row.
@@ -21,8 +23,13 @@ var ErrNotFound = errors.New("store: not found")
 
 // Store wraps the database handle and exposes typed queries.
 type Store struct {
-	db *sql.DB
+	db     *sql.DB
+	cipher *crypto.Cipher // used to seal/open registry secrets; set after Open
 }
+
+// SetCipher installs the cipher used to encrypt secrets at rest (registry
+// credentials). It is wired up once at startup, after the key is loaded.
+func (s *Store) SetCipher(c *crypto.Cipher) { s.cipher = c }
 
 // Open opens (creating if necessary) the SQLite database at path and runs
 // all pending migrations. A path of ":memory:" yields an ephemeral DB.
@@ -131,6 +138,15 @@ CREATE TABLE IF NOT EXISTS alert_events (
 	created_at     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_alert_events_created ON alert_events(id DESC);
+
+CREATE TABLE IF NOT EXISTS registries (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	name       TEXT NOT NULL,
+	address    TEXT NOT NULL,            -- registry host, e.g. ghcr.io, registry-1.docker.io, localhost:5000
+	username   TEXT NOT NULL DEFAULT '',
+	secret_enc TEXT NOT NULL DEFAULT '', -- AES-GCM encrypted password/token
+	created_at TEXT NOT NULL
+);
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err

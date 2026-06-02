@@ -67,6 +67,13 @@ export interface ContainerDetail {
   restartPolicy?: string;
 }
 
+export interface Registry {
+  id: number;
+  name: string;
+  address: string;
+  username: string;
+}
+
 export interface ImageSummary {
   id: string;
   repoTags: string[] | null;

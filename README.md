@@ -18,6 +18,9 @@ from a single binary you download, build, and run.
   are in use or dangling, **pull** with live per-layer progress (over a
   WebSocket), remove (with a force fallback), and prune dangling images;
   per-image **history** (build layers) and raw **inspect**.
+- **Registries & build** — store registry credentials (**encrypted at rest**),
+  pull **private** images and **push** with live progress, **tag** images, and
+  **build** from an uploaded tar context with streamed build output.
 - **Inspect & observe everything** — raw JSON **inspect** for containers,
   images, networks and volumes; container **diff** (filesystem changes) and
   **top** (live process list); a live **events** feed streaming every daemon
@@ -157,6 +160,8 @@ make vet
 - If you expose it on a server, put it behind TLS (reverse proxy) — the session
   cookie is `HttpOnly` + `SameSite=Strict`, and 2FA is mandatory.
 - The JWT signing secret is generated on first run and persisted in the data dir.
+- Registry credentials are **encrypted at rest** (AES-256-GCM) with a key
+  generated on first run; the API never returns stored secrets.
 - **SSH remote hosts** verify the daemon's host key against `~/.ssh/known_hosts`
   or a key you explicitly trust on first connect (pinned in the DB). A key that
   later changes is refused as a possible man-in-the-middle until you re-trust it.
@@ -172,7 +177,7 @@ make vet
 - [x] SSH host-key verification (known_hosts + trust-on-first-use pinning, MITM-safe)
 - [x] Images management (list / pull with live progress / remove / prune)
 - [x] Inspect & observe: raw inspect (any object), container diff/top, image history, live events feed, disk usage (df)
-- [ ] Registry & build: push / private pull (stored creds) + image build with context upload
+- [x] Registry & build: push / private pull (encrypted stored creds), tag, and image build with context upload
 - [ ] Container lifecycle: create/run, rename, update limits, commit, restart-policy
 - [ ] Image transfer: tag, save/load (tar), import, container export
 - [ ] Volumes management + inspector, and which containers use them

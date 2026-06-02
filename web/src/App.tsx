@@ -15,6 +15,7 @@ import { Logs } from "./pages/Logs";
 import { Events } from "./pages/Events";
 import { Alerts } from "./pages/Alerts";
 import { Hosts } from "./pages/Hosts";
+import { Registries } from "./pages/Registries";
 import { Audit } from "./pages/Audit";
 
 export default function App() {
@@ -48,6 +49,7 @@ export default function App() {
         <Route path="/events" element={<Events />} />
         <Route path="/alerts" element={<Alerts />} />
         <Route path="/hosts" element={<Hosts />} />
+        <Route path="/registries" element={<Registries />} />
         <Route path="/audit" element={<Audit />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

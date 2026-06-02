@@ -82,18 +82,28 @@ against the local `red2_*` stack (headless Chrome + Go/WS probes).
   themed zoom controls + a working **fullscreen** button. Logs: **regex**
   search toggle. Events: full-height flex layout. All verified via puppeteer.
 
+- **Registry & build — batch E (DONE 2026-06-02).** Encrypted credential store
+  (`internal/crypto` AES-256-GCM, key persisted in settings; `store/registries.go`
+  with secrets sealed at rest, never returned by the API). `internal/docker/
+  registry.go` resolves auth by an image ref's registry host (Docker Hub aliases
+  normalised) and adds **push** (WS), **tag**, and a daemon **login** test;
+  PullImage now attaches stored auth for **private pulls**. `internal/docker/
+  build.go` builds from an uploaded tar context and streams output; the build
+  handler streams NDJSON over a plain POST (`/api/images/build`, tar body).
+  Frontend: **Registries** page (System nav), Push & Build modals on Images.
+  Verified end-to-end against a local **authenticated** registry (registry:2 +
+  htpasswd): create→login→tag→push→remove→private-pull→build, secret confirmed
+  encrypted in the DB; UI verified with puppeteer.
+
 ## 🧭 "Control everything" plan (decided 2026-06-02 with a colleague)
 
-Goal: expose the rest of the Docker Engine API. Agreed order: **A done** (above),
-then **E next** (registry/build — wanted "hned teď"), then B, C, D.
+Goal: expose the rest of the Docker Engine API. Done: **A** (inspect/observe),
+**E** (registry/build). Remaining: B, C, D.
 
-- **E. Registry & build (NEXT).** push + private pull (store registry creds
-  **encrypted** in DB), `docker build` with build-context upload (stream
-  progress over WS like pull). User accepts the security overhead.
 - **B. Container lifecycle.** create/run (form), rename, update (CPU/MEM limits),
   commit (container→image), unpause toggle, restart-policy edit.
-- **C. Image transfer & tags.** tag, save (export tar download), load (upload
-  tar), import, container export (FS as tar).
+- **C. Image transfer & tags.** save (export tar download), load (upload
+  tar), import, container export (FS as tar). (tag is done — part of E.)
 - **D. Volumes + networks full CRUD** (see item 1 below for volumes).
 
 ## ▶️ Next up (priority order)
@@ -129,6 +139,12 @@ then **E next** (registry/build — wanted "hned teď"), then B, C, D.
 - **Local Redis for metrics history test:**
   `docker run -d --rm --name dc-redis-test -p 6399:6379 redis:7-alpine`, then
   run the server with `DC_REDIS_ADDR=127.0.0.1:6399`.
+- **Local authenticated registry for push/pull test:** no `htpasswd` on this
+  box, so generate the bcrypt entry with Go (`golang.org/x/crypto/bcrypt`,
+  already a dep) into `auth/htpasswd`, then
+  `docker run -d --name dc-reg -p 5999:5000 -v <auth>:/auth -e REGISTRY_AUTH=htpasswd
+  -e REGISTRY_AUTH_HTPASSWD_REALM=... -e REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd registry:2`.
+  localhost is insecure-by-default for the daemon, so HTTP + basic auth works.
 - **Local sshd for host-key test:** `docker run -d --name dc-sshtest -p 2222:22
   alpine:latest sh -c "apk add --no-cache openssh && ssh-keygen -A && adduser -D
   test && echo 'test:test' | chpasswd && /usr/sbin/sshd -D -e"`, then

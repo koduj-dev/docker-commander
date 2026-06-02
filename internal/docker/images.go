@@ -2,14 +2,10 @@ package docker
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
-	"io"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/pkg/jsonmessage"
 )
 
 // ImageSummary is a compact view of a local image for the Images page.
@@ -144,29 +140,12 @@ func (m *Manager) PullImage(ctx context.Context, hostID int64, ref string, onPro
 	if err != nil {
 		return err
 	}
-	rc, err := cli.ImagePull(ctx, ref, image.PullOptions{})
+	// Attach stored credentials for the image's registry, if any, so private
+	// images pull; otherwise the pull proceeds anonymously.
+	rc, err := cli.ImagePull(ctx, ref, image.PullOptions{RegistryAuth: m.authForRef(ctx, ref)})
 	if err != nil {
 		return err
 	}
 	defer rc.Close()
-
-	dec := json.NewDecoder(rc)
-	for {
-		var jm jsonmessage.JSONMessage
-		if err := dec.Decode(&jm); err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil
-			}
-			return err
-		}
-		if jm.Error != nil {
-			return errors.New(jm.Error.Message)
-		}
-		p := PullProgress{Status: jm.Status, ID: jm.ID}
-		if jm.Progress != nil {
-			p.Current = jm.Progress.Current
-			p.Total = jm.Progress.Total
-		}
-		onProgress(p)
-	}
+	return streamJSONProgress(rc, onProgress)
 }

@@ -86,11 +86,19 @@ func (s *Server) Handler() http.Handler {
 
 			r.Get("/images", s.handleListImages)
 			r.Get("/images/history", s.handleImageHistory)
+			r.Post("/images/tag", s.handleTagImage)
+			r.Post("/images/build", s.handleBuildImage)
 			// ref is a query param, not a path segment: image references contain
 			// ':' and '/' (e.g. sha256:… or registry/owner/app:tag) which do not
 			// round-trip cleanly through path matching/decoding.
 			r.Delete("/images", s.handleRemoveImage)
 			r.Post("/images/prune", s.handlePruneImages)
+
+			// Registry credentials (secrets encrypted at rest).
+			r.Get("/registries", s.handleListRegistries)
+			r.Post("/registries", s.handleCreateRegistry)
+			r.Delete("/registries/{id}", s.handleDeleteRegistry)
+			r.Post("/registries/{id}/test", s.handleTestRegistry)
 
 			// Generic raw inspect for any object kind (id/ref via query param).
 			r.Get("/inspect/{kind}", s.handleInspect)
@@ -118,8 +126,9 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/ws", s.handleWebSocket)
 			// WebSocket for an interactive container shell (exec TTY).
 			r.Get("/containers/{id}/exec", s.handleExec)
-			// WebSocket streaming image pull progress.
+			// WebSocket streaming image pull / push progress.
 			r.Get("/images/pull", s.handlePullImage)
+			r.Get("/images/push", s.handlePushImage)
 			// WebSocket streaming live Docker daemon events.
 			r.Get("/events", s.handleEvents)
 		})

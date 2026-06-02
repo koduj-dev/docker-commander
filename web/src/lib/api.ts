@@ -13,6 +13,7 @@ import type {
   Host,
   ImageSummary,
   NetworkSummary,
+  Registry,
   SystemInfo,
   TopResult,
   Topology,
@@ -128,6 +129,15 @@ export const api = {
     if (h != null) params.set("host", String(h));
     return req<HistoryEntry[]>("GET", `/api/images/history?${params.toString()}`);
   },
+  tagImage: (source: string, target: string) =>
+    req<{ ok: boolean; error?: string }>("POST", `/api/images/tag${hostParam()}`, { source, target }),
+
+  // Registry credentials
+  registries: () => req<Registry[]>("GET", "/api/registries"),
+  createRegistry: (b: { name: string; address: string; username: string; secret: string }) =>
+    req<{ id: number }>("POST", "/api/registries", b),
+  deleteRegistry: (id: number) => req<{ ok: boolean }>("DELETE", `/api/registries/${id}`),
+  testRegistry: (id: number) => req<{ ok: boolean; error?: string }>("POST", `/api/registries/${id}/test${hostParam()}`),
 
   networks: () => req<NetworkSummary[]>("GET", `/api/networks${hostParam()}`),
   deleteNetwork: (id: string) => req<{ ok: boolean; error?: string }>("DELETE", `/api/networks/${id}${hostParam()}`),

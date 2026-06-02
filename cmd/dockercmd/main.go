@@ -18,6 +18,7 @@ import (
 	"github.com/koduj-dev/docker-commander/internal/api"
 	"github.com/koduj-dev/docker-commander/internal/auth"
 	"github.com/koduj-dev/docker-commander/internal/config"
+	"github.com/koduj-dev/docker-commander/internal/crypto"
 	"github.com/koduj-dev/docker-commander/internal/docker"
 	"github.com/koduj-dev/docker-commander/internal/history"
 	"github.com/koduj-dev/docker-commander/internal/monitor"
@@ -53,6 +54,17 @@ func run() error {
 	if err != nil {
 		return err
 	}
+
+	// Encryption key for secrets at rest (registry credentials).
+	encKey, err := loadOrCreateSecret(ctx, st, "registry_enc_key")
+	if err != nil {
+		return err
+	}
+	cipher, err := crypto.New(encKey)
+	if err != nil {
+		return err
+	}
+	st.SetCipher(cipher)
 
 	tokens := auth.NewTokenManager(secret, cfg.SessionTTL)
 	authSvc := auth.NewService(st, tokens)
@@ -109,7 +121,12 @@ func run() error {
 // loadOrCreateJWTSecret returns a persistent signing secret, generating one on
 // first run. Keeping it stable means sessions survive restarts.
 func loadOrCreateJWTSecret(ctx context.Context, st *store.Store) ([]byte, error) {
-	const key = "jwt_secret"
+	return loadOrCreateSecret(ctx, st, "jwt_secret")
+}
+
+// loadOrCreateSecret returns a persistent 32-byte secret stored under key in
+// the settings table, generating one on first run.
+func loadOrCreateSecret(ctx context.Context, st *store.Store, key string) ([]byte, error) {
 	existing, err := st.Setting(ctx, key)
 	if err != nil {
 		return nil, err
