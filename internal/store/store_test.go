@@ -154,12 +154,12 @@ func TestRegistriesEncrypted(t *testing.T) {
 
 func TestNormalizeRegistryHost(t *testing.T) {
 	for in, want := range map[string]string{
-		"":                  "docker.io",
-		"index.docker.io":   "docker.io",
+		"":                     "docker.io",
+		"index.docker.io":      "docker.io",
 		"registry-1.docker.io": "docker.io",
-		"GHCR.IO":           "ghcr.io",
-		"https://quay.io/":  "quay.io",
-		"localhost:5000":    "localhost:5000",
+		"GHCR.IO":              "ghcr.io",
+		"https://quay.io/":     "quay.io",
+		"localhost:5000":       "localhost:5000",
 	} {
 		if got := NormalizeRegistryHost(in); got != want {
 			t.Errorf("NormalizeRegistryHost(%q)=%q want %q", in, got, want)
