@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/logo-color.png" alt="Docker Commander" width="360">
+  <img src="docs/images/logo-card.png" alt="Docker Commander" width="360">
 </p>
 
 A self-hosted, open-source **Docker monitoring & control panel** with an
