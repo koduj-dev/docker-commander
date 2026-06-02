@@ -8,13 +8,14 @@ import type {
   ContainerDetail,
   ContainerSummary,
   Host,
+  ImageSummary,
   NetworkSummary,
   SystemInfo,
   Topology,
   User,
   Webhook,
 } from "./types";
-import { hostParam } from "./host";
+import { getHostId, hostParam } from "./host";
 
 export class ApiError extends Error {
   status: number;
@@ -92,6 +93,19 @@ export const api = {
   container: (id: string) => req<ContainerDetail>("GET", `/api/containers/${id}${hostParam()}`),
   containerAction: (id: string, action: string) =>
     req<{ ok: boolean }>("POST", `/api/containers/${id}/${action}${hostParam()}`),
+
+  images: () => req<ImageSummary[]>("GET", `/api/images${hostParam()}`),
+  removeImage: (ref: string, force = false) => {
+    const params = new URLSearchParams({ ref });
+    const h = getHostId();
+    if (h != null) params.set("host", String(h));
+    if (force) params.set("force", "1");
+    return req<{ ok: boolean; error?: string; changed?: string[] }>(
+      "DELETE",
+      `/api/images?${params.toString()}`
+    );
+  },
+  pruneImages: () => req<{ deleted: string[] | null; spaceReclaimed: number }>("POST", `/api/images/prune${hostParam()}`),
 
   networks: () => req<NetworkSummary[]>("GET", `/api/networks${hostParam()}`),
   topology: () => req<Topology>("GET", `/api/topology${hostParam()}`),

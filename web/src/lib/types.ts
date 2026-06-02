@@ -67,6 +67,25 @@ export interface ContainerDetail {
   restartPolicy?: string;
 }
 
+export interface ImageSummary {
+  id: string;
+  repoTags: string[] | null;
+  repoDigests: string[] | null;
+  size: number;
+  created: number; // unix seconds
+  dangling: boolean;
+  inUse: boolean;
+}
+
+export interface PullProgress {
+  status?: string;
+  id?: string;
+  current?: number;
+  total?: number;
+  error?: string;
+  done?: boolean;
+}
+
 export interface NetworkSummary {
   id: string;
   name: string;

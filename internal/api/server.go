@@ -82,6 +82,13 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/containers/{id}", s.handleInspectContainer)
 			r.Post("/containers/{id}/{action}", s.handleContainerAction)
 
+			r.Get("/images", s.handleListImages)
+			// ref is a query param, not a path segment: image references contain
+			// ':' and '/' (e.g. sha256:… or registry/owner/app:tag) which do not
+			// round-trip cleanly through path matching/decoding.
+			r.Delete("/images", s.handleRemoveImage)
+			r.Post("/images/prune", s.handlePruneImages)
+
 			r.Get("/networks", s.handleListNetworks)
 			r.Get("/topology", s.handleTopology)
 			r.Get("/system", s.handleSystemInfo)
@@ -103,6 +110,8 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/ws", s.handleWebSocket)
 			// WebSocket for an interactive container shell (exec TTY).
 			r.Get("/containers/{id}/exec", s.handleExec)
+			// WebSocket streaming image pull progress.
+			r.Get("/images/pull", s.handlePullImage)
 		})
 	})
 

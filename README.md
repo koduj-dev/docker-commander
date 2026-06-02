@@ -14,6 +14,9 @@ from a single binary you download, build, and run.
 
 - **Real-time monitoring** — live CPU / memory graphs streamed over WebSockets.
 - **Container control** — start, stop, restart, pause, kill.
+- **Image management** — list local images with size / tags / age, flag which
+  are in use or dangling, **pull** with live per-layer progress (over a
+  WebSocket), remove (with a force fallback), and prune dangling images.
 - **Interactive console** — a real shell (xterm.js) into any running container,
   streamed over a WebSocket; works the same on local and remote hosts.
 - **Multi-host** — manage local, **TCP(+TLS)** and **SSH** Docker hosts and
@@ -156,7 +159,7 @@ make vet
 - [x] Remote host management UI (TCP+TLS, SSH) + host switcher
 - [x] Historical metrics storage & charts (Redis or in-memory)
 - [x] SSH host-key verification (known_hosts + trust-on-first-use pinning, MITM-safe)
-- [ ] Images management (list / pull / remove / prune)
+- [x] Images management (list / pull with live progress / remove / prune)
 - [ ] Volumes management + inspector, and which containers use them
 - [ ] Data transfer to/from containers (`docker cp` up/download)
 - [ ] Email/SMTP notification channel

@@ -1,6 +1,6 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import { useEffect, useState, type ReactNode } from "react";
-import { Bell, Boxes, Container, LayoutDashboard, Network, ScrollText, Server, Share2, Terminal, LogOut } from "lucide-react";
+import { Bell, Boxes, Container, Layers, LayoutDashboard, Network, ScrollText, Server, Share2, Terminal, LogOut } from "lucide-react";
 import clsx from "clsx";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../lib/api";
@@ -10,6 +10,7 @@ import { getHostId, setHostId } from "../lib/host";
 const nav = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/containers", label: "Containers", icon: Boxes },
+  { to: "/images", label: "Images", icon: Layers },
   { to: "/networks", label: "Networks", icon: Network },
   { to: "/topology", label: "Topology", icon: Share2 },
   { to: "/logs", label: "Logs", icon: Terminal },

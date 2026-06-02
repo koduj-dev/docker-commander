@@ -36,24 +36,33 @@ Everything above is committed & pushed to `origin/main`
 (`git@github.com:koduj-dev/docker-commander.git`) and verified end-to-end
 against the local `red2_*` stack (headless Chrome + Go/WS probes).
 
+## ✅ Done so far (continued)
+
+- **Images management (2026-06-02).** `internal/docker/images.go` +
+  `internal/api/image_handlers.go` + `web/src/pages/Images.tsx`. List with
+  size/tags/age, **in-use** flag (cross-referenced against existing containers'
+  ImageIDs) and **dangling** flag; **pull** with live per-layer progress over a
+  WebSocket (`GET /api/images/pull?ref=…`, mirrors the exec bridge); **remove**
+  (`DELETE /api/images?ref=…&force=1`) with a force fallback when in use; **prune**
+  dangling (`POST /api/images/prune`). New "Images" nav item + route. Verified
+  end-to-end against real Docker (pull→list→remove→inUse) with a Node `ws`
+  harness. NOTE: `ref` is a **query param**, not a path segment — image refs
+  contain `:`/`/` which chi does not decode cleanly in `{id}`.
+
 ## ▶️ Next up (priority order)
 
-1. **Images management.** List local images (`ImageList`), show size/tags/
-   created, pull (`ImagePull` with progress over WS), remove (`ImageRemove`,
-   handle in-use), prune dangling. New page + API.
-
-2. **Volumes management + inspector.** List volumes (`VolumeList`), inspect
+1. **Volumes management + inspector.** List volumes (`VolumeList`), inspect
    (driver, mountpoint, labels, scope), show which containers use a volume,
    create/remove, prune.
 
-3. **Data transfer (docker cp).** Download from container
+2. **Data transfer (docker cp).** Download from container
    (`CopyFromContainer` → tar stream → browser download) and upload
    (`CopyToContainer` from an uploaded tar/file). Wire into the container detail
    (a "Files" tab or buttons) and/or volume inspector.
 
-4. **Email/SMTP alert channel** (alongside webhooks + Prometheus).
+3. **Email/SMTP alert channel** (alongside webhooks + Prometheus).
 
-5. **Structured log views & saved parsing rules** (named regex field
+4. **Structured log views & saved parsing rules** (named regex field
    extraction, column view).
 
 ## 🛠️ Dev / test notes (this machine)
