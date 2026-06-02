@@ -13,6 +13,7 @@ import {
   type Edge,
   type Node,
   type NodeProps,
+  type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import dagre from "@dagrejs/dagre";
@@ -94,7 +95,7 @@ const edgeTypes = { floating: FloatingEdge };
 function layout(topo: Topo, filters: TopoFilters): { nodes: Node[]; edges: Edge[] } {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: "LR", nodesep: 24, ranksep: 140, marginx: 20, marginy: 20 });
+  g.setGraph({ rankdir: "LR", nodesep: 22, ranksep: 240, marginx: 20, marginy: 20 });
 
   const containers = (topo.containers ?? []).filter((c) => filters.showStopped || c.state === "running");
   const visibleContainerIds = new Set(containers.map((c) => c.id));
@@ -166,9 +167,23 @@ export function Topology() {
   const [filters, setFilters] = useState<TopoFilters>({ hideEmptyNetworks: false, showStopped: true });
   const navigate = useNavigate();
   const wrapRef = useRef<HTMLDivElement>(null);
+  const rfRef = useRef<ReactFlowInstance<Node, Edge> | null>(null);
+
+  // Keep the fit readable: a 50-container bipartite graph is very tall, so an
+  // unclamped fitView shrinks nodes to dust. minZoom floors the fit zoom; users
+  // pan / use the minimap / zoom out (down to the lower ReactFlow minZoom).
+  const FIT = { minZoom: 0.5, maxZoom: 1.2, padding: 0.12 };
 
   useEffect(() => {
     api.topology().then(setTopo).catch(() => setTopo({ networks: [], containers: [], links: [] }));
+  }, []);
+
+  // Refit when entering/leaving fullscreen, once the container has resized.
+  useEffect(() => {
+    const onFs = () => setTimeout(() => rfRef.current?.fitView(FIT), 120);
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Recompute the dagre layout whenever the topology or filters change, then
@@ -214,7 +229,7 @@ export function Topology() {
         ) : nodes.length === 0 ? (
           <EmptyState title="Nothing to show" hint="No networks with attached containers match the current filters." />
         ) : (
-          <div ref={wrapRef} className="card overflow-hidden relative bg-bg" style={{ height: "calc(100vh - 9rem)" }}>
+          <div ref={wrapRef} className="dc-topo card overflow-hidden relative bg-bg" style={{ height: "calc(100vh - 9rem)" }}>
             <button
               className="btn-ghost absolute top-3 right-3 z-10 px-2 py-1.5"
               title="Toggle fullscreen"
@@ -230,9 +245,11 @@ export function Topology() {
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
               onNodeClick={onNodeClick}
+              onInit={(inst) => { rfRef.current = inst; }}
               fitView
+              fitViewOptions={FIT}
               proOptions={{ hideAttribution: true }}
-              minZoom={0.2}
+              minZoom={0.15}
             >
               <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#243047" />
               <Controls className="dc-flow-controls" />

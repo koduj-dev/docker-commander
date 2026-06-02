@@ -66,3 +66,11 @@
   max-width: 14px;
   max-height: 14px;
 }
+
+/* When the topology pane is fullscreened, its inline calc() height would
+   otherwise win over the browser's fullscreen sizing and leave a small box in
+   a black screen. Force it to fill the viewport. */
+.dc-topo:fullscreen {
+  width: 100vw !important;
+  height: 100vh !important;
+}

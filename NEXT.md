@@ -60,6 +60,14 @@ against the local `red2_*` stack (headless Chrome + Go/WS probes).
   (`GET /api/system/df`) cards on the dashboard. Verified end-to-end: backend
   via a Node API harness, UI via a puppeteer smoke test (TOTP bypass).
 
+- **Topology readability + fullscreen (2026-06-02).** A 50-container bipartite
+  graph was shrinking to ~23% under fitView; now `fitViewOptions.minZoom: 0.5`
+  floors the fit so nodes stay readable (pan / minimap / zoom out to 0.15 for
+  the full picture), and `ranksep` widened to use more horizontal space.
+  Fullscreen now actually fills the screen — the pane's inline `calc()` height
+  was overriding the browser's fullscreen sizing; a `.dc-topo:fullscreen`
+  `!important` rule fixes it, and the graph refits on fullscreenchange.
+
 - **Polish round (2026-06-02).** Sidebar nav grouped into sections
   (Compute / Network / Observability / System). Reusable
   `components/ListControls.tsx` (search + 10/20/50/100 pagination) applied to
