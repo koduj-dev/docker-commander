@@ -70,7 +70,23 @@ export const api = {
   createHost: (h: Partial<Host> & { tlsCa?: string; tlsCert?: string; tlsKey?: string }) =>
     req<{ id: number }>("POST", "/api/hosts", h),
   deleteHost: (id: number) => req<{ ok: boolean }>("DELETE", `/api/hosts/${id}`),
-  testHost: (id: number) => req<{ ok: boolean; error?: string; serverVersion?: string; containersRunning?: number }>("GET", `/api/hosts/${id}/test`),
+  testHost: (id: number) =>
+    req<{
+      ok: boolean;
+      error?: string;
+      serverVersion?: string;
+      containersRunning?: number;
+      untrusted?: boolean; // ssh host key not yet trusted
+      mismatch?: boolean; // ssh host key changed (possible MITM)
+      fingerprint?: string;
+      keyType?: string;
+    }>("GET", `/api/hosts/${id}/test`),
+  trustHost: (id: number, fingerprint?: string) =>
+    req<{ ok: boolean; error?: string; mismatch?: boolean; fingerprint?: string }>(
+      "POST",
+      `/api/hosts/${id}/trust`,
+      { fingerprint }
+    ),
 
   containers: () => req<ContainerSummary[]>("GET", `/api/containers${hostParam()}`),
   container: (id: string) => req<ContainerDetail>("GET", `/api/containers/${id}${hostParam()}`),

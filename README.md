@@ -17,7 +17,9 @@ from a single binary you download, build, and run.
 - **Interactive console** — a real shell (xterm.js) into any running container,
   streamed over a WebSocket; works the same on local and remote hosts.
 - **Multi-host** — manage local, **TCP(+TLS)** and **SSH** Docker hosts and
-  switch between them; every view and stream rebinds to the selected host.
+  switch between them; every view and stream rebinds to the selected host. SSH
+  daemon **host keys are verified** (`~/.ssh/known_hosts` or a key you trust on
+  first connect); a changed key is refused as a possible MITM.
 - **Live logs** — follow `stdout`/`stderr`, filter by substring, toggle streams.
 - **Aggregated logs** — a global Logs view streaming many containers at once,
   color-coded by source with automatic log-level detection and level filtering.
@@ -33,9 +35,8 @@ from a single binary you download, build, and run.
   feed**, and a **Prometheus `/metrics`** exporter for Grafana dashboards.
 - **Audit log** — every privileged action is recorded (who, what, when, from where).
 - **Security first** — password login with **Argon2id**, **mandatory TOTP 2FA**,
-  signed session cookies, login rate limiting, strict security headers.
-- **Multi-host ready** — connect to the local daemon today; remote TCP+TLS hosts
-  are modeled in the data layer for upcoming releases.
+  signed session cookies, login rate limiting, strict security headers, and
+  **verified SSH host keys** for remote hosts.
 
 ## 🏗️ Architecture
 
@@ -142,6 +143,9 @@ make vet
 - If you expose it on a server, put it behind TLS (reverse proxy) — the session
   cookie is `HttpOnly` + `SameSite=Strict`, and 2FA is mandatory.
 - The JWT signing secret is generated on first run and persisted in the data dir.
+- **SSH remote hosts** verify the daemon's host key against `~/.ssh/known_hosts`
+  or a key you explicitly trust on first connect (pinned in the DB). A key that
+  later changes is refused as a possible man-in-the-middle until you re-trust it.
 
 ## 🗺️ Roadmap
 
@@ -151,7 +155,7 @@ make vet
 - [x] Interactive container console (exec)
 - [x] Remote host management UI (TCP+TLS, SSH) + host switcher
 - [x] Historical metrics storage & charts (Redis or in-memory)
-- [ ] **SSH known_hosts verification** (currently trusts on first connect) — required before exposing remote hosts
+- [x] SSH host-key verification (known_hosts + trust-on-first-use pinning, MITM-safe)
 - [ ] Images management (list / pull / remove / prune)
 - [ ] Volumes management + inspector, and which containers use them
 - [ ] Data transfer to/from containers (`docker cp` up/download)

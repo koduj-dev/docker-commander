@@ -1,16 +1,25 @@
 import { useCallback, useEffect, useState } from "react";
-import { Plus, Trash2, Server, CheckCircle2, XCircle, Loader2 } from "lucide-react";
+import { Plus, Trash2, Server, CheckCircle2, XCircle, Loader2, ShieldAlert, ShieldCheck, KeyRound } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import type { Host } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
 
-type TestState = { ok: boolean; text: string } | "loading" | undefined;
+type TestResult = {
+  ok: boolean;
+  text: string;
+  untrusted?: boolean;
+  mismatch?: boolean;
+  fingerprint?: string;
+  keyType?: string;
+};
+type TestState = TestResult | "loading" | undefined;
 
 export function Hosts() {
   const [hosts, setHosts] = useState<Host[] | null>(null);
   const [tests, setTests] = useState<Record<number, TestState>>({});
+  const [trusting, setTrusting] = useState<Record<number, boolean>>({});
   const [showForm, setShowForm] = useState(false);
 
   const load = useCallback(() => {
@@ -22,9 +31,35 @@ export function Hosts() {
     setTests((t) => ({ ...t, [id]: "loading" }));
     try {
       const r = await api.testHost(id);
-      setTests((t) => ({ ...t, [id]: { ok: r.ok, text: r.ok ? `OK · Docker ${r.serverVersion} · ${r.containersRunning} running` : (r.error ?? "unreachable") } }));
+      setTests((t) => ({
+        ...t,
+        [id]: {
+          ok: r.ok,
+          text: r.ok ? `OK · Docker ${r.serverVersion} · ${r.containersRunning} running` : (r.error ?? "unreachable"),
+          untrusted: r.untrusted,
+          mismatch: r.mismatch,
+          fingerprint: r.fingerprint,
+          keyType: r.keyType,
+        },
+      }));
     } catch {
       setTests((t) => ({ ...t, [id]: { ok: false, text: "request failed" } }));
+    }
+  };
+
+  const trust = async (id: number, fingerprint?: string) => {
+    setTrusting((t) => ({ ...t, [id]: true }));
+    try {
+      const r = await api.trustHost(id, fingerprint);
+      if (r.ok) {
+        await test(id); // re-test now that the key is pinned
+      } else {
+        setTests((t) => ({ ...t, [id]: { ok: false, text: r.error ?? "could not trust host", mismatch: r.mismatch, fingerprint: r.fingerprint } }));
+      }
+    } catch {
+      setTests((t) => ({ ...t, [id]: { ok: false, text: "trust request failed" } }));
+    } finally {
+      setTrusting((t) => ({ ...t, [id]: false }));
     }
   };
 
@@ -63,12 +98,57 @@ export function Hosts() {
                       )}
                     </div>
                   </div>
-                  {t && (
-                    <div className={clsx("mt-3 text-xs flex items-center gap-1.5", t === "loading" ? "text-muted" : t.ok ? "text-ok" : "text-danger")}>
-                      {t === "loading" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : t.ok ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
-                      {t === "loading" ? "Testing…" : t.text}
+                  {t === "loading" ? (
+                    <div className="mt-3 text-xs flex items-center gap-1.5 text-muted">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Testing…
                     </div>
-                  )}
+                  ) : t ? (
+                    <div className="mt-3 space-y-2">
+                      {/* Untrusted SSH host key: show fingerprint + an explicit trust action (TOFU). */}
+                      {t.untrusted ? (
+                        <div className="rounded-md border border-warn/40 bg-warn/10 p-2.5 text-xs space-y-2">
+                          <div className="flex items-center gap-1.5 text-warn font-medium">
+                            <ShieldAlert className="h-3.5 w-3.5" /> Host key not trusted yet
+                          </div>
+                          <div className="text-muted">Verify this fingerprint out-of-band before trusting:</div>
+                          <code className="block break-all bg-panel2 rounded px-2 py-1 text-text">
+                            {t.keyType} {t.fingerprint}
+                          </code>
+                          <button
+                            className="btn-primary px-2.5 py-1 text-xs"
+                            disabled={trusting[h.id]}
+                            onClick={() => trust(h.id, t.fingerprint)}
+                          >
+                            {trusting[h.id] ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+                            {trusting[h.id] ? "Trusting…" : "Trust this host"}
+                          </button>
+                        </div>
+                      ) : t.mismatch ? (
+                        <div className="rounded-md border border-danger/50 bg-danger/10 p-2.5 text-xs space-y-2">
+                          <div className="flex items-center gap-1.5 text-danger font-medium">
+                            <ShieldAlert className="h-3.5 w-3.5" /> Host key CHANGED — possible MITM
+                          </div>
+                          <div className="text-muted">{t.text}</div>
+                          {t.fingerprint && (
+                            <code className="block break-all bg-panel2 rounded px-2 py-1 text-text">{t.fingerprint}</code>
+                          )}
+                          <button
+                            className="btn-ghost px-2.5 py-1 text-xs text-danger border border-danger/40"
+                            disabled={trusting[h.id]}
+                            onClick={() => trust(h.id, t.fingerprint)}
+                            title="Only do this if you changed the host deliberately"
+                          >
+                            <KeyRound className="h-3.5 w-3.5" /> Re-trust new key
+                          </button>
+                        </div>
+                      ) : (
+                        <div className={clsx("text-xs flex items-center gap-1.5", t.ok ? "text-ok" : "text-danger")}>
+                          {t.ok ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
+                          {t.text}
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
                 </div>
               );
             })}
@@ -76,8 +156,9 @@ export function Hosts() {
         )}
         <p className="text-xs text-muted">
           <strong>SSH hosts</strong> use the address <code>user@host[:port]</code> and authenticate with the
-          server's SSH agent or <code>~/.ssh</code> keys (no keys are stored here). <strong>TCP</strong> hosts use
-          <code> tcp://host:2376</code> with optional TLS material.
+          server's SSH agent or <code>~/.ssh</code> keys (no keys are stored here). The daemon's <strong>host key</strong>
+          is verified against <code>~/.ssh/known_hosts</code> or a key you explicitly trust on first connect; a changed
+          key is refused as a possible MITM. <strong>TCP</strong> hosts use <code>tcp://host:2376</code> with optional TLS material.
         </p>
       </div>
     </>

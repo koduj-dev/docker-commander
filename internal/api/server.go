@@ -76,6 +76,7 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/hosts", s.handleCreateHost)
 			r.Delete("/hosts/{id}", s.handleDeleteHost)
 			r.Get("/hosts/{id}/test", s.handleTestHost)
+			r.Post("/hosts/{id}/trust", s.handleTrustHost)
 
 			r.Get("/containers", s.handleListContainers)
 			r.Get("/containers/{id}", s.handleInspectContainer)

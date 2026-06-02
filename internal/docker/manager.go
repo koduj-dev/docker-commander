@@ -76,6 +76,21 @@ func (m *Manager) defaultHostID(ctx context.Context) (int64, error) {
 	return 0, store.ErrNotFound
 }
 
+// ProbeHostKey connects to an SSH host and returns its presented public key
+// (authorized_keys line) and SHA256 fingerprint, trusting whatever is offered.
+// It is used only by the explicit trust flow, so the operator can pin a key
+// after reviewing its fingerprint.
+func (m *Manager) ProbeHostKey(ctx context.Context, hostID int64) (keyLine, fingerprint string, err error) {
+	h, err := m.store.HostByID(ctx, hostID)
+	if err != nil {
+		return "", "", err
+	}
+	if h.Kind != "ssh" {
+		return "", "", errors.New("host key trust applies to ssh hosts only")
+	}
+	return probeSSHHostKey(h)
+}
+
 // Disconnect drops the cached client for a host (e.g. after it is deleted or
 // reconfigured), so the next use reconnects with fresh settings.
 func (m *Manager) Disconnect(hostID int64) {

@@ -21,13 +21,14 @@ type Host struct {
 	TLSCA     string
 	TLSCert   string
 	TLSKey    string
+	HostKey   string // pinned SSH host public key (authorized_keys line); ssh hosts only
 	CreatedAt time.Time
 }
 
 // ListHosts returns all configured hosts ordered by name.
 func (s *Store) ListHosts(ctx context.Context) ([]Host, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, kind, address, tls_ca, tls_cert, tls_key, created_at
+		SELECT id, name, kind, address, tls_ca, tls_cert, tls_key, host_key, created_at
 		FROM hosts ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -38,7 +39,7 @@ func (s *Store) ListHosts(ctx context.Context) ([]Host, error) {
 	for rows.Next() {
 		var h Host
 		var created string
-		if err := rows.Scan(&h.ID, &h.Name, &h.Kind, &h.Address, &h.TLSCA, &h.TLSCert, &h.TLSKey, &created); err != nil {
+		if err := rows.Scan(&h.ID, &h.Name, &h.Kind, &h.Address, &h.TLSCA, &h.TLSCert, &h.TLSKey, &h.HostKey, &created); err != nil {
 			return nil, err
 		}
 		h.CreatedAt, _ = time.Parse(time.RFC3339, created)
@@ -52,9 +53,9 @@ func (s *Store) HostByID(ctx context.Context, id int64) (*Host, error) {
 	var h Host
 	var created string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, name, kind, address, tls_ca, tls_cert, tls_key, created_at
+		SELECT id, name, kind, address, tls_ca, tls_cert, tls_key, host_key, created_at
 		FROM hosts WHERE id = ?`, id).
-		Scan(&h.ID, &h.Name, &h.Kind, &h.Address, &h.TLSCA, &h.TLSCert, &h.TLSKey, &created)
+		Scan(&h.ID, &h.Name, &h.Kind, &h.Address, &h.TLSCA, &h.TLSCert, &h.TLSKey, &h.HostKey, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -81,6 +82,13 @@ func (s *Store) CreateHost(ctx context.Context, h *Host) (int64, error) {
 // DeleteHost removes a host by ID.
 func (s *Store) DeleteHost(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM hosts WHERE id = ?`, id)
+	return err
+}
+
+// SetHostKey pins (or clears, when key is "") the trusted SSH host public key
+// for a host. Subsequent connections verify the daemon's key against it.
+func (s *Store) SetHostKey(ctx context.Context, id int64, key string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE hosts SET host_key = ? WHERE id = ?`, key, id)
 	return err
 }
 

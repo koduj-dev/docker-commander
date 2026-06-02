@@ -10,6 +10,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -72,6 +73,7 @@ CREATE TABLE IF NOT EXISTS hosts (
 	tls_ca     TEXT NOT NULL DEFAULT '',
 	tls_cert   TEXT NOT NULL DEFAULT '',
 	tls_key    TEXT NOT NULL DEFAULT '',
+	host_key   TEXT NOT NULL DEFAULT '', -- pinned SSH host public key (authorized_keys line)
 	created_at TEXT NOT NULL
 );
 
@@ -130,6 +132,24 @@ CREATE TABLE IF NOT EXISTS alert_events (
 );
 CREATE INDEX IF NOT EXISTS idx_alert_events_created ON alert_events(id DESC);
 `
-	_, err := s.db.ExecContext(ctx, schema)
-	return err
+	if _, err := s.db.ExecContext(ctx, schema); err != nil {
+		return err
+	}
+	// Additive column migrations for databases created before the column
+	// existed. SQLite has no "ADD COLUMN IF NOT EXISTS", so we ignore the
+	// duplicate-column error that older-or-newer DBs harmlessly raise.
+	for _, alter := range []string{
+		`ALTER TABLE hosts ADD COLUMN host_key TEXT NOT NULL DEFAULT ''`,
+	} {
+		if _, err := s.db.ExecContext(ctx, alter); err != nil && !isDuplicateColumn(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+// isDuplicateColumn reports whether err is SQLite's "duplicate column name"
+// error, which an idempotent ADD COLUMN migration expects on existing DBs.
+func isDuplicateColumn(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "duplicate column name")
 }

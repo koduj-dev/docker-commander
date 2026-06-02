@@ -2,12 +2,14 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/koduj-dev/docker-commander/internal/docker"
 	"github.com/koduj-dev/docker-commander/internal/store"
 )
 
@@ -74,8 +76,68 @@ func (s *Server) handleTestHost(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	info, err := s.docker.SystemInfo(ctx, id)
 	if err != nil {
+		// An untrusted/changed SSH host key is reported structurally so the UI
+		// can show the fingerprint and offer an explicit "trust" affordance.
+		var unknown *docker.HostKeyUnknownError
+		if errors.As(err, &unknown) {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ok": false, "untrusted": true,
+				"fingerprint": unknown.Fingerprint, "keyType": unknown.KeyType,
+				"error": unknown.Error(),
+			})
+			return
+		}
+		var mismatch *docker.HostKeyMismatchError
+		if errors.As(err, &mismatch) {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ok": false, "mismatch": true,
+				"fingerprint": mismatch.Fingerprint,
+				"error":       mismatch.Error(),
+			})
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "serverVersion": info.ServerVersion, "containersRunning": info.ContainersRunning})
+}
+
+// trustBody optionally carries the fingerprint the operator reviewed, so the
+// server can confirm the host still presents that exact key before pinning it.
+type trustBody struct {
+	Fingerprint string `json:"fingerprint"`
+}
+
+// handleTrustHost pins the SSH host's current public key after explicit operator
+// approval (trust-on-first-use). The key is captured server-side; if the caller
+// passed the fingerprint they reviewed, it must still match — otherwise the host
+// swapped keys between review and trust and we refuse.
+func (s *Server) handleTrustHost(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+
+	var b trustBody
+	_ = decodeJSON(r, &b) // body is optional
+
+	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
+	defer cancel()
+
+	keyLine, fingerprint, err := s.docker.ProbeHostKey(ctx, id)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	if b.Fingerprint != "" && b.Fingerprint != fingerprint {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": false, "mismatch": true, "fingerprint": fingerprint,
+			"error": "host key changed since you reviewed it — not trusting",
+		})
+		return
+	}
+	if err := s.store.SetHostKey(ctx, id, keyLine); err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not store host key")
+		return
+	}
+	s.docker.Disconnect(id) // force reconnect with the freshly pinned key
+	s.audit(r, "host.trust", chi.URLParam(r, "id"), fingerprint)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "fingerprint": fingerprint})
 }
