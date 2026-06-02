@@ -7,6 +7,7 @@ import type {
   AuditEntry,
   ContainerDetail,
   ContainerSummary,
+  CreateSpec,
   DiffEntry,
   DiskUsage,
   HistoryEntry,
@@ -115,6 +116,15 @@ export const api = {
     req<{ ok: boolean }>("POST", `/api/containers/${id}/${action}${hostParam()}`),
   containerDiff: (id: string) => req<DiffEntry[]>("GET", `/api/containers/${id}/diff${hostParam()}`),
   containerTop: (id: string) => req<TopResult>("GET", `/api/containers/${id}/top${hostParam()}`),
+
+  createContainer: (spec: CreateSpec) =>
+    req<{ ok: boolean; id?: string; error?: string }>("POST", `/api/containers${hostParam()}`, spec),
+  renameContainer: (id: string, name: string) =>
+    req<{ ok: boolean; error?: string }>("POST", `/api/containers/${id}/rename${hostParam()}`, { name }),
+  updateContainer: (id: string, body: { memory: number; nanoCpus: number; restartPolicy: string }) =>
+    req<{ ok: boolean; error?: string }>("POST", `/api/containers/${id}/update${hostParam()}`, body),
+  commitContainer: (id: string, body: { ref: string; comment: string }) =>
+    req<{ ok: boolean; imageId?: string; error?: string }>("POST", `/api/containers/${id}/commit${hostParam()}`, body),
 
   // Generic raw inspect for any object kind. id/ref travels as a query param.
   inspect: (kind: "container" | "image" | "network" | "volume", id: string) => {

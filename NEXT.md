@@ -97,14 +97,22 @@ against the local `red2_*` stack (headless Chrome + Go/WS probes).
 
 ## 🧭 "Control everything" plan (decided 2026-06-02 with a colleague)
 
-Goal: expose the rest of the Docker Engine API. Done: **A** (inspect/observe),
-**E** (registry/build). Remaining: B, C, D.
+Goal: expose the rest of the Docker Engine API. **All of A–E DONE (2026-06-02).**
 
-- **B. Container lifecycle.** create/run (form), rename, update (CPU/MEM limits),
-  commit (container→image), unpause toggle, restart-policy edit.
-- **C. Image transfer & tags.** save (export tar download), load (upload
-  tar), import, container export (FS as tar). (tag is done — part of E.)
-- **D. Volumes + networks full CRUD** (see item 1 below for volumes).
+- **A. Inspect & observe** — done (see above).
+- **B. Container lifecycle** — done: create/run (`docker/lifecycle.go` +
+  `CreateContainerModal`), rename, update (mem/CPU limits — set MemorySwap=mem to
+  satisfy the daemon), commit, restart-policy. Routes: static
+  rename/update/commit registered before the `{action}` catch-all.
+- **C. Image transfer** — done: save/load/import + container export
+  (`docker/transfer.go`, `LoadModal`, download via `<a>`/triggerDownload).
+- **D. Volumes** — done: list/inspect/create/remove/prune + in-use detection
+  (`docker/volumes.go`, Volumes page). Networks delete was done in the polish round.
+- **E. Registry & build** — done (see above).
+
+What's left from the original roadmap: data transfer **`docker cp`** in/out of a
+running container (distinct from save/load), email/SMTP alert channel, structured
+log parsing rules.
 
 ## ▶️ Next up (priority order)
 

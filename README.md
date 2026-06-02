@@ -13,7 +13,9 @@ from a single binary you download, build, and run.
 ## ✨ Features
 
 - **Real-time monitoring** — live CPU / memory graphs streamed over WebSockets.
-- **Container control** — start, stop, restart, pause, kill.
+- **Container control** — **create/run** (image, ports, env, volumes, limits,
+  restart policy), start, stop, restart, pause, kill, **rename**, **update**
+  limits & restart policy at runtime, and **commit** to a new image.
 - **Image management** — list local images with size / tags / age, flag which
   are in use or dangling, **pull** with live per-layer progress (over a
   WebSocket), remove (with a force fallback), and prune dangling images;
@@ -184,7 +186,7 @@ make vet
 - [x] Inspect & observe: raw inspect (any object), container diff/top, image history, live events feed, disk usage (df)
 - [x] Registry & build: push / private pull (encrypted stored creds), tag, and image build with context upload
 - [x] Image transfer: save / load (tar), import, container export
-- [ ] Container lifecycle: create/run, rename, update limits, commit, restart-policy
+- [x] Container lifecycle: create/run, rename, update limits, commit, restart-policy
 - [x] Volumes management + inspector, and which containers use them
 - [ ] Data transfer to/from containers (`docker cp` up/download)
 - [ ] Email/SMTP notification channel

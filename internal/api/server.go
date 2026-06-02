@@ -79,10 +79,15 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/hosts/{id}/trust", s.handleTrustHost)
 
 			r.Get("/containers", s.handleListContainers)
+			r.Post("/containers", s.handleCreateContainer)
 			r.Get("/containers/{id}", s.handleInspectContainer)
 			r.Get("/containers/{id}/diff", s.handleContainerDiff)
 			r.Get("/containers/{id}/top", s.handleContainerTop)
 			r.Get("/containers/{id}/export", s.handleExportContainer)
+			// Static sub-routes registered before the {action} catch-all.
+			r.Post("/containers/{id}/rename", s.handleRenameContainer)
+			r.Post("/containers/{id}/update", s.handleUpdateContainer)
+			r.Post("/containers/{id}/commit", s.handleCommitContainer)
 			r.Post("/containers/{id}/{action}", s.handleContainerAction)
 
 			r.Get("/images", s.handleListImages)

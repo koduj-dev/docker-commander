@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Play, RotateCw, Square, Pause } from "lucide-react";
+import { Play, Plus, RotateCw, Square, Pause } from "lucide-react";
 import { api } from "../lib/api";
 import type { ContainerSummary } from "../lib/types";
 import { shortId } from "../lib/format";
 import { StateBadge, EmptyState, Spinner } from "../components/ui";
 import { PageHeader } from "../layout/Shell";
 import { useListControls, SearchBar, Pager } from "../components/ListControls";
+import { CreateContainerModal } from "../components/CreateContainerModal";
 
 function matchContainer(c: ContainerSummary, q: string): boolean {
   return (
@@ -153,12 +154,15 @@ function IconBtn({ children, onClick, title, danger }: { children: React.ReactNo
 }
 
 export function Containers() {
+  const [showCreate, setShowCreate] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   return (
     <>
-      <PageHeader title="Containers" />
+      <PageHeader title="Containers" actions={<button className="btn-primary" onClick={() => setShowCreate(true)}><Plus className="h-4 w-4" /> Create container</button>} />
       <div className="p-6">
-        <ContainerTable withControls />
+        <ContainerTable withControls key={reloadKey} />
       </div>
+      {showCreate && <CreateContainerModal onClose={() => setShowCreate(false)} onDone={() => { setShowCreate(false); setReloadKey((k) => k + 1); }} />}
     </>
   );
 }

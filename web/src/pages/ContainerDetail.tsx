@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, Download, FileSearch, Play, RotateCw, Square } from "lucide-react";
+import { ArrowLeft, Camera, Download, FileSearch, Play, RotateCw, Settings, Square, X, Loader2 } from "lucide-react";
 import { api } from "../lib/api";
 import type { ContainerDetail as Detail, DiffEntry, LogLine, StatsSample, TopResult } from "../lib/types";
 import { live, ensureLive } from "../lib/live";
@@ -23,6 +23,8 @@ export function ContainerDetail() {
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [tab, setTab] = useState<"overview" | "logs" | "console" | "env" | "processes" | "files">("overview");
   const [inspecting, setInspecting] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [commitOpen, setCommitOpen] = useState(false);
   const logBuf = useRef<LogLine[]>([]);
 
   const load = () => api.container(id).then(setDetail).catch(() => {});
@@ -87,6 +89,8 @@ export function ContainerDetail() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <button className="btn-ghost" onClick={() => setCommitOpen(true)} title="Commit to a new image"><Camera className="h-4 w-4" /> Commit</button>
+          <button className="btn-ghost" onClick={() => setSettingsOpen(true)} title="Rename / limits / restart policy"><Settings className="h-4 w-4" /></button>
           <button className="btn-ghost" onClick={() => triggerDownload(api.exportContainerUrl(id))} title="Export filesystem (download tar)"><Download className="h-4 w-4" /> Export</button>
           <button className="btn-ghost" onClick={() => setInspecting(true)}><FileSearch className="h-4 w-4" /> Inspect</button>
           {running ? (
@@ -100,6 +104,8 @@ export function ContainerDetail() {
         </div>
       </div>
       {inspecting && <InspectModal kind="container" id={id} title={detail.name} onClose={() => setInspecting(false)} />}
+      {settingsOpen && <SettingsModal detail={detail} onClose={() => setSettingsOpen(false)} onDone={() => { setSettingsOpen(false); load(); }} />}
+      {commitOpen && <CommitModal id={id} name={detail.name} onClose={() => setCommitOpen(false)} />}
 
       <div className="p-6 space-y-6">
         <StatsCharts data={samples} />
@@ -266,6 +272,129 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
     <div className="flex justify-between gap-4 text-sm">
       <span className="text-muted shrink-0">{k}</span>
       <span className="text-right break-all">{v}</span>
+    </div>
+  );
+}
+
+const RESTART = ["", "no", "on-failure", "always", "unless-stopped"];
+
+// SettingsModal renames the container and updates its resource limits and
+// restart policy at runtime.
+function SettingsModal({ detail, onClose, onDone }: { detail: Detail; onClose: () => void; onDone: () => void }) {
+  const [name, setName] = useState(detail.name);
+  const [memoryMb, setMemoryMb] = useState("");
+  const [cpus, setCpus] = useState("");
+  const [restartPolicy, setRestartPolicy] = useState(detail.restartPolicy ?? "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true); setErr("");
+    try {
+      if (name.trim() && name.trim() !== detail.name) {
+        const r = await api.renameContainer(detail.id, name.trim());
+        if (!r.ok) { setErr(r.error ?? "rename failed"); setBusy(false); return; }
+      }
+      const r = await api.updateContainer(detail.id, {
+        memory: memoryMb ? Math.round(Number(memoryMb) * 1024 * 1024) : 0,
+        nanoCpus: cpus ? Math.round(Number(cpus) * 1e9) : 0,
+        restartPolicy,
+      });
+      if (!r.ok) { setErr(r.error ?? "update failed"); setBusy(false); return; }
+      onDone();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "request failed"); setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
+      <form className="card w-full max-w-lg" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+        <div className="flex items-center gap-3 p-4 border-b border-border">
+          <Settings className="h-4 w-4 text-accent" /><div className="font-medium">Container settings</div>
+          <button type="button" className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-4 space-y-3">
+          <div>
+            <label className="label">Name</label>
+            <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label className="label">Memory (MB)</label>
+              <input className="input" type="number" min="0" value={memoryMb} onChange={(e) => setMemoryMb(e.target.value)} placeholder="unchanged" />
+            </div>
+            <div>
+              <label className="label">CPUs</label>
+              <input className="input" type="number" min="0" step="0.1" value={cpus} onChange={(e) => setCpus(e.target.value)} placeholder="unchanged" />
+            </div>
+            <div>
+              <label className="label">Restart policy</label>
+              <select className="input" value={restartPolicy} onChange={(e) => setRestartPolicy(e.target.value)}>
+                {RESTART.map((p) => <option key={p} value={p}>{p || "(unchanged)"}</option>)}
+              </select>
+            </div>
+          </div>
+          <p className="text-[11px] text-muted">Limits left blank are sent as 0 (unlimited). Restart policy "(unchanged)" leaves it as-is.</p>
+          {err && <p className="text-sm text-danger break-all">{err}</p>}
+        </div>
+        <div className="flex justify-end gap-2 p-4 border-t border-border">
+          <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn-primary" disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Settings className="h-4 w-4" />} Save</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// CommitModal snapshots the container into a new image.
+function CommitModal({ id, name, onClose }: { id: string; name: string; onClose: () => void }) {
+  const [ref, setRef] = useState(`${name}:committed`);
+  const [comment, setComment] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState("");
+  const [err, setErr] = useState("");
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!ref.trim() || busy) return;
+    setBusy(true); setErr(""); setResult("");
+    try {
+      const r = await api.commitContainer(id, { ref: ref.trim(), comment: comment.trim() });
+      if (r.ok) setResult(`Created image ${(r.imageId ?? "").slice(7, 19)} as ${ref.trim()}`);
+      else setErr(r.error ?? "commit failed");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "request failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
+      <form className="card w-full max-w-lg" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+        <div className="flex items-center gap-3 p-4 border-b border-border">
+          <Camera className="h-4 w-4 text-accent" /><div className="font-medium">Commit container to image</div>
+          <button type="button" className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-4 space-y-3">
+          <div>
+            <label className="label">New image reference</label>
+            <input className="input font-mono" value={ref} onChange={(e) => setRef(e.target.value)} placeholder="repo:tag" required />
+          </div>
+          <div>
+            <label className="label">Comment (optional)</label>
+            <input className="input" value={comment} onChange={(e) => setComment(e.target.value)} />
+          </div>
+          {result && <p className="text-sm text-ok break-all">{result}</p>}
+          {err && <p className="text-sm text-danger break-all">{err}</p>}
+        </div>
+        <div className="flex justify-end gap-2 p-4 border-t border-border">
+          <button type="button" className="btn-ghost" onClick={onClose}>{result ? "Close" : "Cancel"}</button>
+          <button className="btn-primary" disabled={!ref.trim() || busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />} Commit</button>
+        </div>
+      </form>
     </div>
   );
 }

@@ -14,6 +14,25 @@ export interface Host {
   address: string;
 }
 
+export interface PortSpec {
+  hostPort: string;
+  containerPort: string;
+  proto: string;
+}
+
+export interface CreateSpec {
+  image: string;
+  name: string;
+  cmd: string[];
+  env: string[];
+  binds: string[];
+  ports: PortSpec[];
+  restartPolicy: string;
+  memory: number;
+  nanoCpus: number;
+  start: boolean;
+}
+
 export interface PortMapping {
   ip?: string;
   privatePort: number;
