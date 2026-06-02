@@ -84,6 +84,11 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/containers/{id}/diff", s.handleContainerDiff)
 			r.Get("/containers/{id}/top", s.handleContainerTop)
 			r.Get("/containers/{id}/export", s.handleExportContainer)
+			// In-container file browser (docker cp + ls/rm via exec).
+			r.Get("/containers/{id}/files", s.handleListFiles)
+			r.Get("/containers/{id}/files/download", s.handleDownloadFile)
+			r.Post("/containers/{id}/files/upload", s.handleUploadFile)
+			r.Delete("/containers/{id}/files", s.handleDeleteFile)
 			// Static sub-routes registered before the {action} catch-all.
 			r.Post("/containers/{id}/rename", s.handleRenameContainer)
 			r.Post("/containers/{id}/update", s.handleUpdateContainer)

@@ -33,6 +33,8 @@ from a single binary you download, build, and run.
   dashboard.
 - **Interactive console** — a real shell (xterm.js) into any running container,
   streamed over a WebSocket; works the same on local and remote hosts.
+- **File browser** — browse a container's filesystem, **download** files or a
+  directory (as a tar), **upload** files into it, and delete paths (`docker cp`).
 - **Multi-host** — manage local, **TCP(+TLS)** and **SSH** Docker hosts and
   switch between them; every view and stream rebinds to the selected host. SSH
   daemon **host keys are verified** (`~/.ssh/known_hosts` or a key you trust on
@@ -188,7 +190,7 @@ make vet
 - [x] Image transfer: save / load (tar), import, container export
 - [x] Container lifecycle: create/run, rename, update limits, commit, restart-policy
 - [x] Volumes management + inspector, and which containers use them
-- [ ] Data transfer to/from containers (`docker cp` up/download)
+- [x] File browser inside containers — list / download / upload / delete (`docker cp`)
 - [ ] Email/SMTP notification channel
 - [ ] Structured log views & saved parsing rules
 

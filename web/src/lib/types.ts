@@ -112,6 +112,15 @@ export interface PullProgress {
   done?: boolean;
 }
 
+export interface FileEntry {
+  name: string;
+  isDir: boolean;
+  isLink: boolean;
+  size: number;
+  mode: string;
+  target?: string;
+}
+
 export interface DiffEntry {
   kind: "modified" | "added" | "deleted" | "unknown";
   path: string;

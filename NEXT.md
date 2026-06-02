@@ -110,8 +110,15 @@ Goal: expose the rest of the Docker Engine API. **All of A–E DONE (2026-06-02)
   (`docker/volumes.go`, Volumes page). Networks delete was done in the polish round.
 - **E. Registry & build** — done (see above).
 
-What's left from the original roadmap: data transfer **`docker cp`** in/out of a
-running container (distinct from save/load), email/SMTP alert channel, structured
+- **File browser (`docker cp`) — DONE 2026-06-02.** `internal/docker/files.go`
+  (`ls`/`rm` via one-shot exec capture using stdcopy; CopyFrom/CopyTo for
+  download/upload) + `files_handlers.go` + `components/FileBrowser.tsx`. The
+  container detail's old "Files" tab (which was `docker diff`) was renamed
+  **Changes**; the new **Files** tab is a real browser: navigate dirs, download
+  a file or a directory (tar), upload into the current dir, delete paths.
+  Verified backend + UI against a live alpine container.
+
+What's left from the original roadmap: email/SMTP alert channel, structured
 log parsing rules.
 
 ## ▶️ Next up (priority order)

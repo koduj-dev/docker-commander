@@ -9,6 +9,7 @@ import type {
   ContainerSummary,
   CreateSpec,
   DiffEntry,
+  FileEntry,
   DiskUsage,
   HistoryEntry,
   Host,
@@ -116,6 +117,38 @@ export const api = {
     req<{ ok: boolean }>("POST", `/api/containers/${id}/${action}${hostParam()}`),
   containerDiff: (id: string) => req<DiffEntry[]>("GET", `/api/containers/${id}/diff${hostParam()}`),
   containerTop: (id: string) => req<TopResult>("GET", `/api/containers/${id}/top${hostParam()}`),
+
+  // In-container file browser (docker cp).
+  listFiles: (id: string, p: string) => {
+    const params = new URLSearchParams({ path: p });
+    const h = getHostId();
+    if (h != null) params.set("host", String(h));
+    return req<{ ok: boolean; path: string; entries: FileEntry[] | null; error?: string }>("GET", `/api/containers/${id}/files?${params.toString()}`);
+  },
+  downloadFileUrl: (id: string, p: string) => {
+    const params = new URLSearchParams({ path: p });
+    const h = getHostId();
+    if (h != null) params.set("host", String(h));
+    return `/api/containers/${id}/files/download?${params.toString()}`;
+  },
+  uploadFile: async (id: string, destDir: string, file: File) => {
+    const params = new URLSearchParams({ path: destDir, name: file.name });
+    const h = getHostId();
+    if (h != null) params.set("host", String(h));
+    const res = await fetch(`/api/containers/${id}/files/upload?${params.toString()}`, {
+      method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/octet-stream" }, body: file,
+    });
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : null;
+    if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText);
+    return data as { ok: boolean; error?: string; bytes?: number };
+  },
+  deleteFile: (id: string, p: string) => {
+    const params = new URLSearchParams({ path: p });
+    const h = getHostId();
+    if (h != null) params.set("host", String(h));
+    return req<{ ok: boolean; error?: string }>("DELETE", `/api/containers/${id}/files?${params.toString()}`);
+  },
 
   createContainer: (spec: CreateSpec) =>
     req<{ ok: boolean; id?: string; error?: string }>("POST", `/api/containers${hostParam()}`, spec),

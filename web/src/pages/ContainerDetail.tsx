@@ -12,6 +12,7 @@ import { LogViewer } from "../components/LogViewer";
 import { Terminal } from "../components/Terminal";
 import { InspectModal } from "../components/InspectModal";
 import { triggerDownload } from "../components/LoadModal";
+import { FileBrowser } from "../components/FileBrowser";
 
 const MAX_SAMPLES = 60;
 const MAX_LOGS = 2000;
@@ -21,7 +22,7 @@ export function ContainerDetail() {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [samples, setSamples] = useState<StatsSample[]>([]);
   const [logs, setLogs] = useState<LogLine[]>([]);
-  const [tab, setTab] = useState<"overview" | "logs" | "console" | "env" | "processes" | "files">("overview");
+  const [tab, setTab] = useState<"overview" | "logs" | "console" | "env" | "processes" | "files" | "changes">("overview");
   const [inspecting, setInspecting] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [commitOpen, setCommitOpen] = useState(false);
@@ -112,7 +113,7 @@ export function ContainerDetail() {
         <MetricsHistory containerId={id} />
 
         <div className="flex gap-1 border-b border-border">
-          {(["overview", "logs", "console", "processes", "files", "env"] as const).map((t) => (
+          {(["overview", "logs", "console", "processes", "files", "changes", "env"] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -129,7 +130,8 @@ export function ContainerDetail() {
         {tab === "logs" && <LogViewer lines={logs} />}
         {tab === "console" && (running ? <Terminal containerId={id} /> : <div className="text-sm text-muted">Container is not running — start it to open a shell.</div>)}
         {tab === "processes" && (running ? <ProcessTable id={id} /> : <div className="text-sm text-muted">Container is not running — no processes.</div>)}
-        {tab === "files" && <DiffList id={id} />}
+        {tab === "files" && (running ? <FileBrowser containerId={id} /> : <div className="text-sm text-muted">Container is not running — start it to browse its filesystem.</div>)}
+        {tab === "changes" && <DiffList id={id} />}
         {tab === "env" && <EnvList env={detail.env ?? []} />}
       </div>
     </>
