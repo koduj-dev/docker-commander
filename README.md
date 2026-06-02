@@ -1,4 +1,6 @@
-# 🐳 Docker Commander
+<p align="center">
+  <img src="docs/images/logo-color.png" alt="Docker Commander" width="360">
+</p>
 
 A self-hosted, open-source **Docker monitoring & control panel** with an
 enterprise-grade UI — monitor containers in real time, control their full
