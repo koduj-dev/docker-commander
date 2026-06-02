@@ -5,6 +5,25 @@ export interface User {
   username: string;
   role: string;
   totpEnabled: boolean;
+  readOnly: boolean;
+  sections: string[];
+  mfaEnforced: boolean;
+}
+
+export interface ManagedUser {
+  id: number;
+  username: string;
+  role: string;
+  readOnly: boolean;
+  sections: string[] | null;
+  totpEnabled: boolean;
+  lastLoginAt: string;
+}
+
+export interface AppSettings {
+  allSections: string[];
+  disabledSections: string[] | null;
+  localhostNo2fa: boolean;
 }
 
 export interface Host {

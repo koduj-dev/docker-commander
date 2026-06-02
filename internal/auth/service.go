@@ -11,13 +11,13 @@ import (
 
 // Common authentication errors surfaced to the API layer.
 var (
-	ErrSetupDone        = errors.New("auth: setup already completed")
-	ErrInvalidCreds     = errors.New("auth: invalid credentials")
-	ErrRateLimited      = errors.New("auth: too many attempts, try again later")
-	ErrMFARequired      = errors.New("auth: 2fa code required")
-	ErrInvalidMFACode   = errors.New("auth: invalid 2fa code")
-	ErrWeakPassword     = errors.New("auth: password must be at least 10 characters")
-	ErrInvalidUsername  = errors.New("auth: username must be 3-32 characters")
+	ErrSetupDone       = errors.New("auth: setup already completed")
+	ErrInvalidCreds    = errors.New("auth: invalid credentials")
+	ErrRateLimited     = errors.New("auth: too many attempts, try again later")
+	ErrMFARequired     = errors.New("auth: 2fa code required")
+	ErrInvalidMFACode  = errors.New("auth: invalid 2fa code")
+	ErrWeakPassword    = errors.New("auth: password must be at least 10 characters")
+	ErrInvalidUsername = errors.New("auth: username must be 3-32 characters")
 )
 
 // Service orchestrates the authentication flows on top of the store and the
@@ -41,7 +41,7 @@ func NewService(s *store.Store, tm *TokenManager) *Service {
 // challenge the caller must satisfy via VerifyMFA.
 type LoginResult struct {
 	MFARequired bool
-	Token       string    // session token, or MFA-challenge token if MFARequired
+	Token       string // session token, or MFA-challenge token if MFARequired
 	ExpiresAt   time.Time
 	User        *store.User
 }
@@ -80,10 +80,51 @@ func (s *Service) Setup(ctx context.Context, username, password string) (*store.
 	return u, nil
 }
 
+// CreateAccount creates a non-setup user account (used by admins). role is
+// "admin" or "user"; for "user", sections and readOnly scope their access.
+func (s *Service) CreateAccount(ctx context.Context, username, password, role string, readOnly bool, sections []string) (*store.User, error) {
+	if err := validateUsername(username); err != nil {
+		return nil, err
+	}
+	if len(password) < 10 {
+		return nil, ErrWeakPassword
+	}
+	if existing, _ := s.store.UserByUsername(ctx, username); existing != nil {
+		return nil, errors.New("auth: username already taken")
+	}
+	hash, err := HashPassword(password)
+	if err != nil {
+		return nil, err
+	}
+	if role != "admin" {
+		role = "user"
+	}
+	u := &store.User{Username: username, PasswordHash: hash, Role: role, ReadOnly: readOnly, Sections: sections}
+	id, err := s.store.CreateUser(ctx, u)
+	if err != nil {
+		return nil, err
+	}
+	u.ID = id
+	return u, nil
+}
+
+// SetPassword replaces a user's password (admin reset or self-change).
+func (s *Service) SetPassword(ctx context.Context, userID int64, password string) error {
+	if len(password) < 10 {
+		return ErrWeakPassword
+	}
+	hash, err := HashPassword(password)
+	if err != nil {
+		return err
+	}
+	return s.store.UpdatePassword(ctx, userID, hash)
+}
+
 // Login verifies username+password. If the account has TOTP enabled it returns
 // an MFA challenge token; otherwise a full session token. rlKey is the rate
-// limit bucket (typically the client IP).
-func (s *Service) Login(ctx context.Context, rlKey, username, password string) (*LoginResult, error) {
+// limit bucket (typically the client IP). exemptMFA skips the 2FA step (used
+// for localhost when the admin has allowed it).
+func (s *Service) Login(ctx context.Context, rlKey, username, password string, exemptMFA bool) (*LoginResult, error) {
 	if !s.limiter.Allow(rlKey) {
 		return nil, ErrRateLimited
 	}
@@ -102,7 +143,9 @@ func (s *Service) Login(ctx context.Context, rlKey, username, password string) (
 	}
 	s.limiter.Reset(rlKey)
 
-	if u.TOTPEnabled {
+	// exemptMFA (localhost + admin setting) issues a session straight away,
+	// even for accounts with TOTP enabled.
+	if u.TOTPEnabled && !exemptMFA {
 		tok, exp, err := s.tokens.Issue(u.ID, u.Username, u.Role, KindMFAChallenge)
 		if err != nil {
 			return nil, err

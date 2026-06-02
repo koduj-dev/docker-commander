@@ -66,11 +66,21 @@ func (s *Server) Handler() http.Handler {
 		// Authenticated endpoints.
 		r.Group(func(r chi.Router) {
 			r.Use(s.mw.RequireSession)
+			r.Use(s.permissions) // role / section / read-only / feature-flag enforcement
 
 			r.Get("/auth/me", s.handleMe)
 			r.Post("/auth/logout", s.handleLogout)
 			r.Post("/auth/totp/setup", s.handleTOTPSetup)
 			r.Post("/auth/totp/enable", s.handleTOTPEnable)
+
+			// User management + app settings (admin only, enforced by section "__admin").
+			r.Get("/users", s.handleListUsers)
+			r.Post("/users", s.handleCreateUser)
+			r.Patch("/users/{id}", s.handleUpdateUser)
+			r.Post("/users/{id}/password", s.handleResetUserPassword)
+			r.Delete("/users/{id}", s.handleDeleteUser)
+			r.Get("/settings", s.handleGetSettings)
+			r.Put("/settings", s.handleSetSettings)
 
 			r.Get("/hosts", s.handleListHosts)
 			r.Post("/hosts", s.handleCreateHost)

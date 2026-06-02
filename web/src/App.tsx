@@ -17,6 +17,8 @@ import { Events } from "./pages/Events";
 import { Alerts } from "./pages/Alerts";
 import { Hosts } from "./pages/Hosts";
 import { Registries } from "./pages/Registries";
+import { Users } from "./pages/Users";
+import { Settings } from "./pages/Settings";
 import { Audit } from "./pages/Audit";
 
 export default function App() {
@@ -34,8 +36,9 @@ export default function App() {
   if (needsSetup) return <Setup />;
   if (!user) return <Login />;
 
-  // Authenticated but 2FA not yet enabled → mandatory enrollment gate.
-  if (!user.totpEnabled) return <Enroll2FA />;
+  // 2FA enrollment gate — enforced unless this connection is exempt (the admin
+  // allowed password-only login from localhost).
+  if (user.mfaEnforced && !user.totpEnabled) return <Enroll2FA />;
 
   return (
     <Shell>
@@ -52,6 +55,8 @@ export default function App() {
         <Route path="/alerts" element={<Alerts />} />
         <Route path="/hosts" element={<Hosts />} />
         <Route path="/registries" element={<Registries />} />
+        <Route path="/users" element={<Users />} />
+        <Route path="/settings" element={<Settings />} />
         <Route path="/audit" element={<Audit />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

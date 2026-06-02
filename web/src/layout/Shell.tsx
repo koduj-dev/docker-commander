@@ -1,6 +1,6 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import { useEffect, useState, type ReactNode } from "react";
-import { Activity, Bell, Boxes, Container, Database, KeyRound, Layers, LayoutDashboard, Network, ScrollText, Server, Share2, Terminal, LogOut } from "lucide-react";
+import { Activity, Bell, Boxes, Container, Database, KeyRound, Layers, LayoutDashboard, Network, ScrollText, Server, Settings, Share2, Terminal, Users, LogOut } from "lucide-react";
 import clsx from "clsx";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../lib/api";
@@ -9,40 +9,43 @@ import { getHostId, setHostId } from "../lib/host";
 
 // Navigation grouped into sections so the sidebar stays scannable as the
 // feature set grows.
-const navGroups: { title: string; items: { to: string; label: string; icon: typeof Boxes; end?: boolean }[] }[] = [
+type NavItem = { to: string; label: string; icon: typeof Boxes; end?: boolean; section?: string; adminOnly?: boolean };
+const navGroups: { title: string; items: NavItem[] }[] = [
   {
     title: "",
-    items: [{ to: "/", label: "Dashboard", icon: LayoutDashboard, end: true }],
+    items: [{ to: "/", label: "Dashboard", icon: LayoutDashboard, end: true, section: "dashboard" }],
   },
   {
     title: "Compute",
     items: [
-      { to: "/containers", label: "Containers", icon: Boxes },
-      { to: "/images", label: "Images", icon: Layers },
-      { to: "/volumes", label: "Volumes", icon: Database },
+      { to: "/containers", label: "Containers", icon: Boxes, section: "containers" },
+      { to: "/images", label: "Images", icon: Layers, section: "images" },
+      { to: "/volumes", label: "Volumes", icon: Database, section: "volumes" },
     ],
   },
   {
     title: "Network",
     items: [
-      { to: "/networks", label: "Networks", icon: Network },
-      { to: "/topology", label: "Topology", icon: Share2 },
+      { to: "/networks", label: "Networks", icon: Network, section: "networks" },
+      { to: "/topology", label: "Topology", icon: Share2, section: "topology" },
     ],
   },
   {
     title: "Observability",
     items: [
-      { to: "/logs", label: "Logs", icon: Terminal },
-      { to: "/events", label: "Events", icon: Activity },
-      { to: "/alerts", label: "Alerts", icon: Bell },
+      { to: "/logs", label: "Logs", icon: Terminal, section: "logs" },
+      { to: "/events", label: "Events", icon: Activity, section: "events" },
+      { to: "/alerts", label: "Alerts", icon: Bell, section: "alerts" },
     ],
   },
   {
     title: "System",
     items: [
-      { to: "/hosts", label: "Hosts", icon: Server },
-      { to: "/registries", label: "Registries", icon: KeyRound },
-      { to: "/audit", label: "Audit log", icon: ScrollText },
+      { to: "/hosts", label: "Hosts", icon: Server, section: "hosts" },
+      { to: "/registries", label: "Registries", icon: KeyRound, section: "registries" },
+      { to: "/audit", label: "Audit log", icon: ScrollText, section: "audit" },
+      { to: "/users", label: "Users", icon: Users, adminOnly: true },
+      { to: "/settings", label: "Settings", icon: Settings, adminOnly: true },
     ],
   },
 ];
@@ -99,12 +102,18 @@ export function Shell({ children }: { children: ReactNode }) {
         </div>
         <HostSwitcher />
         <nav className="flex-1 p-3 space-y-3 overflow-y-auto">
-          {navGroups.map((group, gi) => (
+          {navGroups.map((group, gi) => {
+            // Filter items by the user's accessible sections + admin-only flag.
+            const isAdmin = user?.role === "admin";
+            const allowed = new Set(user?.sections ?? []);
+            const items = group.items.filter((n) => (n.adminOnly ? isAdmin : !n.section || allowed.has(n.section)));
+            if (items.length === 0) return null;
+            return (
             <div key={gi} className="space-y-1">
               {group.title && (
                 <div className="px-3 pt-2 pb-0.5 text-[10px] uppercase tracking-wider text-muted/60 font-semibold">{group.title}</div>
               )}
-              {group.items.map((n) => (
+              {items.map((n) => (
                 <NavLink
                   key={n.to}
                   to={n.to}
@@ -126,7 +135,8 @@ export function Shell({ children }: { children: ReactNode }) {
                 </NavLink>
               ))}
             </div>
-          ))}
+            );
+          })}
         </nav>
         <div className="p-3 border-t border-border">
           <div className="flex items-center justify-between px-2 py-1.5">

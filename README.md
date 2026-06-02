@@ -63,9 +63,13 @@ from a single binary you download, build, and run.
   own SMTP server (password encrypted at rest), an **in-app alert feed**, and a
   **Prometheus `/metrics`** exporter for Grafana dashboards.
 - **Audit log** — every privileged action is recorded (who, what, when, from where).
-- **Security first** — password login with **Argon2id**, **mandatory TOTP 2FA**,
-  signed session cookies, login rate limiting, strict security headers, and
-  **verified SSH host keys** for remote hosts.
+- **Users & roles** — multiple accounts with **per-section permissions** and a
+  **read-only** mode; admins manage users and can **disable whole sections**
+  app-wide (feature flags).
+- **Security first** — password login with **Argon2id**, **TOTP 2FA**
+  (optionally exempt for localhost), signed session cookies, login rate
+  limiting, strict security headers, and **verified SSH host keys** for remote
+  hosts. Registry/SMTP secrets are encrypted at rest.
 
 ## 🏗️ Architecture
 
@@ -170,7 +174,13 @@ make vet
 
 - Designed for **local installation by default** (binds to loopback).
 - If you expose it on a server, put it behind TLS (reverse proxy) — the session
-  cookie is `HttpOnly` + `SameSite=Strict`, and 2FA is mandatory.
+  cookie is `HttpOnly` + `SameSite=Strict`, and 2FA is mandatory by default.
+- **2FA is enforced everywhere** unless an admin enables the *localhost
+  exemption* in Settings, which lets loopback (127.0.0.1/::1) connections log in
+  with a password only. Remote connections always require 2FA. The exemption
+  trusts `RemoteAddr` only — keep it **off** behind a reverse proxy.
+- **Roles**: `admin` accounts manage users, settings and have full access;
+  `user` accounts are limited to granted menu sections and can be read-only.
 - The JWT signing secret is generated on first run and persisted in the data dir.
 - Registry credentials are **encrypted at rest** (AES-256-GCM) with a key
   generated on first run; the API never returns stored secrets.
@@ -196,6 +206,9 @@ make vet
 - [x] File browser inside containers — list / download / upload / delete (`docker cp`)
 - [x] Email/SMTP notification channel
 - [x] Structured log views & saved parsing rules
+- [x] Multi-user accounts with roles, per-section permissions & read-only mode
+- [x] Global feature flags (disable whole sections) + optional localhost 2FA exemption
+- [ ] LDAP / external auth (planned)
 
 > Working notes & "continue here" plan: see [NEXT.md](./NEXT.md).
 

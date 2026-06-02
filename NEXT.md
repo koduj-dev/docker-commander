@@ -126,8 +126,21 @@ Goal: expose the rest of the Docker Engine API. **All of A–E DONE (2026-06-02)
   (`lib/parse.ts`) to render a column view on the Logs page + a manage modal
   with live preview. Verified via puppeteer (INFO/path/status → columns).
 
-The full roadmap is now complete. Possible future polish: per-host SMTP, log
-parsing presets library, alert rule editing (currently create/delete only).
+- **Multi-user + RBAC + feature flags + localhost-2FA (DONE 2026-06-02, company
+  request).** `users` gained `role`/`read_only`/`sections`; admins manage
+  accounts (`/api/users`) and app settings (`/api/settings`: globally disabled
+  sections + localhost-2FA toggle). Enforcement: `internal/api/access_middleware.go`
+  maps each path to a section and checks role / section grant / read-only /
+  global-disable after RequireSession. `/api/auth/me` returns the effective
+  sections + `mfaEnforced`; the frontend hides nav and the 2FA enrollment gate
+  accordingly. Login takes `exemptMFA` (loopback + setting) to skip 2FA. New
+  Users + Settings admin pages. Verified backend (RBAC matrix) + UI (puppeteer).
+  KNOWN LIMIT: the shared stats/logs WebSocket (`/api/ws`) is not section-gated
+  (it's a multiplexed read stream); section RBAC is enforced on REST endpoints.
+
+Next up: **LDAP / external auth** ("aspoň" — the company asked for it after the
+basic local users). Other polish: per-host SMTP, alert rule editing, log parsing
+presets.
 
 ## ⚠️ Gotcha worth remembering
 

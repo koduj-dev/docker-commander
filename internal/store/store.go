@@ -165,6 +165,8 @@ CREATE TABLE IF NOT EXISTS registries (
 	for _, alter := range []string{
 		`ALTER TABLE hosts ADD COLUMN host_key TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE alert_rules ADD COLUMN email INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE users ADD COLUMN read_only INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE users ADD COLUMN sections TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := s.db.ExecContext(ctx, alter); err != nil && !isDuplicateColumn(err) {
 			return err

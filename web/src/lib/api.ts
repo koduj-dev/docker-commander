@@ -4,7 +4,9 @@
 import type {
   AlertEvent,
   AlertRule,
+  AppSettings,
   AuditEntry,
+  ManagedUser,
   ContainerDetail,
   ContainerSummary,
   CreateSpec,
@@ -95,6 +97,21 @@ export const api = {
     req<LoginResult>("POST", "/api/auth/2fa", { mfaToken, code }),
   me: () => req<User>("GET", "/api/auth/me"),
   logout: () => req<{ ok: boolean }>("POST", "/api/auth/logout"),
+
+  // User management (admin)
+  users: () => req<ManagedUser[]>("GET", "/api/users"),
+  createUser: (b: { username: string; password: string; role: string; readOnly: boolean; sections: string[] }) =>
+    req<{ ok: boolean; id?: number; error?: string }>("POST", "/api/users", b),
+  updateUser: (id: number, b: { role: string; readOnly: boolean; sections: string[] }) =>
+    req<{ ok: boolean; error?: string }>("PATCH", `/api/users/${id}`, b),
+  resetUserPassword: (id: number, password: string) =>
+    req<{ ok: boolean; error?: string }>("POST", `/api/users/${id}/password`, { password }),
+  deleteUser: (id: number) => req<{ ok: boolean; error?: string }>("DELETE", `/api/users/${id}`),
+
+  // App settings (admin): feature flags + localhost 2FA
+  settings: () => req<AppSettings>("GET", "/api/settings"),
+  setSettings: (b: { disabledSections: string[]; localhostNo2fa: boolean }) =>
+    req<{ ok: boolean }>("PUT", "/api/settings", b),
   totpSetup: () => req<Enrollment>("POST", "/api/auth/totp/setup"),
   totpEnable: (code: string) => req<{ ok: boolean }>("POST", "/api/auth/totp/enable", { code }),
 
