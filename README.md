@@ -200,6 +200,11 @@ agenda (Containers, Images, Logs, Alerts, Hosts, Users, Settings…) plus
 
 See **[NEXT.md](./NEXT.md)** for the current status and future ideas.
 
+## 🤖 Made with AI
+
+Roughly **95 % of this project was built with AI** (Claude Code) — code,
+tests, and docs — under human direction and review. 🎉
+
 ## 📄 License
 
 [MIT](./LICENSE).
