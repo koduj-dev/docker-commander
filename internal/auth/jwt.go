@@ -30,8 +30,8 @@ type Claims struct {
 
 // TokenManager mints and verifies HMAC-signed JWTs.
 type TokenManager struct {
-	secret      []byte
-	sessionTTL  time.Duration
+	secret       []byte
+	sessionTTL   time.Duration
 	challengeTTL time.Duration
 }
 

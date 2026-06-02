@@ -67,7 +67,8 @@ from a single binary you download, build, and run.
 - **Audit log** — every privileged action is recorded (who, what, when, from where).
 - **Users & roles** — multiple accounts with **per-section permissions** and a
   **read-only** mode; admins manage users and can **disable whole sections**
-  app-wide (feature flags).
+  app-wide (feature flags). Optional **LDAP / Active Directory** login with
+  auto-provisioning and admin-group mapping.
 - **Security first** — password login with **Argon2id**, **TOTP 2FA**
   (optionally exempt for localhost), signed session cookies, login rate
   limiting, strict security headers, and **verified SSH host keys** for remote
@@ -237,7 +238,7 @@ make vet
 - [x] Structured log views & saved parsing rules
 - [x] Multi-user accounts with roles, per-section permissions & read-only mode
 - [x] Global feature flags (disable whole sections) + optional localhost 2FA exemption
-- [ ] LDAP / external auth (planned)
+- [x] LDAP / Active Directory authentication with auto-provisioning
 
 > Working notes & "continue here" plan: see [NEXT.md](./NEXT.md).
 

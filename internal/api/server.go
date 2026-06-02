@@ -81,6 +81,9 @@ func (s *Server) Handler() http.Handler {
 			r.Delete("/users/{id}", s.handleDeleteUser)
 			r.Get("/settings", s.handleGetSettings)
 			r.Put("/settings", s.handleSetSettings)
+			r.Get("/ldap", s.handleGetLDAP)
+			r.Put("/ldap", s.handleSetLDAP)
+			r.Post("/ldap/test", s.handleTestLDAP)
 
 			r.Get("/hosts", s.handleListHosts)
 			r.Post("/hosts", s.handleCreateHost)

@@ -26,6 +26,17 @@ export interface AppSettings {
   localhostNo2fa: boolean;
 }
 
+export interface LdapConfig {
+  enabled: boolean;
+  url: string;
+  startTls: boolean;
+  bindDn: string;
+  userBaseDn: string;
+  userFilter: string;
+  adminGroupDn: string;
+  hasBindPassword?: boolean;
+}
+
 export interface Host {
   id: number;
   name: string;

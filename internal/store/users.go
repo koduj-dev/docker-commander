@@ -20,6 +20,7 @@ type User struct {
 	Username     string
 	PasswordHash string
 	Role         string
+	AuthSource   string // "local" (password stored here) or "ldap" (verified externally)
 	ReadOnly     bool
 	Sections     []string
 	TOTPSecret   string
@@ -42,10 +43,10 @@ func (s *Store) CountUsers(ctx context.Context) (int, error) {
 func (s *Store) CreateUser(ctx context.Context, u *User) (int64, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO users (username, password_hash, role, totp_secret, totp_enabled, read_only, sections, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO users (username, password_hash, role, totp_secret, totp_enabled, read_only, sections, auth_source, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		u.Username, u.PasswordHash, orDefault(u.Role, "admin"), u.TOTPSecret, boolToInt(u.TOTPEnabled),
-		boolToInt(u.ReadOnly), marshalSections(u.Sections), now)
+		boolToInt(u.ReadOnly), marshalSections(u.Sections), orDefault(u.AuthSource, "local"), now)
 	if err != nil {
 		return 0, err
 	}
@@ -55,7 +56,7 @@ func (s *Store) CreateUser(ctx context.Context, u *User) (int64, error) {
 // ListUsers returns all accounts (without secrets) for the admin user manager.
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, username, password_hash, role, totp_secret, totp_enabled, read_only, sections, created_at, last_login_at
+		SELECT id, username, password_hash, role, totp_secret, totp_enabled, read_only, sections, auth_source, created_at, last_login_at
 		FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
@@ -95,14 +96,14 @@ func (s *Store) UpdateUserAccess(ctx context.Context, id int64, role string, rea
 // UserByUsername looks up a user by their unique username.
 func (s *Store) UserByUsername(ctx context.Context, username string) (*User, error) {
 	return scanUserRow(s.db.QueryRowContext(ctx, `
-		SELECT id, username, password_hash, role, totp_secret, totp_enabled, read_only, sections, created_at, last_login_at
+		SELECT id, username, password_hash, role, totp_secret, totp_enabled, read_only, sections, auth_source, created_at, last_login_at
 		FROM users WHERE username = ?`, username))
 }
 
 // UserByID looks up a user by primary key.
 func (s *Store) UserByID(ctx context.Context, id int64) (*User, error) {
 	return scanUserRow(s.db.QueryRowContext(ctx, `
-		SELECT id, username, password_hash, role, totp_secret, totp_enabled, read_only, sections, created_at, last_login_at
+		SELECT id, username, password_hash, role, totp_secret, totp_enabled, read_only, sections, auth_source, created_at, last_login_at
 		FROM users WHERE id = ?`, id))
 }
 
@@ -133,7 +134,7 @@ func scanUserRow(row scanner) (*User, error) {
 	var enabled, readOnly int
 	var sections, createdAt, lastLogin string
 	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.TOTPSecret, &enabled,
-		&readOnly, &sections, &createdAt, &lastLogin)
+		&readOnly, &sections, &u.AuthSource, &createdAt, &lastLogin)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

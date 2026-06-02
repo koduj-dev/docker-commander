@@ -128,18 +128,26 @@ func (s *Service) Login(ctx context.Context, rlKey, username, password string, e
 	if !s.limiter.Allow(rlKey) {
 		return nil, ErrRateLimited
 	}
-	u, err := s.store.UserByUsername(ctx, username)
-	if err != nil {
-		// Run a dummy hash verification to keep timing roughly constant
-		// regardless of whether the username exists.
-		_, _ = VerifyPassword(password, dummyHash)
-		s.limiter.Fail(rlKey)
-		return nil, ErrInvalidCreds
-	}
-	ok, err := VerifyPassword(password, u.PasswordHash)
-	if err != nil || !ok {
-		s.limiter.Fail(rlKey)
-		return nil, ErrInvalidCreds
+	existing, _ := s.store.UserByUsername(ctx, username)
+
+	var u *store.User
+	if existing != nil && existing.AuthSource != "ldap" {
+		// Local account: verify the stored password hash.
+		ok, err := VerifyPassword(password, existing.PasswordHash)
+		if err != nil || !ok {
+			s.limiter.Fail(rlKey)
+			return nil, ErrInvalidCreds
+		}
+		u = existing
+	} else {
+		// LDAP path: either a known LDAP-provisioned account or an unknown user
+		// while LDAP is enabled.
+		authed, err := s.ldapLogin(ctx, existing, username, password)
+		if err != nil {
+			s.limiter.Fail(rlKey)
+			return nil, ErrInvalidCreds
+		}
+		u = authed
 	}
 	s.limiter.Reset(rlKey)
 
@@ -202,6 +210,36 @@ func (s *Service) ConfirmTOTPEnrollment(ctx context.Context, userID int64, code 
 		return ErrInvalidMFACode
 	}
 	return s.store.SetTOTP(ctx, userID, u.TOTPSecret, true)
+}
+
+// ldapLogin authenticates against LDAP and provisions a local account on first
+// login (so roles/sections persist). A dummy password verification keeps timing
+// roughly constant when LDAP is off and the user is unknown.
+func (s *Service) ldapLogin(ctx context.Context, existing *store.User, username, password string) (*store.User, error) {
+	cfg, err := s.store.GetLDAP(ctx)
+	if err != nil || !cfg.Configured() {
+		_, _ = VerifyPassword(password, dummyHash)
+		return nil, ErrInvalidCreds
+	}
+	res, err := LDAPAuthenticate(cfg, username, password)
+	if err != nil {
+		return nil, ErrInvalidCreds
+	}
+	if existing != nil {
+		// Keep the admin-granted role/sections on subsequent logins.
+		return existing, nil
+	}
+	role := "user"
+	if res.IsAdmin {
+		role = "admin"
+	}
+	u := &store.User{Username: res.Username, Role: role, AuthSource: "ldap"}
+	id, err := s.store.CreateUser(ctx, u)
+	if err != nil {
+		return nil, err
+	}
+	u.ID = id
+	return u, nil
 }
 
 func (s *Service) issueSession(ctx context.Context, u *store.User) (*LoginResult, error) {

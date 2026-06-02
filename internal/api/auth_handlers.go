@@ -28,6 +28,10 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"needsSetup": needs})
 }
 
+// NOTE: login resolves credentials locally first; if a username has no local
+// account (or is LDAP-provisioned) and LDAP is enabled, it authenticates via
+// LDAP and provisions a local record. See auth.Service.Login.
+
 // handleSetup creates the first admin account and logs them straight in so the
 // frontend can immediately walk them through mandatory 2FA enrollment.
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {

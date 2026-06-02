@@ -138,9 +138,19 @@ Goal: expose the rest of the Docker Engine API. **All of A–E DONE (2026-06-02)
   KNOWN LIMIT: the shared stats/logs WebSocket (`/api/ws`) is not section-gated
   (it's a multiplexed read stream); section RBAC is enforced on REST endpoints.
 
-Next up: **LDAP / external auth** ("aspoň" — the company asked for it after the
-basic local users). Other polish: per-host SMTP, alert rule editing, log parsing
-presets.
+- **The five company follow-ups — ALL DONE (2026-06-02):**
+  1. systemd unit + deploy docs (`deploy/`).
+  2. log parsing presets (`web/src/lib/parsePresets.ts`).
+  3. alert rule editing (`UpdateAlertRule` + PUT + reusable form).
+  4. multi-host monitoring + per-host email (monitor watches all hosts; alert
+     events carry host; `hosts.alert_email` overrides the global recipient).
+  5. **LDAP** (`internal/store/ldap.go`, `internal/auth/ldap.go`): local-first
+     login, else LDAP bind + provision a local account (auth_source="ldap",
+     admin-group→admin role); config in Settings, bind password encrypted.
+     Verified end-to-end against osixia/openldap.
+
+The roadmap is fully complete. Future ideas only: LDAP group→section mapping,
+SSO/OIDC, alert rule import/export.
 
 ## ⚠️ Gotcha worth remembering
 

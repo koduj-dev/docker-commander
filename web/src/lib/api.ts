@@ -6,6 +6,7 @@ import type {
   AlertRule,
   AppSettings,
   AuditEntry,
+  LdapConfig,
   ManagedUser,
   ContainerDetail,
   ContainerSummary,
@@ -57,6 +58,15 @@ function smtpPayload(c: SmtpConfig & { password?: string }) {
   return {
     host: c.host, port: c.port, username: c.username,
     password: c.password ?? "", from: c.from, to: c.to, tls: c.tls,
+  };
+}
+
+// ldapPayload strips the read-only hasBindPassword field the API rejects.
+function ldapPayload(c: LdapConfig & { bindPassword?: string }) {
+  return {
+    enabled: c.enabled, url: c.url, startTls: c.startTls, bindDn: c.bindDn,
+    bindPassword: c.bindPassword ?? "", userBaseDn: c.userBaseDn,
+    userFilter: c.userFilter, adminGroupDn: c.adminGroupDn,
   };
 }
 
@@ -112,6 +122,12 @@ export const api = {
   settings: () => req<AppSettings>("GET", "/api/settings"),
   setSettings: (b: { disabledSections: string[]; localhostNo2fa: boolean }) =>
     req<{ ok: boolean }>("PUT", "/api/settings", b),
+
+  // LDAP / external auth (admin). Send only server-known fields.
+  ldap: () => req<LdapConfig>("GET", "/api/ldap"),
+  setLdap: (c: LdapConfig & { bindPassword?: string }) => req<{ ok: boolean }>("PUT", "/api/ldap", ldapPayload(c)),
+  testLdap: (c: LdapConfig & { bindPassword?: string }) =>
+    req<{ ok: boolean; error?: string; entries?: number }>("POST", "/api/ldap/test", ldapPayload(c)),
   totpSetup: () => req<Enrollment>("POST", "/api/auth/totp/setup"),
   totpEnable: (code: string) => req<{ ok: boolean }>("POST", "/api/auth/totp/enable", { code }),
 

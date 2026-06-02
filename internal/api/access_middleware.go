@@ -40,7 +40,7 @@ func sectionForPath(path string) string {
 		return "registries"
 	case "audit":
 		return "audit"
-	case "users", "settings":
+	case "users", "settings", "ldap":
 		return "__admin"
 	default:
 		// auth, system, inspect, metrics, ws, … are not section-gated.

@@ -16,9 +16,9 @@ const TOTPIssuer = "Docker Commander"
 
 // Enrollment holds the data needed to show a user how to add their 2FA token.
 type Enrollment struct {
-	Secret    string `json:"secret"`    // base32 secret, also shown for manual entry
+	Secret     string `json:"secret"`     // base32 secret, also shown for manual entry
 	OtpauthURL string `json:"otpauthUrl"` // otpauth:// provisioning URI
-	QRDataURI string `json:"qrDataUri"` // data:image/png;base64,... for <img src>
+	QRDataURI  string `json:"qrDataUri"`  // data:image/png;base64,... for <img src>
 }
 
 // GenerateTOTP creates a new TOTP secret for accountName and renders a QR code

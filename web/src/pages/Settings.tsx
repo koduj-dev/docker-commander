@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, ShieldOff, LayoutGrid } from "lucide-react";
+import { Loader2, ShieldOff, LayoutGrid, Network, Send } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
+import type { LdapConfig } from "../lib/types";
 import { sectionLabel } from "../lib/sections";
 import { PageHeader } from "../layout/Shell";
 import { Spinner } from "../components/ui";
@@ -77,7 +78,56 @@ export function Settings() {
         <div className="flex justify-end">
           <button className="btn-primary" onClick={save} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Save settings</button>
         </div>
+
+        <LdapSettings />
       </div>
     </>
+  );
+}
+
+// LdapSettings configures optional LDAP / Active Directory authentication.
+function LdapSettings() {
+  const [cfg, setCfg] = useState<LdapConfig | null>(null);
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState<"" | "save" | "test">("");
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const load = useCallback(() => {
+    api.ldap().then(setCfg).catch(() => setCfg({ enabled: false, url: "", startTls: false, bindDn: "", userBaseDn: "", userFilter: "(uid=%s)", adminGroupDn: "" }));
+  }, []);
+  useEffect(() => load(), [load]);
+  if (!cfg) return null;
+  const patch = (p: Partial<LdapConfig>) => setCfg({ ...cfg, ...p });
+
+  const run = async (kind: "save" | "test") => {
+    setBusy(kind); setMsg(null);
+    try {
+      if (kind === "save") { await api.setLdap({ ...cfg, bindPassword: password }); setPassword(""); setMsg({ ok: true, text: "Saved." }); load(); }
+      else { const r = await api.testLdap({ ...cfg, bindPassword: password }); setMsg(r.ok ? { ok: true, text: `Connection OK (${r.entries} entries under base).` } : { ok: false, text: r.error ?? "test failed" }); }
+    } catch { setMsg({ ok: false, text: "request failed" }); } finally { setBusy(""); }
+  };
+
+  return (
+    <div className="card p-5 space-y-3">
+      <div className="flex items-center gap-2 font-medium"><Network className="h-4 w-4 text-accent" /> LDAP / Active Directory</div>
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={cfg.enabled} onChange={(e) => patch({ enabled: e.target.checked })} /> Enable LDAP authentication
+      </label>
+      <p className="text-xs text-muted">Users not found locally are authenticated against LDAP and provisioned as local accounts (so you can grant sections). Local admin accounts always use their local password. The bind password is encrypted at rest.</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div><label className="label">Server URL</label><input className="input font-mono" value={cfg.url} onChange={(e) => patch({ url: e.target.value })} placeholder="ldap://ldap.example.com:389" /></div>
+        <label className="flex items-center gap-2 text-sm self-end pb-2"><input type="checkbox" checked={cfg.startTls} onChange={(e) => patch({ startTls: e.target.checked })} /> StartTLS</label>
+        <div><label className="label">Bind DN (service account)</label><input className="input font-mono" value={cfg.bindDn} onChange={(e) => patch({ bindDn: e.target.value })} placeholder="cn=readonly,dc=example,dc=com" /></div>
+        <div><label className="label">Bind password {cfg.hasBindPassword && <span className="text-ok">(stored)</span>}</label><input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={cfg.hasBindPassword ? "•••••• (unchanged)" : ""} autoComplete="new-password" /></div>
+        <div><label className="label">User base DN</label><input className="input font-mono" value={cfg.userBaseDn} onChange={(e) => patch({ userBaseDn: e.target.value })} placeholder="ou=people,dc=example,dc=com" /></div>
+        <div><label className="label">User filter (must contain %s)</label><input className="input font-mono" value={cfg.userFilter} onChange={(e) => patch({ userFilter: e.target.value })} placeholder="(uid=%s)" /></div>
+        <div className="md:col-span-2"><label className="label">Admin group DN (optional — members become admins)</label><input className="input font-mono" value={cfg.adminGroupDn} onChange={(e) => patch({ adminGroupDn: e.target.value })} placeholder="cn=admins,ou=groups,dc=example,dc=com" /></div>
+      </div>
+      {msg && <p className={clsx("text-sm", msg.ok ? "text-ok" : "text-danger")}>{msg.text}</p>}
+      <div className="flex justify-end gap-2">
+        <button className="btn-ghost" onClick={() => run("test")} disabled={busy !== ""}>{busy === "test" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Test</button>
+        <button className="btn-primary" onClick={() => run("save")} disabled={busy !== ""}>{busy === "save" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Network className="h-4 w-4" />} Save LDAP</button>
+      </div>
+    </div>
   );
 }
