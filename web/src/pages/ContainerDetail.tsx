@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, Play, RotateCw, Square } from "lucide-react";
+import { ArrowLeft, FileSearch, Play, RotateCw, Square } from "lucide-react";
 import { api } from "../lib/api";
-import type { ContainerDetail as Detail, LogLine, StatsSample } from "../lib/types";
+import type { ContainerDetail as Detail, DiffEntry, LogLine, StatsSample, TopResult } from "../lib/types";
 import { live, ensureLive } from "../lib/live";
 import { shortId } from "../lib/format";
 import { StateBadge, Spinner } from "../components/ui";
@@ -10,6 +10,7 @@ import { StatsCharts } from "../components/StatsChart";
 import { MetricsHistory } from "../components/MetricsHistory";
 import { LogViewer } from "../components/LogViewer";
 import { Terminal } from "../components/Terminal";
+import { InspectModal } from "../components/InspectModal";
 
 const MAX_SAMPLES = 60;
 const MAX_LOGS = 2000;
@@ -19,7 +20,8 @@ export function ContainerDetail() {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [samples, setSamples] = useState<StatsSample[]>([]);
   const [logs, setLogs] = useState<LogLine[]>([]);
-  const [tab, setTab] = useState<"overview" | "logs" | "console" | "env">("overview");
+  const [tab, setTab] = useState<"overview" | "logs" | "console" | "env" | "processes" | "files">("overview");
+  const [inspecting, setInspecting] = useState(false);
   const logBuf = useRef<LogLine[]>([]);
 
   const load = () => api.container(id).then(setDetail).catch(() => {});
@@ -84,6 +86,7 @@ export function ContainerDetail() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <button className="btn-ghost" onClick={() => setInspecting(true)}><FileSearch className="h-4 w-4" /> Inspect</button>
           {running ? (
             <>
               <button className="btn-ghost" onClick={() => act("restart")}><RotateCw className="h-4 w-4" /> Restart</button>
@@ -94,13 +97,14 @@ export function ContainerDetail() {
           )}
         </div>
       </div>
+      {inspecting && <InspectModal kind="container" id={id} title={detail.name} onClose={() => setInspecting(false)} />}
 
       <div className="p-6 space-y-6">
         <StatsCharts data={samples} />
         <MetricsHistory containerId={id} />
 
         <div className="flex gap-1 border-b border-border">
-          {(["overview", "logs", "console", "env"] as const).map((t) => (
+          {(["overview", "logs", "console", "processes", "files", "env"] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -116,6 +120,8 @@ export function ContainerDetail() {
         {tab === "overview" && <Overview detail={detail} />}
         {tab === "logs" && <LogViewer lines={logs} />}
         {tab === "console" && (running ? <Terminal containerId={id} /> : <div className="text-sm text-muted">Container is not running — start it to open a shell.</div>)}
+        {tab === "processes" && (running ? <ProcessTable id={id} /> : <div className="text-sm text-muted">Container is not running — no processes.</div>)}
+        {tab === "files" && <DiffList id={id} />}
         {tab === "env" && <EnvList env={detail.env ?? []} />}
       </div>
     </>
@@ -160,6 +166,66 @@ function Overview({ detail }: { detail: Detail }) {
           ))
         )}
       </Info>
+    </div>
+  );
+}
+
+// ProcessTable shows the live process list inside the container (docker top).
+function ProcessTable({ id }: { id: string }) {
+  const [top, setTop] = useState<TopResult | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let alive = true;
+    const load = () => api.containerTop(id).then((t) => alive && setTop(t)).catch((e) => alive && setError(e instanceof Error ? e.message : "failed"));
+    load();
+    const t = setInterval(load, 3000); // refresh periodically
+    return () => { alive = false; clearInterval(t); };
+  }, [id]);
+
+  if (error) return <div className="text-sm text-danger">{error}</div>;
+  if (!top) return <div className="flex items-center gap-2 text-muted text-sm"><Spinner className="h-4 w-4" /> Loading…</div>;
+
+  return (
+    <div className="card overflow-auto">
+      <table className="w-full text-xs font-mono">
+        <thead>
+          <tr className="text-muted text-left border-b border-border">
+            {top.titles.map((t) => <th key={t} className="px-3 py-2 font-medium whitespace-nowrap">{t}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {top.processes.map((row, i) => (
+            <tr key={i} className="border-b border-border/50 hover:bg-panel2/50">
+              {row.map((cell, j) => <td key={j} className="px-3 py-1.5 whitespace-nowrap break-all">{cell}</td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// DiffList shows filesystem changes since the container started (docker diff).
+function DiffList({ id }: { id: string }) {
+  const [diff, setDiff] = useState<DiffEntry[] | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    api.containerDiff(id).then(setDiff).catch((e) => setError(e instanceof Error ? e.message : "failed"));
+  }, [id]);
+
+  if (error) return <div className="text-sm text-danger">{error}</div>;
+  if (!diff) return <div className="flex items-center gap-2 text-muted text-sm"><Spinner className="h-4 w-4" /> Loading…</div>;
+  if (diff.length === 0) return <div className="text-sm text-muted">No filesystem changes since the container started.</div>;
+
+  const mark = { added: { c: "text-ok", s: "A" }, modified: { c: "text-warn", s: "C" }, deleted: { c: "text-danger", s: "D" }, unknown: { c: "text-muted", s: "?" } } as const;
+  return (
+    <div className="card p-3 font-mono text-xs space-y-0.5 max-h-[28rem] overflow-auto">
+      {diff.map((d, i) => (
+        <div key={i} className="flex gap-2">
+          <span className={`w-4 shrink-0 font-bold ${mark[d.kind].c}`}>{mark[d.kind].s}</span>
+          <span className="break-all">{d.path}</span>
+        </div>
+      ))}
     </div>
   );
 }

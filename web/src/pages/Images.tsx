@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Download, Trash2, Layers, Loader2, X, Boxes, Eraser } from "lucide-react";
+import { Download, Trash2, Layers, Loader2, X, Boxes, Eraser, FileSearch, History } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
-import type { ImageSummary, PullProgress } from "../lib/types";
+import type { HistoryEntry, ImageSummary, PullProgress } from "../lib/types";
 import { hostParam } from "../lib/host";
 import { bytes, relTime, shortId } from "../lib/format";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
+import { InspectModal } from "../components/InspectModal";
 
 export function Images() {
   const [images, setImages] = useState<ImageSummary[] | null>(null);
@@ -14,6 +15,8 @@ export function Images() {
   const [err, setErr] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState("");
   const [pruning, setPruning] = useState(false);
+  const [inspect, setInspect] = useState<ImageSummary | null>(null);
+  const [history, setHistory] = useState<ImageSummary | null>(null);
 
   const load = useCallback(() => {
     api.images().then(setImages).catch(() => setImages([]));
@@ -105,22 +108,85 @@ export function Images() {
                       </div>
                     )}
                   </div>
-                  <button
-                    className="btn-ghost px-2 py-1 text-danger shrink-0"
-                    title="Remove image"
-                    disabled={busy[img.id]}
-                    onClick={() => remove(img)}
-                  >
-                    {busy[img.id] ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                  </button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button className="btn-ghost px-2 py-1" title="Layer history" onClick={() => setHistory(img)}><History className="h-4 w-4" /></button>
+                    <button className="btn-ghost px-2 py-1" title="Inspect (raw JSON)" onClick={() => setInspect(img)}><FileSearch className="h-4 w-4" /></button>
+                    <button
+                      className="btn-ghost px-2 py-1 text-danger"
+                      title="Remove image"
+                      disabled={busy[img.id]}
+                      onClick={() => remove(img)}
+                    >
+                      {busy[img.id] ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                    </button>
+                  </div>
                 </div>
               );
             })}
           </div>
         )}
       </div>
+      {inspect && (
+        <InspectModal kind="image" id={inspect.id} title={(inspect.repoTags ?? [])[0] || shortId(inspect.id)} onClose={() => setInspect(null)} />
+      )}
+      {history && (
+        <ImageHistoryModal img={history} onClose={() => setHistory(null)} />
+      )}
     </>
   );
+}
+
+// ImageHistoryModal lists an image's build layers (docker history).
+function ImageHistoryModal({ img, onClose }: { img: ImageSummary; onClose: () => void }) {
+  const [layers, setLayers] = useState<HistoryEntry[] | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    api.imageHistory(img.id).then(setLayers).catch((e) => setError(e instanceof Error ? e.message : "failed"));
+  }, [img.id]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
+      <div className="card w-full max-w-4xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-3 p-4 border-b border-border">
+          <div className="font-medium min-w-0">
+            <span className="text-xs uppercase tracking-wide text-muted mr-2">history</span>
+            <span className="break-all">{(img.repoTags ?? [])[0] || shortId(img.id)}</span>
+          </div>
+          <button className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
+        </div>
+        <div className="flex-1 min-h-0 overflow-auto p-4">
+          {error ? (
+            <div className="text-sm text-danger">{error}</div>
+          ) : !layers ? (
+            <div className="flex items-center gap-2 text-muted text-sm"><Spinner className="h-4 w-4" /> Loading…</div>
+          ) : (
+            <div className="space-y-2">
+              {layers.map((l, i) => (
+                <div key={i} className="text-xs border-b border-border/50 pb-2">
+                  <div className="flex justify-between gap-3 text-muted">
+                    <span className="font-mono">{l.id && l.id !== "<missing>" ? shortId(l.id) : "—"}</span>
+                    <span>{bytes(l.size)} · {relTime(l.created)}</span>
+                  </div>
+                  <div className="font-mono break-all text-text/80 mt-0.5">{cleanLayerCmd(l.createdBy)}</div>
+                  {l.tags && l.tags.length > 0 && <div className="text-accent mt-0.5">{l.tags.join(", ")}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// cleanLayerCmd strips the noisy buildkit prefix from a history command line.
+function cleanLayerCmd(s: string): string {
+  return s.replace(/^\/bin\/sh -c #\(nop\)\s*/, "").replace(/^\/bin\/sh -c /, "RUN ").trim() || "—";
 }
 
 // PullPanel pulls an image, streaming per-layer progress over a WebSocket.

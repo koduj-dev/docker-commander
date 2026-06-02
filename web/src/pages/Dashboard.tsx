@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Cpu, HardDrive, Layers, Play, Server, Square } from "lucide-react";
+import { Boxes, Cpu, Database, HardDrive, Layers, Play, Server, Square, Wrench } from "lucide-react";
 import { api } from "../lib/api";
-import type { SystemInfo } from "../lib/types";
+import type { DiskUsage, SystemInfo } from "../lib/types";
 import { bytes } from "../lib/format";
 import { PageHeader } from "../layout/Shell";
 import { StatCard, Spinner } from "../components/ui";
@@ -10,9 +10,11 @@ import { ContainerTable } from "./Containers";
 
 export function Dashboard() {
   const [info, setInfo] = useState<SystemInfo | null>(null);
+  const [df, setDf] = useState<DiskUsage | null>(null);
 
   useEffect(() => {
     api.system().then(setInfo).catch(() => {});
+    api.diskUsage().then(setDf).catch(() => {});
   }, []);
 
   return (
@@ -31,6 +33,19 @@ export function Dashboard() {
             <StatCard icon={<Play className="h-5 w-5" />} label="Running" value={info.containersRunning} />
             <StatCard icon={<Square className="h-5 w-5" />} label="Stopped" value={info.containersStopped} />
             <StatCard icon={<Layers className="h-5 w-5" />} label="Images" value={info.images} />
+          </div>
+        )}
+
+        {df && (
+          <div>
+            <h2 className="text-sm font-semibold text-muted mb-3">Disk usage</h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
+              <StatCard icon={<HardDrive className="h-5 w-5" />} label="Layers total" value={bytes(df.layersSize)} />
+              <StatCard icon={<Layers className="h-5 w-5" />} label="Images" value={bytes(df.images.size)} sub={`${df.images.count} images`} />
+              <StatCard icon={<Boxes className="h-5 w-5" />} label="Containers (rw)" value={bytes(df.containers.size)} sub={`${df.containers.count} containers`} />
+              <StatCard icon={<Database className="h-5 w-5" />} label="Volumes" value={bytes(df.volumes.size)} sub={`${df.volumes.count} volumes`} />
+              <StatCard icon={<Wrench className="h-5 w-5" />} label="Build cache" value={bytes(df.buildCache.size)} sub={`${df.buildCache.count} records`} />
+            </div>
           </div>
         )}
 

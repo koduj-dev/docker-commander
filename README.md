@@ -16,7 +16,13 @@ from a single binary you download, build, and run.
 - **Container control** — start, stop, restart, pause, kill.
 - **Image management** — list local images with size / tags / age, flag which
   are in use or dangling, **pull** with live per-layer progress (over a
-  WebSocket), remove (with a force fallback), and prune dangling images.
+  WebSocket), remove (with a force fallback), and prune dangling images;
+  per-image **history** (build layers) and raw **inspect**.
+- **Inspect & observe everything** — raw JSON **inspect** for containers,
+  images, networks and volumes; container **diff** (filesystem changes) and
+  **top** (live process list); a live **events** feed streaming every daemon
+  event over a WebSocket; and a **disk usage** (`system df`) breakdown on the
+  dashboard.
 - **Interactive console** — a real shell (xterm.js) into any running container,
   streamed over a WebSocket; works the same on local and remote hosts.
 - **Multi-host** — manage local, **TCP(+TLS)** and **SSH** Docker hosts and
@@ -160,6 +166,10 @@ make vet
 - [x] Historical metrics storage & charts (Redis or in-memory)
 - [x] SSH host-key verification (known_hosts + trust-on-first-use pinning, MITM-safe)
 - [x] Images management (list / pull with live progress / remove / prune)
+- [x] Inspect & observe: raw inspect (any object), container diff/top, image history, live events feed, disk usage (df)
+- [ ] Registry & build: push / private pull (stored creds) + image build with context upload
+- [ ] Container lifecycle: create/run, rename, update limits, commit, restart-policy
+- [ ] Image transfer: tag, save/load (tar), import, container export
 - [ ] Volumes management + inspector, and which containers use them
 - [ ] Data transfer to/from containers (`docker cp` up/download)
 - [ ] Email/SMTP notification channel

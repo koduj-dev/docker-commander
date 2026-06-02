@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Boxes, Network as NetworkIcon, X } from "lucide-react";
+import { Boxes, FileSearch, Network as NetworkIcon, X } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import type { NetworkSummary, Topology } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
+import { InspectModal } from "../components/InspectModal";
 import { shortId } from "../lib/format";
 
 export function Networks() {
@@ -69,6 +70,7 @@ function Row({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
 // NetworkModal renders a star graph: the network in the centre with its attached
 // containers around it, joined by edges labelled with the container's IP.
 function NetworkModal({ net, topo, onClose }: { net: NetworkSummary; topo: Topology | null; onClose: () => void }) {
+  const [inspecting, setInspecting] = useState(false);
   const members = useMemo(() => {
     if (!topo) return [];
     const byId = new Map((topo.containers ?? []).map((c) => [c.id, c]));
@@ -106,8 +108,12 @@ function NetworkModal({ net, topo, onClose }: { net: NetworkSummary; topo: Topol
               {net.driver} · {(net.subnets ?? []).join(", ") || "no subnet"} · {members.length} containers
             </span>
           </div>
-          <button className="btn-ghost px-2 py-1.5" onClick={onClose}><X className="h-4 w-4" /></button>
+          <div className="flex items-center gap-1">
+            <button className="btn-ghost px-2 py-1.5" title="Inspect (raw JSON)" onClick={() => setInspecting(true)}><FileSearch className="h-4 w-4" /></button>
+            <button className="btn-ghost px-2 py-1.5" onClick={onClose}><X className="h-4 w-4" /></button>
+          </div>
         </div>
+        {inspecting && <InspectModal kind="network" id={net.id} title={net.name} onClose={() => setInspecting(false)} />}
 
         <div className="p-4">
           {!topo ? (

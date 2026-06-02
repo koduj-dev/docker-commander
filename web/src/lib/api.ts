@@ -7,10 +7,14 @@ import type {
   AuditEntry,
   ContainerDetail,
   ContainerSummary,
+  DiffEntry,
+  DiskUsage,
+  HistoryEntry,
   Host,
   ImageSummary,
   NetworkSummary,
   SystemInfo,
+  TopResult,
   Topology,
   User,
   Webhook,
@@ -93,6 +97,18 @@ export const api = {
   container: (id: string) => req<ContainerDetail>("GET", `/api/containers/${id}${hostParam()}`),
   containerAction: (id: string, action: string) =>
     req<{ ok: boolean }>("POST", `/api/containers/${id}/${action}${hostParam()}`),
+  containerDiff: (id: string) => req<DiffEntry[]>("GET", `/api/containers/${id}/diff${hostParam()}`),
+  containerTop: (id: string) => req<TopResult>("GET", `/api/containers/${id}/top${hostParam()}`),
+
+  // Generic raw inspect for any object kind. id/ref travels as a query param.
+  inspect: (kind: "container" | "image" | "network" | "volume", id: string) => {
+    const params = new URLSearchParams({ id });
+    const h = getHostId();
+    if (h != null) params.set("host", String(h));
+    return req<unknown>("GET", `/api/inspect/${kind}?${params.toString()}`);
+  },
+
+  diskUsage: () => req<DiskUsage>("GET", `/api/system/df${hostParam()}`),
 
   images: () => req<ImageSummary[]>("GET", `/api/images${hostParam()}`),
   removeImage: (ref: string, force = false) => {
@@ -106,6 +122,12 @@ export const api = {
     );
   },
   pruneImages: () => req<{ deleted: string[] | null; spaceReclaimed: number }>("POST", `/api/images/prune${hostParam()}`),
+  imageHistory: (ref: string) => {
+    const params = new URLSearchParams({ ref });
+    const h = getHostId();
+    if (h != null) params.set("host", String(h));
+    return req<HistoryEntry[]>("GET", `/api/images/history?${params.toString()}`);
+  },
 
   networks: () => req<NetworkSummary[]>("GET", `/api/networks${hostParam()}`),
   topology: () => req<Topology>("GET", `/api/topology${hostParam()}`),

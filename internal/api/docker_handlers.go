@@ -114,6 +114,91 @@ func (s *Server) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, info)
 }
 
+// handleInspect returns the daemon's raw JSON for an object. The object id/ref
+// is a query param (refs contain ':' and '/', which path segments mangle).
+func (s *Server) handleInspect(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	kind := chi.URLParam(r, "kind")
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		writeErr(w, http.StatusBadRequest, "id is required")
+		return
+	}
+	raw, err := s.docker.InspectRaw(r.Context(), hostID, kind, id)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "docker error: "+err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
+}
+
+func (s *Server) handleContainerDiff(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	diff, err := s.docker.ContainerDiff(r.Context(), hostID, chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "docker error: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, diff)
+}
+
+func (s *Server) handleContainerTop(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	top, err := s.docker.ContainerTop(r.Context(), hostID, chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "docker error: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, top)
+}
+
+func (s *Server) handleImageHistory(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	ref := r.URL.Query().Get("ref")
+	if ref == "" {
+		writeErr(w, http.StatusBadRequest, "ref is required")
+		return
+	}
+	hist, err := s.docker.ImageHistory(r.Context(), hostID, ref)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "docker error: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, hist)
+}
+
+func (s *Server) handleDiskUsage(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	du, err := s.docker.DiskUsage(r.Context(), hostID)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "docker error: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, du)
+}
+
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	entries, err := s.store.RecentAudit(r.Context(), 200)
 	if err != nil {

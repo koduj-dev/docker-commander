@@ -86,6 +86,47 @@ export interface PullProgress {
   done?: boolean;
 }
 
+export interface DiffEntry {
+  kind: "modified" | "added" | "deleted" | "unknown";
+  path: string;
+}
+
+export interface TopResult {
+  titles: string[];
+  processes: string[][];
+}
+
+export interface HistoryEntry {
+  id: string;
+  created: number;
+  createdBy: string;
+  size: number;
+  comment: string;
+  tags: string[] | null;
+}
+
+export interface UsageCategory {
+  count: number;
+  size: number;
+}
+
+export interface DiskUsage {
+  layersSize: number;
+  images: UsageCategory;
+  containers: UsageCategory;
+  volumes: UsageCategory;
+  buildCache: UsageCategory;
+}
+
+export interface EventMsg {
+  time: number;
+  type: string;
+  action: string;
+  id: string;
+  name: string;
+  attr?: Record<string, string>;
+}
+
 export interface NetworkSummary {
   id: string;
   name: string;

@@ -49,6 +49,31 @@ against the local `red2_*` stack (headless Chrome + Go/WS probes).
   harness. NOTE: `ref` is a **query param**, not a path segment — image refs
   contain `:`/`/` which chi does not decode cleanly in `{id}`.
 
+- **Inspect & observe — batch A of "control everything" (2026-06-02).**
+  `internal/docker/observe.go` + handlers in `docker_handlers.go` /
+  `events_handler.go` + `web/src/components/InspectModal.tsx` + Events page.
+  Generic raw **inspect** (`GET /api/inspect/{kind}?id=…` for
+  container/image/network/volume — id is a query param), container **diff**
+  (`/containers/{id}/diff`) and **top** (`/containers/{id}/top`) as detail tabs,
+  image **history** (`/api/images/history?ref=…`) modal, live **events** feed
+  (WS `GET /api/events`) as a new nav page, and **disk usage**
+  (`GET /api/system/df`) cards on the dashboard. Verified end-to-end: backend
+  via a Node API harness, UI via a puppeteer smoke test (TOTP bypass).
+
+## 🧭 "Control everything" plan (decided 2026-06-02 with a colleague)
+
+Goal: expose the rest of the Docker Engine API. Agreed order: **A done** (above),
+then **E next** (registry/build — wanted "hned teď"), then B, C, D.
+
+- **E. Registry & build (NEXT).** push + private pull (store registry creds
+  **encrypted** in DB), `docker build` with build-context upload (stream
+  progress over WS like pull). User accepts the security overhead.
+- **B. Container lifecycle.** create/run (form), rename, update (CPU/MEM limits),
+  commit (container→image), unpause toggle, restart-policy edit.
+- **C. Image transfer & tags.** tag, save (export tar download), load (upload
+  tar), import, container export (FS as tar).
+- **D. Volumes + networks full CRUD** (see item 1 below for volumes).
+
 ## ▶️ Next up (priority order)
 
 1. **Volumes management + inspector.** List volumes (`VolumeList`), inspect
