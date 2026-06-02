@@ -1,0 +1,59 @@
+# Deployment
+
+[← Manual index](README.md)
+
+Docker Commander is a single binary that embeds the UI. The server runs
+monitoring, alerting and metric history **continuously** — independent of any
+connected browser — so on a server you'll want it supervised.
+
+## Configuration
+Every option is a flag with a `DC_*` environment-variable equivalent. See
+[`.env.example`](../.env.example) for the full list. Key ones:
+
+| Env | Default | Purpose |
+|-----|---------|---------|
+| `DC_ADDR` | `127.0.0.1:8080` | listen address (keep on loopback behind a proxy) |
+| `DC_DATA_DIR` | OS config dir | SQLite DB + signing/encryption keys |
+| `DC_METRICS_TOKEN` | (open) | bearer token guarding `/metrics` |
+| `DC_REDIS_ADDR` | (memory) | Redis for metric history |
+| `DC_METRICS_RETENTION` | `6h` | history retention |
+
+Docker connection honours `DOCKER_HOST` / `DOCKER_CERT_PATH`.
+
+## systemd (Linux)
+A hardened unit and env example live in [`deploy/`](../deploy/).
+
+```bash
+sudo install -m755 dockercmd /usr/local/bin/dockercmd
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin dockercmd
+sudo usermod -aG docker dockercmd
+sudo install -d /etc/dockercmd && sudo cp deploy/dockercmd.env.example /etc/dockercmd/dockercmd.env   # edit
+sudo cp deploy/dockercmd.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now dockercmd
+```
+
+The unit runs as a dedicated user in the `docker` group with
+`NoNewPrivileges`, `ProtectSystem=strict` and a private `StateDirectory`.
+
+## Reverse proxy + TLS
+Bind to loopback and terminate TLS at nginx/Caddy. WebSockets must be allowed
+(stats, logs, exec, events) — proxy `Upgrade`/`Connection` headers. Example
+(nginx) for a location:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+}
+```
+
+> Behind a proxy, **keep the localhost 2FA exemption off** — it trusts the
+> connection address, which becomes the proxy. See [Settings](settings.md).
+
+## Backup
+Back up `DC_DATA_DIR` — it holds the SQLite database and the keys that sign
+sessions and encrypt stored secrets. Losing the keys means re-entering registry
+/ SMTP / LDAP passwords.

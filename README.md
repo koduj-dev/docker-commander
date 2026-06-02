@@ -186,6 +186,12 @@ notify webhooks (Go-template bodies) and/or email. **Prometheus:** scrape
 - **SSH hosts** verify the daemon host key (known_hosts / trust-on-first-use); a changed key is refused as a possible MITM.
 - Signing key and at-rest encryption key are generated on first run and stored in the data dir; stored secrets are never returned by the API.
 
+## 📚 Documentation
+
+A per-feature user manual lives in **[docs/](docs/README.md)** — one page per
+agenda (Containers, Images, Logs, Alerts, Hosts, Users, Settings…) plus
+[Getting started](docs/getting-started.md) and [Deployment](docs/deployment.md).
+
 ## 🗺️ Roadmap
 
 See **[NEXT.md](./NEXT.md)** for the current status and future ideas.
