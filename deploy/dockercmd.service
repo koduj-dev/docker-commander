@@ -1,0 +1,36 @@
+[Unit]
+Description=Docker Commander — Docker monitoring & control panel
+Documentation=https://github.com/koduj-dev/docker-commander
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+# Dedicated unprivileged user that is a member of the `docker` group so it can
+# reach the daemon socket. Create it once with:
+#   sudo useradd --system --no-create-home --shell /usr/sbin/nologin dockercmd
+#   sudo usermod -aG docker dockercmd
+User=dockercmd
+Group=dockercmd
+SupplementaryGroups=docker
+
+# Adjust the binary path / flags to your install. Configuration can also come
+# from the environment file below (DC_ADDR, DC_DATA_DIR, DC_REDIS_ADDR, …).
+ExecStart=/usr/local/bin/dockercmd -addr 127.0.0.1:8080 -data-dir /var/lib/dockercmd
+EnvironmentFile=-/etc/dockercmd/dockercmd.env
+
+Restart=on-failure
+RestartSec=5s
+
+# --- hardening ---------------------------------------------------------------
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/dockercmd
+StateDirectory=dockercmd
+# The daemon socket is reached via the docker group, not raw device access.
+
+[Install]
+WantedBy=multi-user.target

@@ -131,6 +131,33 @@ All options have flags and environment-variable equivalents:
 The Docker connection honours standard `DOCKER_HOST` / `DOCKER_CERT_PATH`
 environment variables.
 
+## 🖥️ Run as a service (Linux / systemd)
+
+The server keeps monitoring, alerting and metric history running 24/7 whether
+or not a browser is connected, so on a server you'll want it under systemd.
+
+```bash
+# 1. install the binary
+sudo install -m755 dockercmd /usr/local/bin/dockercmd
+
+# 2. dedicated user with docker socket access
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin dockercmd
+sudo usermod -aG docker dockercmd
+
+# 3. optional environment file
+sudo install -d /etc/dockercmd
+sudo cp deploy/dockercmd.env.example /etc/dockercmd/dockercmd.env   # then edit
+
+# 4. install + start the unit (creates /var/lib/dockercmd via StateDirectory)
+sudo cp deploy/dockercmd.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now dockercmd
+```
+
+It listens on loopback by default — put it behind a TLS reverse proxy (nginx,
+Caddy) to expose it. Keep the **localhost 2FA exemption off** for server
+deployments (Settings → it trusts `RemoteAddr`).
+
 ## 📈 Monitoring & alerting
 
 Define alert rules in the **Alerts** screen. Each rule has a type:
