@@ -584,6 +584,25 @@ func TestAPIStoreBackedCRUD(t *testing.T) {
 	}
 }
 
+func TestAPIHealthAndVersion(t *testing.T) {
+	a := newAPI(t)
+	// /healthz is public (no auth) and checks the DB is reachable.
+	if code, m := a.do("GET", "/healthz", nil); code != 200 || m["status"] != "ok" {
+		t.Errorf("healthz: %d %v", code, m)
+	}
+	if code, _ := a.do("GET", "/health", nil); code != 200 {
+		t.Errorf("/health alias should work: %d", code)
+	}
+	// /api/version needs a session.
+	if code, _ := a.do("GET", "/api/version", nil); code != 401 {
+		t.Errorf("version should require auth: %d", code)
+	}
+	_, _ = a.do("POST", "/api/auth/setup", map[string]string{"username": "admin", "password": "correcthorse123"})
+	if code, m := a.do("GET", "/api/version", nil); code != 200 {
+		t.Errorf("version after login: %d %v", code, m)
+	}
+}
+
 func TestAPISetup2FAChoice(t *testing.T) {
 	// Deferring 2FA at setup turns on the localhost exemption, so the admin is
 	// not forced to enroll (mfaEnforced=false on loopback).

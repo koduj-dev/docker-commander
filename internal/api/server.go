@@ -140,6 +140,7 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/volumes", s.handleCreateVolume)
 			r.Post("/volumes/prune", s.handlePruneVolumes)
 			r.Delete("/volumes/{name}", s.handleRemoveVolume)
+			r.Get("/version", s.handleVersion)
 			r.Get("/system", s.handleSystemInfo)
 			r.Get("/system/df", s.handleDiskUsage)
 			r.Get("/stats/overview", s.handleStatsOverview)
@@ -177,6 +178,10 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/events", s.handleEvents)
 		})
 	})
+
+	// Unauthenticated health probe (LB / uptime / k8s); /health is an alias.
+	r.Get("/healthz", s.handleHealthz)
+	r.Get("/health", s.handleHealthz)
 
 	// Prometheus exporter (own optional-token auth; Prometheus can't do cookies).
 	r.Get("/metrics", s.handleMetrics)

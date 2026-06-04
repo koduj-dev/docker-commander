@@ -56,6 +56,9 @@ func Open(path string) (*Store, error) {
 // Close releases the underlying database handle.
 func (s *Store) Close() error { return s.db.Close() }
 
+// Ping checks that the database is reachable (used by the health endpoint).
+func (s *Store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
+
 // migrate applies the schema. Each statement is idempotent (IF NOT EXISTS),
 // which keeps the first iteration simple; a versioned migration table can be
 // introduced later without breaking existing databases.

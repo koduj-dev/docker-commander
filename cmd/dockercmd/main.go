@@ -41,6 +41,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	cfg.Version = version // expose the build version to the API/UI
 
 	st, err := store.Open(cfg.DBPath())
 	if err != nil {

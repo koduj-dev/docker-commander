@@ -29,6 +29,9 @@ type Config struct {
 	// Empty means the endpoint is open (fine for loopback-only use).
 	MetricsToken string
 
+	// Version is the build version string, set by main (not from flags/env).
+	Version string
+
 	// Metrics history backend. RedisAddr empty → in-memory ring buffer.
 	RedisAddr        string
 	RedisPassword    string

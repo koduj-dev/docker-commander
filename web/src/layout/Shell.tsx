@@ -117,6 +117,17 @@ function ActiveHostBadge() {
   );
 }
 
+// VersionTag shows the running Docker Commander build version in the sidebar
+// footer, so it's clear which version is deployed.
+function VersionTag() {
+  const [version, setVersion] = useState("");
+  useEffect(() => {
+    api.version().then((v) => setVersion(v.version)).catch(() => {});
+  }, []);
+  if (!version) return null;
+  return <div className="px-2 pt-1 text-[10px] text-muted">Docker Commander {version}</div>;
+}
+
 export function Shell({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -194,6 +205,7 @@ export function Shell({ children }: { children: ReactNode }) {
               <LogOut className="h-4 w-4" />
             </button>
           </div>
+          <VersionTag />
         </div>
       </aside>
       <main className="overflow-auto">{children}</main>

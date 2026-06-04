@@ -60,6 +60,13 @@ sudo systemctl daemon-reload && sudo systemctl enable --now dockercmd
 The unit runs as a dedicated user in the `docker` group with
 `NoNewPrivileges`, `ProtectSystem=strict` and a private `StateDirectory`.
 
+## Health check
+`GET /healthz` (alias `/health`) is an unauthenticated probe for load
+balancers, uptime monitors and Kubernetes. It returns `200` with
+`{"status":"ok","version":"…"}` when the DB is reachable, `503` otherwise. The
+running build version is also shown in the UI sidebar footer and at
+`GET /api/version`.
+
 ## Logs
 Docker Commander logs to **stderr**, so under systemd everything goes to the
 **journal**:
