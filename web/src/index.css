@@ -8,6 +8,11 @@
   #root {
     height: 100%;
   }
+  /* Render native form controls (incl. the <select> dropdown popup) in dark
+     mode, so option lists aren't white-on-white. */
+  :root {
+    color-scheme: dark;
+  }
   body {
     @apply bg-bg text-text font-sans antialiased;
   }

@@ -5,6 +5,7 @@ package config
 import (
 	"errors"
 	"flag"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -69,7 +70,21 @@ func Load() (Config, error) {
 	flag.StringVar(&c.RedisAddr, "redis-addr", lookup("DC_REDIS_ADDR"), "Redis address (host:port) for metrics history; empty = in-memory")
 	flag.StringVar(&c.RedisPassword, "redis-password", lookup("DC_REDIS_PASSWORD"), "Redis password")
 	retention := flag.Duration("metrics-retention", envDuration("DC_METRICS_RETENTION", 6*time.Hour), "how long to keep metric history")
+	var port int
+	flag.IntVar(&port, "port", envInt("DC_PORT", 0), "listen port shorthand; overrides the port in -addr (keeps its host)")
+	flag.IntVar(&port, "p", envInt("DC_PORT", 0), "shorthand for -port")
 	flag.Parse()
+
+	// -port/-p (or DC_PORT) is a convenience that overrides just the port,
+	// keeping the host from -addr (loopback by default) — so `-p 9000` listens
+	// on 127.0.0.1:9000 without spelling out the whole host:port.
+	if port > 0 {
+		host, _, err := net.SplitHostPort(c.Addr)
+		if err != nil {
+			host = c.Addr
+		}
+		c.Addr = net.JoinHostPort(host, strconv.Itoa(port))
+	}
 
 	c.RedisDB = envInt("DC_REDIS_DB", 0)
 	c.MetricsRetention = *retention

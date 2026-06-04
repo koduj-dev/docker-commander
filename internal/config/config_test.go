@@ -99,6 +99,23 @@ func TestLoadMissingExplicitConfigErrors(t *testing.T) {
 	}
 }
 
+func TestLoadPortShorthand(t *testing.T) {
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	defer func() { os.Args, flag.CommandLine = oldArgs, oldFS }()
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = []string{"dockercmd", "-p", "9090"}
+
+	t.Setenv("DC_DATA_DIR", t.TempDir())
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// Default host is loopback; -p overrides just the port.
+	if c.Addr != "127.0.0.1:9090" {
+		t.Errorf("-p should override the port keeping the host: %q", c.Addr)
+	}
+}
+
 func TestDBPath(t *testing.T) {
 	c := Config{DataDir: "/var/lib/dockercmd"}
 	if got, want := c.DBPath(), "/var/lib/dockercmd/docker-commander.db"; got != want {

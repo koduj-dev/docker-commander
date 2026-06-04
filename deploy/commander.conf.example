@@ -11,6 +11,10 @@
 # Listen address. Behind a TLS reverse proxy, keep this on loopback.
 DC_ADDR=127.0.0.1:8080
 
+# Port shorthand: overrides just the port in DC_ADDR (keeps its host).
+# Equivalent to the -p / -port flag. e.g. DC_PORT=9000 -> 127.0.0.1:9000
+# DC_PORT=8080
+
 # Where the SQLite DB + signing/encryption keys live.
 DC_DATA_DIR=/var/lib/dockercmd
 

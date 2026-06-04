@@ -13,6 +13,7 @@ Every option is a flag with a `DC_*` environment-variable equivalent. See
 | Env | Default | Purpose |
 |-----|---------|---------|
 | `DC_ADDR` | `127.0.0.1:8080` | listen address (keep on loopback behind a proxy) |
+| `DC_PORT` | (from `DC_ADDR`) | port shorthand — `-p 9000` ⇒ `127.0.0.1:9000`, keeping the host |
 | `DC_DATA_DIR` | OS config dir | SQLite DB + signing/encryption keys |
 | `DC_METRICS_TOKEN` | (open) | bearer token guarding `/metrics` |
 | `DC_REDIS_ADDR` | (memory) | Redis for metric history |
