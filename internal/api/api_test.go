@@ -603,6 +603,29 @@ func TestAPIHealthAndVersion(t *testing.T) {
 	}
 }
 
+func TestAPIPrefs(t *testing.T) {
+	a := newAPI(t)
+	_, _ = a.do("POST", "/api/auth/setup", map[string]string{"username": "admin", "password": "correcthorse123"})
+
+	// Defaults to an empty object.
+	if code, m := a.do("GET", "/api/prefs", nil); code != 200 || len(m) != 0 {
+		t.Errorf("fresh prefs should be empty: %d %v", code, m)
+	}
+	// Save and read back.
+	if code, _ := a.do("PUT", "/api/prefs", map[string]any{"list.images": map[string]any{"status": "unused"}}); code != 200 {
+		t.Errorf("put prefs: %d", code)
+	}
+	_, m := a.do("GET", "/api/prefs", nil)
+	li, _ := m["list.images"].(map[string]any)
+	if li["status"] != "unused" {
+		t.Errorf("prefs not persisted: %v", m)
+	}
+	// A non-object body is rejected.
+	if code, _ := a.do("PUT", "/api/prefs", []int{1, 2}); code != 400 {
+		t.Errorf("array body should be 400, got %d", code)
+	}
+}
+
 func TestAPISetup2FAChoice(t *testing.T) {
 	// Deferring 2FA at setup turns on the localhost exemption, so the admin is
 	// not forced to enroll (mfaEnforced=false on loopback).

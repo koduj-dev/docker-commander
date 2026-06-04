@@ -107,6 +107,26 @@ func (s *Store) UserByID(ctx context.Context, id int64) (*User, error) {
 		FROM users WHERE id = ?`, id))
 }
 
+// UserPrefs returns a user's UI preferences as a JSON object string ("{}" if
+// none). These are opaque to the server — the frontend owns the shape.
+func (s *Store) UserPrefs(ctx context.Context, userID int64) (string, error) {
+	var prefs string
+	err := s.db.QueryRowContext(ctx, `SELECT ui_prefs FROM users WHERE id = ?`, userID).Scan(&prefs)
+	if err != nil {
+		return "{}", err
+	}
+	if prefs == "" {
+		prefs = "{}"
+	}
+	return prefs, nil
+}
+
+// SetUserPrefs replaces a user's UI preferences JSON blob.
+func (s *Store) SetUserPrefs(ctx context.Context, userID int64, prefs string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET ui_prefs = ? WHERE id = ?`, prefs, userID)
+	return err
+}
+
 // SetTOTP stores the secret and enabled flag for a user (enrollment / disable).
 func (s *Store) SetTOTP(ctx context.Context, userID int64, secret string, enabled bool) error {
 	_, err := s.db.ExecContext(ctx,

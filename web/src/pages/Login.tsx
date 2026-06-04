@@ -5,7 +5,7 @@ import { AuthShell } from "./AuthShell";
 
 // Two-step login: password, then (if enabled) a TOTP code.
 export function Login() {
-  const { setUser, refresh } = useAuth();
+  const { refresh } = useAuth();
   const [step, setStep] = useState<"password" | "2fa">("password");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -24,8 +24,7 @@ export function Login() {
         setMfaToken(res.mfaToken);
         setStep("2fa");
       } else if (res.user) {
-        setUser(res.user);
-        await refresh();
+        await refresh(); // loads prefs, then sets the user
       }
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Login failed");
@@ -41,8 +40,7 @@ export function Login() {
     try {
       const res = await api.verify2fa(mfaToken, code);
       if (res.user) {
-        setUser(res.user);
-        await refresh();
+        await refresh(); // loads prefs, then sets the user
       }
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Invalid code");

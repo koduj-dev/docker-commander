@@ -1,65 +1,43 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import type { AuditEntry } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
+import { useListControls, SearchBar, Pager } from "../components/ListControls";
 
-const PAGE_SIZES = [25, 50, 100, 200];
+// Load a generous recent window and paginate it client-side, so the audit log
+// gets the same search + prev/next pagination as the other lists.
+const RECENT = 1000;
+
+function matchAudit(e: AuditEntry, q: string): boolean {
+  return (
+    (e.username ?? "").toLowerCase().includes(q) ||
+    e.action.toLowerCase().includes(q) ||
+    (e.target ?? "").toLowerCase().includes(q) ||
+    (e.ip ?? "").toLowerCase().includes(q)
+  );
+}
 
 export function Audit() {
   const [entries, setEntries] = useState<AuditEntry[] | null>(null);
-  const [pageSize, setPageSize] = useState(50);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [done, setDone] = useState(false); // no older entries left
 
-  // (Re)load from the top whenever the page size changes.
   useEffect(() => {
-    setEntries(null);
-    setDone(false);
-    api
-      .audit(pageSize)
-      .then((rows) => {
-        setEntries(rows);
-        setDone(rows.length < pageSize);
-      })
-      .catch(() => setEntries([]));
-  }, [pageSize]);
+    api.audit(RECENT).then(setEntries).catch(() => setEntries([]));
+  }, []);
 
-  const loadMore = useCallback(async () => {
-    if (!entries || entries.length === 0) return;
-    setLoadingMore(true);
-    try {
-      const before = entries[entries.length - 1].id; // oldest loaded id
-      const older = await api.audit(pageSize, before);
-      setEntries((cur) => [...(cur ?? []), ...older]);
-      if (older.length < pageSize) setDone(true);
-    } finally {
-      setLoadingMore(false);
-    }
-  }, [entries, pageSize]);
+  const controls = useListControls(entries ?? [], matchAudit, { storageKey: "audit" });
 
   return (
     <>
-      <PageHeader
-        title="Audit log"
-        actions={
-          <label className="flex items-center gap-2 text-xs text-muted">
-            Rows
-            <select className="input py-1 text-xs w-20" value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))}>
-              {PAGE_SIZES.map((n) => (
-                <option key={n} value={n}>{n}</option>
-              ))}
-            </select>
-          </label>
-        }
-      />
-      <div className="p-6 space-y-4">
+      <PageHeader title="Audit log" />
+      <div className="p-6 space-y-3">
         {!entries ? (
           <div className="flex items-center gap-2 text-muted"><Spinner /> Loading…</div>
         ) : entries.length === 0 ? (
           <EmptyState title="No audit entries yet" />
         ) : (
           <>
+            <SearchBar controls={controls} placeholder="Search by user, action, target, IP…" />
             <div className="card overflow-hidden">
               <table className="w-full text-sm">
                 <thead className="text-muted text-xs uppercase tracking-wide">
@@ -72,7 +50,7 @@ export function Audit() {
                   </tr>
                 </thead>
                 <tbody>
-                  {entries.map((e) => (
+                  {controls.pageItems.map((e) => (
                     <tr key={e.id} className="border-b border-border/50 hover:bg-panel2/40">
                       <td className="px-4 py-2.5 text-muted whitespace-nowrap">{e.createdAt.slice(0, 19).replace("T", " ")}</td>
                       <td className="px-4 py-2.5">{e.username || "—"}</td>
@@ -84,16 +62,10 @@ export function Audit() {
                 </tbody>
               </table>
             </div>
-            <div className="flex items-center gap-3">
-              {!done ? (
-                <button className="btn-ghost text-sm" onClick={loadMore} disabled={loadingMore}>
-                  {loadingMore ? "Loading…" : "Load more"}
-                </button>
-              ) : (
-                <span className="text-xs text-muted">End of log.</span>
-              )}
-              <span className="text-xs text-muted">{entries.length} shown</span>
-            </div>
+            <Pager controls={controls} />
+            {entries.length >= RECENT && (
+              <p className="text-xs text-muted">Showing the {RECENT} most recent entries.</p>
+            )}
           </>
         )}
       </div>

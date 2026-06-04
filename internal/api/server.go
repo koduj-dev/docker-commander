@@ -141,6 +141,8 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/volumes/prune", s.handlePruneVolumes)
 			r.Delete("/volumes/{name}", s.handleRemoveVolume)
 			r.Get("/version", s.handleVersion)
+			r.Get("/prefs", s.handleGetPrefs)
+			r.Put("/prefs", s.handleSetPrefs)
 			r.Get("/system", s.handleSystemInfo)
 			r.Get("/system/df", s.handleDiskUsage)
 			r.Get("/stats/overview", s.handleStatsOverview)

@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { api } from "../lib/api";
+import { loadPrefs, clearPrefs } from "../lib/prefs";
 import type { User } from "../lib/types";
 
 interface AuthState {
@@ -24,7 +25,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setNeedsSetup(status.needsSetup);
       if (!status.needsSetup) {
         try {
-          setUser(await api.me());
+          const me = await api.me();
+          await loadPrefs(); // populate the prefs cache before the app renders
+          setUser(me);
         } catch {
           setUser(null);
         }
@@ -40,6 +43,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = async () => {
     await api.logout();
+    clearPrefs();
     setUser(null);
   };
 

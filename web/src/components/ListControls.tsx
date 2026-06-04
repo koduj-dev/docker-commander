@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Search } from "lucide-react";
+import { getPref, setPref } from "../lib/prefs";
 
 const PAGE_SIZES = [10, 20, 50, 100];
 
@@ -7,8 +8,8 @@ const PAGE_SIZES = [10, 20, 50, 100];
 export type StatusOption<T> = { value: string; label: string; test?: (item: T) => boolean };
 
 type Opts<T> = {
-  // storageKey persists query/pageSize/status under localStorage so the view
-  // remembers them across navigation and reloads.
+  // storageKey persists query/pageSize/status in the user's server-side prefs
+  // so the view remembers them across navigation, reloads AND browsers.
   storageKey?: string;
   // statuses renders an extra dropdown (e.g. running / stopped / all).
   statuses?: StatusOption<T>[];
@@ -16,20 +17,10 @@ type Opts<T> = {
 
 type Persisted = { query?: string; pageSize?: number; status?: string };
 function loadPersist(key?: string): Persisted {
-  if (!key) return {};
-  try {
-    return JSON.parse(localStorage.getItem(`dc.list.${key}`) ?? "{}") as Persisted;
-  } catch {
-    return {};
-  }
+  return key ? getPref<Persisted>(`list.${key}`, {}) : {};
 }
 function savePersist(key: string | undefined, v: Persisted) {
-  if (!key) return;
-  try {
-    localStorage.setItem(`dc.list.${key}`, JSON.stringify(v));
-  } catch {
-    /* ignore */
-  }
+  if (key) setPref(`list.${key}`, v);
 }
 
 // useListControls wires up client-side search + status filter + pagination for
