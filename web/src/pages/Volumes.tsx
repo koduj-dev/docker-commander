@@ -6,7 +6,13 @@ import { relTime } from "../lib/format";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
 import { InspectModal } from "../components/InspectModal";
-import { useListControls, SearchBar, Pager } from "../components/ListControls";
+import { useListControls, SearchBar, Pager, type StatusOption } from "../components/ListControls";
+
+const VOLUME_STATUSES: StatusOption<VolumeSummary>[] = [
+  { value: "all", label: "All volumes" },
+  { value: "used", label: "In use", test: (v) => (v.inUseBy ?? []).length > 0 },
+  { value: "unused", label: "Unused", test: (v) => (v.inUseBy ?? []).length === 0 },
+];
 
 function matchVolume(v: VolumeSummary, q: string): boolean {
   return v.name.toLowerCase().includes(q) || v.driver.toLowerCase().includes(q) || (v.mountpoint ?? "").toLowerCase().includes(q);
@@ -31,7 +37,7 @@ export function Volumes() {
   }, []);
   useEffect(() => load(), [load]);
 
-  const controls = useListControls(vols ?? [], matchVolume);
+  const controls = useListControls(vols ?? [], matchVolume, { storageKey: "volumes", statuses: VOLUME_STATUSES });
 
   const remove = async (v: VolumeSummary, force = false) => {
     setBusy((b) => ({ ...b, [v.name]: true }));

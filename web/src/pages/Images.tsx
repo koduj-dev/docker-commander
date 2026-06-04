@@ -11,7 +11,13 @@ import { InspectModal } from "../components/InspectModal";
 import { PushModal } from "../components/PushModal";
 import { BuildModal } from "../components/BuildModal";
 import { LoadModal, triggerDownload } from "../components/LoadModal";
-import { useListControls, SearchBar, Pager } from "../components/ListControls";
+import { useListControls, SearchBar, Pager, type StatusOption } from "../components/ListControls";
+
+const IMAGE_STATUSES: StatusOption<ImageSummary>[] = [
+  { value: "all", label: "All images" },
+  { value: "used", label: "In use", test: (i) => i.inUse },
+  { value: "unused", label: "Unused", test: (i) => !i.inUse },
+];
 
 function matchImage(img: ImageSummary, q: string): boolean {
   if ((img.repoTags ?? []).some((t) => t.toLowerCase().includes(q))) return true;
@@ -38,7 +44,7 @@ export function Images() {
   }, []);
   useEffect(() => load(), [load]);
 
-  const controls = useListControls(images ?? [], matchImage);
+  const controls = useListControls(images ?? [], matchImage, { storageKey: "images", statuses: IMAGE_STATUSES });
 
   const remove = async (img: ImageSummary, force = false) => {
     const id = img.id;

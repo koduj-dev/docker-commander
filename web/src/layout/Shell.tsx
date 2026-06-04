@@ -1,5 +1,5 @@
-import { NavLink, useNavigate } from "react-router-dom";
-import { useEffect, useState, type ReactNode } from "react";
+import { NavLink, useNavigate, useLocation, useNavigationType } from "react-router-dom";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Activity, Bell, Boxes, Container, Database, KeyRound, Layers, LayoutDashboard, Network, ScrollText, Server, Settings, Share2, Terminal, Users, LogOut } from "lucide-react";
 import clsx from "clsx";
 import { useAuth } from "../auth/AuthContext";
@@ -127,10 +127,46 @@ function VersionTag() {
   return <div className="px-2 pt-1 text-[10px] text-muted">Docker Commander {version}</div>;
 }
 
+// useScrollRestoration remembers the scroll position of the main content area
+// per history entry, and restores it on Back/Forward (POP) so returning from a
+// detail page lands where you were, not at the top. The content loads async, so
+// it retries until the page is tall enough.
+function useScrollRestoration(ref: React.RefObject<HTMLElement | null>) {
+  const location = useLocation();
+  const navType = useNavigationType();
+  const positions = useRef(new Map<string, number>());
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const onScroll = () => positions.current.set(location.key, el.scrollTop);
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [ref, location.key]);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (navType === "POP") {
+      const target = positions.current.get(location.key) ?? 0;
+      let tries = 0;
+      const restore = () => {
+        el.scrollTop = target;
+        if (Math.abs(el.scrollTop - target) > 1 && tries++ < 30) requestAnimationFrame(restore);
+      };
+      requestAnimationFrame(restore);
+    } else {
+      el.scrollTop = 0; // fresh navigation starts at the top
+    }
+  }, [ref, location.key, navType]);
+}
+
 export function Shell({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [unread, setUnread] = useState(0);
+  const mainRef = useRef<HTMLElement>(null);
+  useScrollRestoration(mainRef);
 
   // Poll the unread alert count to badge the Alerts nav item.
   useEffect(() => {
@@ -207,7 +243,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <VersionTag />
         </div>
       </aside>
-      <main className="overflow-auto">{children}</main>
+      <main ref={mainRef} className="overflow-auto">{children}</main>
     </div>
   );
 }

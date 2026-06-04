@@ -6,8 +6,14 @@ import type { ContainerSummary } from "../lib/types";
 import { shortId } from "../lib/format";
 import { StateBadge, EmptyState, Spinner } from "../components/ui";
 import { PageHeader } from "../layout/Shell";
-import { useListControls, SearchBar, Pager } from "../components/ListControls";
+import { useListControls, SearchBar, Pager, type StatusOption } from "../components/ListControls";
 import { CreateContainerModal } from "../components/CreateContainerModal";
+
+const CONTAINER_STATUSES: StatusOption<ContainerSummary>[] = [
+  { value: "all", label: "All states" },
+  { value: "running", label: "Running", test: (c) => c.state === "running" },
+  { value: "stopped", label: "Stopped", test: (c) => c.state !== "running" },
+];
 
 function matchContainer(c: ContainerSummary, q: string): boolean {
   return (
@@ -41,7 +47,11 @@ export function ContainerTable({ runningOnly = false, withControls = false }: { 
     return () => clearInterval(t);
   }, [load]);
 
-  const controls = useListControls(list ?? [], matchContainer);
+  const controls = useListControls(
+    list ?? [],
+    matchContainer,
+    withControls ? { storageKey: "containers", statuses: CONTAINER_STATUSES } : {},
+  );
 
   const act = async (id: string, action: string) => {
     setBusyId(id);
