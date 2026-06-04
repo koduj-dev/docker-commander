@@ -293,7 +293,7 @@ func TestParseRulesAndSettingsAndAudit(t *testing.T) {
 	if err := s.Audit(ctx, AuditEntry{Username: "admin", Action: "container.stop", Target: "web", IP: "1.2.3.4"}); err != nil {
 		t.Fatal(err)
 	}
-	entries, _ := s.RecentAudit(ctx, 10)
+	entries, _ := s.RecentAudit(ctx, 10, 0)
 	if len(entries) != 1 || entries[0].Action != "container.stop" {
 		t.Errorf("audit: %+v", entries)
 	}

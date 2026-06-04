@@ -28,14 +28,22 @@ func (s *Store) Audit(ctx context.Context, e AuditEntry) error {
 	return err
 }
 
-// RecentAudit returns the most recent audit entries, newest first.
-func (s *Store) RecentAudit(ctx context.Context, limit int) ([]AuditEntry, error) {
+// RecentAudit returns the most recent audit entries, newest first. When before
+// is > 0, only entries older than that id are returned (cursor pagination).
+func (s *Store) RecentAudit(ctx context.Context, limit int, before int64) ([]AuditEntry, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 200
 	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, user_id, username, action, target, detail, ip, created_at
-		FROM audit_log ORDER BY id DESC LIMIT ?`, limit)
+	query := `SELECT id, user_id, username, action, target, detail, ip, created_at FROM audit_log`
+	args := []any{}
+	if before > 0 {
+		query += ` WHERE id < ?`
+		args = append(args, before)
+	}
+	query += ` ORDER BY id DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

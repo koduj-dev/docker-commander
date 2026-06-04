@@ -285,7 +285,8 @@ export const api = {
   hostPorts: () => req<HostPortProbe[]>("GET", `/api/stats/ports${hostParam()}`),
   // hostSystem fetches engine/host info for a specific host (not the active one).
   hostSystem: (id: number) => req<SystemInfo>("GET", `/api/system?host=${id}`),
-  audit: () => req<AuditEntry[]>("GET", "/api/audit"),
+  audit: (limit = 50, before?: number) =>
+    req<AuditEntry[]>("GET", `/api/audit?limit=${limit}${before ? `&before=${before}` : ""}`),
 
   // Alerting
   webhooks: () => req<Webhook[]>("GET", "/api/webhooks"),

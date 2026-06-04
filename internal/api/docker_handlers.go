@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -295,7 +296,12 @@ func (s *Server) handleDiskUsage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
-	entries, err := s.store.RecentAudit(r.Context(), 200)
+	limit := 50
+	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 {
+		limit = v
+	}
+	before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
+	entries, err := s.store.RecentAudit(r.Context(), limit, before)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not read audit log")
 		return
