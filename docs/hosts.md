@@ -16,6 +16,62 @@ switcher. Every view, stream and the alert engine bind to the selected host.
 You can set a per-host **alert email** (overrides the global SMTP recipient for
 alerts from that host) at creation or inline on the host card.
 
+> The remote server only needs **Docker installed and reachable** — it does
+> **not** need Docker Commander. One Docker Commander instance talks to many
+> remote Docker daemons; it never talks to another Docker Commander.
+
+## Connecting a remote host — worked example
+
+### Option 1 · SSH (recommended)
+Nothing is exposed to the network and no secrets are stored here — Docker
+Commander tunnels the Docker API over SSH using the **OS user's own SSH keys**
+(the user that runs the `dockercmd` process).
+
+On the **Docker Commander server**, as the user that runs `dockercmd`:
+
+```bash
+# 1. Have an SSH key (skip if you already do) and install it on the remote host:
+ssh-keygen -t ed25519
+ssh-copy-id deploy@10.0.0.42
+
+# 2. Sanity check — this must succeed WITHOUT a password prompt:
+ssh deploy@10.0.0.42 docker info
+```
+
+On the **remote host**, the SSH user must be allowed to reach the Docker socket:
+
+```bash
+sudo usermod -aG docker deploy    # then reconnect so the group takes effect
+```
+
+Then in the UI: **Hosts → Add host → SSH**, address `deploy@10.0.0.42`
+(or `deploy@host:2222` for a custom port) → **Test** → **Trust this host**
+after verifying the SSH host-key fingerprint (see below).
+
+> Key auth uses the server's SSH **agent** or `~/.ssh` keys. For a passphrase-
+> protected key, make sure an agent is available to the `dockercmd` process
+> (e.g. `systemctl` service with `SSH_AUTH_SOCK`, or a passphrase-less key
+> dedicated to this).
+
+### Option 2 · TCP + TLS
+Use this when SSH isn't an option. **Never expose the Docker socket over TCP
+without TLS** — that grants root-equivalent access to anyone who can reach the
+port.
+
+1. On the remote host, enable a TLS-protected TCP listener on `:2376` and
+   generate a CA + server + client certificates — follow Docker's official
+   guide: <https://docs.docker.com/engine/security/protect-access/>.
+2. In the UI: **Hosts → Add host → TCP (+TLS)**, address
+   `tcp://10.0.0.42:2376`, and paste the **CA cert**, **client cert** and
+   **client key** (PEM) into the three fields.
+
+Quick sanity check from the Docker Commander server:
+
+```bash
+docker --tlsverify --tlscacert=ca.pem --tlscert=cert.pem --tlskey=key.pem \
+  -H tcp://10.0.0.42:2376 info
+```
+
 ## Switching the active host
 With more than one host configured, a **Viewing host** switcher appears at the
 top of the sidebar. Pick a host and the whole app — dashboard, containers,
