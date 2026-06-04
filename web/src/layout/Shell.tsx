@@ -50,20 +50,37 @@ const navGroups: { title: string; items: NavItem[] }[] = [
   },
 ];
 
+// loadHosts memoises the host list so the switcher and the per-page badge don't
+// each refetch it. A host change reloads the page, which clears this cache.
+let hostsPromise: Promise<Host[]> | null = null;
+function loadHosts(): Promise<Host[]> {
+  if (!hostsPromise) hostsPromise = api.hosts().catch(() => [] as Host[]);
+  return hostsPromise;
+}
+
+// activeHostId resolves the currently selected host: the explicit choice, else
+// the local host, else the first one.
+function activeHostId(hosts: Host[]): number | undefined {
+  return getHostId() ?? hosts.find((h) => h.kind === "local")?.id ?? hosts[0]?.id;
+}
+
 // HostSwitcher selects the active Docker host. Changing it reloads the app so
-// every view and WebSocket re-binds to the new host cleanly.
+// every view and WebSocket re-binds to the new host cleanly. Hidden when there
+// is only one host (nothing to switch).
 function HostSwitcher() {
   const [hosts, setHosts] = useState<Host[]>([]);
   useEffect(() => {
-    api.hosts().then(setHosts).catch(() => {});
+    loadHosts().then(setHosts);
   }, []);
   if (hosts.length <= 1) return null;
-  const current = getHostId() ?? hosts.find((h) => h.kind === "local")?.id ?? hosts[0]?.id;
+  const current = activeHostId(hosts);
   return (
-    <div className="px-3 py-2 border-b border-border">
-      <label className="text-[10px] uppercase tracking-wide text-muted px-1">Host</label>
+    <div className="px-3 py-3 border-b border-border">
+      <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted mb-1.5 px-0.5">
+        <Server className="h-3.5 w-3.5 text-accent" /> Viewing host
+      </div>
       <select
-        className="input py-1.5 mt-1"
+        className="input py-2 font-medium border-accent/40 bg-accent/5 focus:ring-accent"
         value={current}
         onChange={(e) => {
           setHostId(Number(e.target.value));
@@ -75,6 +92,28 @@ function HostSwitcher() {
         ))}
       </select>
     </div>
+  );
+}
+
+// ActiveHostBadge shows which host the current page is bound to. Rendered in
+// every page header (only when more than one host exists) so the active host is
+// always visible, not just in the sidebar switcher.
+function ActiveHostBadge() {
+  const [hosts, setHosts] = useState<Host[]>([]);
+  useEffect(() => {
+    loadHosts().then(setHosts);
+  }, []);
+  if (hosts.length <= 1) return null;
+  const h = hosts.find((x) => x.id === activeHostId(hosts));
+  if (!h) return null;
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 text-xs rounded-md border border-border bg-panel2 px-2 py-1 text-muted"
+      title="Active host — switch it in the sidebar"
+    >
+      <Server className="h-3.5 w-3.5 text-accent" />
+      <span className="font-medium text-text">{h.name}</span>
+    </span>
   );
 }
 
@@ -166,7 +205,7 @@ export function PageHeader({ title, actions }: { title: string; actions?: ReactN
   return (
     <div className="flex items-center justify-between h-16 px-6 border-b border-border sticky top-0 bg-bg/80 backdrop-blur z-10">
       <h1 className="text-lg font-semibold">{title}</h1>
-      <div className="flex items-center gap-2">{actions}</div>
+      <div className="flex items-center gap-2"><ActiveHostBadge />{actions}</div>
     </div>
   );
 }
