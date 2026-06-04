@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"net"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -117,6 +118,45 @@ func TestFingerprintClosedPort(t *testing.T) {
 	}
 	if pp.Error == "" {
 		t.Error("closed port should report an error")
+	}
+}
+
+func TestDedupePorts(t *testing.T) {
+	in := []PortMapping{
+		{PrivatePort: 80, PublicPort: 8080, Type: "tcp", IP: "0.0.0.0"},
+		{PrivatePort: 80, PublicPort: 8080, Type: "tcp", IP: "::"}, // v6 dup of the above
+		{PrivatePort: 443, PublicPort: 8443, Type: "tcp"},
+		{PrivatePort: 9000, PublicPort: 0, Type: "tcp"}, // not published → dropped
+	}
+	out := dedupePorts(in)
+	if len(out) != 2 {
+		t.Fatalf("expected 2 unique published ports, got %d: %+v", len(out), out)
+	}
+	for _, p := range out {
+		if p.PublicPort == 0 {
+			t.Error("unpublished port should be dropped")
+		}
+	}
+}
+
+func TestProbeOnePort(t *testing.T) {
+	// A TCP service that greets is fingerprinted...
+	addr := serve(t, func(c net.Conn) {
+		_, _ = c.Write([]byte("SSH-2.0-OpenSSH_9.6\r\n"))
+		time.Sleep(200 * time.Millisecond)
+	})
+	_, portStr, _ := net.SplitHostPort(addr)
+	port, _ := strconv.Atoi(portStr)
+
+	tcp := probeOnePort(context.Background(), directDial, "127.0.0.1", PortMapping{PrivatePort: 22, PublicPort: uint16(port), Type: "tcp"})
+	if !tcp.Open || tcp.Detected != "SSH" || tcp.GuessByPort != "SSH" {
+		t.Errorf("tcp probe wrong: %+v", tcp)
+	}
+
+	// ...while UDP gets only the passive guess (no active probe).
+	udp := probeOnePort(context.Background(), directDial, "127.0.0.1", PortMapping{PrivatePort: 53, PublicPort: 53, Type: "udp"})
+	if udp.Open || udp.GuessByPort != "DNS" {
+		t.Errorf("udp should be guess-only: %+v", udp)
 	}
 }
 

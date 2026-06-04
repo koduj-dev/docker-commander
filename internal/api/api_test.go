@@ -278,6 +278,72 @@ func TestAPIContainerDetailHandlers(t *testing.T) {
 	}
 }
 
+func TestAPIStatsAndProbe(t *testing.T) {
+	a := newAPI(t)
+	_, _ = a.do("POST", "/api/auth/setup", map[string]string{"username": "admin", "password": "correcthorse123"})
+	if testing.Short() {
+		t.Skip("docker integration test; skipped under -short")
+	}
+	if code, _ := a.do("GET", "/api/system", nil); code != 200 {
+		t.Skipf("docker daemon not available (%d)", code)
+	}
+	ctx := context.Background()
+	_ = a.dm.PullImage(ctx, 0, "alpine:latest", func(docker.PullProgress) {})
+
+	// A container with a published port (nothing listens, so the probe reports
+	// the port closed — deterministic and needs no extra image).
+	_, m := a.do("POST", "/api/containers", map[string]any{
+		"image": "alpine:latest", "name": "dctest_apiprobe", "cmd": []string{"sleep", "300"}, "start": true,
+		"ports": []map[string]any{{"containerPort": "80", "hostPort": "0", "proto": "tcp"}},
+	})
+	id, _ := m["id"].(string)
+	if id == "" {
+		t.Fatalf("create container did not return an id: %v", m)
+	}
+	t.Cleanup(func() {
+		if cli, err := a.dm.Client(ctx, 0); err == nil {
+			_ = cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true})
+		}
+	})
+
+	// Resource overview (object).
+	if code, ov := a.do("GET", "/api/stats/overview", nil); code != 200 || ov["containers"] == nil {
+		t.Errorf("stats/overview: %d %v", code, ov)
+	}
+
+	getArr := func(method, path string) []map[string]any {
+		req, _ := http.NewRequest(method, a.url+path, nil)
+		resp, err := a.c.Do(req)
+		if err != nil {
+			t.Fatalf("%s %s: %v", method, path, err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("%s %s → %d", method, path, resp.StatusCode)
+		}
+		var out []map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return out
+	}
+
+	// Host-wide port scan — the published port must appear.
+	ports := getArr("GET", "/api/stats/ports")
+	var found bool
+	for _, p := range ports {
+		if pub, ok := p["publicPort"].(float64); ok && pub > 0 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("host port scan should include the published port: %v", ports)
+	}
+
+	// Per-container probe runs and returns the port too.
+	if cp := getArr("POST", "/api/containers/"+id+"/probe"); len(cp) == 0 {
+		t.Errorf("container probe should return the published port: %v", cp)
+	}
+}
+
 func TestAPIDockerBackedWrites(t *testing.T) {
 	a := newAPI(t)
 	_, _ = a.do("POST", "/api/auth/setup", map[string]string{"username": "admin", "password": "correcthorse123"})

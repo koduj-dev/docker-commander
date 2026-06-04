@@ -290,11 +290,37 @@ func TestParseRulesAndSettingsAndAudit(t *testing.T) {
 		t.Errorf("setting upsert: %q", v)
 	}
 
-	if err := s.Audit(ctx, AuditEntry{Username: "admin", Action: "container.stop", Target: "web", IP: "1.2.3.4"}); err != nil {
+	for _, a := range []string{"a1", "a2", "a3"} {
+		if err := s.Audit(ctx, AuditEntry{Username: "admin", Action: a, Target: "web", IP: "1.2.3.4"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Newest first, limited.
+	page1, _ := s.RecentAudit(ctx, 2, 0)
+	if len(page1) != 2 || page1[0].Action != "a3" || page1[1].Action != "a2" {
+		t.Fatalf("audit page1: %+v", page1)
+	}
+	// Cursor: entries older than the last one returned.
+	page2, _ := s.RecentAudit(ctx, 2, page1[1].ID)
+	if len(page2) != 1 || page2[0].Action != "a1" {
+		t.Errorf("audit cursor page2: %+v", page2)
+	}
+}
+
+func TestUserPrefs(t *testing.T) {
+	s, ctx := newStore(t)
+	id, err := s.CreateUser(ctx, &User{Username: "alice", PasswordHash: "h", Role: "user"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	entries, _ := s.RecentAudit(ctx, 10, 0)
-	if len(entries) != 1 || entries[0].Action != "container.stop" {
-		t.Errorf("audit: %+v", entries)
+	// Defaults to an empty object.
+	if p, _ := s.UserPrefs(ctx, id); p != "{}" {
+		t.Errorf("default prefs should be {}, got %q", p)
+	}
+	if err := s.SetUserPrefs(ctx, id, `{"list.images":{"status":"unused"}}`); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := s.UserPrefs(ctx, id); p != `{"list.images":{"status":"unused"}}` {
+		t.Errorf("prefs not persisted: %q", p)
 	}
 }

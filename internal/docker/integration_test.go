@@ -302,6 +302,42 @@ func TestIntegrationLogsAndEvents(t *testing.T) {
 	}
 }
 
+func TestIntegrationProbePorts(t *testing.T) {
+	m, ctx := newManager(t)
+	ensureImage(t, m, ctx) // alpine is already present — no extra pull
+	id, err := m.CreateContainer(ctx, 0, CreateSpec{
+		Image: testImage, Name: "dctest_probe", Cmd: []string{"sleep", "300"}, Start: true,
+		Ports: []PortSpec{{ContainerPort: "80", HostPort: "0"}}, // published; nothing listens
+	})
+	if err != nil {
+		t.Fatalf("CreateContainer: %v", err)
+	}
+	t.Cleanup(func() { rmContainer(t, m, ctx, id) })
+
+	// Host-wide scan: the published port appears (closed, since nothing listens).
+	host, err := m.ProbeHostPorts(ctx, 0)
+	if err != nil {
+		t.Fatalf("ProbeHostPorts: %v", err)
+	}
+	var found bool
+	for _, p := range host {
+		if p.ContainerID == id && p.PublicPort != 0 {
+			found = true
+			if p.GuessByPort != "HTTP" { // container port 80
+				t.Errorf("passive guess for :80 should be HTTP: %+v", p)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("host scan should include the published port: %+v", host)
+	}
+
+	// Per-container probe returns the same port.
+	if c, err := m.ProbeContainerPorts(ctx, 0, id); err != nil || len(c) == 0 {
+		t.Errorf("ProbeContainerPorts: %v %+v", err, c)
+	}
+}
+
 func TestIntegrationResourceOverview(t *testing.T) {
 	m, ctx := newManager(t)
 	id := startTestContainer(t, m, ctx, "dctest_overview")
