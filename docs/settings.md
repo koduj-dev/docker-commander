@@ -2,6 +2,8 @@
 
 [← Manual index](README.md)
 
+![Settings](images/settings.png)
+
 _Admin only._ App-wide configuration.
 
 ## Feature flags (enabled features)
@@ -19,6 +21,8 @@ require 2FA.
   **keep it off behind a reverse proxy** — otherwise every proxied request looks
   like localhost.
 - Good for a personal/local install; leave off for shared servers.
+- This is the same toggle the **first-run setup** screen flips when you choose
+  *"Skip 2FA for now"* — so you can decide up front and change it here later.
 
 ## LDAP / Active Directory
 Optional external authentication.

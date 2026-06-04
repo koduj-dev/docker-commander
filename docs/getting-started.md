@@ -5,11 +5,12 @@
 ## First run
 
 1. Start the binary (`./dockercmd`) and open <http://127.0.0.1:8470>.
-2. **Create the admin account** — the first account is always an `admin`.
-3. **Enable 2FA** — scan the QR code with an authenticator app (Google
-   Authenticator, Aegis, 1Password…) and enter the 6-digit code to confirm.
-   2FA is mandatory by default; an admin can later relax it for localhost only
-   (see [Settings](settings.md)).
+2. **Create the admin account** — the first account is always an `admin`. On
+   the same screen you choose whether to **enable 2FA now** or **skip it for
+   now** (leaving localhost password-only — handy for a local/dev box).
+3. **If you enable 2FA** — scan the QR code with an authenticator app (Google
+   Authenticator, Aegis, 1Password…) and enter the 6-digit code to confirm. You
+   can change the localhost exemption later (see [Settings](settings.md)).
 
 After that you log in with username + password + the current TOTP code.
 

@@ -2,10 +2,13 @@
 
 [← Manual index](README.md)
 
+![Images](images/images.png)
+
 ## The list
 Each image shows its tags, short id, size and age, with badges for **in use**
-(referenced by a container) and **dangling** (untagged). Search by tag or id and
-paginate. Per-row actions: **Save** (download as a tar), **Push**, **History**,
+(referenced by a container) and **dangling** (untagged). Filter by **in use /
+unused / all**, search by tag or id, and paginate. Per-row actions: **Save**
+(download as a tar), **Push**, **History**,
 **Inspect** (raw JSON), **Remove** (with a *force* fallback when in use).
 
 Header: **Prune** removes dangling images; **Build** and **Load** open dialogs.

@@ -28,7 +28,8 @@ two cover installation and configuration.
 
 ## Operations
 - [Getting started](getting-started.md) — first run, 2FA, the basics
-- [Deployment](deployment.md) — running on a server (systemd, reverse proxy, config)
+- [Deployment](deployment.md) — running on a server (systemd, HTTPS, config, logs, health)
+- [Changelog](../CHANGELOG.md) — what changed in each release
 
 ---
 

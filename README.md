@@ -38,6 +38,7 @@ level filters, regex search and structured parsing.
 
 **Monitor**
 - Live **CPU / memory graphs** over WebSockets and **historical charts** (Redis or in-memory).
+- **Dashboard** that updates in near real time (Docker events stream): host facts, disk usage, a **resource breakdown** (each container's share of host CPU/memory), and a **port scan** that fingerprints what's actually listening.
 - **Logs** — per-container tail, plus a global **aggregated** view with level detection, **regex search** and saved **parsing rules** that turn lines into structured columns.
 - Live **events** feed, container **diff** / **top**, **disk usage**, and raw JSON **inspect** for any object.
 - **Networks & topology** — an interactive containers ↔ networks graph (pan / zoom / fullscreen, filters).
@@ -49,7 +50,7 @@ level filters, regex search and structured parsing.
 - Volumes & networks: list, inspect, create, remove, prune (see which containers use each volume).
 
 **Multi-host**
-- Manage **local**, **TCP(+TLS)** and **SSH** daemons; SSH **host keys are verified** (known_hosts / trust-on-first-use). Every view rebinds to the selected host, and the alert engine watches **all** hosts.
+- Manage **local**, **TCP(+TLS)** and **SSH** daemons; SSH **host keys are verified** (known_hosts / trust-on-first-use). Every view rebinds to the selected host, and the alert engine watches **all** hosts. A per-host **detail** panel shows the hardware / OS / engine.
 
 **Alerting & integrations**
 - Rules on **state**, **resource thresholds**, **log patterns** and **restart/crash-loops** — editable, with severity & cooldown.
@@ -57,8 +58,11 @@ level filters, regex search and structured parsing.
 
 **Security & administration**
 - **Argon2id** passwords + **TOTP 2FA** (optionally exempt for localhost), rate limiting, strict headers, signed `HttpOnly` cookies.
-- **Multi-user** with **roles**, **per-section permissions**, **read-only** mode, global **feature flags**, and an **audit log**.
+- **Multi-user** with **roles**, **per-section permissions**, **read-only** mode, global **feature flags**, and an **audit log**. Per-user UI preferences (filters) follow the account across browsers.
 - Optional **LDAP / Active Directory** login with auto-provisioning. Registry / SMTP / LDAP secrets are **encrypted at rest** (AES-256-GCM).
+
+**Ops**
+- Single CGO-free binary, embedded UI, systemd unit, config file, **native HTTPS** (or behind a proxy), `/healthz` probe, and structured alert logging to the journal/syslog. See [Deployment](docs/deployment.md).
 
 ## 🏗️ Architecture
 
@@ -212,9 +216,10 @@ A per-feature user manual lives in **[docs/](docs/README.md)** — one page per
 agenda (Containers, Images, Logs, Alerts, Hosts, Users, Settings…) plus
 [Getting started](docs/getting-started.md) and [Deployment](docs/deployment.md).
 
-## 🗺️ Roadmap
+## 🗺️ Roadmap & changelog
 
-See **[NEXT.md](./NEXT.md)** for the current status and future ideas.
+See **[NEXT.md](./NEXT.md)** for the status and future ideas, and
+**[CHANGELOG.md](./CHANGELOG.md)** for what shipped in each release.
 
 ## 🤖 Made with AI
 

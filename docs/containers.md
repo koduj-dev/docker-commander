@@ -2,10 +2,11 @@
 
 [← Manual index](README.md)
 
-![Container detail](images/container_detail.png)
+![Containers](images/containers.png)
 
 ## The list
-Search by name / image / id / state, choose a page size (10–100), and act on a
+Filter by **state** (running / stopped / all), search by name / image / id /
+state, choose a page size (10–100), and act on a
 row: **start**, **stop**, **restart**, **pause/unpause**, **kill**. Click a name
 to open the detail page.
 
@@ -18,6 +19,9 @@ to open the detail page.
 - **Restart policy**, **memory limit (MB)**, **CPUs**, and *start immediately*.
 
 ## Detail page
+
+![Container detail](images/container_detail.png)
+
 Live **CPU** and **memory** charts plus a **history** chart (15m / 1h / 6h).
 Header actions: **Commit** (snapshot to a new image), **Settings** (rename +
 update limits/restart policy at runtime), **Export** (download the filesystem as

@@ -2,9 +2,12 @@
 
 [← Manual index](README.md)
 
+![Volumes](images/volumes.png)
+
 List volumes with driver, scope and mountpoint. Each volume shows **which
 containers mount it** (cross-referenced from container mounts) so you know what
-you'd affect before removing one. Search and paginate as elsewhere.
+you'd affect before removing one. Filter by **in use / unused / all**, search
+and paginate as elsewhere.
 
 ## Actions
 - **Create** — a named volume with an optional driver (defaults to `local`).
