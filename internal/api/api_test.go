@@ -584,9 +584,31 @@ func TestAPIStoreBackedCRUD(t *testing.T) {
 	}
 }
 
+func TestAPISetup2FAChoice(t *testing.T) {
+	// Deferring 2FA at setup turns on the localhost exemption, so the admin is
+	// not forced to enroll (mfaEnforced=false on loopback).
+	a := newAPI(t)
+	_, _ = a.do("POST", "/api/auth/setup", map[string]any{"username": "admin", "password": "correcthorse123", "enable2fa": false})
+	if _, me := a.do("GET", "/api/auth/me", nil); me["mfaEnforced"] != false {
+		t.Errorf("deferring 2FA should not enforce it on localhost: %v", me["mfaEnforced"])
+	}
+	if _, st := a.do("GET", "/api/settings", nil); st["localhostNo2fa"] != true {
+		t.Errorf("deferring 2FA should set localhostNo2fa=true, got %v", st["localhostNo2fa"])
+	}
+
+	// Enabling 2FA at setup keeps it enforced.
+	b := newAPI(t)
+	_, _ = b.do("POST", "/api/auth/setup", map[string]any{"username": "admin", "password": "correcthorse123", "enable2fa": true})
+	if _, me := b.do("GET", "/api/auth/me", nil); me["mfaEnforced"] != true {
+		t.Errorf("enabling 2FA at setup should enforce it: %v", me["mfaEnforced"])
+	}
+}
+
 func TestAPIUserMgmtAndSettings(t *testing.T) {
 	a := newAPI(t)
-	_, _ = a.do("POST", "/api/auth/setup", map[string]string{"username": "admin", "password": "correcthorse123"})
+	// enable2fa:true keeps 2FA enforced (LocalhostNo2FA off) so the MFA login
+	// flow below is exercised.
+	_, _ = a.do("POST", "/api/auth/setup", map[string]any{"username": "admin", "password": "correcthorse123", "enable2fa": true})
 
 	// settings + alert-rules listing
 	if code, _ := a.do("GET", "/api/settings", nil); code != 200 {

@@ -11,7 +11,7 @@ import (
 	"github.com/koduj-dev/docker-commander/internal/store"
 )
 
-// credentials is the shared shape for setup/login bodies.
+// credentials is the shape for login bodies (setup uses setupBody).
 type credentials struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
@@ -32,10 +32,21 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 // account (or is LDAP-provisioned) and LDAP is enabled, it authenticates via
 // LDAP and provisions a local record. See auth.Service.Login.
 
-// handleSetup creates the first admin account and logs them straight in so the
-// frontend can immediately walk them through mandatory 2FA enrollment.
+// setupBody is the first-run payload: credentials plus the admin's choice of
+// whether to enable 2FA right away or defer it (leaving it optional on
+// localhost, to be turned on later from Settings).
+type setupBody struct {
+	Username  string `json:"username"`
+	Password  string `json:"password"`
+	Enable2FA bool   `json:"enable2fa"`
+}
+
+// handleSetup creates the first admin account and logs them straight in. If the
+// admin chose to enable 2FA, the frontend then walks them through enrollment;
+// if they deferred it, we turn on the localhost-no-2FA exemption so they aren't
+// forced to enroll now.
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
-	var body credentials
+	var body setupBody
 	if err := decodeJSON(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
@@ -51,6 +62,14 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, "setup failed")
 		}
 		return
+	}
+	// Deferring 2FA enables the localhost exemption so the admin can finish
+	// setup without enrolling; they can require 2FA again from Settings.
+	if !body.Enable2FA {
+		if err := s.store.SetLocalhostNo2FA(r.Context(), true); err != nil {
+			writeErr(w, http.StatusInternalServerError, "setup failed")
+			return
+		}
 	}
 	res, err := s.auth.Login(r.Context(), r.RemoteAddr, body.Username, body.Password, s.mfaExempt(r))
 	if err != nil {

@@ -99,8 +99,8 @@ export interface LoginResult {
 
 export const api = {
   authStatus: () => req<{ needsSetup: boolean }>("GET", "/api/auth/status"),
-  setup: (username: string, password: string) =>
-    req<LoginResult>("POST", "/api/auth/setup", { username, password }),
+  setup: (username: string, password: string, enable2fa: boolean) =>
+    req<LoginResult>("POST", "/api/auth/setup", { username, password, enable2fa }),
   login: (username: string, password: string) =>
     req<LoginResult>("POST", "/api/auth/login", { username, password }),
   verify2fa: (mfaToken: string, code: string) =>
