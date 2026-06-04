@@ -22,10 +22,10 @@ Every option is a flag with a `DC_*` environment-variable equivalent. See
 Docker connection honours `DOCKER_HOST` / `DOCKER_CERT_PATH`.
 
 ### Config file
-Instead of (or alongside) flags and env vars, settings can live in a config
-file — handy when running as a service. It is a plain `KEY=VALUE` file using the
-same `DC_*` keys (so it can also be a systemd `EnvironmentFile`); `#` starts a
-comment and `export `/quotes are tolerated.
+When running as a service, the simplest place for settings is a config file. It
+is a plain `KEY=VALUE` file using the same `DC_*` keys; `#` starts a comment and
+`export `/quotes are tolerated. (Flags and env vars still work and take
+precedence, but the config file is the recommended single source of truth.)
 
 ```ini
 # /etc/docker-commander/commander.conf
@@ -42,13 +42,13 @@ built-in default. A starter file lives at
 [`deploy/commander.conf.example`](../deploy/commander.conf.example).
 
 ## systemd (Linux)
-A hardened unit and env example live in [`deploy/`](../deploy/).
+A hardened unit and a config example live in [`deploy/`](../deploy/).
 
 ```bash
 sudo install -m755 dockercmd /usr/local/bin/dockercmd
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin dockercmd
 sudo usermod -aG docker dockercmd
-sudo install -d /etc/dockercmd && sudo cp deploy/dockercmd.env.example /etc/dockercmd/dockercmd.env   # edit
+sudo install -d /etc/docker-commander && sudo cp deploy/commander.conf.example /etc/docker-commander/commander.conf   # edit
 sudo cp deploy/dockercmd.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now dockercmd
 ```

@@ -16,12 +16,10 @@ Group=dockercmd
 SupplementaryGroups=docker
 
 # The -data-dir flag is pinned here because it must match ReadWritePaths below.
-# Everything else (DC_ADDR, DC_REDIS_ADDR, DC_METRICS_TOKEN, …) can come from a
-# config file or the environment file. The binary reads
-# /etc/docker-commander/commander.conf by default (override with -config / the
-# DC_CONFIG env var). Precedence: flags > environment > config file.
+# Everything else (DC_ADDR, DC_REDIS_ADDR, DC_METRICS_TOKEN, …) is read from
+# /etc/docker-commander/commander.conf — the binary loads it automatically
+# (override the path with -config or DC_CONFIG). Precedence: flags > env > file.
 ExecStart=/usr/local/bin/dockercmd -data-dir /var/lib/dockercmd
-EnvironmentFile=-/etc/dockercmd/dockercmd.env
 
 Restart=on-failure
 RestartSec=5s

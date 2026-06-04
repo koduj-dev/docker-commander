@@ -131,7 +131,7 @@ not a browser is connected — on a server, run it under systemd:
 sudo install -m755 dockercmd /usr/local/bin/dockercmd
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin dockercmd
 sudo usermod -aG docker dockercmd
-sudo install -d /etc/dockercmd && sudo cp deploy/dockercmd.env.example /etc/dockercmd/dockercmd.env   # edit
+sudo install -d /etc/docker-commander && sudo cp deploy/commander.conf.example /etc/docker-commander/commander.conf   # edit
 sudo cp deploy/dockercmd.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now dockercmd
 ```
