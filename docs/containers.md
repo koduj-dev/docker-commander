@@ -25,7 +25,12 @@ a tar), **Inspect** (raw JSON), and lifecycle buttons.
 
 Tabs:
 
-- **Overview** — status, health, command, networks, ports, mounts.
+- **Overview** — status, health, command, networks, ports, mounts. Each port
+  shows a passive **guess** from its number; the **Probe** button then actively
+  connects to the published ports and fingerprints what's *really* listening
+  (SSH / HTTP(S) / SMTP / Redis / TLS / banner) — useful when the port number
+  doesn't match the service. For SSH hosts the probe is tunnelled through the
+  same SSH connection; it only touches **your own** hosts.
 - **Logs** — live `stdout`/`stderr` tail.
 - **Console** — an interactive shell (xterm.js) into the running container.
 - **Processes** — `docker top`, refreshed periodically.

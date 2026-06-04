@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/docker/docker/client"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/koduj-dev/docker-commander/internal/store"
 )
@@ -21,13 +22,21 @@ import (
 type Manager struct {
 	store *store.Store
 
-	mu      sync.Mutex
-	clients map[int64]*client.Client
+	mu sync.Mutex
+	// clients holds the Docker API client per host; sshConns holds a separate
+	// SSH connection per ssh-host, used by the port prober to tunnel TCP probes
+	// to ports on the remote host.
+	clients  map[int64]*client.Client
+	sshConns map[int64]*ssh.Client
 }
 
 // NewManager returns a manager that resolves hosts from the store.
 func NewManager(s *store.Store) *Manager {
-	return &Manager{store: s, clients: make(map[int64]*client.Client)}
+	return &Manager{
+		store:    s,
+		clients:  make(map[int64]*client.Client),
+		sshConns: make(map[int64]*ssh.Client),
+	}
 }
 
 // Client returns a connected Docker client for the given host ID, creating and
@@ -100,6 +109,10 @@ func (m *Manager) Disconnect(hostID int64) {
 		_ = c.Close()
 		delete(m.clients, hostID)
 	}
+	if c, ok := m.sshConns[hostID]; ok {
+		_ = c.Close()
+		delete(m.sshConns, hostID)
+	}
 }
 
 // Close disconnects all cached clients.
@@ -109,7 +122,11 @@ func (m *Manager) Close() {
 	for _, c := range m.clients {
 		_ = c.Close()
 	}
+	for _, c := range m.sshConns {
+		_ = c.Close()
+	}
 	m.clients = make(map[int64]*client.Client)
+	m.sshConns = make(map[int64]*ssh.Client)
 }
 
 // buildClient constructs a Docker client appropriate for the host kind.

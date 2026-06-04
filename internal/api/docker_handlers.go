@@ -133,6 +133,23 @@ func (s *Server) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, info)
 }
 
+// handleProbePorts actively fingerprints a container's published ports.
+func (s *Server) handleProbePorts(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	probes, err := s.docker.ProbeContainerPorts(r.Context(), hostID, id)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "docker error: "+err.Error())
+		return
+	}
+	s.audit(r, "container.probe", id, "")
+	writeJSON(w, http.StatusOK, probes)
+}
+
 // handleStatsOverview reports how running containers divide up the host's CPU
 // and memory — the data behind the dashboard's usage breakdown.
 func (s *Server) handleStatsOverview(w http.ResponseWriter, r *http.Request) {

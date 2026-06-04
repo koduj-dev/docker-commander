@@ -52,11 +52,41 @@ func (e *HostKeyMismatchError) Error() string {
 // default private keys — no key material is stored in the app. The Docker API
 // then talks to the remote unix socket tunnelled through the SSH connection.
 func buildSSHClient(h *store.Host) (*client.Client, error) {
-	user, addr, err := parseSSHAddress(h.Address)
+	sshConn, err := dialSSH(h)
 	if err != nil {
 		return nil, err
 	}
 
+	// Custom transport: every HTTP request the Docker client makes is dialled
+	// to the remote daemon socket over the SSH connection. No Proxy is set, so a
+	// HTTP(S)_PROXY in the environment can't hijack the tunnelled requests.
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+				return sshConn.Dial("unix", remoteDockerSocket)
+			},
+		},
+	}
+
+	// Option order is load-bearing: client.WithHost runs sockets.ConfigureTransport,
+	// which OVERWRITES the transport's DialContext with a default TCP dialer. So
+	// WithHTTPClient must come LAST, ensuring our SSH-tunnelling transport (with
+	// its DialContext) is the one that survives — otherwise the client tries to
+	// resolve the "docker.ssh" placeholder over DNS and fails.
+	return client.NewClientWithOpts(
+		client.WithHost("tcp://docker.ssh:2375"), // placeholder; our DialContext ignores the address
+		client.WithAPIVersionNegotiation(),
+		client.WithHTTPClient(httpClient),
+	)
+}
+
+// dialSSH opens an SSH connection to the host, enforcing our host-key trust
+// policy. It is shared by the Docker client transport and the port prober.
+func dialSSH(h *store.Host) (*ssh.Client, error) {
+	user, addr, err := parseSSHAddress(h.Address)
+	if err != nil {
+		return nil, err
+	}
 	auth := sshAuthMethods()
 	if len(auth) == 0 {
 		return nil, fmt.Errorf("ssh: no auth available (start an ssh-agent or add a key under ~/.ssh)")
@@ -86,28 +116,7 @@ func buildSSHClient(h *store.Host) (*client.Client, error) {
 		}
 		return nil, fmt.Errorf("ssh dial %s: %w", addr, err)
 	}
-
-	// Custom transport: every HTTP request the Docker client makes is dialled
-	// to the remote daemon socket over the SSH connection. No Proxy is set, so a
-	// HTTP(S)_PROXY in the environment can't hijack the tunnelled requests.
-	httpClient := &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
-				return sshConn.Dial("unix", remoteDockerSocket)
-			},
-		},
-	}
-
-	// Option order is load-bearing: client.WithHost runs sockets.ConfigureTransport,
-	// which OVERWRITES the transport's DialContext with a default TCP dialer. So
-	// WithHTTPClient must come LAST, ensuring our SSH-tunnelling transport (with
-	// its DialContext) is the one that survives — otherwise the client tries to
-	// resolve the "docker.ssh" placeholder over DNS and fails.
-	return client.NewClientWithOpts(
-		client.WithHost("tcp://docker.ssh:2375"), // placeholder; our DialContext ignores the address
-		client.WithAPIVersionNegotiation(),
-		client.WithHTTPClient(httpClient),
-	)
+	return sshConn, nil
 }
 
 // parseSSHAddress splits "user@host[:port]" into (user, "host:port").

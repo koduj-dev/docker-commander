@@ -107,6 +107,7 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/containers/{id}/rename", s.handleRenameContainer)
 			r.Post("/containers/{id}/update", s.handleUpdateContainer)
 			r.Post("/containers/{id}/commit", s.handleCommitContainer)
+			r.Post("/containers/{id}/probe", s.handleProbePorts)
 			r.Post("/containers/{id}/{action}", s.handleContainerAction)
 
 			r.Get("/images", s.handleListImages)

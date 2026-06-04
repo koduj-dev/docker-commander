@@ -19,6 +19,7 @@ import type {
   ImageSummary,
   NetworkSummary,
   ParseRule,
+  PortProbe,
   Registry,
   ResourceOverview,
   SmtpConfig,
@@ -204,6 +205,7 @@ export const api = {
     req<{ ok: boolean; error?: string }>("POST", `/api/containers/${id}/update${hostParam()}`, body),
   commitContainer: (id: string, body: { ref: string; comment: string }) =>
     req<{ ok: boolean; imageId?: string; error?: string }>("POST", `/api/containers/${id}/commit${hostParam()}`, body),
+  probePorts: (id: string) => req<PortProbe[]>("POST", `/api/containers/${id}/probe${hostParam()}`),
 
   // Generic raw inspect for any object kind. id/ref travels as a query param.
   inspect: (kind: "container" | "image" | "network" | "volume", id: string) => {

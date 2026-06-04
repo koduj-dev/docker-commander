@@ -264,6 +264,18 @@ export interface SystemInfo {
   images: number;
 }
 
+export interface PortProbe {
+  privatePort: number;
+  publicPort: number;
+  type: string;
+  guessByPort: string;
+  open: boolean;
+  detected: string;
+  info?: string;
+  tls: boolean;
+  error?: string;
+}
+
 export interface ResourceUsage {
   id: string;
   name: string;
