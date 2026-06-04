@@ -15,8 +15,9 @@ list. Key ones:
 | Env | Default | Purpose |
 |-----|---------|---------|
 | `DC_HOST` | `127.0.0.1` | listen host/interface (use `0.0.0.0` for all; keep on loopback behind a proxy) |
-| `DC_PORT` | `8080` | listen port (also `-p 9000` shorthand) |
+| `DC_PORT` | `8470` | listen port (also `-p 9000` shorthand) |
 | `DC_ADDR` | (unset) | legacy full `host:port`; overrides `DC_HOST`/`DC_PORT` if set |
+| `DC_TLS_CERT` / `DC_TLS_KEY` | (off) | PEM cert + key paths; set both to serve **HTTPS** directly |
 | `DC_DATA_DIR` | OS config dir | SQLite DB + signing/encryption keys |
 | `DC_METRICS_TOKEN` | (open) | bearer token guarding `/metrics` |
 | `DC_REDIS_ADDR` | (memory) | Redis for metric history |
@@ -33,7 +34,7 @@ precedence, but the config file is the recommended single source of truth.)
 ```ini
 # /etc/docker-commander/commander.conf
 DC_HOST=127.0.0.1
-DC_PORT=8080
+DC_PORT=8470
 DC_DATA_DIR=/var/lib/dockercmd
 DC_METRICS_RETENTION=24h
 ```
@@ -88,14 +89,31 @@ To forward the journal to a **syslog** daemon (rsyslog/syslog-ng → SIEM), set
 `systemd-journald`. Entries are tagged `dockercmd` (`SyslogIdentifier`). Not
 using systemd? Redirect the process's stderr to a file or your collector.
 
-## Reverse proxy + TLS
+## HTTPS
+Two options:
+
+**A — native TLS (no proxy).** Point Docker Commander at a PEM cert + key and it
+serves HTTPS directly — handy for a small public deployment:
+
+```ini
+DC_HOST=0.0.0.0
+DC_PORT=8470
+DC_TLS_CERT=/etc/docker-commander/tls/cert.pem
+DC_TLS_KEY=/etc/docker-commander/tls/key.pem
+```
+
+Use a real certificate (e.g. Let's Encrypt) for public hosts; both keys must be
+set together (TLS ≥ 1.2). The key file should be readable only by the service
+user.
+
+**B — reverse proxy (recommended for anything non-trivial).**
 Bind to loopback and terminate TLS at nginx/Caddy. WebSockets must be allowed
 (stats, logs, exec, events) — proxy `Upgrade`/`Connection` headers. Example
 (nginx) for a location:
 
 ```nginx
 location / {
-    proxy_pass http://127.0.0.1:8080;
+    proxy_pass http://127.0.0.1:8470;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";

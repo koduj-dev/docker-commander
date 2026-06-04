@@ -153,6 +153,37 @@ func TestLoadAddrOverridesHostPort(t *testing.T) {
 	}
 }
 
+func TestLoadTLSRequiresBoth(t *testing.T) {
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	defer func() { os.Args, flag.CommandLine = oldArgs, oldFS }()
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = []string{"dockercmd"}
+
+	t.Setenv("DC_DATA_DIR", t.TempDir())
+	t.Setenv("DC_TLS_CERT", "/tmp/cert.pem") // key missing
+	if _, err := Load(); err == nil {
+		t.Error("a TLS cert without a key should error")
+	}
+}
+
+func TestLoadTLSBothOK(t *testing.T) {
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	defer func() { os.Args, flag.CommandLine = oldArgs, oldFS }()
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = []string{"dockercmd"}
+
+	t.Setenv("DC_DATA_DIR", t.TempDir())
+	t.Setenv("DC_TLS_CERT", "/tmp/cert.pem")
+	t.Setenv("DC_TLS_KEY", "/tmp/key.pem")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("both cert+key should be accepted: %v", err)
+	}
+	if c.TLSCert == "" || c.TLSKey == "" {
+		t.Error("TLS paths should be set")
+	}
+}
+
 func TestDBPath(t *testing.T) {
 	c := Config{DataDir: "/var/lib/dockercmd"}
 	if got, want := c.DBPath(), "/var/lib/dockercmd/docker-commander.db"; got != want {

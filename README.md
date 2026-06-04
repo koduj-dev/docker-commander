@@ -85,7 +85,7 @@ Grab the binary for your OS/arch from the [Releases](../../releases) page, then:
 
 ```bash
 chmod +x dockercmd-linux-amd64
-./dockercmd-linux-amd64           # serves on http://127.0.0.1:8080
+./dockercmd-linux-amd64           # serves on http://127.0.0.1:8470
 ```
 
 On Windows, run `dockercmd-windows-amd64.exe` from a terminal.
@@ -99,10 +99,10 @@ daemon. See [Building](#-building) for per-OS details.
 git clone https://github.com/koduj-dev/docker-commander.git
 cd docker-commander
 make build      # builds the UI, then the binary with the UI embedded
-./dockercmd     # http://127.0.0.1:8080
+./dockercmd     # http://127.0.0.1:8470
 ```
 
-Open <http://127.0.0.1:8080>, create the admin account, scan the QR code to
+Open <http://127.0.0.1:8470>, create the admin account, scan the QR code to
 enable 2FA — done.
 
 ## ⚙️ Configuration
@@ -115,7 +115,11 @@ list. The Docker connection also honours the standard `DOCKER_HOST` /
 
 | Flag                 | Env                    | Default            | Description |
 |----------------------|------------------------|--------------------|-------------|
-| `-addr`              | `DC_ADDR`              | `127.0.0.1:8080`   | Listen address. Bind beyond loopback only deliberately. |
+| `-host`              | `DC_HOST`              | `127.0.0.1`        | Listen host/interface. Use `0.0.0.0` to bind all (deliberate). |
+| `-port` / `-p`       | `DC_PORT`              | `8470`             | Listen port. |
+| `-addr`              | `DC_ADDR`              | (unset)            | Legacy full `host:port`; overrides `-host`/`-port`. |
+| `-tls-cert`          | `DC_TLS_CERT`          | (off)              | PEM certificate path; with `-tls-key`, serves **HTTPS** directly. |
+| `-tls-key`           | `DC_TLS_KEY`           | (off)              | PEM private-key path. |
 | `-data-dir`          | `DC_DATA_DIR`          | OS config dir      | SQLite DB + signing/encryption keys. |
 | `-session-ttl`       | —                      | `12h`              | Session token lifetime. |
 | `-dev`               | `DC_DEV=1`             | off                | Dev mode: API only + permissive CORS for Vite. |
@@ -167,8 +171,8 @@ Per OS (building **from source** — end users can just download a release):
 ## 🧑‍💻 Development
 
 ```bash
-make dev                       # API on :8080 (dev mode)
-cd web && npm install && npm run dev   # UI on :5173, proxies /api → :8080
+make dev                       # API on :8470 (dev mode)
+cd web && npm install && npm run dev   # UI on :5173, proxies /api → :8470
 ```
 
 ### Tests

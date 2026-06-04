@@ -4,7 +4,7 @@
 
 ## First run
 
-1. Start the binary (`./dockercmd`) and open <http://127.0.0.1:8080>.
+1. Start the binary (`./dockercmd`) and open <http://127.0.0.1:8470>.
 2. **Create the admin account** — the first account is always an `admin`.
 3. **Enable 2FA** — scan the QR code with an authenticator app (Google
    Authenticator, Aegis, 1Password…) and enter the 6-digit code to confirm.

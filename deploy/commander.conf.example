@@ -12,11 +12,16 @@
 # Listen host + port. Behind a TLS reverse proxy, keep the host on loopback;
 # use 0.0.0.0 to listen on all interfaces.
 DC_HOST=127.0.0.1
-DC_PORT=8080
+DC_PORT=8470
 
 # DC_ADDR (full host:port) is still accepted and overrides DC_HOST/DC_PORT, for
 # compatibility with older setups:
-# DC_ADDR=127.0.0.1:8080
+# DC_ADDR=127.0.0.1:8470
+
+# Serve HTTPS directly (set both for native TLS; otherwise put it behind a TLS
+# reverse proxy). Use a real certificate for public hosts.
+# DC_TLS_CERT=/etc/docker-commander/tls/cert.pem
+# DC_TLS_KEY=/etc/docker-commander/tls/key.pem
 
 # Where the SQLite DB + signing/encryption keys live.
 DC_DATA_DIR=/var/lib/dockercmd

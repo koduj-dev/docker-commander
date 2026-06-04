@@ -29,6 +29,11 @@ type Config struct {
 	// Empty means the endpoint is open (fine for loopback-only use).
 	MetricsToken string
 
+	// TLSCert/TLSKey are paths to a PEM certificate and key. When both are set,
+	// the server speaks HTTPS directly (otherwise plain HTTP behind a proxy).
+	TLSCert string
+	TLSKey  string
+
 	// Version is the build version string, set by main (not from flags/env).
 	Version string
 
@@ -68,13 +73,15 @@ func Load() (Config, error) {
 	var port int
 	flag.String("config", cfgPath, "path to a config file (KEY=VALUE, same keys as the environment)")
 	flag.StringVar(&host, "host", envOr("DC_HOST", "127.0.0.1"), "listen host/interface (use 0.0.0.0 for all)")
-	flag.IntVar(&port, "port", envInt("DC_PORT", 8080), "listen port")
-	flag.IntVar(&port, "p", envInt("DC_PORT", 8080), "shorthand for -port")
+	flag.IntVar(&port, "port", envInt("DC_PORT", 8470), "listen port")
+	flag.IntVar(&port, "p", envInt("DC_PORT", 8470), "shorthand for -port")
 	flag.StringVar(&addr, "addr", lookup("DC_ADDR"), "full listen address host:port (legacy; overrides -host/-port)")
 	flag.StringVar(&c.DataDir, "data-dir", envOr("DC_DATA_DIR", def), "directory for the database and secrets")
 	ttl := flag.Duration("session-ttl", 12*time.Hour, "session token lifetime")
 	flag.BoolVar(&c.Dev, "dev", lookup("DC_DEV") == "1", "enable development mode (permissive CORS)")
 	flag.StringVar(&c.MetricsToken, "metrics-token", lookup("DC_METRICS_TOKEN"), "require this bearer token to scrape /metrics (empty = open)")
+	flag.StringVar(&c.TLSCert, "tls-cert", lookup("DC_TLS_CERT"), "PEM TLS certificate path (enables HTTPS together with -tls-key)")
+	flag.StringVar(&c.TLSKey, "tls-key", lookup("DC_TLS_KEY"), "PEM TLS private-key path")
 	flag.StringVar(&c.RedisAddr, "redis-addr", lookup("DC_REDIS_ADDR"), "Redis address (host:port) for metrics history; empty = in-memory")
 	flag.StringVar(&c.RedisPassword, "redis-password", lookup("DC_REDIS_PASSWORD"), "Redis password")
 	retention := flag.Duration("metrics-retention", envDuration("DC_METRICS_RETENTION", 6*time.Hour), "how long to keep metric history")
@@ -91,6 +98,12 @@ func Load() (Config, error) {
 	c.RedisDB = envInt("DC_REDIS_DB", 0)
 	c.MetricsRetention = *retention
 	c.SessionTTL = *ttl
+
+	// HTTPS needs both halves of the keypair.
+	if (c.TLSCert == "") != (c.TLSKey == "") {
+		return c, errors.New("both -tls-cert and -tls-key (DC_TLS_CERT/DC_TLS_KEY) must be set to enable HTTPS")
+	}
+
 	if err := os.MkdirAll(c.DataDir, 0o700); err != nil {
 		return c, err
 	}

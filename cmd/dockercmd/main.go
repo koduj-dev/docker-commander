@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/base64"
 	"errors"
 	"io/fs"
@@ -106,6 +107,10 @@ func run() error {
 		ReadHeaderTimeout: 10 * time.Second,
 		// No WriteTimeout: WebSocket streams are long-lived.
 	}
+	tlsEnabled := cfg.TLSCert != "" && cfg.TLSKey != ""
+	if tlsEnabled {
+		httpServer.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
 
 	go func() {
 		<-shutdownCtx.Done()
@@ -116,7 +121,12 @@ func run() error {
 	}()
 
 	logStartup(cfg)
-	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	serve := httpServer.ListenAndServe
+	if tlsEnabled {
+		// Cert/key paths are passed to ServeTLS; the http.Server reads them.
+		serve = func() error { return httpServer.ListenAndServeTLS(cfg.TLSCert, cfg.TLSKey) }
+	}
+	if err := serve(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
@@ -161,7 +171,11 @@ func serveWebFS(cfg config.Config) fs.FS {
 }
 
 func logStartup(cfg config.Config) {
-	log.Printf("Docker Commander %s listening on http://%s", version, cfg.Addr)
+	scheme := "http"
+	if cfg.TLSCert != "" && cfg.TLSKey != "" {
+		scheme = "https"
+	}
+	log.Printf("Docker Commander %s listening on %s://%s", version, scheme, cfg.Addr)
 	log.Printf("data dir: %s", cfg.DataDir)
 	if cfg.Dev {
 		log.Printf("dev mode: serving API only; run the Vite dev server for the UI")
