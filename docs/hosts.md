@@ -54,9 +54,19 @@ after verifying the SSH host-key fingerprint (see below).
 > dedicated to this).
 
 ### Option 2 · TCP + TLS
-Use this when SSH isn't an option. **Never expose the Docker socket over TCP
-without TLS** — that grants root-equivalent access to anyone who can reach the
-port.
+Prefer SSH (Option 1) — it exposes **no extra port**. Reach for TCP only when
+SSH genuinely isn't possible, and treat it carefully:
+
+> ⚠️ **The Docker daemon socket is root-equivalent.** Anyone who can reach it
+> can mount the host filesystem and run privileged containers, i.e. become root
+> on that machine. So:
+> - **Never** expose plaintext `2375` — that is an open root shell to the world.
+> - `2376` **must** use **mutual TLS** (`--tlsverify`): a leaked **client cert
+>   is a root credential**, so guard it like one.
+> - Even with TLS, **don't put `2376` on the open internet.** Keep it on a
+>   **private network / VPN (e.g. WireGuard)** or restrict it with a **firewall
+>   allowlist** to the Docker Commander server's IP, and bind the daemon to that
+>   specific interface — not `0.0.0.0`.
 
 1. On the remote host, enable a TLS-protected TCP listener on `:2376` and
    generate a CA + server + client certificates — follow Docker's official
