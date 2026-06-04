@@ -150,6 +150,23 @@ func (s *Server) handleProbePorts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, probes)
 }
 
+// handleHostPorts scans every published port of every running container on the
+// host and fingerprints what's listening (the host-wide "open ports" map).
+func (s *Server) handleHostPorts(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	ports, err := s.docker.ProbeHostPorts(r.Context(), hostID)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "docker error: "+err.Error())
+		return
+	}
+	s.audit(r, "host.ports.scan", "", "")
+	writeJSON(w, http.StatusOK, ports)
+}
+
 // handleStatsOverview reports how running containers divide up the host's CPU
 // and memory — the data behind the dashboard's usage breakdown.
 func (s *Server) handleStatsOverview(w http.ResponseWriter, r *http.Request) {

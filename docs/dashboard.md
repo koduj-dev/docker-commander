@@ -30,6 +30,13 @@ when the page loads (sampling every container isn't free, so it doesn't poll).
 > CPU share is relative to all cores (100% = the entire host); memory share is
 > usage ÷ total RAM. Remote hosts work the same, over the Docker API.
 
+## Open ports
+A host-wide map of every **published port** across the running containers.
+**Scan** actively connects to each one and fingerprints what's really listening
+(SSH / HTTP(S) / SMTP / Redis / TLS / banner) — not just a guess from the port
+number. It only runs on demand (probing is an active network action), works for
+remote hosts too (SSH ports are tunnelled), and only touches **your own** hosts.
+
 ## Running containers
 A live table (refreshes automatically) of what's running, with quick
 start/stop/restart actions. Click a name to open its

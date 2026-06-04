@@ -7,6 +7,7 @@ import { bytes } from "../lib/format";
 import { PageHeader } from "../layout/Shell";
 import { StatCard, Spinner } from "../components/ui";
 import { ResourceBreakdown } from "../components/ResourceBreakdown";
+import { OpenPorts } from "../components/OpenPorts";
 import { ContainerTable } from "./Containers";
 
 export function Dashboard() {
@@ -51,6 +52,8 @@ export function Dashboard() {
         )}
 
         <ResourceBreakdown />
+
+        <OpenPorts />
 
         <div>
           <div className="flex items-baseline justify-between mb-3">

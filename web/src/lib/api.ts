@@ -18,6 +18,7 @@ import type {
   Host,
   ImageSummary,
   NetworkSummary,
+  HostPortProbe,
   ParseRule,
   PortProbe,
   Registry,
@@ -281,6 +282,7 @@ export const api = {
   version: () => req<{ version: string }>("GET", "/api/version"),
   system: () => req<SystemInfo>("GET", `/api/system${hostParam()}`),
   statsOverview: () => req<ResourceOverview>("GET", `/api/stats/overview${hostParam()}`),
+  hostPorts: () => req<HostPortProbe[]>("GET", `/api/stats/ports${hostParam()}`),
   // hostSystem fetches engine/host info for a specific host (not the active one).
   hostSystem: (id: number) => req<SystemInfo>("GET", `/api/system?host=${id}`),
   audit: () => req<AuditEntry[]>("GET", "/api/audit"),

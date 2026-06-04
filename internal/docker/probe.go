@@ -58,53 +58,111 @@ func (m *Manager) ProbeContainerPorts(ctx context.Context, hostID int64, contain
 		return nil, err
 	}
 
-	// De-duplicate by published port (Docker lists v4 + v6 separately).
-	seen := map[string]bool{}
-	out := make([]PortProbe, 0, len(ports))
-	var mu sync.Mutex
+	out := make([]PortProbe, len(dedupePorts(ports)))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, statsConcurrency)
+	for i, p := range dedupePorts(ports) {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int, p PortMapping) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			out[i] = probeOnePort(ctx, dial, baseHost, p)
+		}(i, p)
+	}
+	wg.Wait()
 
+	sort.Slice(out, func(i, j int) bool { return out[i].PublicPort < out[j].PublicPort })
+	return out, nil
+}
+
+// ProbeHostPorts scans every published port of every running container on the
+// host — the host-wide "open ports" map. Probes run in one bounded pool so a
+// busy host doesn't open a flood of connections at once.
+func (m *Manager) ProbeHostPorts(ctx context.Context, hostID int64) ([]HostPortProbe, error) {
+	containers, err := m.ListContainers(ctx, hostID)
+	if err != nil {
+		return nil, err
+	}
+	dial, baseHost, err := m.probeTarget(ctx, hostID)
+	if err != nil {
+		return nil, err
+	}
+
+	type target struct {
+		cid, cname string
+		p          PortMapping
+	}
+	var targets []target
+	for _, c := range containers {
+		if c.State != "running" {
+			continue
+		}
+		for _, p := range dedupePorts(c.Ports) {
+			targets = append(targets, target{c.ID, c.Name, p})
+		}
+	}
+
+	out := make([]HostPortProbe, len(targets))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 16)
+	for i, t := range targets {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int, t target) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			out[i] = HostPortProbe{
+				ContainerID:   t.cid,
+				ContainerName: t.cname,
+				PortProbe:     probeOnePort(ctx, dial, baseHost, t.p),
+			}
+		}(i, t)
+	}
+	wg.Wait()
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ContainerName != out[j].ContainerName {
+			return out[i].ContainerName < out[j].ContainerName
+		}
+		return out[i].PublicPort < out[j].PublicPort
+	})
+	return out, nil
+}
+
+// dedupePorts keeps only published ports, de-duplicated by published port +
+// protocol (Docker lists IPv4 and IPv6 bindings separately).
+func dedupePorts(ports []PortMapping) []PortMapping {
+	seen := map[string]bool{}
+	out := make([]PortMapping, 0, len(ports))
 	for _, p := range ports {
 		if p.PublicPort == 0 {
-			continue // not published — nothing to reach from here
+			continue
 		}
 		key := fmt.Sprintf("%d/%s", p.PublicPort, p.Type)
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
-
-		base := PortProbe{
-			PrivatePort: p.PrivatePort,
-			PublicPort:  p.PublicPort,
-			Type:        p.Type,
-			GuessByPort: wellKnownService(p.PrivatePort, p.Type),
-		}
-		if p.Type != "tcp" {
-			// UDP can't be banner-grabbed reliably; report the guess only.
-			mu.Lock()
-			out = append(out, base)
-			mu.Unlock()
-			continue
-		}
-
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(pp PortProbe, port uint16) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			addr := net.JoinHostPort(baseHost, strconv.Itoa(int(port)))
-			fingerprintPort(ctx, dial, addr, &pp)
-			mu.Lock()
-			out = append(out, pp)
-			mu.Unlock()
-		}(base, p.PublicPort)
+		out = append(out, p)
 	}
-	wg.Wait()
+	return out
+}
 
-	sort.Slice(out, func(i, j int) bool { return out[i].PublicPort < out[j].PublicPort })
-	return out, nil
+// probeOnePort fingerprints a single published port (UDP gets the guess only).
+func probeOnePort(ctx context.Context, dial probeDialer, baseHost string, p PortMapping) PortProbe {
+	pp := PortProbe{
+		PrivatePort: p.PrivatePort,
+		PublicPort:  p.PublicPort,
+		Type:        p.Type,
+		GuessByPort: wellKnownService(p.PrivatePort, p.Type),
+	}
+	if p.Type != "tcp" {
+		return pp // UDP can't be banner-grabbed reliably
+	}
+	addr := net.JoinHostPort(baseHost, strconv.Itoa(int(p.PublicPort)))
+	fingerprintPort(ctx, dial, addr, &pp)
+	return pp
 }
 
 // probeTarget returns a dialer plus the host address to use for the container's

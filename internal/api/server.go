@@ -144,6 +144,7 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/system", s.handleSystemInfo)
 			r.Get("/system/df", s.handleDiskUsage)
 			r.Get("/stats/overview", s.handleStatsOverview)
+			r.Get("/stats/ports", s.handleHostPorts)
 			r.Get("/metrics/history", s.handleMetricsHistory)
 			r.Get("/audit", s.handleAudit)
 

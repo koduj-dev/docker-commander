@@ -276,6 +276,11 @@ export interface PortProbe {
   error?: string;
 }
 
+export interface HostPortProbe extends PortProbe {
+  containerId: string;
+  containerName: string;
+}
+
 export interface ResourceUsage {
   id: string;
   name: string;

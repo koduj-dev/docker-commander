@@ -87,6 +87,14 @@ type StatsSample struct {
 	PIDs        uint64  `json:"pids"`
 }
 
+// HostPortProbe is one published port on the host, tagged with the container
+// that owns it — the rows behind the host-wide "open ports" view.
+type HostPortProbe struct {
+	ContainerID   string `json:"containerId"`
+	ContainerName string `json:"containerName"`
+	PortProbe
+}
+
 // ResourceUsage is one container's live share of the host's CPU and memory.
 type ResourceUsage struct {
 	ID         string  `json:"id"`
