@@ -1,12 +1,13 @@
-# Docker Commander config file.
+# Docker Commander config file — the canonical list of settings.
 #
-# Default location (Linux): /etc/docker-commander/commander.conf
-# Override with `-config /path/to/file` or the DC_CONFIG environment variable.
+# Default location: /etc/docker-commander/commander.conf (Linux),
+#                   %ProgramData%\docker-commander\commander.conf (Windows).
+# Override the path with `-config /path/to/file` or the DC_CONFIG env var.
 #
-# Format: KEY=VALUE, one per line; "#" starts a comment. Keys are the same as
-# the environment variables, so this file can double as a systemd
-# EnvironmentFile. Precedence: command-line flag > environment > this file.
-# All keys are optional.
+# Format: KEY=VALUE, one per line; "#" starts a comment. These are the same
+# DC_* keys you can also pass as environment variables or flags.
+# Precedence: command-line flag > environment variable > this file.
+# All keys are optional — defaults are shown.
 
 # Listen host + port. Behind a TLS reverse proxy, keep the host on loopback;
 # use 0.0.0.0 to listen on all interfaces.
@@ -23,10 +24,14 @@ DC_DATA_DIR=/var/lib/dockercmd
 # Session token lifetime is set with the -session-ttl flag (e.g. -session-ttl 8h).
 
 # Optional: protect the Prometheus /metrics endpoint with a bearer token.
-# DC_METRICS_TOKEN=changeme
+# DC_METRICS_TOKEN=change-me
 
-# Optional: store metric history in Redis instead of memory.
+# Optional: store metric history in Redis instead of an in-memory ring buffer.
 # DC_REDIS_ADDR=127.0.0.1:6379
 # DC_REDIS_PASSWORD=
 # DC_REDIS_DB=0
 # DC_METRICS_RETENTION=24h
+
+# Talk to a non-default Docker daemon (standard Docker env vars are honoured).
+# DOCKER_HOST=unix:///var/run/docker.sock
+# DOCKER_CERT_PATH=

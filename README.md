@@ -107,9 +107,11 @@ enable 2FA — done.
 
 ## ⚙️ Configuration
 
-Every option is a flag with an environment-variable equivalent (handy with the
-[`.env.example`](.env.example) + systemd). The Docker connection also honours
-the standard `DOCKER_HOST` / `DOCKER_CERT_PATH` variables.
+Every option is a flag with an environment-variable equivalent, and can also
+live in a config file — see
+[`deploy/commander.conf.example`](deploy/commander.conf.example) for the full
+list. The Docker connection also honours the standard `DOCKER_HOST` /
+`DOCKER_CERT_PATH` variables.
 
 | Flag                 | Env                    | Default            | Description |
 |----------------------|------------------------|--------------------|-------------|

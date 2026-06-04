@@ -44,9 +44,9 @@ func (c Config) DBPath() string { return filepath.Join(c.DataDir, "docker-comman
 // Precedence (highest first): command-line flag → environment variable →
 // config file → built-in default. The config file is a simple "KEY=VALUE" file
 // using the same DC_* keys as the environment. Its path comes from -config,
-// then $DC_CONFIG, then the platform default
-// (/etc/docker-commander/commander.conf on Unix); a missing default file is
-// ignored, a missing explicit one is an error.
+// then $DC_CONFIG, then the platform default (/etc/docker-commander/
+// commander.conf on Unix, %ProgramData%\docker-commander\commander.conf on
+// Windows); a missing default file is ignored, a missing explicit one errors.
 func Load() (Config, error) {
 	cfgPath, explicit := resolveConfigPath()
 	vals, err := loadConfigFile(cfgPath)
@@ -153,6 +153,10 @@ func argConfigPath() string {
 // no sensible default (Windows — use -config or $DC_CONFIG there).
 func defaultConfigPath() string {
 	if runtime.GOOS == "windows" {
+		// Machine-wide config under %ProgramData% (e.g. C:\ProgramData).
+		if pd := os.Getenv("ProgramData"); pd != "" {
+			return filepath.Join(pd, "docker-commander", "commander.conf")
+		}
 		return ""
 	}
 	return "/etc/docker-commander/commander.conf"

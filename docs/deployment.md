@@ -7,8 +7,10 @@ monitoring, alerting and metric history **continuously** — independent of any
 connected browser — so on a server you'll want it supervised.
 
 ## Configuration
-Every option is a flag with a `DC_*` environment-variable equivalent. See
-[`.env.example`](../.env.example) for the full list. Key ones:
+Every option is a flag with a `DC_*` environment-variable equivalent, and can
+live in a config file. See
+[`deploy/commander.conf.example`](../deploy/commander.conf.example) for the full
+list. Key ones:
 
 | Env | Default | Purpose |
 |-----|---------|---------|
