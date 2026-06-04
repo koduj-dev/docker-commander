@@ -20,6 +20,26 @@ Every option is a flag with a `DC_*` environment-variable equivalent. See
 
 Docker connection honours `DOCKER_HOST` / `DOCKER_CERT_PATH`.
 
+### Config file
+Instead of (or alongside) flags and env vars, settings can live in a config
+file — handy when running as a service. It is a plain `KEY=VALUE` file using the
+same `DC_*` keys (so it can also be a systemd `EnvironmentFile`); `#` starts a
+comment and `export `/quotes are tolerated.
+
+```ini
+# /etc/docker-commander/commander.conf
+DC_ADDR=127.0.0.1:8080
+DC_DATA_DIR=/var/lib/dockercmd
+DC_METRICS_RETENTION=24h
+```
+
+The binary reads **`/etc/docker-commander/commander.conf`** by default (on
+Unix); point it elsewhere with `-config /path/to/file` or `$DC_CONFIG`. A
+missing default file is ignored; a missing **explicit** one is an error.
+**Precedence:** command-line flag → environment variable → config file →
+built-in default. A starter file lives at
+[`deploy/commander.conf.example`](../deploy/commander.conf.example).
+
 ## systemd (Linux)
 A hardened unit and env example live in [`deploy/`](../deploy/).
 

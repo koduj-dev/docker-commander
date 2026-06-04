@@ -3,6 +3,7 @@ package config
 import (
 	"flag"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -30,6 +31,71 @@ func TestLoad(t *testing.T) {
 	}
 	if c.SessionTTL != 12*time.Hour {
 		t.Errorf("default session TTL: %v", c.SessionTTL)
+	}
+}
+
+func TestLoadConfigFileParsing(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "commander.conf")
+	body := "# a comment\n\nDC_ADDR = 10.0.0.1:8080\nexport DC_REDIS_DB=3\nDC_METRICS_TOKEN=\"secret\"\nbad line without equals\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	vals, err := loadConfigFile(path)
+	if err != nil {
+		t.Fatalf("loadConfigFile: %v", err)
+	}
+	if vals["DC_ADDR"] != "10.0.0.1:8080" {
+		t.Errorf("trimmed value wrong: %q", vals["DC_ADDR"])
+	}
+	if vals["DC_REDIS_DB"] != "3" {
+		t.Errorf("export prefix not stripped: %q", vals["DC_REDIS_DB"])
+	}
+	if vals["DC_METRICS_TOKEN"] != "secret" {
+		t.Errorf("quotes not stripped: %q", vals["DC_METRICS_TOKEN"])
+	}
+	if _, ok := vals["bad line without equals"]; ok {
+		t.Error("lines without '=' should be skipped")
+	}
+}
+
+func TestLoadConfigFilePrecedence(t *testing.T) {
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	defer func() { os.Args, flag.CommandLine = oldArgs, oldFS }()
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = []string{"dockercmd"}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "commander.conf")
+	conf := "DC_ADDR=192.168.1.1:7000\nDC_DATA_DIR=" + dir + "\nDC_METRICS_RETENTION=15m\n"
+	if err := os.WriteFile(path, []byte(conf), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DC_CONFIG", path)
+	// Env must win over the file for keys present in both.
+	t.Setenv("DC_METRICS_RETENTION", "90m")
+
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Addr != "192.168.1.1:7000" {
+		t.Errorf("config-file value should be used when env is unset: %q", c.Addr)
+	}
+	if c.MetricsRetention != 90*time.Minute {
+		t.Errorf("env should override the config file: %v", c.MetricsRetention)
+	}
+}
+
+func TestLoadMissingExplicitConfigErrors(t *testing.T) {
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	defer func() { os.Args, flag.CommandLine = oldArgs, oldFS }()
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = []string{"dockercmd"}
+
+	t.Setenv("DC_CONFIG", filepath.Join(t.TempDir(), "does-not-exist.conf"))
+	if _, err := Load(); err == nil {
+		t.Error("an explicitly configured but missing config file should error")
 	}
 }
 

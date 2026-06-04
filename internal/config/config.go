@@ -3,10 +3,13 @@
 package config
 
 import (
+	"errors"
 	"flag"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -35,18 +38,36 @@ type Config struct {
 // DBPath is the path to the SQLite database file.
 func (c Config) DBPath() string { return filepath.Join(c.DataDir, "docker-commander.db") }
 
-// Load parses flags/env and returns the resolved configuration.
+// Load parses flags/env/config-file and returns the resolved configuration.
+//
+// Precedence (highest first): command-line flag → environment variable →
+// config file → built-in default. The config file is a simple "KEY=VALUE" file
+// using the same DC_* keys as the environment (so it doubles as a systemd
+// EnvironmentFile). Its path comes from -config, then $DC_CONFIG, then the
+// platform default (/etc/docker-commander/commander.conf on Unix); a missing
+// default file is ignored, a missing explicit one is an error.
 func Load() (Config, error) {
+	cfgPath, explicit := resolveConfigPath()
+	vals, err := loadConfigFile(cfgPath)
+	if err != nil {
+		if explicit || !errors.Is(err, os.ErrNotExist) {
+			return Config{}, err
+		}
+		vals = map[string]string{} // default file absent → ignore
+	}
+	fileVals = vals
+
 	def := defaultDataDir()
 
 	var c Config
+	flag.String("config", cfgPath, "path to a config file (KEY=VALUE, same keys as the environment)")
 	flag.StringVar(&c.Addr, "addr", envOr("DC_ADDR", "127.0.0.1:8080"), "listen address (host:port)")
 	flag.StringVar(&c.DataDir, "data-dir", envOr("DC_DATA_DIR", def), "directory for the database and secrets")
 	ttl := flag.Duration("session-ttl", 12*time.Hour, "session token lifetime")
-	flag.BoolVar(&c.Dev, "dev", os.Getenv("DC_DEV") == "1", "enable development mode (permissive CORS)")
-	flag.StringVar(&c.MetricsToken, "metrics-token", os.Getenv("DC_METRICS_TOKEN"), "require this bearer token to scrape /metrics (empty = open)")
-	flag.StringVar(&c.RedisAddr, "redis-addr", os.Getenv("DC_REDIS_ADDR"), "Redis address (host:port) for metrics history; empty = in-memory")
-	flag.StringVar(&c.RedisPassword, "redis-password", os.Getenv("DC_REDIS_PASSWORD"), "Redis password")
+	flag.BoolVar(&c.Dev, "dev", lookup("DC_DEV") == "1", "enable development mode (permissive CORS)")
+	flag.StringVar(&c.MetricsToken, "metrics-token", lookup("DC_METRICS_TOKEN"), "require this bearer token to scrape /metrics (empty = open)")
+	flag.StringVar(&c.RedisAddr, "redis-addr", lookup("DC_REDIS_ADDR"), "Redis address (host:port) for metrics history; empty = in-memory")
+	flag.StringVar(&c.RedisPassword, "redis-password", lookup("DC_REDIS_PASSWORD"), "Redis password")
 	retention := flag.Duration("metrics-retention", envDuration("DC_METRICS_RETENTION", 6*time.Hour), "how long to keep metric history")
 	flag.Parse()
 
@@ -67,15 +88,102 @@ func defaultDataDir() string {
 	return ".docker-commander"
 }
 
-func envOr(key, def string) string {
+// fileVals holds key=value pairs parsed from the optional config file. It is
+// consulted by lookup() after the environment and before built-in defaults.
+var fileVals map[string]string
+
+// lookup returns a setting from the environment, falling back to the config
+// file. An empty/unset value yields "".
+func lookup(key string) string {
 	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	if fileVals != nil {
+		return fileVals[key]
+	}
+	return ""
+}
+
+// resolveConfigPath picks the config-file path: -config flag, then $DC_CONFIG,
+// then the platform default. `explicit` is true for the first two, so a missing
+// file there is a hard error (vs. silently ignoring an absent default).
+func resolveConfigPath() (path string, explicit bool) {
+	if p := argConfigPath(); p != "" {
+		return p, true
+	}
+	if p := os.Getenv("DC_CONFIG"); p != "" {
+		return p, true
+	}
+	return defaultConfigPath(), false
+}
+
+// argConfigPath scans os.Args for -config/--config (the flag package hasn't run
+// yet when we need the path, so we read it ourselves).
+func argConfigPath() string {
+	args := os.Args[1:]
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		for _, pre := range []string{"--config=", "-config="} {
+			if v, ok := strings.CutPrefix(a, pre); ok {
+				return v
+			}
+		}
+		if (a == "-config" || a == "--config") && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
+// defaultConfigPath is the conventional config location, or "" where there is
+// no sensible default (Windows — use -config or $DC_CONFIG there).
+func defaultConfigPath() string {
+	if runtime.GOOS == "windows" {
+		return ""
+	}
+	return "/etc/docker-commander/commander.conf"
+}
+
+// loadConfigFile parses a "KEY=VALUE" file (with "#" comments, optional quotes
+// and a tolerated "export " prefix). An empty path yields an empty map.
+func loadConfigFile(path string) (map[string]string, error) {
+	out := map[string]string{}
+	if path == "" {
+		return out, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	for _, raw := range strings.Split(string(data), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		line = strings.TrimPrefix(line, "export ")
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		v = strings.Trim(v, `"'`)
+		if k != "" {
+			out[k] = v
+		}
+	}
+	return out, nil
+}
+
+func envOr(key, def string) string {
+	if v := lookup(key); v != "" {
 		return v
 	}
 	return def
 }
 
 func envInt(key string, def int) int {
-	if v := os.Getenv(key); v != "" {
+	if v := lookup(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
 		}
@@ -84,7 +192,7 @@ func envInt(key string, def int) int {
 }
 
 func envDuration(key string, def time.Duration) time.Duration {
-	if v := os.Getenv(key); v != "" {
+	if v := lookup(key); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			return d
 		}

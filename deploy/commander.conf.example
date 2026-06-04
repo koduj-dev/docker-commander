@@ -1,0 +1,26 @@
+# Docker Commander config file.
+#
+# Default location (Linux): /etc/docker-commander/commander.conf
+# Override with `-config /path/to/file` or the DC_CONFIG environment variable.
+#
+# Format: KEY=VALUE, one per line; "#" starts a comment. Keys are the same as
+# the environment variables, so this file can double as a systemd
+# EnvironmentFile. Precedence: command-line flag > environment > this file.
+# All keys are optional.
+
+# Listen address. Behind a TLS reverse proxy, keep this on loopback.
+DC_ADDR=127.0.0.1:8080
+
+# Where the SQLite DB + signing/encryption keys live.
+DC_DATA_DIR=/var/lib/dockercmd
+
+# Session token lifetime is set with the -session-ttl flag (e.g. -session-ttl 8h).
+
+# Optional: protect the Prometheus /metrics endpoint with a bearer token.
+# DC_METRICS_TOKEN=changeme
+
+# Optional: store metric history in Redis instead of memory.
+# DC_REDIS_ADDR=127.0.0.1:6379
+# DC_REDIS_PASSWORD=
+# DC_REDIS_DB=0
+# DC_METRICS_RETENTION=24h
