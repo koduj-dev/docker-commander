@@ -14,9 +14,15 @@ export function Dashboard() {
   const [info, setInfo] = useState<SystemInfo | null>(null);
   const [df, setDf] = useState<DiskUsage | null>(null);
 
+  // Poll so the counts/disk usage reflect containers starting or stopping.
   useEffect(() => {
-    api.system().then(setInfo).catch(() => {});
-    api.diskUsage().then(setDf).catch(() => {});
+    const load = () => {
+      api.system().then(setInfo).catch(() => {});
+      api.diskUsage().then(setDf).catch(() => {});
+    };
+    load();
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
   }, []);
 
   return (

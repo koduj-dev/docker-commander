@@ -37,11 +37,20 @@ export function ResourceBreakdown() {
   const [data, setData] = useState<ResourceOverview | null>(null);
   const [error, setError] = useState("");
 
+  // Poll so the breakdown follows containers starting/stopping. Refreshes
+  // update in place (no flicker); a transient error keeps the last good data.
   useEffect(() => {
-    api
-      .statsOverview()
-      .then(setData)
-      .catch((e) => setError(e instanceof Error ? e.message : "could not sample container resources"));
+    const load = () =>
+      api
+        .statsOverview()
+        .then((d) => {
+          setData(d);
+          setError("");
+        })
+        .catch((e) => setError(e instanceof Error ? e.message : "could not sample container resources"));
+    load();
+    const t = setInterval(load, 8000);
+    return () => clearInterval(t);
   }, []);
 
   const containers = data?.containers ?? []; // Go sends null, not [], when empty
@@ -49,7 +58,7 @@ export function ResourceBreakdown() {
   // The section always reserves the chart height so it doesn't jump when the
   // data arrives; errors/empty render in the same space instead of the pies.
   let body: React.ReactNode;
-  if (error) {
+  if (error && !data) {
     body = <div className="card p-4 text-sm text-danger">Couldn't sample container resources: {error}</div>;
   } else if (!data) {
     body = (
