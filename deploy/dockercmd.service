@@ -24,6 +24,10 @@ ExecStart=/usr/local/bin/dockercmd -data-dir /var/lib/dockercmd
 Restart=on-failure
 RestartSec=5s
 
+# Tag journal/syslog entries as "dockercmd" (journalctl -t dockercmd). Add
+# ForwardToSyslog=yes in journald.conf to also push them to a syslog daemon.
+SyslogIdentifier=dockercmd
+
 # --- hardening ---------------------------------------------------------------
 NoNewPrivileges=true
 ProtectSystem=strict

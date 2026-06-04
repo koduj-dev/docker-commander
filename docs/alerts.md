@@ -41,3 +41,9 @@ recipient for alerts from that host.
 Scrape `/metrics` for `dockercmd_container_cpu_percent`, `_mem_bytes`,
 `_mem_percent` and `_container_running`, labelled by `id`, `name` and `host`.
 Protect it with `DC_METRICS_TOKEN` if exposed.
+
+## System log
+Beyond these channels, every fired alert is also written to the process log
+(stderr) as a structured line, so under systemd it lands in the journal — and,
+if you enable forwarding, in syslog. See
+[Deployment → Logs](deployment.md#logs).

@@ -445,6 +445,16 @@ func (m *Monitor) fire(ctx context.Context, r store.AlertRule, hostID int64, hos
 	}
 	m.cooldowns.Store(key, time.Now())
 
+	// Emit every fired alert to the process log (stderr) as a structured line.
+	// Under systemd this lands in the journal — and from there into syslog / any
+	// central log collector — so failures are visible beyond the in-app feed.
+	severity := r.Severity
+	if severity == "" {
+		severity = "info"
+	}
+	log.Printf("alert severity=%s rule=%q host=%q container=%q message=%q",
+		severity, r.Name, hostName, name, message)
+
 	ev := &store.AlertEvent{
 		RuleID: r.ID, RuleName: r.Name, Type: r.Type, Severity: r.Severity,
 		HostID: hostID, HostName: hostName,

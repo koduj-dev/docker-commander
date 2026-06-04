@@ -60,6 +60,27 @@ sudo systemctl daemon-reload && sudo systemctl enable --now dockercmd
 The unit runs as a dedicated user in the `docker` group with
 `NoNewPrivileges`, `ProtectSystem=strict` and a private `StateDirectory`.
 
+## Logs
+Docker Commander logs to **stderr**, so under systemd everything goes to the
+**journal**:
+
+```bash
+journalctl -u dockercmd -f          # follow
+journalctl -t dockercmd --since today
+```
+
+Every **fired alert** is written as a structured line, so failures are visible
+in your log pipeline, not only in the in-app feed:
+
+```
+alert severity=critical rule="db down" host="prod-1" container="postgres" message="container event: die"
+```
+
+To forward the journal to a **syslog** daemon (rsyslog/syslog-ng → SIEM), set
+`ForwardToSyslog=yes` in `/etc/systemd/journald.conf` and restart
+`systemd-journald`. Entries are tagged `dockercmd` (`SyslogIdentifier`). Not
+using systemd? Redirect the process's stderr to a file or your collector.
+
 ## Reverse proxy + TLS
 Bind to loopback and terminate TLS at nginx/Caddy. WebSockets must be allowed
 (stats, logs, exec, events) — proxy `Upgrade`/`Connection` headers. Example
