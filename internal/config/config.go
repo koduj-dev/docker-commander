@@ -36,6 +36,8 @@ type Config struct {
 
 	// Version is the build version string, set by main (not from flags/env).
 	Version string
+	// ConfigFile is the config file that was loaded, or "" if none.
+	ConfigFile string
 
 	// Metrics history backend. RedisAddr empty → in-memory ring buffer.
 	RedisAddr        string
@@ -63,12 +65,14 @@ func Load() (Config, error) {
 			return Config{}, err
 		}
 		vals = map[string]string{} // default file absent → ignore
+		cfgPath = ""               // nothing was loaded
 	}
 	fileVals = vals
 
 	def := defaultDataDir()
 
 	var c Config
+	c.ConfigFile = cfgPath // the config file actually loaded ("" if none)
 	var host, addr string
 	var port int
 	flag.String("config", cfgPath, "path to a config file (KEY=VALUE, same keys as the environment)")

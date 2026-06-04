@@ -30,7 +30,8 @@ func (m *Manager) ResourceOverview(ctx context.Context, hostID int64) (ResourceO
 		}
 	}
 
-	out := ResourceOverview{CPUs: info.CPUs, MemTotal: info.MemTotal}
+	// Non-nil so the JSON is [] (not null) when nothing is running.
+	out := ResourceOverview{CPUs: info.CPUs, MemTotal: info.MemTotal, Containers: []ResourceUsage{}}
 	results := make([]ResourceUsage, len(running))
 	sem := make(chan struct{}, statsConcurrency)
 	var wg sync.WaitGroup

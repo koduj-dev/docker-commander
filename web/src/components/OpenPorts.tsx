@@ -15,7 +15,7 @@ export function OpenPorts() {
     setBusy(true);
     setErr("");
     try {
-      setRows(await api.hostPorts());
+      setRows((await api.hostPorts()) ?? []);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "scan failed");
     } finally {

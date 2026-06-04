@@ -176,6 +176,11 @@ func logStartup(cfg config.Config) {
 		scheme = "https"
 	}
 	log.Printf("Docker Commander %s listening on %s://%s", version, scheme, cfg.Addr)
+	if cfg.ConfigFile != "" {
+		log.Printf("config file: %s", cfg.ConfigFile)
+	} else {
+		log.Printf("config file: none (flags/env only)")
+	}
 	log.Printf("data dir: %s", cfg.DataDir)
 	if cfg.Dev {
 		log.Printf("dev mode: serving API only; run the Vite dev server for the UI")

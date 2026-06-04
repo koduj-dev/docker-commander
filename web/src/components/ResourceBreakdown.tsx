@@ -49,14 +49,15 @@ export function ResourceBreakdown() {
       </div>
     );
   }
-  if (data.containers.length === 0) return null; // nothing running
+  const containers = data.containers ?? []; // Go sends null, not [], when empty
+  if (containers.length === 0) return null; // nothing running
 
   return (
     <div>
       <h2 className="text-sm font-semibold text-muted mb-3">Resource usage · share of host</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <UsagePie title={`CPU · ${data.cpus} core${data.cpus === 1 ? "" : "s"}`} slices={build(data.containers, (c) => c.cpuPercent)} />
-        <UsagePie title="Memory" slices={build(data.containers, (c) => c.memPercent)} />
+        <UsagePie title={`CPU · ${data.cpus} core${data.cpus === 1 ? "" : "s"}`} slices={build(containers, (c) => c.cpuPercent)} />
+        <UsagePie title="Memory" slices={build(containers, (c) => c.memPercent)} />
       </div>
     </div>
   );
