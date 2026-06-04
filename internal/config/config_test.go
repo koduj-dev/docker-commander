@@ -116,6 +116,43 @@ func TestLoadPortShorthand(t *testing.T) {
 	}
 }
 
+func TestLoadHostPort(t *testing.T) {
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	defer func() { os.Args, flag.CommandLine = oldArgs, oldFS }()
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = []string{"dockercmd"}
+
+	t.Setenv("DC_DATA_DIR", t.TempDir())
+	t.Setenv("DC_HOST", "0.0.0.0")
+	t.Setenv("DC_PORT", "9443")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Addr != "0.0.0.0:9443" {
+		t.Errorf("host+port should compose the addr: %q", c.Addr)
+	}
+}
+
+func TestLoadAddrOverridesHostPort(t *testing.T) {
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	defer func() { os.Args, flag.CommandLine = oldArgs, oldFS }()
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = []string{"dockercmd"}
+
+	t.Setenv("DC_DATA_DIR", t.TempDir())
+	t.Setenv("DC_HOST", "0.0.0.0")
+	t.Setenv("DC_PORT", "9443")
+	t.Setenv("DC_ADDR", "127.0.0.1:7000") // legacy full address wins
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Addr != "127.0.0.1:7000" {
+		t.Errorf("legacy DC_ADDR should override host+port: %q", c.Addr)
+	}
+}
+
 func TestDBPath(t *testing.T) {
 	c := Config{DataDir: "/var/lib/dockercmd"}
 	if got, want := c.DBPath(), "/var/lib/dockercmd/docker-commander.db"; got != want {

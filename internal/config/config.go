@@ -61,8 +61,13 @@ func Load() (Config, error) {
 	def := defaultDataDir()
 
 	var c Config
+	var host, addr string
+	var port int
 	flag.String("config", cfgPath, "path to a config file (KEY=VALUE, same keys as the environment)")
-	flag.StringVar(&c.Addr, "addr", envOr("DC_ADDR", "127.0.0.1:8080"), "listen address (host:port)")
+	flag.StringVar(&host, "host", envOr("DC_HOST", "127.0.0.1"), "listen host/interface (use 0.0.0.0 for all)")
+	flag.IntVar(&port, "port", envInt("DC_PORT", 8080), "listen port")
+	flag.IntVar(&port, "p", envInt("DC_PORT", 8080), "shorthand for -port")
+	flag.StringVar(&addr, "addr", lookup("DC_ADDR"), "full listen address host:port (legacy; overrides -host/-port)")
 	flag.StringVar(&c.DataDir, "data-dir", envOr("DC_DATA_DIR", def), "directory for the database and secrets")
 	ttl := flag.Duration("session-ttl", 12*time.Hour, "session token lifetime")
 	flag.BoolVar(&c.Dev, "dev", lookup("DC_DEV") == "1", "enable development mode (permissive CORS)")
@@ -70,19 +75,13 @@ func Load() (Config, error) {
 	flag.StringVar(&c.RedisAddr, "redis-addr", lookup("DC_REDIS_ADDR"), "Redis address (host:port) for metrics history; empty = in-memory")
 	flag.StringVar(&c.RedisPassword, "redis-password", lookup("DC_REDIS_PASSWORD"), "Redis password")
 	retention := flag.Duration("metrics-retention", envDuration("DC_METRICS_RETENTION", 6*time.Hour), "how long to keep metric history")
-	var port int
-	flag.IntVar(&port, "port", envInt("DC_PORT", 0), "listen port shorthand; overrides the port in -addr (keeps its host)")
-	flag.IntVar(&port, "p", envInt("DC_PORT", 0), "shorthand for -port")
 	flag.Parse()
 
-	// -port/-p (or DC_PORT) is a convenience that overrides just the port,
-	// keeping the host from -addr (loopback by default) — so `-p 9000` listens
-	// on 127.0.0.1:9000 without spelling out the whole host:port.
-	if port > 0 {
-		host, _, err := net.SplitHostPort(c.Addr)
-		if err != nil {
-			host = c.Addr
-		}
+	// Listen address is host + port. A full -addr/DC_ADDR (legacy) still wins if
+	// set, so existing host:port configs keep working.
+	if addr != "" {
+		c.Addr = addr
+	} else {
 		c.Addr = net.JoinHostPort(host, strconv.Itoa(port))
 	}
 

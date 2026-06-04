@@ -8,12 +8,14 @@
 # EnvironmentFile. Precedence: command-line flag > environment > this file.
 # All keys are optional.
 
-# Listen address. Behind a TLS reverse proxy, keep this on loopback.
-DC_ADDR=127.0.0.1:8080
+# Listen host + port. Behind a TLS reverse proxy, keep the host on loopback;
+# use 0.0.0.0 to listen on all interfaces.
+DC_HOST=127.0.0.1
+DC_PORT=8080
 
-# Port shorthand: overrides just the port in DC_ADDR (keeps its host).
-# Equivalent to the -p / -port flag. e.g. DC_PORT=9000 -> 127.0.0.1:9000
-# DC_PORT=8080
+# DC_ADDR (full host:port) is still accepted and overrides DC_HOST/DC_PORT, for
+# compatibility with older setups:
+# DC_ADDR=127.0.0.1:8080
 
 # Where the SQLite DB + signing/encryption keys live.
 DC_DATA_DIR=/var/lib/dockercmd
