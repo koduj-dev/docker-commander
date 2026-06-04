@@ -33,12 +33,13 @@ function colorFor(name: string, i: number): string {
 // ResourceBreakdown shows how the running containers divide up the host's CPU
 // and memory as two pie charts. It's a snapshot taken on load (sampling every
 // container is not free, so it doesn't auto-poll).
-export function ResourceBreakdown() {
+export function ResourceBreakdown({ tick = 0 }: { tick?: number }) {
   const [data, setData] = useState<ResourceOverview | null>(null);
   const [error, setError] = useState("");
 
-  // Poll so the breakdown follows containers starting/stopping. Refreshes
-  // update in place (no flicker); a transient error keeps the last good data.
+  // Refresh on Docker lifecycle events (`tick`) plus a slow poll for CPU/mem
+  // drift. Refreshes update in place (no flicker); a transient error keeps the
+  // last good data.
   useEffect(() => {
     const load = () =>
       api
@@ -51,7 +52,7 @@ export function ResourceBreakdown() {
     load();
     const t = setInterval(load, 8000);
     return () => clearInterval(t);
-  }, []);
+  }, [tick]);
 
   const containers = data?.containers ?? []; // Go sends null, not [], when empty
 

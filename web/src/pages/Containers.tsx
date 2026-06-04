@@ -28,7 +28,7 @@ function matchContainer(c: ContainerSummary, q: string): boolean {
 // ContainerTable is shared by the dashboard and the dedicated Containers page.
 // With runningOnly it hides stopped containers (handy on the dashboard when a
 // host has many idle containers); withControls adds search + pagination.
-export function ContainerTable({ runningOnly = false, withControls = false }: { runningOnly?: boolean; withControls?: boolean }) {
+export function ContainerTable({ runningOnly = false, withControls = false, refreshSignal = 0 }: { runningOnly?: boolean; withControls?: boolean; refreshSignal?: number }) {
   const [list, setList] = useState<ContainerSummary[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -41,11 +41,12 @@ export function ContainerTable({ runningOnly = false, withControls = false }: { 
     }
   }, [runningOnly]);
 
+  // refreshSignal (Docker events) triggers an immediate reload on top of the poll.
   useEffect(() => {
     void load();
     const t = setInterval(load, 4000);
     return () => clearInterval(t);
-  }, [load]);
+  }, [load, refreshSignal]);
 
   const controls = useListControls(
     list ?? [],

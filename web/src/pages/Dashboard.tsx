@@ -9,21 +9,24 @@ import { StatCard, Spinner } from "../components/ui";
 import { ResourceBreakdown } from "../components/ResourceBreakdown";
 import { OpenPorts } from "../components/OpenPorts";
 import { ContainerTable } from "./Containers";
+import { useDockerEventTick } from "../lib/dockerEvents";
 
 export function Dashboard() {
   const [info, setInfo] = useState<SystemInfo | null>(null);
   const [df, setDf] = useState<DiskUsage | null>(null);
+  // Bumps on Docker lifecycle events → near-instant refresh; a slow poll backs
+  // it up (sizes drift even without events) and covers a dropped stream.
+  const tick = useDockerEventTick();
 
-  // Poll so the counts/disk usage reflect containers starting or stopping.
   useEffect(() => {
     const load = () => {
       api.system().then(setInfo).catch(() => {});
       api.diskUsage().then(setDf).catch(() => {});
     };
     load();
-    const t = setInterval(load, 5000);
+    const t = setInterval(load, 15000);
     return () => clearInterval(t);
-  }, []);
+  }, [tick]);
 
   return (
     <>
@@ -57,7 +60,7 @@ export function Dashboard() {
           </div>
         )}
 
-        <ResourceBreakdown />
+        <ResourceBreakdown tick={tick} />
 
         <OpenPorts />
 
@@ -66,7 +69,7 @@ export function Dashboard() {
             <h2 className="text-sm font-semibold text-muted">Running containers</h2>
             <Link to="/containers" className="text-xs text-accent hover:underline">View all →</Link>
           </div>
-          <ContainerTable runningOnly />
+          <ContainerTable runningOnly refreshSignal={tick} />
         </div>
       </div>
     </>
