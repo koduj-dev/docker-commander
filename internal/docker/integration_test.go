@@ -302,6 +302,31 @@ func TestIntegrationLogsAndEvents(t *testing.T) {
 	}
 }
 
+func TestIntegrationResourceOverview(t *testing.T) {
+	m, ctx := newManager(t)
+	id := startTestContainer(t, m, ctx, "dctest_overview")
+
+	ov, err := m.ResourceOverview(ctx, 0)
+	if err != nil {
+		t.Fatalf("ResourceOverview: %v", err)
+	}
+	if ov.CPUs <= 0 || ov.MemTotal <= 0 {
+		t.Errorf("host totals should be populated: cpus=%d mem=%d", ov.CPUs, ov.MemTotal)
+	}
+	var found bool
+	for _, c := range ov.Containers {
+		if c.ID == id {
+			found = true
+			if c.CPUPercent < 0 || c.CPUPercent > 100 || c.MemPercent < 0 || c.MemPercent > 100 {
+				t.Errorf("shares must be 0..100%%: %+v", c)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("the running container %s should appear in the overview", id[:12])
+	}
+}
+
 func TestIntegrationExecAndStats(t *testing.T) {
 	m, ctx := newManager(t)
 	id := startTestContainer(t, m, ctx, "dctest_exec")

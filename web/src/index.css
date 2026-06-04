@@ -11,6 +11,12 @@
   body {
     @apply bg-bg text-text font-sans antialiased;
   }
+  /* Native <select> dropdowns render their <option>s with the OS default
+     (white) background. On our dark theme that gave white-on-white text, so
+     pin option colours explicitly. */
+  option {
+    @apply bg-panel2 text-text;
+  }
   ::-webkit-scrollbar {
     width: 10px;
     height: 10px;

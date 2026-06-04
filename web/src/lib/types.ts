@@ -264,6 +264,20 @@ export interface SystemInfo {
   images: number;
 }
 
+export interface ResourceUsage {
+  id: string;
+  name: string;
+  cpuPercent: number; // share of total host CPU (0..100)
+  memBytes: number;
+  memPercent: number; // share of total host memory (0..100)
+}
+
+export interface ResourceOverview {
+  cpus: number;
+  memTotal: number;
+  containers: ResourceUsage[];
+}
+
 export interface StatsSample {
   containerId: string;
   timestamp: number;

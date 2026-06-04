@@ -6,6 +6,7 @@ import type { DiskUsage, SystemInfo } from "../lib/types";
 import { bytes } from "../lib/format";
 import { PageHeader } from "../layout/Shell";
 import { StatCard, Spinner } from "../components/ui";
+import { ResourceBreakdown } from "../components/ResourceBreakdown";
 import { ContainerTable } from "./Containers";
 
 export function Dashboard() {
@@ -48,6 +49,8 @@ export function Dashboard() {
             </div>
           </div>
         )}
+
+        <ResourceBreakdown />
 
         <div>
           <div className="flex items-baseline justify-between mb-3">

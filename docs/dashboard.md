@@ -20,6 +20,16 @@ A breakdown from `docker system df`:
 Use this to spot bloat; reclaim space from [Images](images.md) (prune dangling),
 [Volumes](volumes.md) (prune unused) or the build cache.
 
+## Resource usage (share of host)
+Two pie charts show how the **running containers** divide up the host's **CPU**
+and **memory** — i.e. what slice of the whole machine each container is using
+right now, with the unused remainder shown as **Free**. The busiest containers
+get their own slice; the rest are grouped as **Other**. It's a snapshot taken
+when the page loads (sampling every container isn't free, so it doesn't poll).
+
+> CPU share is relative to all cores (100% = the entire host); memory share is
+> usage ÷ total RAM. Remote hosts work the same, over the Docker API.
+
 ## Running containers
 A live table (refreshes automatically) of what's running, with quick
 start/stop/restart actions. Click a name to open its

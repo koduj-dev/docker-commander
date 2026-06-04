@@ -133,6 +133,22 @@ func (s *Server) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, info)
 }
 
+// handleStatsOverview reports how running containers divide up the host's CPU
+// and memory — the data behind the dashboard's usage breakdown.
+func (s *Server) handleStatsOverview(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	overview, err := s.docker.ResourceOverview(r.Context(), hostID)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "docker error: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, overview)
+}
+
 // handleInspect returns the daemon's raw JSON for an object. The object id/ref
 // is a query param (refs contain ':' and '/', which path segments mangle).
 func (s *Server) handleInspect(w http.ResponseWriter, r *http.Request) {

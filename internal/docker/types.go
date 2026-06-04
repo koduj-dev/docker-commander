@@ -87,6 +87,23 @@ type StatsSample struct {
 	PIDs        uint64  `json:"pids"`
 }
 
+// ResourceUsage is one container's live share of the host's CPU and memory.
+type ResourceUsage struct {
+	ID         string  `json:"id"`
+	Name       string  `json:"name"`
+	CPUPercent float64 `json:"cpuPercent"` // share of total host CPU (0..100)
+	MemBytes   uint64  `json:"memBytes"`
+	MemPercent float64 `json:"memPercent"` // share of total host memory (0..100)
+}
+
+// ResourceOverview is a snapshot of how the running containers divide up the
+// host's CPU and memory — the data behind the dashboard's usage breakdown.
+type ResourceOverview struct {
+	CPUs       int             `json:"cpus"`
+	MemTotal   int64           `json:"memTotal"`
+	Containers []ResourceUsage `json:"containers"`
+}
+
 // SystemInfo summarises the Docker host itself: hardware, OS/kernel and the
 // engine configuration. Note that for Docker Desktop (Windows/macOS) these
 // describe the engine's Linux VM, not the desktop OS — the Docker API does not
