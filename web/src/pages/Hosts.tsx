@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { Plus, Trash2, Server, CheckCircle2, XCircle, Loader2, ShieldAlert, ShieldCheck, KeyRound } from "lucide-react";
+import { Plus, Trash2, Server, CheckCircle2, XCircle, Loader2, ShieldAlert, ShieldCheck, KeyRound, Info } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import type { Host } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
+import { HostDetailModal } from "../components/HostDetailModal";
 
 type TestResult = {
   ok: boolean;
@@ -21,6 +22,7 @@ export function Hosts() {
   const [tests, setTests] = useState<Record<number, TestState>>({});
   const [trusting, setTrusting] = useState<Record<number, boolean>>({});
   const [showForm, setShowForm] = useState(false);
+  const [detail, setDetail] = useState<Host | null>(null);
 
   const load = useCallback(() => {
     api.hosts().then(setHosts).catch(() => setHosts([]));
@@ -92,6 +94,7 @@ export function Hosts() {
                       <div className="text-xs text-muted font-mono mt-1 break-all">{h.address || "(local socket)"}</div>
                     </div>
                     <div className="flex items-center gap-1">
+                      <button className="btn-ghost px-2 py-1 text-xs" title="Host detail" onClick={() => setDetail(h)}><Info className="h-4 w-4" /></button>
                       <button className="btn-ghost px-2 py-1 text-xs" onClick={() => test(h.id)}>Test</button>
                       {h.kind !== "local" && (
                         <button className="btn-ghost px-2 py-1 text-danger" title="Delete" onClick={() => del(h.id)}><Trash2 className="h-4 w-4" /></button>
@@ -162,6 +165,7 @@ export function Hosts() {
           key is refused as a possible MITM. <strong>TCP</strong> hosts use <code>tcp://host:2376</code> with optional TLS material.
         </p>
       </div>
+      {detail && <HostDetailModal host={detail} onClose={() => setDetail(null)} />}
     </>
   );
 }

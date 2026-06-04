@@ -85,6 +85,8 @@ func TestIntegrationSystemAndLists(t *testing.T) {
 
 	if info, err := m.SystemInfo(ctx, 0); err != nil || info.ServerVersion == "" {
 		t.Errorf("SystemInfo: %+v err=%v", info, err)
+	} else if info.OSType == "" || info.KernelVersion == "" || info.StorageDriver == "" {
+		t.Errorf("SystemInfo host detail fields should be populated: %+v", info)
 	}
 	if _, err := m.DiskUsage(ctx, 0); err != nil {
 		t.Errorf("DiskUsage: %v", err)

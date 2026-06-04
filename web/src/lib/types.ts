@@ -245,10 +245,21 @@ export interface SystemInfo {
   hostName: string;
   serverVersion: string;
   operatingSystem: string;
+  osType: string;
+  osVersion: string;
+  kernelVersion: string;
   architecture: string;
   cpus: number;
   memTotal: number;
+  storageDriver: string;
+  loggingDriver: string;
+  cgroupDriver: string;
+  cgroupVersion: string;
+  dockerRootDir: string;
+  liveRestore: boolean;
+  containers: number;
   containersRunning: number;
+  containersPaused: number;
   containersStopped: number;
   images: number;
 }

@@ -87,15 +87,32 @@ type StatsSample struct {
 	PIDs        uint64  `json:"pids"`
 }
 
-// SystemInfo summarises the Docker host itself.
+// SystemInfo summarises the Docker host itself: hardware, OS/kernel and the
+// engine configuration. Note that for Docker Desktop (Windows/macOS) these
+// describe the engine's Linux VM, not the desktop OS — the Docker API does not
+// expose the underlying host, so KernelVersion/OSType are the best hint (e.g.
+// a "…microsoft-standard-WSL2" kernel reveals a Windows/WSL2 host).
 type SystemInfo struct {
-	HostName          string `json:"hostName"`
-	ServerVersion     string `json:"serverVersion"`
-	OperatingSystem   string `json:"operatingSystem"`
-	Architecture      string `json:"architecture"`
-	CPUs              int    `json:"cpus"`
-	MemTotal          int64  `json:"memTotal"`
-	ContainersRunning int    `json:"containersRunning"`
-	ContainersStopped int    `json:"containersStopped"`
-	Images            int    `json:"images"`
+	HostName        string `json:"hostName"`
+	ServerVersion   string `json:"serverVersion"`
+	OperatingSystem string `json:"operatingSystem"`
+	OSType          string `json:"osType"`
+	OSVersion       string `json:"osVersion"`
+	KernelVersion   string `json:"kernelVersion"`
+	Architecture    string `json:"architecture"`
+	CPUs            int    `json:"cpus"`
+	MemTotal        int64  `json:"memTotal"`
+
+	StorageDriver string `json:"storageDriver"`
+	LoggingDriver string `json:"loggingDriver"`
+	CgroupDriver  string `json:"cgroupDriver"`
+	CgroupVersion string `json:"cgroupVersion"`
+	DockerRootDir string `json:"dockerRootDir"`
+	LiveRestore   bool   `json:"liveRestore"`
+
+	Containers        int `json:"containers"`
+	ContainersRunning int `json:"containersRunning"`
+	ContainersPaused  int `json:"containersPaused"`
+	ContainersStopped int `json:"containersStopped"`
+	Images            int `json:"images"`
 }

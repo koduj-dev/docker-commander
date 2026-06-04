@@ -276,6 +276,8 @@ export const api = {
   pruneVolumes: () => req<{ deleted: string[] | null; spaceReclaimed: number }>("POST", `/api/volumes/prune${hostParam()}`),
   topology: () => req<Topology>("GET", `/api/topology${hostParam()}`),
   system: () => req<SystemInfo>("GET", `/api/system${hostParam()}`),
+  // hostSystem fetches engine/host info for a specific host (not the active one).
+  hostSystem: (id: number) => req<SystemInfo>("GET", `/api/system?host=${id}`),
   audit: () => req<AuditEntry[]>("GET", "/api/audit"),
 
   // Alerting
