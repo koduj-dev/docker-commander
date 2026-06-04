@@ -197,9 +197,30 @@ func (m *Manager) probeTarget(ctx context.Context, hostID int64) (probeDialer, s
 			return nil, "", err
 		}
 		// Published ports live on the remote host; reach them via its loopback
-		// through the SSH tunnel.
-		return func(_ context.Context, addr string) (net.Conn, error) {
-			return cli.Dial("tcp", addr)
+		// through the SSH tunnel. ssh.Client.Dial has no timeout/context, so wrap
+		// it to honour the probe deadline — otherwise a filtered remote port
+		// would hang the whole scan.
+		return func(ctx context.Context, addr string) (net.Conn, error) {
+			type result struct {
+				c net.Conn
+				e error
+			}
+			ch := make(chan result, 1)
+			go func() {
+				c, e := cli.Dial("tcp", addr)
+				ch <- result{c, e}
+			}()
+			select {
+			case <-ctx.Done():
+				go func() { // a late connection must still be closed
+					if r := <-ch; r.c != nil {
+						_ = r.c.Close()
+					}
+				}()
+				return nil, ctx.Err()
+			case r := <-ch:
+				return r.c, r.e
+			}
 		}, "127.0.0.1", nil
 	default:
 		return nil, "", fmt.Errorf("unknown host kind %q", h.Kind)

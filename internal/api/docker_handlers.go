@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -141,7 +143,9 @@ func (s *Server) handleProbePorts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	probes, err := s.docker.ProbeContainerPorts(r.Context(), hostID, id)
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	probes, err := s.docker.ProbeContainerPorts(ctx, hostID, id)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "docker error: "+err.Error())
 		return
@@ -158,7 +162,9 @@ func (s *Server) handleHostPorts(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "no host configured")
 		return
 	}
-	ports, err := s.docker.ProbeHostPorts(r.Context(), hostID)
+	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	defer cancel()
+	ports, err := s.docker.ProbeHostPorts(ctx, hostID)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "docker error: "+err.Error())
 		return

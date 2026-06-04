@@ -77,6 +77,8 @@ function UsagePie({ title, slices }: { title: string; slices: Slice[] }) {
             </Pie>
             <Tooltip
               contentStyle={{ background: "#1a2233", border: "1px solid #243047", borderRadius: 8, fontSize: 12 }}
+              itemStyle={{ color: "#e5e9f0" }}
+              labelStyle={{ color: "#e5e9f0" }}
               formatter={(v: number, n: string) => [`${v.toFixed(1)} %`, n]}
             />
             <Legend wrapperStyle={{ fontSize: 11 }} iconSize={8} />

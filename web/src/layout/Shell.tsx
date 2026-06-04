@@ -106,13 +106,12 @@ function ActiveHostBadge() {
   if (hosts.length <= 1) return null;
   const h = hosts.find((x) => x.id === activeHostId(hosts));
   if (!h) return null;
+  // A plain label (not a chip/button) so it reads as context, not an action —
+  // the actual switcher lives in the sidebar.
   return (
-    <span
-      className="inline-flex items-center gap-1.5 text-xs rounded-md border border-border bg-panel2 px-2 py-1 text-muted"
-      title="Active host — switch it in the sidebar"
-    >
+    <span className="inline-flex items-center gap-1.5 text-xs text-muted select-none" title="Active host — change it in the sidebar switcher">
       <Server className="h-3.5 w-3.5 text-accent" />
-      <span className="font-medium text-text">{h.name}</span>
+      Host: <span className="font-medium text-text">{h.name}</span>
     </span>
   );
 }

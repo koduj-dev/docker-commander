@@ -1,21 +1,58 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Radar, Loader2, Lock } from "lucide-react";
 import { api } from "../lib/api";
+import { getHostId } from "../lib/host";
 import type { HostPortProbe } from "../lib/types";
 
+type Cached = { rows: HostPortProbe[]; at: number };
+
+// Scan results are cached per host (published ports rarely change between
+// restarts), so revisiting the dashboard shows the last scan instead of
+// re-probing every time. Persisted in localStorage so it survives reloads.
+function cacheKey(): string {
+  return `dc.portscan.${getHostId() ?? "local"}`;
+}
+function readCache(): Cached | null {
+  try {
+    const raw = localStorage.getItem(cacheKey());
+    return raw ? (JSON.parse(raw) as Cached) : null;
+  } catch {
+    return null;
+  }
+}
+function writeCache(rows: HostPortProbe[]) {
+  try {
+    localStorage.setItem(cacheKey(), JSON.stringify({ rows, at: Date.now() }));
+  } catch {
+    /* quota / private mode — ignore */
+  }
+}
+
 // OpenPorts is a host-wide map of published ports across all running
-// containers, with active service detection. It only scans on demand (probing
-// every port is an active network action, so it isn't run automatically).
+// containers, with active service detection. It scans on demand (probing every
+// port is an active network action) and remembers the last scan per host.
 export function OpenPorts() {
   const [rows, setRows] = useState<HostPortProbe[] | null>(null);
+  const [scannedAt, setScannedAt] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+
+  useEffect(() => {
+    const c = readCache();
+    if (c) {
+      setRows(c.rows);
+      setScannedAt(c.at);
+    }
+  }, []);
 
   const scan = async () => {
     setBusy(true);
     setErr("");
     try {
-      setRows((await api.hostPorts()) ?? []);
+      const r = (await api.hostPorts()) ?? [];
+      setRows(r);
+      setScannedAt(Date.now());
+      writeCache(r);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "scan failed");
     } finally {
@@ -25,11 +62,12 @@ export function OpenPorts() {
 
   return (
     <div>
-      <div className="flex items-baseline justify-between mb-3">
+      <div className="flex items-center gap-3 mb-3">
         <h2 className="text-sm font-semibold text-muted">Open ports</h2>
         <button className="btn-ghost px-2 py-1 text-xs" onClick={scan} disabled={busy} title="Connect to every published port and detect the service">
           {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Radar className="h-3.5 w-3.5" />} {rows ? "Rescan" : "Scan"}
         </button>
+        {scannedAt && <span className="text-xs text-muted">scanned {new Date(scannedAt).toLocaleTimeString()}</span>}
       </div>
 
       {err && <p className="text-sm text-danger mb-2">{err}</p>}
