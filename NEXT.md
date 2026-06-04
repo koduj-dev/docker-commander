@@ -23,6 +23,7 @@ encrypted secrets), useful locally out of the box, and friendly to ops
 
 ## 🔭 Next / ideas (not yet built)
 
+- **Built-in TLS cert helper** — a `dockercmd --make-certs` subcommand to obtain certs without external tooling: generate a **self-signed** cert for internal/LAN use, or drive an **ACME / Let's Encrypt** flow for public hosts. _Why: enable HTTPS with zero "ohýbátka" — no `openssl`, no reverse proxy. Native TLS via `DC_TLS_CERT`/`DC_TLS_KEY` already ships; this removes the cert-wrangling step._
 - **CI/CD release pipeline** — tag → cross-compiled binaries on the Releases page (workflow in `.github/workflows/`). _Why: one-click installs per OS._
 - **LDAP group → section mapping** — map directory groups to specific sections, not just admin. _Why: manage permissions in the directory, not per-user here._
 - **OIDC / SSO** — Google/Azure/Okta login. _Why: enterprises standardise on SSO; LDAP is step one._
