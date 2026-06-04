@@ -4,39 +4,55 @@ import type { AuditEntry } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
 
-const PAGE = 50;
+const PAGE_SIZES = [25, 50, 100, 200];
 
 export function Audit() {
   const [entries, setEntries] = useState<AuditEntry[] | null>(null);
+  const [pageSize, setPageSize] = useState(50);
   const [loadingMore, setLoadingMore] = useState(false);
   const [done, setDone] = useState(false); // no older entries left
 
+  // (Re)load from the top whenever the page size changes.
   useEffect(() => {
+    setEntries(null);
+    setDone(false);
     api
-      .audit(PAGE)
+      .audit(pageSize)
       .then((rows) => {
         setEntries(rows);
-        setDone(rows.length < PAGE);
+        setDone(rows.length < pageSize);
       })
       .catch(() => setEntries([]));
-  }, []);
+  }, [pageSize]);
 
   const loadMore = useCallback(async () => {
     if (!entries || entries.length === 0) return;
     setLoadingMore(true);
     try {
       const before = entries[entries.length - 1].id; // oldest loaded id
-      const older = await api.audit(PAGE, before);
+      const older = await api.audit(pageSize, before);
       setEntries((cur) => [...(cur ?? []), ...older]);
-      if (older.length < PAGE) setDone(true);
+      if (older.length < pageSize) setDone(true);
     } finally {
       setLoadingMore(false);
     }
-  }, [entries]);
+  }, [entries, pageSize]);
 
   return (
     <>
-      <PageHeader title="Audit log" />
+      <PageHeader
+        title="Audit log"
+        actions={
+          <label className="flex items-center gap-2 text-xs text-muted">
+            Rows
+            <select className="input py-1 text-xs w-20" value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))}>
+              {PAGE_SIZES.map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+          </label>
+        }
+      />
       <div className="p-6 space-y-4">
         {!entries ? (
           <div className="flex items-center gap-2 text-muted"><Spinner /> Loading…</div>

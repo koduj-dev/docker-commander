@@ -35,30 +35,54 @@ function colorFor(name: string, i: number): string {
 // container is not free, so it doesn't auto-poll).
 export function ResourceBreakdown() {
   const [data, setData] = useState<ResourceOverview | null>(null);
-  const [failed, setFailed] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    api.statsOverview().then(setData).catch(() => setFailed(true));
+    api
+      .statsOverview()
+      .then(setData)
+      .catch((e) => setError(e instanceof Error ? e.message : "could not sample container resources"));
   }, []);
 
-  if (failed) return null; // host unreachable / no permission — just hide the section
-  if (!data) {
-    return (
-      <div className="flex items-center gap-2 text-muted text-sm">
-        <Spinner /> Sampling container resources…
+  const containers = data?.containers ?? []; // Go sends null, not [], when empty
+
+  // The section always reserves the chart height so it doesn't jump when the
+  // data arrives; errors/empty render in the same space instead of the pies.
+  let body: React.ReactNode;
+  if (error) {
+    body = <div className="card p-4 text-sm text-danger">Couldn't sample container resources: {error}</div>;
+  } else if (!data) {
+    body = (
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <PiePlaceholder loading />
+        <PiePlaceholder loading />
       </div>
     );
-  }
-  const containers = data.containers ?? []; // Go sends null, not [], when empty
-  if (containers.length === 0) return null; // nothing running
-
-  return (
-    <div>
-      <h2 className="text-sm font-semibold text-muted mb-3">Resource usage · share of host</h2>
+  } else if (containers.length === 0) {
+    body = <div className="card p-4 text-sm text-muted">No running containers to sample.</div>;
+  } else {
+    body = (
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <UsagePie title={`CPU · ${data.cpus} core${data.cpus === 1 ? "" : "s"}`} slices={build(containers, (c) => c.cpuPercent)} />
         <UsagePie title="Memory" slices={build(containers, (c) => c.memPercent)} />
       </div>
+    );
+  }
+
+  return (
+    <div>
+      <h2 className="text-sm font-semibold text-muted mb-3">Resource usage · share of host</h2>
+      {body}
+    </div>
+  );
+}
+
+// PiePlaceholder reserves the same footprint as a UsagePie while loading.
+function PiePlaceholder({ loading }: { loading?: boolean }) {
+  return (
+    <div className="card p-4">
+      <div className="text-xs uppercase tracking-wide text-muted mb-2">&nbsp;</div>
+      <div className="h-56 grid place-items-center text-muted">{loading && <Spinner />}</div>
     </div>
   );
 }
