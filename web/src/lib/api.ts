@@ -22,6 +22,8 @@ import type {
   ParseRule,
   PortProbe,
   Registry,
+  Project,
+  ProjectFile,
   ResourceOverview,
   SmtpConfig,
   Stack,
@@ -215,6 +217,21 @@ export const api = {
     req<{ ok: boolean; error?: string }>("POST", `/api/stacks/${encodeURIComponent(project)}/${action}${hostParam()}`),
   stackCompose: (project: string) =>
     req<{ ok: boolean; path?: string; content?: string; error?: string }>("GET", `/api/stacks/${encodeURIComponent(project)}/compose${hostParam()}`),
+
+  // Compose projects (managed folders; local host only — no hostParam)
+  projects: () => req<{ projects: Project[]; composeAvailable: boolean }>("GET", "/api/projects"),
+  createProject: (name: string) => req<{ id: number; slug: string }>("POST", "/api/projects", { name }),
+  deleteProject: (id: number, force = false) =>
+    req<{ ok: boolean; error?: string; output?: string }>("DELETE", `/api/projects/${id}${force ? "?force=1" : ""}`),
+  projectFiles: (id: number) => req<ProjectFile[]>("GET", `/api/projects/${id}/files`),
+  writeProjectFile: (id: number, name: string, content: string) =>
+    req<{ ok: boolean }>("PUT", `/api/projects/${id}/files`, { name, content }),
+  deleteProjectFile: (id: number, path: string) =>
+    req<{ ok: boolean }>("DELETE", `/api/projects/${id}/files?path=${encodeURIComponent(path)}`),
+  deployProject: (id: number) =>
+    req<{ ok: boolean; output?: string; error?: string }>("POST", `/api/projects/${id}/deploy`),
+  downProject: (id: number) =>
+    req<{ ok: boolean; output?: string; error?: string }>("POST", `/api/projects/${id}/down`),
 
   // Generic raw inspect for any object kind. id/ref travels as a query param.
   inspect: (kind: "container" | "image" | "network" | "volume", id: string) => {

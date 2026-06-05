@@ -282,6 +282,23 @@ export interface Stack {
   running: number;
 }
 
+export interface Project {
+  id: number;
+  name: string;
+  slug: string;
+  composeFile: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectFile {
+  name: string;
+  size: number;
+  content: string;
+  tooLarge?: boolean;
+}
+
 export interface PortProbe {
   privatePort: number;
   publicPort: number;
