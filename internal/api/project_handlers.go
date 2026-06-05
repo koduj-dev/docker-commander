@@ -12,8 +12,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/go-chi/chi/v5"
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/koduj-dev/docker-commander/internal/auth"
 	"github.com/koduj-dev/docker-commander/internal/docker"
@@ -542,12 +544,16 @@ func countFiles(root string) (int, error) {
 }
 
 // slugify turns a display name into a compose-legal project name
-// (^[a-z0-9][a-z0-9_-]*$).
+// (^[a-z0-9][a-z0-9_-]*$). Diacritics are transliterated to ASCII (NFD then drop
+// the combining marks) so accented letters become their base form (š→s, í→i,
+// ů→u) instead of being dropped — e.g. "Další projekt" → "dalsi-projekt".
 func slugify(name string) string {
 	var b strings.Builder
 	prevDash := false
-	for _, r := range strings.ToLower(strings.TrimSpace(name)) {
+	for _, r := range norm.NFD.String(strings.ToLower(strings.TrimSpace(name))) {
 		switch {
+		case unicode.Is(unicode.Mn, r):
+			// combining mark left over from NFD — drop it, keep the base letter
 		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
 			b.WriteRune(r)
 			prevDash = false

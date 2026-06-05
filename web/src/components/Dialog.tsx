@@ -62,16 +62,17 @@ export function DialogProvider({ children }: { children: ReactNode }) {
               <button type="button" className="btn-ghost px-2 py-1.5 ml-auto" onClick={() => settle(false)}><X className="h-4 w-4" /></button>
             </div>
 
-            <div className="p-4 space-y-3">
-              {pending.kind === "confirm" && pending.opts.message && <div className="text-sm text-muted whitespace-pre-line">{pending.opts.message}</div>}
-              {pending.kind === "alert" && pending.opts.message && <div className="text-sm text-muted whitespace-pre-line">{pending.opts.message}</div>}
-              {pending.kind === "prompt" && (
-                <label className="block">
-                  {pending.opts.label && <span className="label">{pending.opts.label}</span>}
-                  <input autoFocus className="input" value={value} placeholder={pending.opts.placeholder} onChange={(e) => setValue(e.target.value)} />
-                </label>
-              )}
-            </div>
+            {(pending.kind === "prompt" || !!pending.opts.message) && (
+              <div className="p-4 space-y-3">
+                {pending.kind !== "prompt" && pending.opts.message && <div className="text-sm text-muted whitespace-pre-line">{pending.opts.message}</div>}
+                {pending.kind === "prompt" && (
+                  <label className="block">
+                    {pending.opts.label && <span className="label">{pending.opts.label}</span>}
+                    <input autoFocus className="input" value={value} placeholder={pending.opts.placeholder} onChange={(e) => setValue(e.target.value)} />
+                  </label>
+                )}
+              </div>
+            )}
 
             <div className="flex justify-end gap-2 p-4 border-t border-border">
               {pending.kind !== "alert" && (

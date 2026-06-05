@@ -308,7 +308,7 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
   const dirty = files != null && active !== "" && draft !== original;
 
   const loadFiles = useCallback((select?: string) => {
-    api.projectFiles(project.id).then((fs) => {
+    return api.projectFiles(project.id).then((fs) => {
       setFiles(fs);
       setActive((cur) => {
         const want = select ?? cur;
@@ -316,9 +316,10 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
         if (pick) setDraft(pick.content);
         return pick?.name ?? "";
       });
-    }).catch(() => setFiles([]));
+      return fs;
+    }).catch(() => { setFiles([]); return [] as ProjectFile[]; });
   }, [project.id]);
-  useEffect(() => loadFiles(), [loadFiles]);
+  useEffect(() => { loadFiles(); }, [loadFiles]);
 
   const select = async (name: string) => {
     if (name === active) return;
@@ -353,11 +354,21 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
   };
 
   const removeEntry = async (f: ProjectFile) => {
-    if (!(await dialogs.confirm({ title: `Delete ${f.isDir ? "folder" : "file"} "${f.name}"?`, danger: true, confirmLabel: "Delete" }))) return;
+    if (!(await dialogs.confirm({ title: `Delete ${f.isDir ? "folder" : "file"}`, message: <>Really delete <code className="font-mono text-text">{f.name}</code>?</>, danger: true, confirmLabel: "Delete" }))) return;
     setBusy("del");
-    try { await api.deleteProjectFile(project.id, f.name); loadFiles(f.name === active ? undefined : active); }
-    catch (e) { dialogs.alert({ title: "Delete failed", message: e instanceof Error ? e.message : "unknown error (folders must be empty)" }); }
-    finally { setBusy(""); }
+    try {
+      await api.deleteProjectFile(project.id, f.name);
+      const fs = await loadFiles(f.name === active ? undefined : active);
+      // Offer to delete the whole project once it has no editable files left.
+      if (!fs.some((x) => !x.isDir)) {
+        if (await dialogs.confirm({ title: "Delete project?", message: "That was the last file — this project is now empty. Delete the whole project?", danger: true, confirmLabel: "Delete project" })) {
+          try { await api.deleteProject(project.id); onClose(); }
+          catch (e) { dialogs.alert({ title: "Could not delete project", message: e instanceof ApiError ? e.message : e instanceof Error ? e.message : "unknown error" }); }
+        }
+      }
+    } catch (e) {
+      dialogs.alert({ title: "Delete failed", message: e instanceof Error ? e.message : "unknown error (folders must be empty)" });
+    } finally { setBusy(""); }
   };
 
   const upload = async (file: File) => {
