@@ -24,6 +24,7 @@ import type {
   Registry,
   ResourceOverview,
   SmtpConfig,
+  Stack,
   SystemInfo,
   VolumeSummary,
   TopResult,
@@ -207,6 +208,13 @@ export const api = {
   commitContainer: (id: string, body: { ref: string; comment: string }) =>
     req<{ ok: boolean; imageId?: string; error?: string }>("POST", `/api/containers/${id}/commit${hostParam()}`, body),
   probePorts: (id: string) => req<PortProbe[]>("POST", `/api/containers/${id}/probe${hostParam()}`),
+
+  // Compose stacks
+  stacks: () => req<Stack[]>("GET", `/api/stacks${hostParam()}`),
+  stackAction: (project: string, action: string) =>
+    req<{ ok: boolean; error?: string }>("POST", `/api/stacks/${encodeURIComponent(project)}/${action}${hostParam()}`),
+  stackCompose: (project: string) =>
+    req<{ ok: boolean; path?: string; content?: string; error?: string }>("GET", `/api/stacks/${encodeURIComponent(project)}/compose${hostParam()}`),
 
   // Generic raw inspect for any object kind. id/ref travels as a query param.
   inspect: (kind: "container" | "image" | "network" | "volume", id: string) => {

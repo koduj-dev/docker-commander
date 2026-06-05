@@ -110,6 +110,11 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/containers/{id}/probe", s.handleProbePorts)
 			r.Post("/containers/{id}/{action}", s.handleContainerAction)
 
+			// Compose stacks (grouped by the compose project label).
+			r.Get("/stacks", s.handleListStacks)
+			r.Get("/stacks/{project}/compose", s.handleStackCompose)
+			r.Post("/stacks/{project}/{action}", s.handleStackAction)
+
 			r.Get("/images", s.handleListImages)
 			r.Get("/images/history", s.handleImageHistory)
 			r.Get("/images/save", s.handleSaveImage)

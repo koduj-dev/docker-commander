@@ -6,6 +6,14 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Compose stacks (discover & manage)** — a Stacks view that groups containers
+  by their `com.docker.compose.project` label (so stacks started with the
+  `docker compose` CLI show up too), with start / stop / restart / remove for a
+  whole stack and a read-only **view of the stack's compose file** (read from
+  the host — directly for the local daemon, over SSH for ssh hosts). Deploying a
+  stack from a compose file comes next.
+
 ### Fixed
 - Stable, alphabetical ordering for Containers (running first, then A→Z),
   Images, Volumes, Networks and Topology — they previously came back in the

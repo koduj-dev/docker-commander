@@ -18,7 +18,7 @@ func sectionForPath(path string) string {
 		seg = p[:i]
 	}
 	switch seg {
-	case "containers":
+	case "containers", "stacks":
 		return "containers"
 	case "images":
 		return "images"
