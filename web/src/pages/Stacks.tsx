@@ -10,6 +10,8 @@ import { getPref, setPref } from "../lib/prefs";
 import { shortId } from "../lib/format";
 
 type ComposeView = { project: string; loading: boolean; path?: string; content?: string; error?: string };
+type Hover = { c: StackContainer; x: number; y: number };
+const TOOLTIP_W = 288; // matches w-72
 
 function matchStack(s: Stack, q: string): boolean {
   if (s.project.toLowerCase().includes(q)) return true;
@@ -24,6 +26,7 @@ export function Stacks() {
   const [compose, setCompose] = useState<ComposeView | null>(null);
   const [query, setQuery] = useState(() => getPref<string>("stacks.query", ""));
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => getPref("stacks.collapsed", {}));
+  const [hover, setHover] = useState<Hover | null>(null);
   const tick = useDockerEventTick();
 
   const load = useCallback(() => {
@@ -81,70 +84,83 @@ export function Stacks() {
 
   return (
     <>
-      <PageHeader
-        title="Stacks"
-        actions={
-          stacks.length > 0 && (
-            <div className="relative w-64">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted" />
-              <input className="input pl-8 py-1.5" placeholder="Filter stacks, services, images…" value={query} onChange={(e) => setSearch(e.target.value)} />
-            </div>
-          )
-        }
-      />
+      <PageHeader title="Stacks" />
       <div className="p-6 space-y-3">
         {stacks.length === 0 ? (
           <EmptyState
             title="No Compose stacks"
             hint="Containers labelled with com.docker.compose.project (e.g. started via docker compose) show up here grouped as stacks."
           />
-        ) : shown.length === 0 ? (
-          <p className="text-sm text-muted">No stacks match “{query}”.</p>
         ) : (
-          shown.map((s) => {
-            const isOpen = !collapsed[s.project];
-            return (
-              <div key={s.project} className="card p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <button className="flex items-center gap-2 min-w-0 text-left" onClick={() => toggle(s.project)} title={isOpen ? "Collapse" : "Expand"}>
-                    <ChevronRight className={`h-4 w-4 shrink-0 text-muted transition-transform ${isOpen ? "rotate-90" : ""}`} />
-                    <Blocks className="h-4 w-4 text-accent shrink-0" />
-                    <span className="font-medium truncate">{s.project}</span>
-                    <span className="text-xs text-muted shrink-0">{s.running}/{s.containers.length} running</span>
-                  </button>
-                  <div className="flex items-center gap-1 shrink-0">
-                    {busy === s.project ? (
-                      <Loader2 className="h-4 w-4 animate-spin text-muted" />
-                    ) : (
-                      <>
-                        {s.configFile && (
-                          <button className="btn-ghost px-2 py-1" title="View compose file" onClick={() => viewCompose(s.project)}><FileText className="h-4 w-4" /></button>
+          <>
+            {/* Filter bar — same placement/style as the other agendas. */}
+            <div className="flex items-center gap-3">
+              <div className="relative flex-1">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted" />
+                <input className="input pl-8 py-1.5" placeholder="Filter stacks, services, images…" value={query} onChange={(e) => setSearch(e.target.value)} />
+              </div>
+              <span className="text-xs text-muted shrink-0">{shown.length} of {stacks.length}</span>
+            </div>
+
+            {shown.length === 0 ? (
+              <p className="text-sm text-muted">No stacks match “{query}”.</p>
+            ) : (
+              shown.map((s) => {
+                const isOpen = !collapsed[s.project];
+                return (
+                  <div key={s.project} className="card p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <button className="flex items-center gap-2 min-w-0 text-left" onClick={() => toggle(s.project)} title={isOpen ? "Collapse" : "Expand"}>
+                        <ChevronRight className={`h-4 w-4 shrink-0 text-muted transition-transform ${isOpen ? "rotate-90" : ""}`} />
+                        <Blocks className="h-4 w-4 text-accent shrink-0" />
+                        <span className="font-medium truncate">{s.project}</span>
+                        <span className="text-xs text-muted shrink-0">{s.running}/{s.containers.length} running</span>
+                      </button>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {busy === s.project ? (
+                          <Loader2 className="h-4 w-4 animate-spin text-muted" />
+                        ) : (
+                          <>
+                            {s.configFile && (
+                              <button className="btn-ghost px-2 py-1" title="View compose file" onClick={() => viewCompose(s.project)}><FileText className="h-4 w-4" /></button>
+                            )}
+                            <button className="btn-ghost px-2 py-1" title="Start" onClick={() => act(s.project, "start")}><Play className="h-4 w-4" /></button>
+                            <button className="btn-ghost px-2 py-1" title="Stop" onClick={() => act(s.project, "stop")}><Square className="h-4 w-4" /></button>
+                            <button className="btn-ghost px-2 py-1" title="Restart" onClick={() => act(s.project, "restart")}><RotateCw className="h-4 w-4" /></button>
+                            <button className="btn-ghost px-2 py-1 text-danger" title="Remove stack" onClick={() => act(s.project, "remove")}><Trash2 className="h-4 w-4" /></button>
+                          </>
                         )}
-                        <button className="btn-ghost px-2 py-1" title="Start" onClick={() => act(s.project, "start")}><Play className="h-4 w-4" /></button>
-                        <button className="btn-ghost px-2 py-1" title="Stop" onClick={() => act(s.project, "stop")}><Square className="h-4 w-4" /></button>
-                        <button className="btn-ghost px-2 py-1" title="Restart" onClick={() => act(s.project, "restart")}><RotateCw className="h-4 w-4" /></button>
-                        <button className="btn-ghost px-2 py-1 text-danger" title="Remove stack" onClick={() => act(s.project, "remove")}><Trash2 className="h-4 w-4" /></button>
-                      </>
+                      </div>
+                    </div>
+
+                    {s.configFile && (
+                      <button className="text-xs text-muted font-mono mt-1 break-all hover:text-accent text-left" onClick={() => viewCompose(s.project)} title="View compose file">
+                        {s.configFile}
+                      </button>
+                    )}
+
+                    {isOpen && (
+                      <div className="mt-3 rounded-lg border border-border overflow-hidden">
+                        {s.containers.map((c, i) => (
+                          <div
+                            key={c.id}
+                            className={`flex items-center gap-3 px-3 py-2 text-sm hover:bg-panel2/40 ${i > 0 ? "border-t border-border" : ""}`}
+                            onMouseMove={(e) => setHover({ c, x: e.clientX, y: e.clientY })}
+                            onMouseLeave={() => setHover(null)}
+                          >
+                            <span className="w-28 shrink-0 font-medium truncate">{c.service || "—"}</span>
+                            <StateBadge state={c.state} />
+                            <Link to={`/containers/${c.id}`} className="text-muted hover:text-accent truncate">{c.name}</Link>
+                            <span className="ml-auto text-xs text-muted font-mono truncate hidden md:block">{c.image}</span>
+                          </div>
+                        ))}
+                      </div>
                     )}
                   </div>
-                </div>
-
-                {s.configFile && (
-                  <button className="text-xs text-muted font-mono mt-1 break-all hover:text-accent text-left" onClick={() => viewCompose(s.project)} title="View compose file">
-                    {s.configFile}
-                  </button>
-                )}
-
-                {isOpen && (
-                  <div className="mt-3 rounded-lg border border-border">
-                    {s.containers.map((c, i) => (
-                      <ServiceRow key={c.id} c={c} first={i === 0} last={i === s.containers.length - 1} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })
+                );
+              })
+            )}
+          </>
         )}
 
         <p className="text-xs text-muted">
@@ -152,6 +168,8 @@ export function Stacks() {
           <strong>docker&nbsp;compose</strong> CLI appear here too. Deploying a stack from a compose file is coming next.
         </p>
       </div>
+
+      {hover && <HoverCard hover={hover} />}
 
       {compose && (
         <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={() => setCompose(null)}>
@@ -180,39 +198,39 @@ export function Stacks() {
   );
 }
 
-// ServiceRow is a container line with a floating info card on hover.
-function ServiceRow({ c, first, last }: { c: StackContainer; first: boolean; last: boolean }) {
+// HoverCard is a floating details card that follows the cursor.
+function HoverCard({ hover }: { hover: Hover }) {
+  const { c } = hover;
   const ports = (c.ports ?? []).filter((p) => p.publicPort);
+  // Keep the card on-screen: flip left/up near the right/bottom edges.
+  const left = hover.x + TOOLTIP_W + 24 > window.innerWidth ? hover.x - TOOLTIP_W - 16 : hover.x + 16;
+  const top = Math.min(hover.y + 16, window.innerHeight - 180);
   return (
-    <div className={`group relative flex items-center gap-3 px-3 py-2 text-sm ${!first ? "border-t border-border" : ""}`}>
-      <span className="w-28 shrink-0 font-medium truncate">{c.service || "—"}</span>
-      <StateBadge state={c.state} />
-      <Link to={`/containers/${c.id}`} className="text-muted hover:text-accent truncate">{c.name}</Link>
-      <span className="ml-auto text-xs text-muted font-mono truncate hidden md:block">{c.image}</span>
-
-      {/* Floating details card */}
-      <div className={`pointer-events-none absolute left-8 z-30 hidden group-hover:block ${last ? "bottom-full mb-1" : "top-full mt-1"} w-72 rounded-lg border border-border bg-panel2 shadow-xl p-3 text-xs space-y-1.5`}>
-        <div className="flex items-center gap-2">
-          <StateBadge state={c.state} />
-          <span className="font-mono text-muted">{shortId(c.id)}</span>
-        </div>
-        <Row label="Image" value={<span className="font-mono break-all">{c.image}</span>} />
-        <Row label="Status" value={c.status} />
-        <Row
-          label="Ports"
-          value={
-            ports.length ? (
-              <span className="flex flex-wrap gap-1">
-                {ports.map((p, i) => (
-                  <span key={i} className="font-mono bg-panel rounded px-1.5 py-0.5">{p.publicPort}→{p.privatePort}/{p.type}</span>
-                ))}
-              </span>
-            ) : (
-              <span className="text-muted">none published</span>
-            )
-          }
-        />
+    <div
+      className="pointer-events-none fixed z-[60] w-72 rounded-lg border border-border bg-panel2 shadow-xl p-3 text-xs space-y-1.5"
+      style={{ left, top }}
+    >
+      <div className="flex items-center gap-2">
+        <StateBadge state={c.state} />
+        <span className="font-medium truncate">{c.service || c.name}</span>
+        <span className="font-mono text-muted ml-auto">{shortId(c.id)}</span>
       </div>
+      <Row label="Image" value={<span className="font-mono break-all">{c.image}</span>} />
+      <Row label="Status" value={c.status} />
+      <Row
+        label="Ports"
+        value={
+          ports.length ? (
+            <span className="flex flex-wrap gap-1">
+              {ports.map((p, i) => (
+                <span key={i} className="font-mono bg-panel rounded px-1.5 py-0.5">{p.publicPort}→{p.privatePort}/{p.type}</span>
+              ))}
+            </span>
+          ) : (
+            <span className="text-muted">none published</span>
+          )
+        }
+      />
     </div>
   );
 }
