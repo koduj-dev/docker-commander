@@ -55,10 +55,10 @@ function buildTree(files: ProjectFile[]): TreeNode[] {
 }
 
 // TreeItem renders one tree node (folder or file) recursively.
-function TreeItem({ node, depth, active, dirty, collapsed, currentDir, onToggle, onSelect, onSelectDir, onDelete }: {
+function TreeItem({ node, depth, active, dirty, collapsed, currentDir, onToggle, onSelect, onEnterDir, onDelete }: {
   node: TreeNode; depth: number; active: string; dirty: boolean; currentDir: string;
   collapsed: Set<string>; onToggle: (path: string) => void;
-  onSelect: (path: string) => void; onSelectDir: (path: string) => void; onDelete: (n: { name: string; isDir?: boolean }) => void;
+  onSelect: (path: string) => void; onEnterDir: (path: string) => void; onDelete: (n: { name: string; isDir?: boolean }) => void;
 }) {
   const pad = { paddingLeft: `${depth * 12 + 6}px` };
   if (node.isDir) {
@@ -66,14 +66,17 @@ function TreeItem({ node, depth, active, dirty, collapsed, currentDir, onToggle,
     const isCurrent = node.path === currentDir;
     return (
       <>
-        <div className={`group flex items-center gap-1 rounded px-2 py-1 text-sm cursor-pointer ${isCurrent ? "bg-accent/10 text-accent" : "hover:bg-panel2"}`} style={pad} onClick={() => { onToggle(node.path); onSelectDir(node.path); }}>
-          <ChevronRight className={`h-3.5 w-3.5 shrink-0 transition-transform ${open ? "rotate-90" : ""} ${isCurrent ? "text-accent" : "text-muted"}`} />
+        {/* Clicking the row "enters" the folder (selects + expands); the chevron toggles collapse. */}
+        <div className={`group flex items-center gap-1 rounded px-2 py-1 text-sm cursor-pointer ${isCurrent ? "bg-accent/10 text-accent" : "hover:bg-panel2"}`} style={pad} onClick={() => onEnterDir(node.path)}>
+          <button className="shrink-0" title={open ? "Collapse" : "Expand"} onClick={(e) => { e.stopPropagation(); onToggle(node.path); }}>
+            <ChevronRight className={`h-3.5 w-3.5 transition-transform ${open ? "rotate-90" : ""} ${isCurrent ? "text-accent" : "text-muted"}`} />
+          </button>
           <Folder className={`h-3.5 w-3.5 shrink-0 ${isCurrent ? "text-accent" : "text-muted"}`} />
           <span className={`truncate font-mono text-xs ${isCurrent ? "" : "text-muted"}`}>{node.name}</span>
           <button className="ml-auto opacity-0 group-hover:opacity-100 text-danger" title="Delete folder" onClick={(e) => { e.stopPropagation(); onDelete({ name: node.path, isDir: true }); }}><Trash2 className="h-3.5 w-3.5" /></button>
         </div>
         {open && node.children.map((c) => (
-          <TreeItem key={c.path} node={c} depth={depth + 1} active={active} dirty={dirty} collapsed={collapsed} currentDir={currentDir} onToggle={onToggle} onSelect={onSelect} onSelectDir={onSelectDir} onDelete={onDelete} />
+          <TreeItem key={c.path} node={c} depth={depth + 1} active={active} dirty={dirty} collapsed={collapsed} currentDir={currentDir} onToggle={onToggle} onSelect={onSelect} onEnterDir={onEnterDir} onDelete={onDelete} />
         ))}
       </>
     );
@@ -384,6 +387,12 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
     return next;
   });
   const toggleDir = (path: string) => setCollapsedDirs((s) => { const n = new Set(s); n.has(path) ? n.delete(path) : n.add(path); return n; });
+  // Entering a folder selects it as the target and ensures it's expanded, so a
+  // new file created in it is actually visible.
+  const enterDir = (path: string) => {
+    setCurrentDir(path);
+    setCollapsedDirs((s) => { if (!s.has(path)) return s; const n = new Set(s); n.delete(path); return n; });
+  };
 
   const original = files?.find((f) => f.name === active)?.content ?? "";
   const dirty = files != null && active !== "" && draft !== original;
@@ -535,7 +544,7 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
               {files === null ? <div className="p-3 text-muted text-sm flex items-center gap-2"><Spinner /> …</div> :
                 files.length === 0 ? <div className="p-3 text-muted text-xs">No files</div> :
                 buildTree(files).map((n) => (
-                  <TreeItem key={n.path} node={n} depth={0} active={active} dirty={dirty} collapsed={collapsedDirs} currentDir={currentDir} onToggle={toggleDir} onSelect={select} onSelectDir={setCurrentDir} onDelete={removeEntry} />
+                  <TreeItem key={n.path} node={n} depth={0} active={active} dirty={dirty} collapsed={collapsedDirs} currentDir={currentDir} onToggle={toggleDir} onSelect={select} onEnterDir={enterDir} onDelete={removeEntry} />
                 ))}
             </div>
           </div>

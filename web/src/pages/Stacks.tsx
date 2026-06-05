@@ -50,10 +50,14 @@ export function Stacks() {
 
   const load = useCallback(() => {
     api.stacks().then(setStacks).catch(() => setStacks([]));
-    // Which stacks are DC-managed projects (so we can link back to them).
-    api.projects().then((r) => setManaged(new Set(r.projects.map((p) => p.slug)))).catch(() => {});
   }, []);
   useEffect(() => load(), [load, tick]);
+
+  // Which stacks are DC-managed projects (so we can link back). This changes
+  // rarely, so fetch it once — not on every Docker event tick.
+  useEffect(() => {
+    api.projects().then((r) => setManaged(new Set(r.projects.map((p) => p.slug)))).catch(() => {});
+  }, []);
 
   // ?focus=<slug> (e.g. from "Open in Stacks") filters to and expands that stack.
   const [searchParams, setSearchParams] = useSearchParams();

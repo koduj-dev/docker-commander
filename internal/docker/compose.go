@@ -5,6 +5,7 @@ import (
 	"context"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -15,8 +16,16 @@ const composeTimeout = 10 * time.Minute
 // ComposeAvailable reports whether the `docker compose` CLI is usable on the
 // host running Docker Commander. This is a runtime dependency that the SDK-only
 // rest of the app doesn't need, so callers degrade gracefully when it's false.
+// The result is cached for the process lifetime — it's called on every project
+// list and we don't want to fork `docker compose version` on each request.
+var (
+	composeOnce sync.Once
+	composeOK   bool
+)
+
 func ComposeAvailable(ctx context.Context) bool {
-	return composeProbe(ctx, "docker")
+	composeOnce.Do(func() { composeOK = composeProbe(ctx, "docker") })
+	return composeOK
 }
 
 // composeProbe runs `<bin> compose version`; split out so tests can exercise the

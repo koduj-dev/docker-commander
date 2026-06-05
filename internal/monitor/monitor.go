@@ -124,7 +124,11 @@ func (m *Monitor) pollStats(ctx context.Context) {
 
 	// Sample every configured host so alerts and history cover them all.
 	for _, h := range m.monitoredHosts(ctx) {
-		containers, err := m.docker.ListContainers(ctx, h.ID)
+		// Bound the per-host listing so one unreachable host can't stall the
+		// whole stats poll (and every request behind it).
+		lctx, lcancel := context.WithTimeout(ctx, 5*time.Second)
+		containers, err := m.docker.ListContainers(lctx, h.ID)
+		lcancel()
 		if err != nil {
 			continue
 		}
