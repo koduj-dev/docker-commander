@@ -221,6 +221,13 @@ agenda (Containers, Images, Logs, Alerts, Hosts, Users, Settings…) plus
 See **[NEXT.md](./NEXT.md)** for the status and future ideas, and
 **[CHANGELOG.md](./CHANGELOG.md)** for what shipped in each release.
 
+## 🤝 Contributing
+
+Issues and pull requests are welcome! See **[CONTRIBUTING.md](./CONTRIBUTING.md)**
+for build/test/style guidelines, **[CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)**,
+and **[SECURITY.md](./SECURITY.md)** for reporting vulnerabilities (privately,
+please).
+
 ## 🤖 Made with AI
 
 Roughly **95 % of this project was built with AI** (Claude Code) — code,

@@ -1,0 +1,54 @@
+# Security Policy
+
+Docker Commander controls Docker daemons, so we take security seriously and
+appreciate responsible disclosure.
+
+## Supported versions
+
+The project follows semantic versioning. Security fixes land on the **latest
+released minor** and are published as a new patch/minor release.
+
+| Version | Supported |
+|---------|-----------|
+| latest `1.x` | ✅ |
+| older releases | ⚠️ best effort — please upgrade |
+
+## Reporting a vulnerability
+
+**Please do not open a public issue for security problems.**
+
+Report privately through either:
+
+- **GitHub** — *Security → Report a vulnerability* (private vulnerability
+  reporting / advisories) on this repository, **or**
+- **Email** — **filip@majerik.cz**.
+
+Please include, as far as you can:
+
+- a description of the issue and its impact,
+- steps to reproduce or a proof of concept,
+- affected version (see the UI footer or `GET /api/version`) and deployment
+  details (binary / systemd, host kind, reverse proxy, OS).
+
+We aim to acknowledge a report within a few days and to keep you updated on the
+fix and disclosure timeline. We'll credit reporters who want to be named once a
+fix is released. This is a community project maintained on a best-effort basis —
+thanks for your patience.
+
+## Scope & threat model
+
+A few things worth knowing when assessing a report:
+
+- **The Docker daemon socket is root-equivalent.** Docker Commander is intended
+  to run behind authentication (Argon2id + optional TOTP 2FA), RBAC and — for
+  anything public — TLS (native or a reverse proxy). It binds to **loopback by
+  default**.
+- Stored secrets (registry / SMTP / LDAP passwords) are **encrypted at rest**
+  (AES-256-GCM) with a per-install key in the data directory.
+- Reaching remote daemons over **plain TCP without TLS** is insecure by design;
+  prefer SSH or TLS. See [docs/hosts.md](docs/hosts.md).
+
+Generally **out of scope:** issues that require an already-compromised host or
+data directory, exposing the app without the documented protections, or
+vulnerabilities in Docker/third-party dependencies themselves (report those
+upstream, though we're happy to bump versions).
