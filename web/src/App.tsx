@@ -9,6 +9,7 @@ import { Dashboard } from "./pages/Dashboard";
 import { Containers } from "./pages/Containers";
 import { ContainerDetail } from "./pages/ContainerDetail";
 import { Stacks } from "./pages/Stacks";
+import { Projects } from "./pages/Projects";
 import { Images } from "./pages/Images";
 import { Volumes } from "./pages/Volumes";
 import { Networks } from "./pages/Networks";
@@ -48,6 +49,7 @@ export default function App() {
         <Route path="/containers" element={<Containers />} />
         <Route path="/containers/:id" element={<ContainerDetail />} />
         <Route path="/stacks" element={<Stacks />} />
+        <Route path="/projects" element={<Projects />} />
         <Route path="/images" element={<Images />} />
         <Route path="/volumes" element={<Volumes />} />
         <Route path="/networks" element={<Networks />} />

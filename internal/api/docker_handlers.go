@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -23,7 +24,7 @@ func (s *Server) handleListHosts(w http.ResponseWriter, r *http.Request) {
 	for _, h := range hosts {
 		out = append(out, map[string]any{
 			"id": h.ID, "name": h.Name, "kind": h.Kind, "address": h.Address,
-			"alertEmail": h.AlertEmail,
+			"alertEmail": h.AlertEmail, "disabled": h.Disabled,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -182,12 +183,42 @@ func (s *Server) handleStatsOverview(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "no host configured")
 		return
 	}
-	overview, err := s.docker.ResourceOverview(r.Context(), hostID)
+	info, err := s.docker.SystemInfo(r.Context(), hostID)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "docker error: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, overview)
+	hid, _ := s.docker.ResolveHostID(r.Context(), hostID)
+
+	// Serve per-container stats from the monitor's background snapshot rather
+	// than re-sampling on demand. A single ContainerStats call costs ~1s (the
+	// daemon's collection interval); with many containers, sampling them all on
+	// every request hammered the daemon and slowed every other call.
+	out := docker.ResourceOverview{CPUs: info.CPUs, MemTotal: info.MemTotal, Containers: []docker.ResourceUsage{}}
+	for _, c := range s.monitor.Snapshot() {
+		if c.HostID != hid || c.State != "running" {
+			continue
+		}
+		cpuShare := c.CPUPercent
+		if info.CPUs > 0 {
+			cpuShare = c.CPUPercent / float64(info.CPUs)
+		}
+		var memShare float64
+		if info.MemTotal > 0 {
+			memShare = float64(c.MemBytes) / float64(info.MemTotal) * 100
+		}
+		out.Containers = append(out.Containers, docker.ResourceUsage{
+			ID: c.ID, Name: c.Name, CPUPercent: cpuShare, MemBytes: c.MemBytes, MemPercent: memShare,
+		})
+	}
+	sort.SliceStable(out.Containers, func(i, j int) bool {
+		a, b := out.Containers[i], out.Containers[j]
+		if a.CPUPercent != b.CPUPercent {
+			return a.CPUPercent > b.CPUPercent
+		}
+		return a.MemBytes > b.MemBytes
+	})
+	writeJSON(w, http.StatusOK, out)
 }
 
 // handleInspect returns the daemon's raw JSON for an object. The object id/ref

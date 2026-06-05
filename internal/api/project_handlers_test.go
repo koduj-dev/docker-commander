@@ -47,6 +47,8 @@ func TestSlugify(t *testing.T) {
 		"-leading-":      "leading",
 		"!!!":            "project",
 		"Foo.Bar":        "foo-bar",
+		"Další projekt":  "dalsi-projekt", // diacritics transliterated, not dropped
+		"Žluťoučký":      "zlutoucky",
 	}
 	for in, want := range cases {
 		if got := slugify(in); got != want {

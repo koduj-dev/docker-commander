@@ -190,7 +190,7 @@ func (m *Manager) StackComposeFile(ctx context.Context, hostID int64, project st
 		candidates = append(candidates, filepath.Join(st.WorkingDir, filepath.Base(cf)))
 	}
 
-	id, err := m.resolveHostID(ctx, hostID)
+	id, err := m.ResolveHostID(ctx, hostID)
 	if err != nil {
 		return "", "", err
 	}
@@ -218,8 +218,8 @@ func (m *Manager) StackComposeFile(ctx context.Context, hostID int64, project st
 	return "", "", lastErr
 }
 
-// resolveHostID maps hostID <= 0 to the default local host.
-func (m *Manager) resolveHostID(ctx context.Context, hostID int64) (int64, error) {
+// ResolveHostID maps hostID <= 0 to the default local host's ID.
+func (m *Manager) ResolveHostID(ctx context.Context, hostID int64) (int64, error) {
 	if hostID > 0 {
 		return hostID, nil
 	}

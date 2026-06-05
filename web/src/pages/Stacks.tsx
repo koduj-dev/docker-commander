@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { Blocks, Play, Square, RotateCw, Trash2, Loader2, FileText, X, ChevronRight, Search, Copy, Check, Download } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
+import { Blocks, Play, Square, RotateCw, Trash2, Loader2, FileText, X, ChevronRight, Search, Copy, Check, Download, FolderGit2 } from "lucide-react";
 import { api } from "../lib/api";
 import type { Stack, StackContainer } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
@@ -45,12 +45,31 @@ export function Stacks() {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => getPref("stacks.collapsed", {}));
   const [hover, setHover] = useState<Hover | null>(null);
   const [copied, setCopied] = useState(false);
+  const [managed, setManaged] = useState<Set<string>>(new Set());
   const tick = useDockerEventTick();
 
   const load = useCallback(() => {
     api.stacks().then(setStacks).catch(() => setStacks([]));
   }, []);
   useEffect(() => load(), [load, tick]);
+
+  // Which stacks are DC-managed projects (so we can link back). This changes
+  // rarely, so fetch it once — not on every Docker event tick.
+  useEffect(() => {
+    api.projects().then((r) => setManaged(new Set(r.projects.map((p) => p.slug)))).catch(() => {});
+  }, []);
+
+  // ?focus=<slug> (e.g. from "Open in Stacks") filters to and expands that stack.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const focus = searchParams.get("focus");
+    if (!focus) return;
+    setQuery(focus);
+    setPref("stacks.query", focus);
+    setCollapsed((c) => { const next = { ...c, [focus]: false }; setPref("stacks.collapsed", next); return next; });
+    setSearchParams({}, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const setSearch = (q: string) => { setQuery(q); setPref("stacks.query", q); };
   const setHealthFilter = (h: string) => { setHealth(h); setPref("stacks.health", h); };
@@ -184,6 +203,9 @@ export function Stacks() {
                           <Loader2 className="h-4 w-4 animate-spin text-muted" />
                         ) : (
                           <>
+                            {managed.has(s.project) && (
+                              <Link className="btn-ghost px-2 py-1 text-accent" title="Managed project — open in Projects" to={`/projects?open=${encodeURIComponent(s.project)}`}><FolderGit2 className="h-4 w-4" /></Link>
+                            )}
                             {s.configFile && (
                               <button className="btn-ghost px-2 py-1" title="View compose file" onClick={() => viewCompose(s.project)}><FileText className="h-4 w-4" /></button>
                             )}

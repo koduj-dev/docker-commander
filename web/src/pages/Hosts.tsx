@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Plus, Trash2, Server, CheckCircle2, XCircle, Loader2, ShieldAlert, ShieldCheck, KeyRound, Info } from "lucide-react";
+import { Plus, Trash2, Server, CheckCircle2, XCircle, Loader2, ShieldAlert, ShieldCheck, KeyRound, Info, Power, PowerOff } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import type { Host } from "../lib/types";
@@ -70,6 +70,11 @@ export function Hosts() {
     load();
   };
 
+  const toggleDisabled = async (h: Host) => {
+    await api.setHostDisabled(h.id, !h.disabled);
+    load();
+  };
+
   if (!hosts) return (<><PageHeader title="Hosts" /><div className="p-6 flex items-center gap-2 text-muted"><Spinner /> Loading…</div></>);
 
   return (
@@ -88,14 +93,20 @@ export function Hosts() {
                   <div className="flex items-start justify-between">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 font-medium">
-                        <Server className="h-4 w-4 text-accent" /> {h.name}
+                        <Server className={`h-4 w-4 ${h.disabled ? "text-muted" : "text-accent"}`} /> {h.name}
                         <span className="text-xs bg-panel2 rounded-sm px-1.5 py-0.5 text-muted">{h.kind}</span>
+                        {h.disabled && <span className="text-xs bg-warn/15 text-warn rounded-sm px-1.5 py-0.5">disabled</span>}
                       </div>
                       <div className="text-xs text-muted font-mono mt-1 break-all">{h.address || "(local socket)"}</div>
                     </div>
                     <div className="flex items-center gap-1">
                       <button className="btn-ghost px-2 py-1 text-xs" title="Host detail" onClick={() => setDetail(h)}><Info className="h-4 w-4" /></button>
                       <button className="btn-ghost px-2 py-1 text-xs" onClick={() => test(h.id)}>Test</button>
+                      {h.kind !== "local" && (
+                        <button className="btn-ghost px-2 py-1" title={h.disabled ? "Enable monitoring" : "Disable — the monitor ignores this host (no events/stats)"} onClick={() => toggleDisabled(h)}>
+                          {h.disabled ? <Power className="h-4 w-4 text-ok" /> : <PowerOff className="h-4 w-4" />}
+                        </button>
+                      )}
                       {h.kind !== "local" && (
                         <button className="btn-ghost px-2 py-1 text-danger" title="Delete" onClick={() => del(h.id)}><Trash2 className="h-4 w-4" /></button>
                       )}

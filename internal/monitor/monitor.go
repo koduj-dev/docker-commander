@@ -19,7 +19,12 @@ import (
 )
 
 const (
-	statsInterval   = 5 * time.Second
+	// statsInterval is how often we sample every container's stats in the
+	// background. Each ContainerStats call costs ~1s (the daemon's collection
+	// interval), so on a host with many containers this is a heavy sweep — keep
+	// it infrequent enough not to keep the daemon busy (overview/charts read
+	// this cached snapshot rather than re-sampling).
+	statsInterval   = 15 * time.Second
 	logReconcileInt = 10 * time.Second
 )
 
@@ -42,7 +47,15 @@ func (m *Monitor) monitoredHosts(ctx context.Context) []store.Host {
 	if err != nil || len(hosts) == 0 {
 		return []store.Host{{ID: 0, Name: "local"}}
 	}
-	return hosts
+	// Skip hosts the operator has disabled — the monitor stops watching events
+	// and sampling stats for them (e.g. a laptop that's offline).
+	out := make([]store.Host, 0, len(hosts))
+	for _, h := range hosts {
+		if !h.Disabled {
+			out = append(out, h)
+		}
+	}
+	return out
 }
 
 // Monitor is the long-running alert engine.
@@ -105,7 +118,14 @@ func (m *Monitor) Snapshot() []ContainerStat {
 func (m *Monitor) statsLoop(ctx context.Context) {
 	t := time.NewTicker(statsInterval)
 	defer t.Stop()
+	// The first sweep can take a few seconds on a busy host; log around it so it
+	// is clear when the app is fully up (and any later "loading" is a real error,
+	// not just a not-yet-primed snapshot).
+	log.Printf("monitor: building initial stats snapshot…")
 	m.pollStats(ctx) // prime immediately
+	if ctx.Err() == nil {
+		log.Printf("monitor: stats snapshot ready (%d running containers) — fully up", m.runningInSnapshot())
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -116,6 +136,17 @@ func (m *Monitor) statsLoop(ctx context.Context) {
 	}
 }
 
+// runningInSnapshot counts the running containers in the current snapshot.
+func (m *Monitor) runningInSnapshot() int {
+	n := 0
+	for _, c := range m.Snapshot() {
+		if c.State == "running" {
+			n++
+		}
+	}
+	return n
+}
+
 func (m *Monitor) pollStats(ctx context.Context) {
 	next := make(map[string]ContainerStat)
 	var mu sync.Mutex
@@ -124,7 +155,11 @@ func (m *Monitor) pollStats(ctx context.Context) {
 
 	// Sample every configured host so alerts and history cover them all.
 	for _, h := range m.monitoredHosts(ctx) {
-		containers, err := m.docker.ListContainers(ctx, h.ID)
+		// Bound the per-host listing so one unreachable host can't stall the
+		// whole stats poll (and every request behind it).
+		lctx, lcancel := context.WithTimeout(ctx, 5*time.Second)
+		containers, err := m.docker.ListContainers(lctx, h.ID)
+		lcancel()
 		if err != nil {
 			continue
 		}
@@ -262,18 +297,41 @@ func (m *Monitor) watchManagerLoop(ctx context.Context) {
 }
 
 // watchHost streams one host's Docker events until its context is cancelled.
+// Reconnects use exponential backoff so an unreachable host (e.g. a laptop that
+// went offline) doesn't spam the log or hammer the connection every couple of
+// seconds. A stream that stayed up for a while before dropping is treated as a
+// transient blip and resets the backoff.
 func (m *Monitor) watchHost(ctx context.Context, hostID int64, hostName string) {
+	const (
+		minBackoff = 2 * time.Second
+		maxBackoff = 2 * time.Minute
+	)
+	backoff := minBackoff
 	for ctx.Err() == nil {
+		start := time.Now()
 		err := m.docker.WatchEvents(ctx, hostID, func(e docker.Event) {
 			m.handleEvent(ctx, hostID, hostName, e)
 		})
 		if ctx.Err() != nil {
 			return
 		}
-		if err != nil {
-			log.Printf("monitor: events stream for host %d ended: %v; retrying", hostID, err)
+		if time.Since(start) > 30*time.Second {
+			backoff = minBackoff // a real connection that dropped — retry promptly
 		}
-		time.Sleep(2 * time.Second) // reconnect backoff
+		if err != nil {
+			log.Printf("monitor: events stream for host %d ended: %v; retrying in %s", hostID, err, backoff)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		if backoff < maxBackoff {
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
 	}
 }
 

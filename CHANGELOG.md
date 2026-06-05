@@ -7,6 +7,16 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Disable a host** — toggle a host off so the monitor ignores it entirely (no
+  events stream, no stats sampling), e.g. for a laptop/host that's offline. The
+  Hosts page shows a `disabled` badge and an enable/disable button.
+- **Compose projects** — create and edit a managed project *folder* (a compose
+  file plus sidecar configs / scripts / init files) in a built-in multi-file
+  **tree editor**, then **deploy it with the host's `docker compose` CLI** —
+  including selecting **compose profiles** to enable. Import/export a project as
+  a `.zip`, redeploy, and bring it down. Deployed projects appear on the Stacks
+  page (lifecycle + view-compose reused), and link back and forth. Targets the
+  local Docker host; Deploy/Down are disabled when the compose CLI isn't present.
 - **Compose stacks (discover & manage)** — a Stacks view that groups containers
   by their `com.docker.compose.project` label (so stacks started with the
   `docker compose` CLI show up too), with start / stop / restart / remove for a
@@ -15,6 +25,11 @@ All notable changes to Docker Commander are documented here. The format follows
   stack from a compose file comes next.
 
 ### Fixed
+- UI slowness on hosts with many containers: the dashboard resource overview no
+  longer re-samples every container on demand (each `docker stats` call costs
+  ~1s) — it reads the monitor's background snapshot, and the stats sweep runs
+  less often. Also, an unreachable host no longer stalls the stats poll or spams
+  reconnects (timeouts + exponential backoff; disable it to skip it entirely).
 - Stable, alphabetical ordering for Containers (running first, then A→Z),
   Images, Volumes, Networks and Topology — they previously came back in the
   daemon's arbitrary order (which shuffled on reload).

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"os/exec"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -14,8 +16,16 @@ const composeTimeout = 10 * time.Minute
 // ComposeAvailable reports whether the `docker compose` CLI is usable on the
 // host running Docker Commander. This is a runtime dependency that the SDK-only
 // rest of the app doesn't need, so callers degrade gracefully when it's false.
+// The result is cached for the process lifetime — it's called on every project
+// list and we don't want to fork `docker compose version` on each request.
+var (
+	composeOnce sync.Once
+	composeOK   bool
+)
+
 func ComposeAvailable(ctx context.Context) bool {
-	return composeProbe(ctx, "docker")
+	composeOnce.Do(func() { composeOK = composeProbe(ctx, "docker") })
+	return composeOK
 }
 
 // composeProbe runs `<bin> compose version`; split out so tests can exercise the
@@ -26,16 +36,45 @@ func composeProbe(ctx context.Context, bin string) bool {
 	return exec.CommandContext(cctx, bin, "compose", "version").Run() == nil
 }
 
-// ComposeUp runs `docker compose -p <slug> up -d` in dir and returns the
-// combined stdout+stderr (for display) alongside any error.
-func ComposeUp(ctx context.Context, dir, slug string) (string, error) {
-	return runCompose(ctx, dir, slug, "up", "-d")
+// ComposeUp runs `docker compose -p <slug> [--profile p…] up -d` in dir and
+// returns the combined stdout+stderr (for display) alongside any error.
+func ComposeUp(ctx context.Context, dir, slug string, profiles []string) (string, error) {
+	args := make([]string, 0, len(profiles)*2+2)
+	for _, p := range profiles {
+		if p = strings.TrimSpace(p); p != "" {
+			args = append(args, "--profile", p)
+		}
+	}
+	args = append(args, "up", "-d")
+	return runCompose(ctx, dir, slug, args...)
+}
+
+// ComposeProfiles lists the profiles defined in the project's compose file
+// (`docker compose config --profiles`), one per line.
+func ComposeProfiles(ctx context.Context, dir, slug string) ([]string, error) {
+	out, err := runCompose(ctx, dir, slug, "config", "--profiles")
+	if err != nil {
+		return nil, err
+	}
+	var profiles []string
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			profiles = append(profiles, line)
+		}
+	}
+	return profiles, nil
 }
 
 // ComposeDown runs `docker compose -p <slug> down` in dir (removes containers
 // and the project's networks; named volumes are kept, like the CLI default).
 func ComposeDown(ctx context.Context, dir, slug string) (string, error) {
 	return runCompose(ctx, dir, slug, "down")
+}
+
+// ComposeRestart runs `docker compose -p <slug> restart` (restarts the running
+// containers without re-creating them).
+func ComposeRestart(ctx context.Context, dir, slug string) (string, error) {
+	return runCompose(ctx, dir, slug, "restart")
 }
 
 func runCompose(ctx context.Context, dir, slug string, args ...string) (string, error) {

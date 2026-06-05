@@ -43,6 +43,7 @@ export interface Host {
   kind: string; // local | tcp | ssh
   address: string;
   alertEmail?: string;
+  disabled?: boolean;
 }
 
 export interface PortSpec {
@@ -280,6 +281,24 @@ export interface Stack {
   workingDir?: string;
   containers: StackContainer[];
   running: number;
+}
+
+export interface Project {
+  id: number;
+  name: string;
+  slug: string;
+  composeFile: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectFile {
+  name: string;
+  size: number;
+  content: string;
+  isDir?: boolean;
+  tooLarge?: boolean;
 }
 
 export interface PortProbe {

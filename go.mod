@@ -12,6 +12,7 @@ require (
 	github.com/pquerna/otp v1.5.0
 	github.com/redis/go-redis/v9 v9.20.0
 	golang.org/x/crypto v0.52.0
+	golang.org/x/text v0.37.0
 	modernc.org/sqlite v1.51.0
 )
 

@@ -22,6 +22,8 @@ import type {
   ParseRule,
   PortProbe,
   Registry,
+  Project,
+  ProjectFile,
   ResourceOverview,
   SmtpConfig,
   Stack,
@@ -142,6 +144,8 @@ export const api = {
   deleteHost: (id: number) => req<{ ok: boolean }>("DELETE", `/api/hosts/${id}`),
   updateHostAlertEmail: (id: number, alertEmail: string) =>
     req<{ ok: boolean }>("PATCH", `/api/hosts/${id}`, { alertEmail }),
+  setHostDisabled: (id: number, disabled: boolean) =>
+    req<{ ok: boolean }>("PATCH", `/api/hosts/${id}`, { disabled }),
   testHost: (id: number) =>
     req<{
       ok: boolean;
@@ -215,6 +219,37 @@ export const api = {
     req<{ ok: boolean; error?: string }>("POST", `/api/stacks/${encodeURIComponent(project)}/${action}${hostParam()}`),
   stackCompose: (project: string) =>
     req<{ ok: boolean; path?: string; content?: string; error?: string }>("GET", `/api/stacks/${encodeURIComponent(project)}/compose${hostParam()}`),
+
+  // Compose projects (managed folders; local host only — no hostParam)
+  projects: () => req<{ projects: Project[]; composeAvailable: boolean }>("GET", "/api/projects"),
+  createProject: (name: string) => req<{ id: number; slug: string }>("POST", "/api/projects", { name }),
+  importProject: async (name: string, file: File) => {
+    const res = await fetch(`/api/projects/import?name=${encodeURIComponent(name)}`, {
+      method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/zip" }, body: file,
+    });
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : null;
+    if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText);
+    return data as { id: number; slug: string; files: number };
+  },
+  renameProject: (id: number, name: string) => req<{ ok: boolean }>("PATCH", `/api/projects/${id}`, { name }),
+  deleteProject: (id: number, force = false) =>
+    req<{ ok: boolean; error?: string; output?: string }>("DELETE", `/api/projects/${id}${force ? "?force=1" : ""}`),
+  projectFiles: (id: number) => req<ProjectFile[]>("GET", `/api/projects/${id}/files`),
+  makeProjectDir: (id: number, name: string) => req<{ ok: boolean }>("POST", `/api/projects/${id}/files/dir`, { name }),
+  writeProjectFile: (id: number, name: string, content: string) =>
+    req<{ ok: boolean }>("PUT", `/api/projects/${id}/files`, { name, content }),
+  deleteProjectFile: (id: number, path: string) =>
+    req<{ ok: boolean }>("DELETE", `/api/projects/${id}/files?path=${encodeURIComponent(path)}`),
+  projectProfiles: (id: number) =>
+    req<{ profiles: string[]; error?: string }>("GET", `/api/projects/${id}/profiles`),
+  deployProject: (id: number, profiles: string[] = []) =>
+    req<{ ok: boolean; output?: string; error?: string }>("POST", `/api/projects/${id}/deploy`, { profiles }),
+  downProject: (id: number) =>
+    req<{ ok: boolean; output?: string; error?: string }>("POST", `/api/projects/${id}/down`),
+  restartProject: (id: number) =>
+    req<{ ok: boolean; output?: string; error?: string }>("POST", `/api/projects/${id}/restart`),
+  projectDownloadUrl: (id: number) => `/api/projects/${id}/download`,
 
   // Generic raw inspect for any object kind. id/ref travels as a query param.
   inspect: (kind: "container" | "image" | "network" | "volume", id: string) => {

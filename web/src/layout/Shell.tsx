@@ -1,6 +1,6 @@
-import { NavLink, useNavigate, useLocation, useNavigationType } from "react-router-dom";
+import { Link, NavLink, useNavigate, useLocation, useNavigationType } from "react-router-dom";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Activity, Bell, Blocks, Boxes, Container, Database, KeyRound, Layers, LayoutDashboard, Network, ScrollText, Server, Settings, Share2, Terminal, Users, LogOut } from "lucide-react";
+import { Activity, Bell, Blocks, Boxes, Container, Database, FolderGit2, KeyRound, Layers, LayoutDashboard, Network, ScrollText, Server, Settings, Share2, Terminal, Users, LogOut } from "lucide-react";
 import clsx from "clsx";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../lib/api";
@@ -20,6 +20,7 @@ const navGroups: { title: string; items: NavItem[] }[] = [
     items: [
       { to: "/containers", label: "Containers", icon: Boxes, section: "containers" },
       { to: "/stacks", label: "Stacks", icon: Blocks, section: "containers" },
+      { to: "/projects", label: "Projects", icon: FolderGit2, section: "projects" },
       { to: "/images", label: "Images", icon: Layers, section: "images" },
       { to: "/volumes", label: "Volumes", icon: Database, section: "volumes" },
     ],
@@ -59,10 +60,12 @@ function loadHosts(): Promise<Host[]> {
   return hostsPromise;
 }
 
-// activeHostId resolves the currently selected host: the explicit choice, else
-// the local host, else the first one.
+// activeHostId resolves the currently selected host among the enabled ones: the
+// explicit choice (if still enabled), else the local host, else the first.
 function activeHostId(hosts: Host[]): number | undefined {
-  return getHostId() ?? hosts.find((h) => h.kind === "local")?.id ?? hosts[0]?.id;
+  const enabled = hosts.filter((h) => !h.disabled);
+  const stored = getHostId();
+  return enabled.find((h) => h.id === stored)?.id ?? enabled.find((h) => h.kind === "local")?.id ?? enabled[0]?.id;
 }
 
 // HostSwitcher selects the active Docker host. Changing it reloads the app so
@@ -73,7 +76,9 @@ function HostSwitcher() {
   useEffect(() => {
     loadHosts().then(setHosts);
   }, []);
-  if (hosts.length <= 1) return null;
+  // Disabled hosts aren't monitored — there's nothing to view, so leave them out.
+  const enabled = hosts.filter((h) => !h.disabled);
+  if (enabled.length <= 1) return null;
   const current = activeHostId(hosts);
   return (
     <div className="px-3 py-3 border-b border-border">
@@ -88,7 +93,7 @@ function HostSwitcher() {
           window.location.reload();
         }}
       >
-        {hosts.map((h) => (
+        {enabled.map((h) => (
           <option key={h.id} value={h.id}>{h.name} ({h.kind})</option>
         ))}
       </select>
@@ -180,12 +185,12 @@ export function Shell({ children }: { children: ReactNode }) {
   return (
     <div className="h-full grid grid-cols-[240px_1fr]">
       <aside className="bg-panel border-r border-border flex flex-col">
-        <div className="flex items-center gap-2.5 px-5 h-16 border-b border-border">
+        <Link to="/" className="flex items-center gap-2.5 px-5 h-16 border-b border-border hover:bg-panel2/40 transition-colors" title="Dashboard">
           <div className="h-8 w-8 rounded-lg bg-accent grid place-items-center">
             <Container className="h-5 w-5 text-white" />
           </div>
           <div className="font-semibold text-sm">Docker Commander</div>
-        </div>
+        </Link>
         <HostSwitcher />
         <nav className="flex-1 p-3 space-y-3 overflow-y-auto">
           {navGroups.map((group, gi) => {
@@ -249,10 +254,26 @@ export function Shell({ children }: { children: ReactNode }) {
   );
 }
 
+// iconForPath finds the nav icon for the current route (exact, else the longest
+// matching prefix, so detail pages like /containers/:id reuse the section icon).
+function iconForPath(pathname: string): typeof Boxes | undefined {
+  const items = navGroups.flatMap((g) => g.items);
+  const exact = items.find((i) => i.to === pathname);
+  if (exact) return exact.icon;
+  return items
+    .filter((i) => i.to !== "/" && pathname.startsWith(i.to))
+    .sort((a, b) => b.to.length - a.to.length)[0]?.icon;
+}
+
 export function PageHeader({ title, actions }: { title: string; actions?: ReactNode }) {
+  const { pathname } = useLocation();
+  const Icon = iconForPath(pathname);
   return (
     <div className="flex items-center justify-between h-16 px-6 border-b border-border sticky top-0 bg-bg/80 backdrop-blur-sm z-10">
-      <h1 className="text-lg font-semibold">{title}</h1>
+      <h1 className="text-lg font-semibold flex items-center gap-2">
+        {Icon && <Icon className="h-5 w-5 text-accent" />}
+        {title}
+      </h1>
       <div className="flex items-center gap-2"><ActiveHostBadge />{actions}</div>
     </div>
   );
