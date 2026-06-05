@@ -213,6 +213,8 @@ export const api = {
   stacks: () => req<Stack[]>("GET", `/api/stacks${hostParam()}`),
   stackAction: (project: string, action: string) =>
     req<{ ok: boolean; error?: string }>("POST", `/api/stacks/${encodeURIComponent(project)}/${action}${hostParam()}`),
+  stackCompose: (project: string) =>
+    req<{ ok: boolean; path?: string; content?: string; error?: string }>("GET", `/api/stacks/${encodeURIComponent(project)}/compose${hostParam()}`),
 
   // Generic raw inspect for any object kind. id/ref travels as a query param.
   inspect: (kind: "container" | "image" | "network" | "volume", id: string) => {

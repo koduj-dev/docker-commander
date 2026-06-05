@@ -1,16 +1,29 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Blocks, Play, Square, RotateCw, Trash2, Loader2 } from "lucide-react";
+import { Blocks, Play, Square, RotateCw, Trash2, Loader2, FileText, X } from "lucide-react";
 import { api } from "../lib/api";
 import type { Stack } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { StateBadge, EmptyState, Spinner } from "../components/ui";
 import { useDockerEventTick } from "../lib/dockerEvents";
 
+type ComposeView = { project: string; loading: boolean; path?: string; content?: string; error?: string };
+
 export function Stacks() {
   const [stacks, setStacks] = useState<Stack[] | null>(null);
   const [busy, setBusy] = useState(""); // project currently acting
+  const [compose, setCompose] = useState<ComposeView | null>(null);
   const tick = useDockerEventTick();
+
+  const viewCompose = async (project: string) => {
+    setCompose({ project, loading: true });
+    try {
+      const r = await api.stackCompose(project);
+      setCompose(r.ok ? { project, loading: false, path: r.path, content: r.content } : { project, loading: false, error: r.error });
+    } catch (e) {
+      setCompose({ project, loading: false, error: e instanceof Error ? e.message : "failed to read compose file" });
+    }
+  };
 
   const load = useCallback(() => {
     api.stacks().then(setStacks).catch(() => setStacks([]));
@@ -65,6 +78,9 @@ export function Stacks() {
                     <Loader2 className="h-4 w-4 animate-spin text-muted" />
                   ) : (
                     <>
+                      {s.configFile && (
+                        <button className="btn-ghost px-2 py-1" title="View compose file" onClick={() => viewCompose(s.project)}><FileText className="h-4 w-4" /></button>
+                      )}
                       <button className="btn-ghost px-2 py-1" title="Start" onClick={() => act(s.project, "start")}><Play className="h-4 w-4" /></button>
                       <button className="btn-ghost px-2 py-1" title="Stop" onClick={() => act(s.project, "stop")}><Square className="h-4 w-4" /></button>
                       <button className="btn-ghost px-2 py-1" title="Restart" onClick={() => act(s.project, "restart")}><RotateCw className="h-4 w-4" /></button>
@@ -93,6 +109,30 @@ export function Stacks() {
           <strong>docker&nbsp;compose</strong> CLI appear here too. Deploying a stack from a compose file is coming next.
         </p>
       </div>
+
+      {compose && (
+        <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={() => setCompose(null)}>
+          <div className="card w-full max-w-3xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 p-4 border-b border-border">
+              <FileText className="h-4 w-4 text-accent shrink-0" />
+              <div className="min-w-0">
+                <div className="font-medium">{compose.project}</div>
+                {compose.path && <div className="text-xs text-muted font-mono break-all">{compose.path}</div>}
+              </div>
+              <button className="btn-ghost px-2 py-1.5 ml-auto" onClick={() => setCompose(null)} title="Close"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="p-4 overflow-auto">
+              {compose.loading ? (
+                <div className="flex items-center gap-2 text-muted text-sm"><Spinner /> Reading compose file…</div>
+              ) : compose.error ? (
+                <p className="text-sm text-danger">{compose.error}</p>
+              ) : (
+                <pre className="text-xs font-mono whitespace-pre overflow-x-auto bg-panel2 rounded-lg p-3">{compose.content}</pre>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
