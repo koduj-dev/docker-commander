@@ -6,6 +6,11 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- Stable, alphabetical ordering for Containers (running first, then A→Z),
+  Images, Volumes, Networks and Topology — they previously came back in the
+  daemon's arbitrary order (which shuffled on reload).
+
 ### Project / infrastructure
 - Community health files: Code of Conduct, contributing guide, security policy,
   and issue / pull-request templates.
