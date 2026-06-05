@@ -21,6 +21,10 @@ import (
 // ErrNotFound is returned when a lookup yields no row.
 var ErrNotFound = errors.New("store: not found")
 
+// ErrDuplicate is returned when an insert violates a UNIQUE constraint
+// (e.g. a project slug that already exists).
+var ErrDuplicate = errors.New("store: duplicate")
+
 // Store wraps the database handle and exposes typed queries.
 type Store struct {
 	db     *sql.DB
@@ -157,6 +161,16 @@ CREATE TABLE IF NOT EXISTS registries (
 	username   TEXT NOT NULL DEFAULT '',
 	secret_enc TEXT NOT NULL DEFAULT '', -- AES-GCM encrypted password/token
 	created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS projects (
+	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	name         TEXT NOT NULL,            -- user-facing display name
+	slug         TEXT NOT NULL UNIQUE,     -- compose project name (-p), [a-z0-9][a-z0-9_-]*
+	compose_file TEXT NOT NULL DEFAULT 'compose.yml',
+	created_by   TEXT NOT NULL DEFAULT '',
+	created_at   TEXT NOT NULL,
+	updated_at   TEXT NOT NULL
 );
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {

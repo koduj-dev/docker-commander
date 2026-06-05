@@ -8,7 +8,7 @@ import (
 // Sections are the access-control units, matching the app's menu. A user's
 // permissions and the global feature flags are both expressed as sets of these.
 var Sections = []string{
-	"dashboard", "containers", "images", "volumes", "networks", "topology",
+	"dashboard", "containers", "projects", "images", "volumes", "networks", "topology",
 	"logs", "events", "alerts", "hosts", "registries", "audit",
 }
 
