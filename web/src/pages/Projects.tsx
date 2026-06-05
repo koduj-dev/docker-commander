@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
-  FolderGit2, Plus, Rocket, Square, Trash2, X, FilePlus, FolderPlus, Upload, Loader2,
-  ExternalLink, Save, FileText, Folder, Terminal, Pencil,
+  FolderGit2, Plus, Rocket, Square, RotateCw, Trash2, X, FilePlus, FolderPlus, Upload, Loader2,
+  ExternalLink, Save, FileText, Folder, Terminal, Pencil, ChevronRight, Download,
 } from "lucide-react";
 import { api, ApiError } from "../lib/api";
 import type { Project, ProjectFile, Stack } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
-import { EmptyState, Spinner } from "../components/ui";
+import { EmptyState, Spinner, StateBadge } from "../components/ui";
 import { useDialogs } from "../components/Dialog";
 import { useDockerEventTick } from "../lib/dockerEvents";
 
 type Output = { title: string; text: string; ok: boolean };
+type Kind = "deploy" | "down" | "restart";
 
 function projectState(stack: Stack | undefined): { cls: string; label: string; deployed: boolean } {
   if (!stack) return { cls: "bg-muted/40", label: "Not deployed", deployed: false };
@@ -21,6 +22,16 @@ function projectState(stack: Stack | undefined): { cls: string; label: string; d
   return { cls: "bg-warn text-warn", label: "Partial", deployed: true };
 }
 
+// downloadText triggers a client-side download of in-memory text.
+function downloadText(name: string, content: string) {
+  const url = URL.createObjectURL(new Blob([content], { type: "text/plain" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name.split("/").pop() || name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function Projects() {
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [composeAvailable, setComposeAvailable] = useState(true);
@@ -28,6 +39,8 @@ export function Projects() {
   const [busy, setBusy] = useState(""); // slug acting
   const [editing, setEditing] = useState<Project | null>(null);
   const [output, setOutput] = useState<Output | null>(null);
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [searchParams, setSearchParams] = useSearchParams();
   const dialogs = useDialogs();
   const tick = useDockerEventTick();
 
@@ -42,6 +55,18 @@ export function Projects() {
     for (const s of stacks) m.set(s.project, s);
     return m;
   }, [stacks]);
+
+  // ?open=<slug> (from "Open in Projects") opens that project's editor.
+  useEffect(() => {
+    const open = searchParams.get("open");
+    if (open && projects) {
+      const p = projects.find((x) => x.slug === open);
+      if (p) setEditing(p);
+      setSearchParams({}, { replace: true });
+    }
+  }, [projects, searchParams, setSearchParams]);
+
+  const toggleExpand = (id: number) => setExpanded((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
   const newProject = async () => {
     const name = await dialogs.prompt({ title: "New project", label: "Project name", placeholder: "My app" });
@@ -62,10 +87,10 @@ export function Projects() {
     catch (e) { dialogs.alert({ title: "Rename failed", message: e instanceof Error ? e.message : "unknown error" }); }
   };
 
-  const runCompose = async (p: Project, kind: "deploy" | "down") => {
+  const runCompose = async (p: Project, kind: Kind) => {
     setBusy(p.slug);
     try {
-      const r = kind === "deploy" ? await api.deployProject(p.id) : await api.downProject(p.id);
+      const r = kind === "deploy" ? await api.deployProject(p.id) : kind === "down" ? await api.downProject(p.id) : await api.restartProject(p.id);
       setOutput({ title: `${p.name} — ${kind}`, text: r.output || r.error || "(no output)", ok: r.ok });
       load();
     } catch (e) {
@@ -119,26 +144,59 @@ export function Projects() {
             const stack = stackBySlug.get(p.slug);
             const st = projectState(stack);
             const acting = busy === p.slug;
+            const isOpen = expanded.has(p.id);
             return (
-              <div key={p.id} className="card p-4 flex items-center gap-3">
-                <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${st.cls}`} style={st.deployed ? { boxShadow: "0 0 6px currentColor" } : undefined} title={st.label} />
-                <FolderGit2 className="h-4 w-4 text-accent shrink-0" />
-                <button className="min-w-0 text-left" onClick={() => setEditing(p)}>
-                  <div className="font-medium truncate hover:text-accent">{p.name}</div>
-                  <div className="text-xs text-muted font-mono truncate">{p.slug}{stack ? ` · ${stack.running}/${stack.containers.length} running` : ""}</div>
-                </button>
-                <div className="flex items-center gap-1 shrink-0 ml-auto">
-                  {acting ? <Loader2 className="h-4 w-4 animate-spin text-muted" /> : (
-                    <>
-                      <button className="btn-ghost px-2 py-1" title="Edit files" onClick={() => setEditing(p)}><FileText className="h-4 w-4" /></button>
-                      <button className="btn-ghost px-2 py-1" title="Rename" onClick={() => rename(p)}><Pencil className="h-4 w-4" /></button>
-                      <button className="btn-ghost px-2 py-1 disabled:opacity-40" title={composeAvailable ? "Deploy" : "docker compose CLI not available"} disabled={!composeAvailable} onClick={() => runCompose(p, "deploy")}><Rocket className="h-4 w-4" /></button>
-                      {st.deployed && <button className="btn-ghost px-2 py-1 disabled:opacity-40" title="Down" disabled={!composeAvailable} onClick={() => runCompose(p, "down")}><Square className="h-4 w-4" /></button>}
-                      {st.deployed && <Link className="btn-ghost px-2 py-1" title="Open in Stacks" to="/stacks"><ExternalLink className="h-4 w-4" /></Link>}
-                      <button className="btn-ghost px-2 py-1 text-danger" title="Delete project" onClick={() => remove(p)}><Trash2 className="h-4 w-4" /></button>
-                    </>
-                  )}
+              <div key={p.id} className="card p-4">
+                <div className="flex items-center gap-3">
+                  <button className="shrink-0 text-muted" onClick={() => toggleExpand(p.id)} title={isOpen ? "Collapse" : "Expand"}>
+                    <ChevronRight className={`h-4 w-4 transition-transform ${isOpen ? "rotate-90" : ""}`} />
+                  </button>
+                  <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${st.cls}`} style={st.deployed ? { boxShadow: "0 0 6px currentColor" } : undefined} title={st.label} />
+                  <FolderGit2 className="h-4 w-4 text-accent shrink-0" />
+                  <button className="min-w-0 text-left" onClick={() => setEditing(p)}>
+                    <div className="font-medium truncate hover:text-accent">{p.name}</div>
+                    <div className="text-xs text-muted font-mono truncate">{p.slug}{stack ? ` · ${stack.running}/${stack.containers.length} running` : ""}</div>
+                  </button>
+                  <div className="flex items-center gap-1 shrink-0 ml-auto">
+                    {acting ? <Loader2 className="h-4 w-4 animate-spin text-muted" /> : (
+                      <>
+                        <button className="btn-ghost px-2 py-1" title="Edit files" onClick={() => setEditing(p)}><FileText className="h-4 w-4" /></button>
+                        <button className="btn-ghost px-2 py-1" title="Rename" onClick={() => rename(p)}><Pencil className="h-4 w-4" /></button>
+                        {st.deployed ? (
+                          <>
+                            <button className="btn-ghost px-2 py-1 disabled:opacity-40" title="Restart" disabled={!composeAvailable} onClick={() => runCompose(p, "restart")}><RotateCw className="h-4 w-4" /></button>
+                            <button className="btn-ghost px-2 py-1 disabled:opacity-40" title="Down" disabled={!composeAvailable} onClick={() => runCompose(p, "down")}><Square className="h-4 w-4" /></button>
+                            <Link className="btn-ghost px-2 py-1" title="Open in Stacks" to={`/stacks?focus=${encodeURIComponent(p.slug)}`}><ExternalLink className="h-4 w-4" /></Link>
+                          </>
+                        ) : (
+                          <button className="btn-ghost px-2 py-1 text-accent disabled:opacity-40" title={composeAvailable ? "Deploy" : "docker compose CLI not available"} disabled={!composeAvailable} onClick={() => runCompose(p, "deploy")}><Rocket className="h-4 w-4" /></button>
+                        )}
+                        <button className="btn-ghost px-2 py-1 text-danger" title="Delete project" onClick={() => remove(p)}><Trash2 className="h-4 w-4" /></button>
+                      </>
+                    )}
+                  </div>
                 </div>
+
+                {isOpen && (
+                  <div className="mt-3 rounded-lg border border-border">
+                    {!stack ? (
+                      <div className="px-3 py-2 text-sm text-muted">Not deployed.</div>
+                    ) : (
+                      stack.containers.map((c, i) => (
+                        <div key={c.id} className={`flex items-center gap-3 px-3 py-2 text-sm ${i > 0 ? "border-t border-border" : ""}`}>
+                          <span className="w-28 shrink-0 font-medium truncate">{c.service || "—"}</span>
+                          <StateBadge state={c.state} />
+                          <Link to={`/containers/${c.id}`} className="text-muted hover:text-accent truncate">{c.name}</Link>
+                          <span className="ml-auto flex flex-wrap gap-1 justify-end">
+                            {(c.ports ?? []).filter((pt) => pt.publicPort).map((pt, j) => (
+                              <span key={j} className="font-mono text-xs bg-panel2 rounded px-1.5 py-0.5">{pt.publicPort}→{pt.privatePort}/{pt.type}</span>
+                            ))}
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
             );
           })
@@ -172,9 +230,7 @@ export function Projects() {
   );
 }
 
-// ProjectEditor is a multi-file editor over the project folder: a left file
-// list (add file / add folder / upload / delete) and a right textarea, plus
-// Deploy / Down.
+// ProjectEditor is a multi-file editor over the project folder.
 function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput }: {
   project: Project; composeAvailable: boolean; deployed: boolean; onClose: () => void; onOutput: (o: Output) => void;
 }) {
@@ -248,11 +304,11 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
     finally { setBusy(""); if (uploadRef.current) uploadRef.current.value = ""; }
   };
 
-  const runCompose = async (kind: "deploy" | "down") => {
-    if (dirty && !(await dialogs.confirm({ title: "Unsaved changes", message: "Deploy with the last saved files?", confirmLabel: "Continue" }))) return;
+  const runCompose = async (kind: Kind) => {
+    if (dirty && !(await dialogs.confirm({ title: "Unsaved changes", message: "Continue with the last saved files?", confirmLabel: "Continue" }))) return;
     setBusy(kind);
     try {
-      const r = kind === "deploy" ? await api.deployProject(project.id) : await api.downProject(project.id);
+      const r = kind === "deploy" ? await api.deployProject(project.id) : kind === "down" ? await api.downProject(project.id) : await api.restartProject(project.id);
       onOutput({ title: `${project.name} — ${kind}`, text: r.output || r.error || "(no output)", ok: r.ok });
     } catch (e) {
       onOutput({ title: `${project.name} — ${kind}`, text: e instanceof Error ? e.message : "failed", ok: false });
@@ -271,8 +327,9 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
             <div className="text-xs text-muted font-mono">{project.slug}</div>
           </div>
           <div className="flex items-center gap-1 ml-auto">
+            <a className="btn-ghost px-2 py-1.5" title="Download project as .zip" href={api.projectDownloadUrl(project.id)}><Download className="h-4 w-4" /></a>
             <button className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40" disabled={!composeAvailable || busy === "deploy"} onClick={() => runCompose("deploy")} title={composeAvailable ? "docker compose up -d" : "docker compose CLI not available"}>
-              {busy === "deploy" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />} Deploy
+              {busy === "deploy" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />} {deployed ? "Redeploy" : "Deploy"}
             </button>
             <button className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40" disabled={!composeAvailable || !deployed || busy === "down"} onClick={() => runCompose("down")} title={deployed ? "docker compose down" : "not deployed"}>Down</button>
             <button className="btn-ghost px-2 py-1.5" onClick={onClose}><X className="h-4 w-4" /></button>
@@ -311,9 +368,12 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
           <div className="flex-1 flex flex-col min-w-0">
             <div className="flex items-center gap-2 p-2 border-b border-border">
               <span className="text-xs font-mono text-muted truncate">{active || "—"}</span>
-              <button className="btn-primary px-3 py-1 text-xs ml-auto disabled:opacity-40" disabled={!dirty || busy === "save" || !active} onClick={save}>
-                {busy === "save" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Save
-              </button>
+              <div className="ml-auto flex items-center gap-1">
+                <button className="btn-ghost px-2 py-1 text-xs disabled:opacity-40" disabled={!active} title="Download this file" onClick={() => downloadText(active, draft)}><Download className="h-3.5 w-3.5" /></button>
+                <button className="btn-primary px-3 py-1 text-xs disabled:opacity-40" disabled={!dirty || busy === "save" || !active} onClick={save}>
+                  {busy === "save" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Save
+                </button>
+              </div>
             </div>
             {activeFile?.tooLarge ? (
               <div className="p-4 text-sm text-muted">This file is too large to edit here.</div>

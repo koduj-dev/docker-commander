@@ -126,8 +126,10 @@ func (s *Server) Handler() http.Handler {
 			r.Put("/projects/{id}/files", s.handleWriteProjectFile)
 			r.Delete("/projects/{id}/files", s.handleDeleteProjectFile)
 			r.Post("/projects/{id}/files/dir", s.handleMakeProjectDir)
+			r.Get("/projects/{id}/download", s.handleDownloadProject)
 			r.Post("/projects/{id}/deploy", s.handleDeployProject)
 			r.Post("/projects/{id}/down", s.handleDownProject)
+			r.Post("/projects/{id}/restart", s.handleRestartProject)
 
 			r.Get("/images", s.handleListImages)
 			r.Get("/images/history", s.handleImageHistory)

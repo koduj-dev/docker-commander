@@ -234,6 +234,9 @@ export const api = {
     req<{ ok: boolean; output?: string; error?: string }>("POST", `/api/projects/${id}/deploy`),
   downProject: (id: number) =>
     req<{ ok: boolean; output?: string; error?: string }>("POST", `/api/projects/${id}/down`),
+  restartProject: (id: number) =>
+    req<{ ok: boolean; output?: string; error?: string }>("POST", `/api/projects/${id}/restart`),
+  projectDownloadUrl: (id: number) => `/api/projects/${id}/download`,
 
   // Generic raw inspect for any object kind. id/ref travels as a query param.
   inspect: (kind: "container" | "image" | "network" | "volume", id: string) => {

@@ -38,6 +38,12 @@ func ComposeDown(ctx context.Context, dir, slug string) (string, error) {
 	return runCompose(ctx, dir, slug, "down")
 }
 
+// ComposeRestart runs `docker compose -p <slug> restart` (restarts the running
+// containers without re-creating them).
+func ComposeRestart(ctx context.Context, dir, slug string) (string, error) {
+	return runCompose(ctx, dir, slug, "restart")
+}
+
 func runCompose(ctx context.Context, dir, slug string, args ...string) (string, error) {
 	cctx, cancel := context.WithTimeout(ctx, composeTimeout)
 	defer cancel()

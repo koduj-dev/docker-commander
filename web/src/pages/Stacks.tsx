@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Blocks, Play, Square, RotateCw, Trash2, Loader2, FileText, X, ChevronRight, Search, Copy, Check, Download, FolderGit2 } from "lucide-react";
 import { api } from "../lib/api";
 import type { Stack, StackContainer } from "../lib/types";
@@ -54,6 +54,18 @@ export function Stacks() {
     api.projects().then((r) => setManaged(new Set(r.projects.map((p) => p.slug)))).catch(() => {});
   }, []);
   useEffect(() => load(), [load, tick]);
+
+  // ?focus=<slug> (e.g. from "Open in Stacks") filters to and expands that stack.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const focus = searchParams.get("focus");
+    if (!focus) return;
+    setQuery(focus);
+    setPref("stacks.query", focus);
+    setCollapsed((c) => { const next = { ...c, [focus]: false }; setPref("stacks.collapsed", next); return next; });
+    setSearchParams({}, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const setSearch = (q: string) => { setQuery(q); setPref("stacks.query", q); };
   const setHealthFilter = (h: string) => { setHealth(h); setPref("stacks.health", h); };
@@ -188,7 +200,7 @@ export function Stacks() {
                         ) : (
                           <>
                             {managed.has(s.project) && (
-                              <Link className="btn-ghost px-2 py-1 text-accent" title="Managed project — open in Projects" to="/projects"><FolderGit2 className="h-4 w-4" /></Link>
+                              <Link className="btn-ghost px-2 py-1 text-accent" title="Managed project — open in Projects" to={`/projects?open=${encodeURIComponent(s.project)}`}><FolderGit2 className="h-4 w-4" /></Link>
                             )}
                             {s.configFile && (
                               <button className="btn-ghost px-2 py-1" title="View compose file" onClick={() => viewCompose(s.project)}><FileText className="h-4 w-4" /></button>

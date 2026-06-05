@@ -1,6 +1,7 @@
 package api
 
 import (
+	"archive/zip"
 	"context"
 	"errors"
 	"io/fs"
@@ -349,6 +350,40 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 // handleDownProject runs `docker compose down`.
 func (s *Server) handleDownProject(w http.ResponseWriter, r *http.Request) {
 	s.runProjectCompose(w, r, docker.ComposeDown, "down")
+}
+
+// handleRestartProject runs `docker compose restart`.
+func (s *Server) handleRestartProject(w http.ResponseWriter, r *http.Request) {
+	s.runProjectCompose(w, r, docker.ComposeRestart, "restart")
+}
+
+// handleDownloadProject streams the project folder as a zip archive.
+func (s *Server) handleDownloadProject(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	root := s.projectRoot(p.ID)
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+p.Slug+`.zip"`)
+	zw := zip.NewWriter(w)
+	defer zw.Close()
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
+			return err
+		}
+		rel, _ := filepath.Rel(root, path)
+		fw, err := zw.Create(filepath.ToSlash(rel))
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		_, err = fw.Write(data)
+		return err
+	})
 }
 
 func (s *Server) runProjectCompose(w http.ResponseWriter, r *http.Request, fn func(ctx context.Context, dir, slug string) (string, error), action string) {
