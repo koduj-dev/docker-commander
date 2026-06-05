@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Blocks, Play, Square, RotateCw, Trash2, Loader2, FileText, X, ChevronRight, Search } from "lucide-react";
+import { Blocks, Play, Square, RotateCw, Trash2, Loader2, FileText, X, ChevronRight, Search, Copy, Check, Download } from "lucide-react";
 import { api } from "../lib/api";
 import type { Stack, StackContainer } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
@@ -27,6 +27,7 @@ export function Stacks() {
   const [query, setQuery] = useState(() => getPref<string>("stacks.query", ""));
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => getPref("stacks.collapsed", {}));
   const [hover, setHover] = useState<Hover | null>(null);
+  const [copied, setCopied] = useState(false);
   const tick = useDockerEventTick();
 
   const load = useCallback(() => {
@@ -74,6 +75,38 @@ export function Stacks() {
     return q ? stacks.filter((s) => matchStack(s, q)) : stacks;
   }, [stacks, query]);
 
+  const allCollapsed = shown.length > 0 && shown.every((s) => collapsed[s.project]);
+  const toggleAll = () => {
+    const collapse = !allCollapsed;
+    setCollapsed((c) => {
+      const next = { ...c };
+      for (const s of shown) next[s.project] = collapse;
+      setPref("stacks.collapsed", next);
+      return next;
+    });
+  };
+
+  const copyCompose = async () => {
+    if (!compose?.content) return;
+    try {
+      await navigator.clipboard.writeText(compose.content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard may be unavailable over plain http */
+    }
+  };
+  const downloadCompose = () => {
+    if (!compose?.content) return;
+    const name = compose.path ? compose.path.split("/").pop() || "compose.yml" : `${compose.project}.compose.yml`;
+    const url = URL.createObjectURL(new Blob([compose.content], { type: "text/yaml" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   if (!stacks)
     return (
       <>
@@ -100,6 +133,9 @@ export function Stacks() {
                 <input className="input pl-8 py-1.5" placeholder="Filter stacks, services, images…" value={query} onChange={(e) => setSearch(e.target.value)} />
               </div>
               <span className="text-xs text-muted shrink-0">{shown.length} of {stacks.length}</span>
+              <button className="btn-ghost px-2 py-1.5 text-xs shrink-0" onClick={toggleAll}>
+                {allCollapsed ? "Expand all" : "Collapse all"}
+              </button>
             </div>
 
             {shown.length === 0 ? (
@@ -180,7 +216,17 @@ export function Stacks() {
                 <div className="font-medium">{compose.project}</div>
                 {compose.path && <div className="text-xs text-muted font-mono break-all">{compose.path}</div>}
               </div>
-              <button className="btn-ghost px-2 py-1.5 ml-auto" onClick={() => setCompose(null)} title="Close"><X className="h-4 w-4" /></button>
+              <div className="flex items-center gap-1 ml-auto">
+                {!compose.loading && !compose.error && (
+                  <>
+                    <button className="btn-ghost px-2 py-1.5" onClick={copyCompose} title="Copy to clipboard">
+                      {copied ? <Check className="h-4 w-4 text-ok" /> : <Copy className="h-4 w-4" />}
+                    </button>
+                    <button className="btn-ghost px-2 py-1.5" onClick={downloadCompose} title="Download"><Download className="h-4 w-4" /></button>
+                  </>
+                )}
+                <button className="btn-ghost px-2 py-1.5" onClick={() => setCompose(null)} title="Close"><X className="h-4 w-4" /></button>
+              </div>
             </div>
             <div className="p-4 overflow-auto">
               {compose.loading ? (
