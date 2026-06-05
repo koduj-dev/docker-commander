@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"sort"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
@@ -42,6 +43,14 @@ func (m *Manager) ListContainers(ctx context.Context, hostID int64) ([]Container
 		}
 		out = append(out, s)
 	}
+	// Running first, then alphabetical within each group.
+	sort.SliceStable(out, func(i, j int) bool {
+		ri, rj := out[i].State == "running", out[j].State == "running"
+		if ri != rj {
+			return ri
+		}
+		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+	})
 	return out, nil
 }
 
@@ -153,6 +162,7 @@ func (m *Manager) ListNetworks(ctx context.Context, hostID int64) ([]NetworkSumm
 		}
 		out = append(out, ns)
 	}
+	sort.SliceStable(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
 	return out, nil
 }
 
