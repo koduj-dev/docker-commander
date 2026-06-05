@@ -18,6 +18,9 @@ All notable changes to Docker Commander are documented here. The format follows
 - Stable, alphabetical ordering for Containers (running first, then A→Z),
   Images, Volumes, Networks and Topology — they previously came back in the
   daemon's arbitrary order (which shuffled on reload).
+- Dashboard "Open ports" no longer shows ports of containers that have since
+  stopped — the cached scan is filtered to the currently-running containers and
+  refreshes on Docker lifecycle events.
 
 ### Project / infrastructure
 - Community health files: Code of Conduct, contributing guide, security policy,
