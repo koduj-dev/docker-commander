@@ -27,7 +27,7 @@ individual is officially representing the project in public spaces.
 
 ## Enforcement
 
-Report concerns privately to the maintainer at **filip@majerik.cz**. All reports
+Report concerns privately to the maintainer at **filip@koduj.dev**. All reports
 are reviewed and investigated promptly and fairly, and the reporter's privacy is
 respected. Maintainers will take any action they deem appropriate, up to and
 including a temporary or permanent ban from the project, and are obligated to

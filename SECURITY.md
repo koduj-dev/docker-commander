@@ -21,7 +21,7 @@ Report privately through either:
 
 - **GitHub** — *Security → Report a vulnerability* (private vulnerability
   reporting / advisories) on this repository, **or**
-- **Email** — **filip@majerik.cz**.
+- **Email** — **filip@koduj.dev**.
 
 Please include, as far as you can:
 
