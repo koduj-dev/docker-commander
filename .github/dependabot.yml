@@ -1,0 +1,36 @@
+# Dependabot keeps dependencies fresh by opening update PRs. Minor/patch bumps
+# are grouped into one PR per ecosystem to keep the noise down; major bumps
+# (potentially breaking) come as individual PRs.
+version: 2
+updates:
+  # Go modules (Docker SDK, chi, crypto, …)
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "go"]
+    groups:
+      go-minor-patch:
+        update-types: ["minor", "patch"]
+
+  # Frontend npm packages (React, Vite, Recharts, …)
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "javascript"]
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
+
+  # GitHub Actions used by the CI / release workflows
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels: ["dependencies", "github-actions"]
+    groups:
+      actions:
+        patterns: ["*"]
