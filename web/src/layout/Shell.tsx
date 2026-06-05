@@ -60,10 +60,12 @@ function loadHosts(): Promise<Host[]> {
   return hostsPromise;
 }
 
-// activeHostId resolves the currently selected host: the explicit choice, else
-// the local host, else the first one.
+// activeHostId resolves the currently selected host among the enabled ones: the
+// explicit choice (if still enabled), else the local host, else the first.
 function activeHostId(hosts: Host[]): number | undefined {
-  return getHostId() ?? hosts.find((h) => h.kind === "local")?.id ?? hosts[0]?.id;
+  const enabled = hosts.filter((h) => !h.disabled);
+  const stored = getHostId();
+  return enabled.find((h) => h.id === stored)?.id ?? enabled.find((h) => h.kind === "local")?.id ?? enabled[0]?.id;
 }
 
 // HostSwitcher selects the active Docker host. Changing it reloads the app so
@@ -74,7 +76,9 @@ function HostSwitcher() {
   useEffect(() => {
     loadHosts().then(setHosts);
   }, []);
-  if (hosts.length <= 1) return null;
+  // Disabled hosts aren't monitored — there's nothing to view, so leave them out.
+  const enabled = hosts.filter((h) => !h.disabled);
+  if (enabled.length <= 1) return null;
   const current = activeHostId(hosts);
   return (
     <div className="px-3 py-3 border-b border-border">
@@ -89,7 +93,7 @@ function HostSwitcher() {
           window.location.reload();
         }}
       >
-        {hosts.map((h) => (
+        {enabled.map((h) => (
           <option key={h.id} value={h.id}>{h.name} ({h.kind})</option>
         ))}
       </select>
