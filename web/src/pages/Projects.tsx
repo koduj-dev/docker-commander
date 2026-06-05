@@ -362,6 +362,7 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
       // Offer to delete the whole project once it has no editable files left.
       if (!fs.some((x) => !x.isDir)) {
         if (await dialogs.confirm({ title: "Delete project?", message: "That was the last file — this project is now empty. Delete the whole project?", danger: true, confirmLabel: "Delete project" })) {
+          setBusy("delproj");
           try { await api.deleteProject(project.id); onClose(); }
           catch (e) { dialogs.alert({ title: "Could not delete project", message: e instanceof ApiError ? e.message : e instanceof Error ? e.message : "unknown error" }); }
         }
@@ -393,7 +394,12 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
-      <div className="card w-[85vw] h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+      <div className="card relative w-[85vw] h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        {busy === "delproj" && (
+          <div className="absolute inset-0 z-10 bg-bg/70 grid place-items-center rounded-xl">
+            <div className="flex items-center gap-2 text-sm text-muted"><Loader2 className="h-4 w-4 animate-spin" /> Deleting project…</div>
+          </div>
+        )}
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <FolderGit2 className="h-4 w-4 text-accent shrink-0" />
           <div className="min-w-0">

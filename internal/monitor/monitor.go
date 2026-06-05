@@ -262,18 +262,41 @@ func (m *Monitor) watchManagerLoop(ctx context.Context) {
 }
 
 // watchHost streams one host's Docker events until its context is cancelled.
+// Reconnects use exponential backoff so an unreachable host (e.g. a laptop that
+// went offline) doesn't spam the log or hammer the connection every couple of
+// seconds. A stream that stayed up for a while before dropping is treated as a
+// transient blip and resets the backoff.
 func (m *Monitor) watchHost(ctx context.Context, hostID int64, hostName string) {
+	const (
+		minBackoff = 2 * time.Second
+		maxBackoff = 2 * time.Minute
+	)
+	backoff := minBackoff
 	for ctx.Err() == nil {
+		start := time.Now()
 		err := m.docker.WatchEvents(ctx, hostID, func(e docker.Event) {
 			m.handleEvent(ctx, hostID, hostName, e)
 		})
 		if ctx.Err() != nil {
 			return
 		}
-		if err != nil {
-			log.Printf("monitor: events stream for host %d ended: %v; retrying", hostID, err)
+		if time.Since(start) > 30*time.Second {
+			backoff = minBackoff // a real connection that dropped — retry promptly
 		}
-		time.Sleep(2 * time.Second) // reconnect backoff
+		if err != nil {
+			log.Printf("monitor: events stream for host %d ended: %v; retrying in %s", hostID, err, backoff)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		if backoff < maxBackoff {
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
 	}
 }
 
