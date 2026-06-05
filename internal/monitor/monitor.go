@@ -19,7 +19,12 @@ import (
 )
 
 const (
-	statsInterval   = 5 * time.Second
+	// statsInterval is how often we sample every container's stats in the
+	// background. Each ContainerStats call costs ~1s (the daemon's collection
+	// interval), so on a host with many containers this is a heavy sweep — keep
+	// it infrequent enough not to keep the daemon busy (overview/charts read
+	// this cached snapshot rather than re-sampling).
+	statsInterval   = 15 * time.Second
 	logReconcileInt = 10 * time.Second
 )
 
