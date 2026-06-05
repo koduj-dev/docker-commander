@@ -41,6 +41,7 @@ export function Stacks() {
   const [busy, setBusy] = useState(""); // project currently acting
   const [compose, setCompose] = useState<ComposeView | null>(null);
   const [query, setQuery] = useState(() => getPref<string>("stacks.query", ""));
+  const [health, setHealth] = useState(() => getPref<string>("stacks.health", "all"));
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => getPref("stacks.collapsed", {}));
   const [hover, setHover] = useState<Hover | null>(null);
   const [copied, setCopied] = useState(false);
@@ -52,6 +53,7 @@ export function Stacks() {
   useEffect(() => load(), [load, tick]);
 
   const setSearch = (q: string) => { setQuery(q); setPref("stacks.query", q); };
+  const setHealthFilter = (h: string) => { setHealth(h); setPref("stacks.health", h); };
   const toggle = (project: string) => {
     setCollapsed((c) => {
       const next = { ...c, [project]: !c[project] };
@@ -86,10 +88,12 @@ export function Stacks() {
   };
 
   const shown = useMemo(() => {
-    if (!stacks) return [];
+    let arr = stacks ?? [];
+    if (health !== "all") arr = arr.filter((s) => stackHealth(s) === health);
     const q = query.trim().toLowerCase();
-    return q ? stacks.filter((s) => matchStack(s, q)) : stacks;
-  }, [stacks, query]);
+    if (q) arr = arr.filter((s) => matchStack(s, q));
+    return arr;
+  }, [stacks, query, health]);
 
   const allCollapsed = shown.length > 0 && shown.every((s) => collapsed[s.project]);
   const toggleAll = () => {
@@ -148,6 +152,12 @@ export function Stacks() {
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted" />
                 <input className="input pl-8 py-1.5" placeholder="Filter stacks, services, images…" value={query} onChange={(e) => setSearch(e.target.value)} />
               </div>
+              <select className="input py-1.5 w-auto shrink-0 text-sm" value={health} onChange={(e) => setHealthFilter(e.target.value)}>
+                <option value="all">All states</option>
+                <option value="green">🟢 Running</option>
+                <option value="yellow">🟡 Issues</option>
+                <option value="red">🔴 Stopped</option>
+              </select>
               <span className="text-xs text-muted shrink-0">{shown.length} of {stacks.length}</span>
               <button className="btn-ghost px-2 py-1.5 text-xs shrink-0" onClick={toggleAll}>
                 {allCollapsed ? "Expand all" : "Collapse all"}
