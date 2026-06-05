@@ -4,6 +4,13 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Project / infrastructure
+- Community health files: Code of Conduct, contributing guide, security policy,
+  and issue / pull-request templates.
+- Dependabot for Go modules, npm and GitHub Actions (weekly, grouped).
+
 ## [1.1.0] — 2026-06-04
 
 ### Added
