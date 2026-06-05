@@ -2,6 +2,8 @@ package docker
 
 import (
 	"context"
+	"sort"
+	"strings"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
@@ -93,5 +95,12 @@ func (m *Manager) Topology(ctx context.Context, hostID int64) (*Topology, error)
 		}
 		top.Networks = append(top.Networks, tn)
 	}
+	// Deterministic, alphabetical order so the graph is stable across reloads.
+	sort.SliceStable(top.Networks, func(i, j int) bool {
+		return strings.ToLower(top.Networks[i].Name) < strings.ToLower(top.Networks[j].Name)
+	})
+	sort.SliceStable(top.Containers, func(i, j int) bool {
+		return strings.ToLower(top.Containers[i].Name) < strings.ToLower(top.Containers[j].Name)
+	})
 	return top, nil
 }

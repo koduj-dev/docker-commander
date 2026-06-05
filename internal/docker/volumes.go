@@ -2,6 +2,8 @@ package docker
 
 import (
 	"context"
+	"sort"
+	"strings"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
@@ -62,6 +64,7 @@ func (m *Manager) ListVolumes(ctx context.Context, hostID int64) ([]VolumeSummar
 			InUseBy: usage[v.Name],
 		})
 	}
+	sort.SliceStable(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
 	return out, nil
 }
 

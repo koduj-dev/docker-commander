@@ -2,6 +2,8 @@ package docker
 
 import (
 	"context"
+	"sort"
+	"strings"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
@@ -70,6 +72,16 @@ func (m *Manager) ListImages(ctx context.Context, hostID int64) ([]ImageSummary,
 		}
 		out = append(out, s)
 	}
+	// Alphabetical by first real tag; untagged/dangling images sort last.
+	sortKey := func(im ImageSummary) string {
+		for _, t := range im.RepoTags {
+			if t != "" && t != "<none>:<none>" {
+				return strings.ToLower(t)
+			}
+		}
+		return "\uffff" + im.ID
+	}
+	sort.SliceStable(out, func(i, j int) bool { return sortKey(out[i]) < sortKey(out[j]) })
 	return out, nil
 }
 
