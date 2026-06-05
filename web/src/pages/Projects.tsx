@@ -55,24 +55,25 @@ function buildTree(files: ProjectFile[]): TreeNode[] {
 }
 
 // TreeItem renders one tree node (folder or file) recursively.
-function TreeItem({ node, depth, active, dirty, collapsed, onToggle, onSelect, onDelete }: {
-  node: TreeNode; depth: number; active: string; dirty: boolean;
+function TreeItem({ node, depth, active, dirty, collapsed, currentDir, onToggle, onSelect, onSelectDir, onDelete }: {
+  node: TreeNode; depth: number; active: string; dirty: boolean; currentDir: string;
   collapsed: Set<string>; onToggle: (path: string) => void;
-  onSelect: (path: string) => void; onDelete: (n: { name: string; isDir?: boolean }) => void;
+  onSelect: (path: string) => void; onSelectDir: (path: string) => void; onDelete: (n: { name: string; isDir?: boolean }) => void;
 }) {
   const pad = { paddingLeft: `${depth * 12 + 6}px` };
   if (node.isDir) {
     const open = !collapsed.has(node.path);
+    const isCurrent = node.path === currentDir;
     return (
       <>
-        <div className="group flex items-center gap-1 rounded px-2 py-1 text-sm hover:bg-panel2 cursor-pointer" style={pad} onClick={() => onToggle(node.path)}>
-          <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-muted transition-transform ${open ? "rotate-90" : ""}`} />
-          <Folder className="h-3.5 w-3.5 shrink-0 text-muted" />
-          <span className="truncate font-mono text-xs text-muted">{node.name}</span>
+        <div className={`group flex items-center gap-1 rounded px-2 py-1 text-sm cursor-pointer ${isCurrent ? "bg-accent/10 text-accent" : "hover:bg-panel2"}`} style={pad} onClick={() => { onToggle(node.path); onSelectDir(node.path); }}>
+          <ChevronRight className={`h-3.5 w-3.5 shrink-0 transition-transform ${open ? "rotate-90" : ""} ${isCurrent ? "text-accent" : "text-muted"}`} />
+          <Folder className={`h-3.5 w-3.5 shrink-0 ${isCurrent ? "text-accent" : "text-muted"}`} />
+          <span className={`truncate font-mono text-xs ${isCurrent ? "" : "text-muted"}`}>{node.name}</span>
           <button className="ml-auto opacity-0 group-hover:opacity-100 text-danger" title="Delete folder" onClick={(e) => { e.stopPropagation(); onDelete({ name: node.path, isDir: true }); }}><Trash2 className="h-3.5 w-3.5" /></button>
         </div>
         {open && node.children.map((c) => (
-          <TreeItem key={c.path} node={c} depth={depth + 1} active={active} dirty={dirty} collapsed={collapsed} onToggle={onToggle} onSelect={onSelect} onDelete={onDelete} />
+          <TreeItem key={c.path} node={c} depth={depth + 1} active={active} dirty={dirty} collapsed={collapsed} currentDir={currentDir} onToggle={onToggle} onSelect={onSelect} onSelectDir={onSelectDir} onDelete={onDelete} />
         ))}
       </>
     );
@@ -370,8 +371,11 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
   const [profiles, setProfiles] = useState<string[]>([]);
   const [selectedProfiles, setSelectedProfiles] = useState<string[]>(() => getPref<string[]>(`projects.profiles.${project.slug}`, []));
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
+  const [currentDir, setCurrentDir] = useState(""); // where New file/folder land
   const dialogs = useDialogs();
   const uploadRef = useRef<HTMLInputElement>(null);
+
+  const dirOf = (path: string) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
 
   useEffect(() => { api.projectProfiles(project.id).then((r) => setProfiles(r.profiles)).catch(() => {}); }, [project.id]);
   const toggleProfile = (p: string) => setSelectedProfiles((s) => {
@@ -402,6 +406,7 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
     if (name === active) return;
     if (dirty && !(await dialogs.confirm({ title: "Discard unsaved changes?", message: "This file has unsaved edits.", danger: true, confirmLabel: "Discard" }))) return;
     setActive(name);
+    setCurrentDir(dirOf(name)); // new files land next to the one you opened
     setDraft(files?.find((x) => x.name === name)?.content ?? "");
   };
 
@@ -413,19 +418,21 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
   };
 
   const addFile = async () => {
-    const name = await dialogs.prompt({ title: "New file", label: "File name", placeholder: "nginx.conf or scripts/init.sh" });
+    const name = await dialogs.prompt({ title: "New file", label: currentDir ? `File name (in ${currentDir}/)` : "File name", placeholder: "nginx.conf or scripts/init.sh" });
     if (!name) return;
+    const full = currentDir ? `${currentDir}/${name}` : name;
     setBusy("add");
-    try { await api.writeProjectFile(project.id, name, ""); loadFiles(name); }
+    try { await api.writeProjectFile(project.id, full, ""); loadFiles(full); }
     catch (e) { dialogs.alert({ title: "Could not add file", message: e instanceof Error ? e.message : "unknown error" }); }
     finally { setBusy(""); }
   };
 
   const addDir = async () => {
-    const name = await dialogs.prompt({ title: "New folder", label: "Folder name", placeholder: "config" });
+    const name = await dialogs.prompt({ title: "New folder", label: currentDir ? `Folder name (in ${currentDir}/)` : "Folder name", placeholder: "config" });
     if (!name) return;
+    const full = currentDir ? `${currentDir}/${name}` : name;
     setBusy("dir");
-    try { await api.makeProjectDir(project.id, name); loadFiles(); }
+    try { await api.makeProjectDir(project.id, full); setCurrentDir(full); loadFiles(); }
     catch (e) { dialogs.alert({ title: "Could not create folder", message: e instanceof Error ? e.message : "unknown error" }); }
     finally { setBusy(""); }
   };
@@ -450,8 +457,9 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
   };
 
   const upload = async (file: File) => {
+    const full = currentDir ? `${currentDir}/${file.name}` : file.name;
     setBusy("upload");
-    try { await api.writeProjectFile(project.id, file.name, await file.text()); loadFiles(file.name); }
+    try { await api.writeProjectFile(project.id, full, await file.text()); loadFiles(full); }
     catch (e) { dialogs.alert({ title: "Upload failed", message: e instanceof Error ? e.message : "unknown error" }); }
     finally { setBusy(""); if (uploadRef.current) uploadRef.current.value = ""; }
   };
@@ -511,16 +519,23 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
           <div className="w-56 shrink-0 border-r border-border flex flex-col">
             <div className="flex items-center gap-1 p-2 border-b border-border">
               <span className="text-xs uppercase tracking-wide text-muted px-1">Files</span>
-              <button className="btn-ghost px-1.5 py-1 ml-auto" title="New file" onClick={addFile}><FilePlus className="h-4 w-4" /></button>
-              <button className="btn-ghost px-1.5 py-1" title="New folder" onClick={addDir}><FolderPlus className="h-4 w-4" /></button>
+              <button className="btn-ghost px-1.5 py-1 ml-auto" title={`New file${currentDir ? ` in ${currentDir}/` : ""}`} onClick={addFile}><FilePlus className="h-4 w-4" /></button>
+              <button className="btn-ghost px-1.5 py-1" title={`New folder${currentDir ? ` in ${currentDir}/` : ""}`} onClick={addDir}><FolderPlus className="h-4 w-4" /></button>
               <button className="btn-ghost px-1.5 py-1" title="Upload file" onClick={() => uploadRef.current?.click()}><Upload className="h-4 w-4" /></button>
               <input ref={uploadRef} type="file" className="hidden" onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
             </div>
+            {currentDir && (
+              <div className="flex items-center gap-1 px-2 py-1 border-b border-border text-[11px] text-accent font-mono" title={`New items are created in ${currentDir}/`}>
+                <Folder className="h-3 w-3 shrink-0" />
+                <span className="truncate">{currentDir}/</span>
+                <button className="ml-auto text-muted hover:text-text" title="Create in the project root" onClick={() => setCurrentDir("")}><X className="h-3 w-3" /></button>
+              </div>
+            )}
             <div className="flex-1 overflow-auto p-1">
               {files === null ? <div className="p-3 text-muted text-sm flex items-center gap-2"><Spinner /> …</div> :
                 files.length === 0 ? <div className="p-3 text-muted text-xs">No files</div> :
                 buildTree(files).map((n) => (
-                  <TreeItem key={n.path} node={n} depth={0} active={active} dirty={dirty} collapsed={collapsedDirs} onToggle={toggleDir} onSelect={select} onDelete={removeEntry} />
+                  <TreeItem key={n.path} node={n} depth={0} active={active} dirty={dirty} collapsed={collapsedDirs} currentDir={currentDir} onToggle={toggleDir} onSelect={select} onSelectDir={setCurrentDir} onDelete={removeEntry} />
                 ))}
             </div>
           </div>
