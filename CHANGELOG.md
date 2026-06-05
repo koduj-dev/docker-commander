@@ -6,23 +6,30 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-06-05
+
 ### Added
-- **Disable a host** — toggle a host off so the monitor ignores it entirely (no
-  events stream, no stats sampling), e.g. for a laptop/host that's offline. The
-  Hosts page shows a `disabled` badge and an enable/disable button.
+- **Compose stacks (discover & manage)** — a Stacks view that groups containers
+  by their `com.docker.compose.project` label (so stacks started with the
+  `docker compose` CLI show up too), with start / stop / restart / remove for a
+  whole stack and a read-only **view of the stack's compose file** (read from
+  the host — directly for the local daemon, over SSH for ssh hosts). A status
+  LED, filter (name / service / image, by state), collapse/expand, and a
+  cursor-following hover card with ports.
 - **Compose projects** — create and edit a managed project *folder* (a compose
   file plus sidecar configs / scripts / init files) in a built-in multi-file
   **tree editor**, then **deploy it with the host's `docker compose` CLI** —
   including selecting **compose profiles** to enable. Import/export a project as
   a `.zip`, redeploy, and bring it down. Deployed projects appear on the Stacks
-  page (lifecycle + view-compose reused), and link back and forth. Targets the
+  page (lifecycle + view-compose reused) and link back and forth. Targets the
   local Docker host; Deploy/Down are disabled when the compose CLI isn't present.
-- **Compose stacks (discover & manage)** — a Stacks view that groups containers
-  by their `com.docker.compose.project` label (so stacks started with the
-  `docker compose` CLI show up too), with start / stop / restart / remove for a
-  whole stack and a read-only **view of the stack's compose file** (read from
-  the host — directly for the local daemon, over SSH for ssh hosts). Deploying a
-  stack from a compose file comes next.
+- **Disable a host** — toggle a host off so the monitor ignores it entirely (no
+  events stream, no stats sampling) and it's dropped from the host switcher —
+  e.g. for a laptop/host that's offline. The Hosts page shows a `disabled` badge
+  and an enable/disable button.
+- App-wide UX: in-app confirm / prompt / alert dialogs (replacing the browser
+  ones), each page header shows its section icon, and the sidebar logo links to
+  the Dashboard.
 
 ### Fixed
 - UI slowness on hosts with many containers: the dashboard resource overview no
@@ -36,6 +43,12 @@ All notable changes to Docker Commander are documented here. The format follows
 - Dashboard "Open ports" no longer shows ports of containers that have since
   stopped — the cached scan is filtered to the currently-running containers and
   refreshes on Docker lifecycle events.
+- Restored the pointer cursor on buttons (Tailwind v4 had dropped it).
+
+### Changed
+- Upgraded the frontend stack to current majors: **React 19**, **Vite 8**,
+  `@vitejs/plugin-react` 6, **React Router 7**, **Tailwind CSS 4** (and the
+  GitHub Actions to v6). No behavioural changes intended.
 
 ### Project / infrastructure
 - Community health files: Code of Conduct, contributing guide, security policy,

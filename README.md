@@ -48,9 +48,10 @@ level filters, regex search and structured parsing.
 - **File browser** inside containers — list, download, upload, delete (`docker cp`).
 - Images: pull (live progress), build, push, tag, save/load/import, history, prune.
 - Volumes & networks: list, inspect, create, remove, prune (see which containers use each volume).
+- **Compose** — discover & manage **Stacks** by label (CLI-created ones too: start/stop/restart/remove, view compose file), and **Projects**: managed compose *folders* (a compose file + sidecar configs/scripts) edited in a built-in **tree editor** and **deployed via the `docker compose` CLI** with **profile** selection and `.zip` import/export.
 
 **Multi-host**
-- Manage **local**, **TCP(+TLS)** and **SSH** daemons; SSH **host keys are verified** (known_hosts / trust-on-first-use). Every view rebinds to the selected host, and the alert engine watches **all** hosts. A per-host **detail** panel shows the hardware / OS / engine.
+- Manage **local**, **TCP(+TLS)** and **SSH** daemons; SSH **host keys are verified** (known_hosts / trust-on-first-use). Every view rebinds to the selected host, and the alert engine watches **all** hosts. A per-host **detail** panel shows the hardware / OS / engine, and a host can be **disabled** to take it out of monitoring (e.g. an offline laptop).
 
 **Alerting & integrations**
 - Rules on **state**, **resource thresholds**, **log patterns** and **restart/crash-loops** — editable, with severity & cooldown.

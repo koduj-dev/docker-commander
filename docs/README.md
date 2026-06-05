@@ -8,6 +8,8 @@ two cover installation and configuration.
 ## Compute
 - [Dashboard](dashboard.md) — host overview, disk usage, running containers
 - [Containers](containers.md) — create/run, lifecycle, console, files, logs, processes
+- [Stacks](stacks.md) — Compose stacks: discover, lifecycle, view compose file
+- [Projects](projects.md) — managed Compose folders: edit, deploy, profiles, import/export
 - [Images](images.md) — pull, build, push, tag, save/load/import, history, prune
 - [Volumes](volumes.md) — list, inspect, create, remove, prune
 
