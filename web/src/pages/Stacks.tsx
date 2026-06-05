@@ -1,34 +1,44 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Blocks, Play, Square, RotateCw, Trash2, Loader2, FileText, X } from "lucide-react";
+import { Blocks, Play, Square, RotateCw, Trash2, Loader2, FileText, X, ChevronRight, Search } from "lucide-react";
 import { api } from "../lib/api";
-import type { Stack } from "../lib/types";
+import type { Stack, StackContainer } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { StateBadge, EmptyState, Spinner } from "../components/ui";
 import { useDockerEventTick } from "../lib/dockerEvents";
+import { getPref, setPref } from "../lib/prefs";
+import { shortId } from "../lib/format";
 
 type ComposeView = { project: string; loading: boolean; path?: string; content?: string; error?: string };
+
+function matchStack(s: Stack, q: string): boolean {
+  if (s.project.toLowerCase().includes(q)) return true;
+  return s.containers.some(
+    (c) => c.service.toLowerCase().includes(q) || c.name.toLowerCase().includes(q) || c.image.toLowerCase().includes(q),
+  );
+}
 
 export function Stacks() {
   const [stacks, setStacks] = useState<Stack[] | null>(null);
   const [busy, setBusy] = useState(""); // project currently acting
   const [compose, setCompose] = useState<ComposeView | null>(null);
+  const [query, setQuery] = useState(() => getPref<string>("stacks.query", ""));
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => getPref("stacks.collapsed", {}));
   const tick = useDockerEventTick();
-
-  const viewCompose = async (project: string) => {
-    setCompose({ project, loading: true });
-    try {
-      const r = await api.stackCompose(project);
-      setCompose(r.ok ? { project, loading: false, path: r.path, content: r.content } : { project, loading: false, error: r.error });
-    } catch (e) {
-      setCompose({ project, loading: false, error: e instanceof Error ? e.message : "failed to read compose file" });
-    }
-  };
 
   const load = useCallback(() => {
     api.stacks().then(setStacks).catch(() => setStacks([]));
   }, []);
   useEffect(() => load(), [load, tick]);
+
+  const setSearch = (q: string) => { setQuery(q); setPref("stacks.query", q); };
+  const toggle = (project: string) => {
+    setCollapsed((c) => {
+      const next = { ...c, [project]: !c[project] };
+      setPref("stacks.collapsed", next);
+      return next;
+    });
+  };
 
   const act = async (project: string, action: string) => {
     if (
@@ -45,6 +55,22 @@ export function Stacks() {
     }
   };
 
+  const viewCompose = async (project: string) => {
+    setCompose({ project, loading: true });
+    try {
+      const r = await api.stackCompose(project);
+      setCompose(r.ok ? { project, loading: false, path: r.path, content: r.content } : { project, loading: false, error: r.error });
+    } catch (e) {
+      setCompose({ project, loading: false, error: e instanceof Error ? e.message : "failed to read compose file" });
+    }
+  };
+
+  const shown = useMemo(() => {
+    if (!stacks) return [];
+    const q = query.trim().toLowerCase();
+    return q ? stacks.filter((s) => matchStack(s, q)) : stacks;
+  }, [stacks, query]);
+
   if (!stacks)
     return (
       <>
@@ -55,53 +81,70 @@ export function Stacks() {
 
   return (
     <>
-      <PageHeader title="Stacks" />
-      <div className="p-6 space-y-4">
+      <PageHeader
+        title="Stacks"
+        actions={
+          stacks.length > 0 && (
+            <div className="relative w-64">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted" />
+              <input className="input pl-8 py-1.5" placeholder="Filter stacks, services, images…" value={query} onChange={(e) => setSearch(e.target.value)} />
+            </div>
+          )
+        }
+      />
+      <div className="p-6 space-y-3">
         {stacks.length === 0 ? (
           <EmptyState
             title="No Compose stacks"
             hint="Containers labelled with com.docker.compose.project (e.g. started via docker compose) show up here grouped as stacks."
           />
+        ) : shown.length === 0 ? (
+          <p className="text-sm text-muted">No stacks match “{query}”.</p>
         ) : (
-          stacks.map((s) => (
-            <div key={s.project} className="card p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 font-medium">
-                    <Blocks className="h-4 w-4 text-accent" /> {s.project}
-                    <span className="text-xs text-muted">{s.running}/{s.containers.length} running</span>
+          shown.map((s) => {
+            const isOpen = !collapsed[s.project];
+            return (
+              <div key={s.project} className="card p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <button className="flex items-center gap-2 min-w-0 text-left" onClick={() => toggle(s.project)} title={isOpen ? "Collapse" : "Expand"}>
+                    <ChevronRight className={`h-4 w-4 shrink-0 text-muted transition-transform ${isOpen ? "rotate-90" : ""}`} />
+                    <Blocks className="h-4 w-4 text-accent shrink-0" />
+                    <span className="font-medium truncate">{s.project}</span>
+                    <span className="text-xs text-muted shrink-0">{s.running}/{s.containers.length} running</span>
+                  </button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {busy === s.project ? (
+                      <Loader2 className="h-4 w-4 animate-spin text-muted" />
+                    ) : (
+                      <>
+                        {s.configFile && (
+                          <button className="btn-ghost px-2 py-1" title="View compose file" onClick={() => viewCompose(s.project)}><FileText className="h-4 w-4" /></button>
+                        )}
+                        <button className="btn-ghost px-2 py-1" title="Start" onClick={() => act(s.project, "start")}><Play className="h-4 w-4" /></button>
+                        <button className="btn-ghost px-2 py-1" title="Stop" onClick={() => act(s.project, "stop")}><Square className="h-4 w-4" /></button>
+                        <button className="btn-ghost px-2 py-1" title="Restart" onClick={() => act(s.project, "restart")}><RotateCw className="h-4 w-4" /></button>
+                        <button className="btn-ghost px-2 py-1 text-danger" title="Remove stack" onClick={() => act(s.project, "remove")}><Trash2 className="h-4 w-4" /></button>
+                      </>
+                    )}
                   </div>
-                  {s.configFile && <div className="text-xs text-muted font-mono mt-1 break-all">{s.configFile}</div>}
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  {busy === s.project ? (
-                    <Loader2 className="h-4 w-4 animate-spin text-muted" />
-                  ) : (
-                    <>
-                      {s.configFile && (
-                        <button className="btn-ghost px-2 py-1" title="View compose file" onClick={() => viewCompose(s.project)}><FileText className="h-4 w-4" /></button>
-                      )}
-                      <button className="btn-ghost px-2 py-1" title="Start" onClick={() => act(s.project, "start")}><Play className="h-4 w-4" /></button>
-                      <button className="btn-ghost px-2 py-1" title="Stop" onClick={() => act(s.project, "stop")}><Square className="h-4 w-4" /></button>
-                      <button className="btn-ghost px-2 py-1" title="Restart" onClick={() => act(s.project, "restart")}><RotateCw className="h-4 w-4" /></button>
-                      <button className="btn-ghost px-2 py-1 text-danger" title="Remove stack" onClick={() => act(s.project, "remove")}><Trash2 className="h-4 w-4" /></button>
-                    </>
-                  )}
-                </div>
-              </div>
 
-              <div className="mt-3 divide-y divide-border rounded-lg border border-border overflow-hidden">
-                {s.containers.map((c) => (
-                  <div key={c.id} className="flex items-center gap-3 px-3 py-2 text-sm bg-panel">
-                    <span className="w-28 shrink-0 font-medium truncate">{c.service || "—"}</span>
-                    <StateBadge state={c.state} />
-                    <Link to={`/containers/${c.id}`} className="text-muted hover:text-accent truncate">{c.name}</Link>
-                    <span className="ml-auto text-xs text-muted font-mono truncate hidden md:block">{c.image}</span>
+                {s.configFile && (
+                  <button className="text-xs text-muted font-mono mt-1 break-all hover:text-accent text-left" onClick={() => viewCompose(s.project)} title="View compose file">
+                    {s.configFile}
+                  </button>
+                )}
+
+                {isOpen && (
+                  <div className="mt-3 rounded-lg border border-border">
+                    {s.containers.map((c, i) => (
+                      <ServiceRow key={c.id} c={c} first={i === 0} last={i === s.containers.length - 1} />
+                    ))}
                   </div>
-                ))}
+                )}
               </div>
-            </div>
-          ))
+            );
+          })
         )}
 
         <p className="text-xs text-muted">
@@ -112,7 +155,7 @@ export function Stacks() {
 
       {compose && (
         <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={() => setCompose(null)}>
-          <div className="card w-full max-w-3xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+          <div className="card w-[75vw] max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-3 p-4 border-b border-border">
               <FileText className="h-4 w-4 text-accent shrink-0" />
               <div className="min-w-0">
@@ -134,5 +177,51 @@ export function Stacks() {
         </div>
       )}
     </>
+  );
+}
+
+// ServiceRow is a container line with a floating info card on hover.
+function ServiceRow({ c, first, last }: { c: StackContainer; first: boolean; last: boolean }) {
+  const ports = (c.ports ?? []).filter((p) => p.publicPort);
+  return (
+    <div className={`group relative flex items-center gap-3 px-3 py-2 text-sm ${!first ? "border-t border-border" : ""}`}>
+      <span className="w-28 shrink-0 font-medium truncate">{c.service || "—"}</span>
+      <StateBadge state={c.state} />
+      <Link to={`/containers/${c.id}`} className="text-muted hover:text-accent truncate">{c.name}</Link>
+      <span className="ml-auto text-xs text-muted font-mono truncate hidden md:block">{c.image}</span>
+
+      {/* Floating details card */}
+      <div className={`pointer-events-none absolute left-8 z-30 hidden group-hover:block ${last ? "bottom-full mb-1" : "top-full mt-1"} w-72 rounded-lg border border-border bg-panel2 shadow-xl p-3 text-xs space-y-1.5`}>
+        <div className="flex items-center gap-2">
+          <StateBadge state={c.state} />
+          <span className="font-mono text-muted">{shortId(c.id)}</span>
+        </div>
+        <Row label="Image" value={<span className="font-mono break-all">{c.image}</span>} />
+        <Row label="Status" value={c.status} />
+        <Row
+          label="Ports"
+          value={
+            ports.length ? (
+              <span className="flex flex-wrap gap-1">
+                {ports.map((p, i) => (
+                  <span key={i} className="font-mono bg-panel rounded px-1.5 py-0.5">{p.publicPort}→{p.privatePort}/{p.type}</span>
+                ))}
+              </span>
+            ) : (
+              <span className="text-muted">none published</span>
+            )
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex gap-2">
+      <span className="text-muted w-14 shrink-0">{label}</span>
+      <span className="min-w-0">{value}</span>
+    </div>
   );
 }

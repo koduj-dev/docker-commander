@@ -31,12 +31,13 @@ const (
 
 // StackContainer is one container belonging to a Compose stack.
 type StackContainer struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Service string `json:"service"`
-	State   string `json:"state"`
-	Status  string `json:"status"`
-	Image   string `json:"image"`
+	ID      string        `json:"id"`
+	Name    string        `json:"name"`
+	Service string        `json:"service"`
+	State   string        `json:"state"`
+	Status  string        `json:"status"`
+	Image   string        `json:"image"`
+	Ports   []PortMapping `json:"ports,omitempty"`
 }
 
 // Stack is a group of containers sharing a Compose project label.
@@ -73,7 +74,7 @@ func (m *Manager) ListStacks(ctx context.Context, hostID int64) ([]Stack, error)
 		}
 		st.Containers = append(st.Containers, StackContainer{
 			ID: c.ID, Name: c.Name, Service: c.Labels[labelComposeService],
-			State: c.State, Status: c.Status, Image: c.Image,
+			State: c.State, Status: c.Status, Image: c.Image, Ports: c.Ports,
 		})
 		if c.State == "running" {
 			st.Running++

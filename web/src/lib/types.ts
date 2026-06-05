@@ -271,6 +271,7 @@ export interface StackContainer {
   state: string;
   status: string;
   image: string;
+  ports?: PortMapping[];
 }
 
 export interface Stack {
