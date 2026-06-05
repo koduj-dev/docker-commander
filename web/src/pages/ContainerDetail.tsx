@@ -78,7 +78,7 @@ export function ContainerDetail() {
 
   return (
     <>
-      <div className="flex items-center justify-between h-16 px-6 border-b border-border sticky top-0 bg-bg/80 backdrop-blur z-10">
+      <div className="flex items-center justify-between h-16 px-6 border-b border-border sticky top-0 bg-bg/80 backdrop-blur-sm z-10">
         <div className="flex items-center gap-3 min-w-0">
           <Link to="/containers" className="btn-ghost px-2 py-2"><ArrowLeft className="h-4 w-4" /></Link>
           <div className="min-w-0">
@@ -221,7 +221,7 @@ function DiffList({ id }: { id: string }) {
 
   const mark = { added: { c: "text-ok", s: "A" }, modified: { c: "text-warn", s: "C" }, deleted: { c: "text-danger", s: "D" }, unknown: { c: "text-muted", s: "?" } } as const;
   return (
-    <div className="card p-3 font-mono text-xs space-y-0.5 max-h-[28rem] overflow-auto">
+    <div className="card p-3 font-mono text-xs space-y-0.5 max-h-112 overflow-auto">
       {diff.map((d, i) => (
         <div key={i} className="flex gap-2">
           <span className={`w-4 shrink-0 font-bold ${mark[d.kind].c}`}>{mark[d.kind].s}</span>
@@ -310,11 +310,11 @@ function PortsPanel({ id, ports }: { id: string; ports: PortMapping[] }) {
 function ProbeTag({ port, probe }: { port: PortMapping; probe?: PortProbe }) {
   if (probe) {
     if (!probe.open) {
-      return <span className="text-[11px] rounded px-1.5 py-0.5 bg-danger/15 text-danger" title={probe.error}>{probe.error || "closed"}</span>;
+      return <span className="text-[11px] rounded-sm px-1.5 py-0.5 bg-danger/15 text-danger" title={probe.error}>{probe.error || "closed"}</span>;
     }
     const label = probe.detected || "open · unknown";
     return (
-      <span className="text-[11px] rounded px-1.5 py-0.5 bg-ok/15 text-ok" title={probe.info || probe.guessByPort}>
+      <span className="text-[11px] rounded-sm px-1.5 py-0.5 bg-ok/15 text-ok" title={probe.info || probe.guessByPort}>
         {label}
         {probe.tls && " 🔒"}
         {probe.info ? ` · ${probe.info}` : ""}

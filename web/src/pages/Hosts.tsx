@@ -89,7 +89,7 @@ export function Hosts() {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 font-medium">
                         <Server className="h-4 w-4 text-accent" /> {h.name}
-                        <span className="text-xs bg-panel2 rounded px-1.5 py-0.5 text-muted">{h.kind}</span>
+                        <span className="text-xs bg-panel2 rounded-sm px-1.5 py-0.5 text-muted">{h.kind}</span>
                       </div>
                       <div className="text-xs text-muted font-mono mt-1 break-all">{h.address || "(local socket)"}</div>
                     </div>
@@ -115,7 +115,7 @@ export function Hosts() {
                             <ShieldAlert className="h-3.5 w-3.5" /> Host key not trusted yet
                           </div>
                           <div className="text-muted">Verify this fingerprint out-of-band before trusting:</div>
-                          <code className="block break-all bg-panel2 rounded px-2 py-1 text-text">
+                          <code className="block break-all bg-panel2 rounded-sm px-2 py-1 text-text">
                             {t.keyType} {t.fingerprint}
                           </code>
                           <button
@@ -134,7 +134,7 @@ export function Hosts() {
                           </div>
                           <div className="text-muted">{t.text}</div>
                           {t.fingerprint && (
-                            <code className="block break-all bg-panel2 rounded px-2 py-1 text-text">{t.fingerprint}</code>
+                            <code className="block break-all bg-panel2 rounded-sm px-2 py-1 text-text">{t.fingerprint}</code>
                           )}
                           <button
                             className="btn-ghost px-2.5 py-1 text-xs text-danger border border-danger/40"

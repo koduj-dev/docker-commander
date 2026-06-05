@@ -175,7 +175,7 @@ function Rules() {
               {rules.map((r) => (
                 <tr key={r.id} className="border-b border-border/50">
                   <td className="px-4 py-2.5 font-medium">{r.name}</td>
-                  <td className="px-4 py-2.5"><span className="text-xs bg-panel2 rounded px-1.5 py-0.5">{r.type}</span></td>
+                  <td className="px-4 py-2.5"><span className="text-xs bg-panel2 rounded-sm px-1.5 py-0.5">{r.type}</span></td>
                   <td className="px-4 py-2.5 font-mono text-xs text-muted">{r.target || "*"}</td>
                   <td className="px-4 py-2.5"><span className={clsx("text-xs px-2 py-0.5 rounded-md capitalize", sevBadge[r.severity])}>{r.severity}</span></td>
                   <td className="px-4 py-2.5 font-mono text-[11px] text-muted max-w-[220px] truncate">{r.config}</td>

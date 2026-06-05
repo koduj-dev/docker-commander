@@ -1,6 +1,71 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --color-bg: #0b0f17;
+  --color-panel: #121826;
+  --color-panel2: #1a2233;
+  --color-border: #243047;
+  --color-muted: #8b97ad;
+  --color-text: #e6ebf4;
+  --color-accent: #2496ed;
+  --color-accent2: #1d7fd1;
+  --color-ok: #2dd4a7;
+  --color-warn: #f5b14c;
+  --color-danger: #f0616d;
+
+  --font-sans: Inter, system-ui, Segoe UI, Roboto, sans-serif;
+  --font-mono: JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
+
+@utility card {
+  @apply bg-panel border border-border rounded-xl;
+}
+
+@utility btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium
+           transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+}
+
+@utility btn-primary {
+  @apply btn bg-accent hover:bg-accent2 text-white;
+}
+
+@utility btn-ghost {
+  @apply btn bg-panel2 hover:bg-border text-text;
+}
+
+@utility btn-danger {
+  @apply btn bg-danger/15 hover:bg-danger/25 text-danger;
+}
+
+@utility input {
+  @apply w-full rounded-lg bg-panel2 border border-border px-3 py-2 text-sm text-text
+           placeholder:text-muted focus:outline-hidden focus:ring-2 focus:ring-accent/60;
+}
+
+@utility label {
+  @apply block text-xs font-medium text-muted mb-1.5;
+}
 
 @layer base {
   html,
@@ -27,36 +92,10 @@
     height: 10px;
   }
   ::-webkit-scrollbar-thumb {
-    @apply bg-border rounded;
+    @apply bg-border rounded-sm;
   }
   ::-webkit-scrollbar-track {
     background: transparent;
-  }
-}
-
-@layer components {
-  .card {
-    @apply bg-panel border border-border rounded-xl;
-  }
-  .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium
-           transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
-  }
-  .btn-primary {
-    @apply btn bg-accent hover:bg-accent2 text-white;
-  }
-  .btn-ghost {
-    @apply btn bg-panel2 hover:bg-border text-text;
-  }
-  .btn-danger {
-    @apply btn bg-danger/15 hover:bg-danger/25 text-danger;
-  }
-  .input {
-    @apply w-full rounded-lg bg-panel2 border border-border px-3 py-2 text-sm text-text
-           placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-accent/60;
-  }
-  .label {
-    @apply block text-xs font-medium text-muted mb-1.5;
   }
 }
 

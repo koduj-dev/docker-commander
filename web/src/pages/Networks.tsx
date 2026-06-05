@@ -45,11 +45,11 @@ export function Networks() {
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
                     {n.internal ? (
-                      <span className="text-[10px] bg-warn/15 text-warn rounded px-1.5 py-0.5">internal</span>
+                      <span className="text-[10px] bg-warn/15 text-warn rounded-sm px-1.5 py-0.5">internal</span>
                     ) : (
-                      <span className="text-[10px] bg-ok/15 text-ok rounded px-1.5 py-0.5">external</span>
+                      <span className="text-[10px] bg-ok/15 text-ok rounded-sm px-1.5 py-0.5">external</span>
                     )}
-                    <span className="text-xs bg-panel2 rounded px-2 py-0.5 text-muted">{n.driver}</span>
+                    <span className="text-xs bg-panel2 rounded-sm px-2 py-0.5 text-muted">{n.driver}</span>
                   </div>
                 </div>
                 <div className="text-xs text-muted font-mono mt-1">{shortId(n.id)}</div>

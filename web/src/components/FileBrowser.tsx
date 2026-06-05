@@ -97,7 +97,7 @@ export function FileBrowser({ containerId }: { containerId: string }) {
 
       {error && <div className="px-3 py-2 text-xs text-danger border-b border-border break-all">{error}</div>}
 
-      <div className="overflow-auto max-h-[28rem]">
+      <div className="overflow-auto max-h-112">
         {entries === null ? (
           <div className="flex items-center gap-2 text-muted text-sm p-4"><Spinner className="h-4 w-4" /> Loading…</div>
         ) : sorted.length === 0 ? (

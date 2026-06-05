@@ -64,5 +64,5 @@ export function Terminal({ containerId }: { containerId: string }) {
     };
   }, [containerId]);
 
-  return <div ref={ref} className="h-[28rem] w-full rounded-lg overflow-hidden bg-bg p-2" />;
+  return <div ref={ref} className="h-112 w-full rounded-lg overflow-hidden bg-bg p-2" />;
 }
