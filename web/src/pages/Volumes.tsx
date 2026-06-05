@@ -101,9 +101,9 @@ export function Volumes() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-medium text-sm break-all">{v.name}</span>
-                        <span className="text-[10px] bg-panel2 rounded px-1.5 py-0.5 text-muted">{v.driver}</span>
+                        <span className="text-[10px] bg-panel2 rounded-sm px-1.5 py-0.5 text-muted">{v.driver}</span>
                         {inUse && (
-                          <span className="text-[10px] bg-ok/15 text-ok rounded px-1.5 py-0.5 inline-flex items-center gap-1">
+                          <span className="text-[10px] bg-ok/15 text-ok rounded-sm px-1.5 py-0.5 inline-flex items-center gap-1">
                             <Boxes className="h-3 w-3" /> in use by {(v.inUseBy ?? []).join(", ")}
                           </span>
                         )}

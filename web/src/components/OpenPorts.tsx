@@ -104,7 +104,7 @@ export function OpenPorts({ tick = 0 }: { tick?: number }) {
             <tbody>
               {visible.map((r, i) => (
                 <tr key={i} className="border-t border-border">
-                  <td className="px-3 py-2 font-medium truncate max-w-[14rem]">{r.containerName}</td>
+                  <td className="px-3 py-2 font-medium truncate max-w-56">{r.containerName}</td>
                   <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">
                     {r.privatePort}/{r.type} → :{r.publicPort}
                   </td>
@@ -123,11 +123,11 @@ export function OpenPorts({ tick = 0 }: { tick?: number }) {
 
 function ServiceCell({ r }: { r: HostPortProbe }) {
   if (!r.open) {
-    return <span className="text-xs rounded px-1.5 py-0.5 bg-danger/15 text-danger" title={r.error}>{r.error || "closed"}</span>;
+    return <span className="text-xs rounded-sm px-1.5 py-0.5 bg-danger/15 text-danger" title={r.error}>{r.error || "closed"}</span>;
   }
   return (
     <span className="inline-flex items-center gap-1.5 flex-wrap">
-      <span className="text-xs rounded px-1.5 py-0.5 bg-ok/15 text-ok">{r.detected || "open · unknown"}</span>
+      <span className="text-xs rounded-sm px-1.5 py-0.5 bg-ok/15 text-ok">{r.detected || "open · unknown"}</span>
       {r.tls && <Lock className="h-3 w-3 text-ok" />}
       {r.info && <span className="text-xs text-muted">{r.info}</span>}
       {r.guessByPort && r.guessByPort !== r.detected && <span className="text-[11px] text-muted">~ {r.guessByPort}</span>}

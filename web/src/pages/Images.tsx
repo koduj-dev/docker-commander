@@ -126,8 +126,8 @@ export function Images() {
                       ) : (
                         <span className="text-sm text-muted italic">&lt;none&gt;</span>
                       )}
-                      {img.dangling && <span className="text-[10px] bg-warn/15 text-warn rounded px-1.5 py-0.5">dangling</span>}
-                      {img.inUse && <span className="text-[10px] bg-ok/15 text-ok rounded px-1.5 py-0.5 inline-flex items-center gap-1"><Boxes className="h-3 w-3" />in use</span>}
+                      {img.dangling && <span className="text-[10px] bg-warn/15 text-warn rounded-sm px-1.5 py-0.5">dangling</span>}
+                      {img.inUse && <span className="text-[10px] bg-ok/15 text-ok rounded-sm px-1.5 py-0.5 inline-flex items-center gap-1"><Boxes className="h-3 w-3" />in use</span>}
                     </div>
                     <div className="text-xs text-muted font-mono mt-1">
                       {shortId(img.id)} · {bytes(img.size)} · {relTime(img.created)}
@@ -341,7 +341,7 @@ function LayerRow({ p }: { p: PullProgress }) {
       <span className="w-28 shrink-0 truncate text-text/70">{p.id}</span>
       <span className="w-32 shrink-0 truncate">{p.status}</span>
       {pct !== null && (
-        <div className="flex-1 h-1.5 bg-border rounded overflow-hidden">
+        <div className="flex-1 h-1.5 bg-border rounded-sm overflow-hidden">
           <div className={clsx("h-full bg-accent transition-all")} style={{ width: `${pct}%` }} />
         </div>
       )}

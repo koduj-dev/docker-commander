@@ -251,7 +251,7 @@ export function Shell({ children }: { children: ReactNode }) {
 
 export function PageHeader({ title, actions }: { title: string; actions?: ReactNode }) {
   return (
-    <div className="flex items-center justify-between h-16 px-6 border-b border-border sticky top-0 bg-bg/80 backdrop-blur z-10">
+    <div className="flex items-center justify-between h-16 px-6 border-b border-border sticky top-0 bg-bg/80 backdrop-blur-sm z-10">
       <h1 className="text-lg font-semibold">{title}</h1>
       <div className="flex items-center gap-2"><ActiveHostBadge />{actions}</div>
     </div>

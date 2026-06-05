@@ -35,7 +35,7 @@ export function HostDetailModal({ host, onClose }: { host: Host; onClose: () => 
           <Server className="h-4 w-4 text-accent shrink-0" />
           <div className="font-medium min-w-0">
             <span className="break-all">{host.name}</span>
-            <span className="text-xs bg-panel2 rounded px-1.5 py-0.5 text-muted ml-2">{host.kind}</span>
+            <span className="text-xs bg-panel2 rounded-sm px-1.5 py-0.5 text-muted ml-2">{host.kind}</span>
           </div>
           <button className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose} title="Close">
             <X className="h-4 w-4" />

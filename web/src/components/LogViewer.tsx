@@ -32,7 +32,7 @@ export function LogViewer({ lines }: Props) {
   }, [filtered, stick]);
 
   return (
-    <div className="card flex flex-col h-[28rem]">
+    <div className="card flex flex-col h-112">
       <div className="flex items-center gap-3 p-3 border-b border-border">
         <div className="relative flex-1">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted" />

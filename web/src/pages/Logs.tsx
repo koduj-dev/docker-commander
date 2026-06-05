@@ -242,7 +242,7 @@ export function Logs() {
                 onClick={() => setUseRegex((v) => !v)}
                 title={useRegex ? "Regex mode on" : "Use regular expression"}
                 className={clsx(
-                  "absolute right-1.5 top-1 px-1.5 py-1 rounded text-[11px] font-mono font-semibold transition-colors",
+                  "absolute right-1.5 top-1 px-1.5 py-1 rounded-sm text-[11px] font-mono font-semibold transition-colors",
                   useRegex ? "bg-accent/20 text-accent" : "text-muted hover:bg-panel2"
                 )}
               >

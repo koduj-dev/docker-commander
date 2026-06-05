@@ -88,7 +88,7 @@ export function PushModal({ image, onClose, onDone }: { image: ImageSummary; onC
                   <div key={l.id} className="flex items-center gap-2 text-muted">
                     <span className="w-28 shrink-0 truncate text-text/70">{l.id}</span>
                     <span className="w-32 shrink-0 truncate">{l.status}</span>
-                    {pct !== null && <div className="flex-1 h-1.5 bg-border rounded overflow-hidden"><div className="h-full bg-accent" style={{ width: `${pct}%` }} /></div>}
+                    {pct !== null && <div className="flex-1 h-1.5 bg-border rounded-sm overflow-hidden"><div className="h-full bg-accent" style={{ width: `${pct}%` }} /></div>}
                     {pct !== null && <span className="w-9 text-right">{pct}%</span>}
                   </div>
                 );

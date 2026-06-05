@@ -111,7 +111,7 @@ export function ContainerTable({ runningOnly = false, withControls = false, refr
                     {(c.ports ?? [])
                       .filter((p) => p.publicPort)
                       .map((p, i) => (
-                        <span key={i} className="text-xs font-mono bg-panel2 rounded px-1.5 py-0.5">
+                        <span key={i} className="text-xs font-mono bg-panel2 rounded-sm px-1.5 py-0.5">
                           {p.publicPort}:{p.privatePort}
                         </span>
                       ))}
@@ -120,7 +120,7 @@ export function ContainerTable({ runningOnly = false, withControls = false, refr
                 <td className="px-4 py-3 hidden xl:table-cell">
                   <div className="flex flex-wrap gap-1">
                     {(c.networks ?? []).map((n) => (
-                      <span key={n} className="text-xs bg-panel2 rounded px-1.5 py-0.5 text-muted">{n}</span>
+                      <span key={n} className="text-xs bg-panel2 rounded-sm px-1.5 py-0.5 text-muted">{n}</span>
                     ))}
                   </div>
                 </td>

@@ -280,7 +280,7 @@ function HoverCard({ hover }: { hover: Hover }) {
   const top = Math.min(hover.y + 16, window.innerHeight - 180);
   return (
     <div
-      className="pointer-events-none fixed z-[60] w-72 rounded-lg border border-border bg-panel2 shadow-xl p-3 text-xs space-y-1.5"
+      className="pointer-events-none fixed z-60 w-72 rounded-lg border border-border bg-panel2 shadow-xl p-3 text-xs space-y-1.5"
       style={{ left, top }}
     >
       <div className="flex items-center gap-2">
@@ -296,7 +296,7 @@ function HoverCard({ hover }: { hover: Hover }) {
           ports.length ? (
             <span className="flex flex-wrap gap-1">
               {ports.map((p, i) => (
-                <span key={i} className="font-mono bg-panel rounded px-1.5 py-0.5">{p.publicPort}→{p.privatePort}/{p.type}</span>
+                <span key={i} className="font-mono bg-panel rounded-sm px-1.5 py-0.5">{p.publicPort}→{p.privatePort}/{p.type}</span>
               ))}
             </span>
           ) : (
