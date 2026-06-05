@@ -118,7 +118,14 @@ func (m *Monitor) Snapshot() []ContainerStat {
 func (m *Monitor) statsLoop(ctx context.Context) {
 	t := time.NewTicker(statsInterval)
 	defer t.Stop()
+	// The first sweep can take a few seconds on a busy host; log around it so it
+	// is clear when the app is fully up (and any later "loading" is a real error,
+	// not just a not-yet-primed snapshot).
+	log.Printf("monitor: building initial stats snapshot…")
 	m.pollStats(ctx) // prime immediately
+	if ctx.Err() == nil {
+		log.Printf("monitor: stats snapshot ready (%d running containers) — fully up", m.runningInSnapshot())
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -127,6 +134,17 @@ func (m *Monitor) statsLoop(ctx context.Context) {
 			m.pollStats(ctx)
 		}
 	}
+}
+
+// runningInSnapshot counts the running containers in the current snapshot.
+func (m *Monitor) runningInSnapshot() int {
+	n := 0
+	for _, c := range m.Snapshot() {
+		if c.State == "running" {
+			n++
+		}
+	}
+	return n
 }
 
 func (m *Monitor) pollStats(ctx context.Context) {
