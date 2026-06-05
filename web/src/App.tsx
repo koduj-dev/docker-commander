@@ -8,6 +8,7 @@ import { Enroll2FA } from "./pages/Enroll2FA";
 import { Dashboard } from "./pages/Dashboard";
 import { Containers } from "./pages/Containers";
 import { ContainerDetail } from "./pages/ContainerDetail";
+import { Stacks } from "./pages/Stacks";
 import { Images } from "./pages/Images";
 import { Volumes } from "./pages/Volumes";
 import { Networks } from "./pages/Networks";
@@ -46,6 +47,7 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/containers" element={<Containers />} />
         <Route path="/containers/:id" element={<ContainerDetail />} />
+        <Route path="/stacks" element={<Stacks />} />
         <Route path="/images" element={<Images />} />
         <Route path="/volumes" element={<Volumes />} />
         <Route path="/networks" element={<Networks />} />

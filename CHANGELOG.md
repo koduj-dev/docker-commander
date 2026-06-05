@@ -6,6 +6,12 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Compose stacks (discover & manage)** — a Stacks view that groups containers
+  by their `com.docker.compose.project` label (so stacks started with the
+  `docker compose` CLI show up too), with start / stop / restart / remove for a
+  whole stack. Deploying a stack from a compose file comes next.
+
 ### Project / infrastructure
 - Community health files: Code of Conduct, contributing guide, security policy,
   and issue / pull-request templates.

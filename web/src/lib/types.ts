@@ -264,6 +264,23 @@ export interface SystemInfo {
   images: number;
 }
 
+export interface StackContainer {
+  id: string;
+  name: string;
+  service: string;
+  state: string;
+  status: string;
+  image: string;
+}
+
+export interface Stack {
+  project: string;
+  configFile?: string;
+  workingDir?: string;
+  containers: StackContainer[];
+  running: number;
+}
+
 export interface PortProbe {
   privatePort: number;
   publicPort: number;
