@@ -23,6 +23,71 @@ function projectState(stack: Stack | undefined): { cls: string; label: string; d
   return { cls: "bg-warn text-warn", label: "Partial", deployed: true };
 }
 
+type TreeNode = { name: string; path: string; isDir: boolean; children: TreeNode[] };
+
+// buildTree turns the flat file list (paths like "config/app.conf") into a
+// nested tree, materialising intermediate folders.
+function buildTree(files: ProjectFile[]): TreeNode[] {
+  const root: TreeNode = { name: "", path: "", isDir: true, children: [] };
+  const dirs = new Map<string, TreeNode>([["", root]]);
+  const ensureDir = (path: string): TreeNode => {
+    const hit = dirs.get(path);
+    if (hit) return hit;
+    const slash = path.lastIndexOf("/");
+    const parent = ensureDir(slash >= 0 ? path.slice(0, slash) : "");
+    const node: TreeNode = { name: path.slice(slash + 1), path, isDir: true, children: [] };
+    parent.children.push(node);
+    dirs.set(path, node);
+    return node;
+  };
+  for (const f of files) {
+    const slash = f.name.lastIndexOf("/");
+    if (f.isDir) { ensureDir(f.name); continue; }
+    const parent = ensureDir(slash >= 0 ? f.name.slice(0, slash) : "");
+    parent.children.push({ name: f.name.slice(slash + 1), path: f.name, isDir: false, children: [] });
+  }
+  const sort = (n: TreeNode) => {
+    n.children.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
+    n.children.forEach(sort);
+  };
+  sort(root);
+  return root.children;
+}
+
+// TreeItem renders one tree node (folder or file) recursively.
+function TreeItem({ node, depth, active, dirty, collapsed, onToggle, onSelect, onDelete }: {
+  node: TreeNode; depth: number; active: string; dirty: boolean;
+  collapsed: Set<string>; onToggle: (path: string) => void;
+  onSelect: (path: string) => void; onDelete: (n: { name: string; isDir?: boolean }) => void;
+}) {
+  const pad = { paddingLeft: `${depth * 12 + 6}px` };
+  if (node.isDir) {
+    const open = !collapsed.has(node.path);
+    return (
+      <>
+        <div className="group flex items-center gap-1 rounded px-2 py-1 text-sm hover:bg-panel2 cursor-pointer" style={pad} onClick={() => onToggle(node.path)}>
+          <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-muted transition-transform ${open ? "rotate-90" : ""}`} />
+          <Folder className="h-3.5 w-3.5 shrink-0 text-muted" />
+          <span className="truncate font-mono text-xs text-muted">{node.name}</span>
+          <button className="ml-auto opacity-0 group-hover:opacity-100 text-danger" title="Delete folder" onClick={(e) => { e.stopPropagation(); onDelete({ name: node.path, isDir: true }); }}><Trash2 className="h-3.5 w-3.5" /></button>
+        </div>
+        {open && node.children.map((c) => (
+          <TreeItem key={c.path} node={c} depth={depth + 1} active={active} dirty={dirty} collapsed={collapsed} onToggle={onToggle} onSelect={onSelect} onDelete={onDelete} />
+        ))}
+      </>
+    );
+  }
+  const isActive = node.path === active;
+  return (
+    <div className={`group flex items-center gap-1 rounded px-2 py-1 text-sm cursor-pointer ${isActive ? "bg-accent/15 text-accent" : "hover:bg-panel2"}`} style={pad} onClick={() => onSelect(node.path)}>
+      <FileText className="h-3.5 w-3.5 shrink-0 opacity-70" />
+      <span className="truncate font-mono text-xs">{node.name}</span>
+      {dirty && isActive && <span className="text-warn text-xs">●</span>}
+      <button className="ml-auto opacity-0 group-hover:opacity-100 text-danger" title="Delete file" onClick={(e) => { e.stopPropagation(); onDelete({ name: node.path, isDir: false }); }}><Trash2 className="h-3.5 w-3.5" /></button>
+    </div>
+  );
+}
+
 // downloadText triggers a client-side download of in-memory text.
 function downloadText(name: string, content: string) {
   const url = URL.createObjectURL(new Blob([content], { type: "text/plain" }));
@@ -84,7 +149,8 @@ export function Projects() {
   const runCompose = async (p: Project, kind: Kind) => {
     setBusy(p.slug);
     try {
-      const r = kind === "deploy" ? await api.deployProject(p.id) : kind === "down" ? await api.downProject(p.id) : await api.restartProject(p.id);
+      const r = kind === "deploy" ? await api.deployProject(p.id, getPref<string[]>(`projects.profiles.${p.slug}`, []))
+        : kind === "down" ? await api.downProject(p.id) : await api.restartProject(p.id);
       setOutput({ title: `${p.name} — ${kind}`, text: r.output || r.error || "(no output)", ok: r.ok });
       load();
     } catch (e) {
@@ -301,8 +367,19 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
   const [active, setActive] = useState<string>("");
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState("");
+  const [profiles, setProfiles] = useState<string[]>([]);
+  const [selectedProfiles, setSelectedProfiles] = useState<string[]>(() => getPref<string[]>(`projects.profiles.${project.slug}`, []));
+  const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
   const dialogs = useDialogs();
   const uploadRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { api.projectProfiles(project.id).then((r) => setProfiles(r.profiles)).catch(() => {}); }, [project.id]);
+  const toggleProfile = (p: string) => setSelectedProfiles((s) => {
+    const next = s.includes(p) ? s.filter((x) => x !== p) : [...s, p];
+    setPref(`projects.profiles.${project.slug}`, next);
+    return next;
+  });
+  const toggleDir = (path: string) => setCollapsedDirs((s) => { const n = new Set(s); n.has(path) ? n.delete(path) : n.add(path); return n; });
 
   const original = files?.find((f) => f.name === active)?.content ?? "";
   const dirty = files != null && active !== "" && draft !== original;
@@ -353,7 +430,7 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
     finally { setBusy(""); }
   };
 
-  const removeEntry = async (f: ProjectFile) => {
+  const removeEntry = async (f: { name: string; isDir?: boolean }) => {
     if (!(await dialogs.confirm({ title: `Delete ${f.isDir ? "folder" : "file"}`, message: <>Really delete <code className="font-mono text-text">{f.name}</code>?</>, danger: true, confirmLabel: "Delete" }))) return;
     setBusy("del");
     try {
@@ -383,7 +460,7 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
     if (dirty && !(await dialogs.confirm({ title: "Unsaved changes", message: "Continue with the last saved files?", confirmLabel: "Continue" }))) return;
     setBusy(kind);
     try {
-      const r = kind === "deploy" ? await api.deployProject(project.id) : kind === "down" ? await api.downProject(project.id) : await api.restartProject(project.id);
+      const r = kind === "deploy" ? await api.deployProject(project.id, selectedProfiles) : kind === "down" ? await api.downProject(project.id) : await api.restartProject(project.id);
       onOutput({ title: `${project.name} — ${kind}`, text: r.output || r.error || "(no output)", ok: r.ok });
     } catch (e) {
       onOutput({ title: `${project.name} — ${kind}`, text: e instanceof Error ? e.message : "failed", ok: false });
@@ -416,8 +493,21 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
           </div>
         </div>
 
+        {profiles.length > 0 && (
+          <div className="flex items-center gap-2 px-4 py-2 border-b border-border text-xs flex-wrap">
+            <span className="text-muted">Profiles:</span>
+            {profiles.map((pr) => {
+              const on = selectedProfiles.includes(pr);
+              return (
+                <button key={pr} onClick={() => toggleProfile(pr)} className={`px-2 py-0.5 rounded-md border font-mono ${on ? "border-accent text-accent bg-accent/10" : "border-border text-muted hover:text-text"}`}>{pr}</button>
+              );
+            })}
+            <span className="text-muted/60">— applied on Deploy</span>
+          </div>
+        )}
+
         <div className="flex-1 flex min-h-0">
-          {/* File list */}
+          {/* File tree */}
           <div className="w-56 shrink-0 border-r border-border flex flex-col">
             <div className="flex items-center gap-1 p-2 border-b border-border">
               <span className="text-xs uppercase tracking-wide text-muted px-1">Files</span>
@@ -429,17 +519,8 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
             <div className="flex-1 overflow-auto p-1">
               {files === null ? <div className="p-3 text-muted text-sm flex items-center gap-2"><Spinner /> …</div> :
                 files.length === 0 ? <div className="p-3 text-muted text-xs">No files</div> :
-                files.map((f) => (
-                  <div
-                    key={f.name}
-                    className={`group flex items-center gap-1 rounded px-2 py-1 text-sm ${f.isDir ? "" : "cursor-pointer"} ${f.name === active ? "bg-accent/15 text-accent" : "hover:bg-panel2"}`}
-                    onClick={() => !f.isDir && select(f.name)}
-                  >
-                    {f.isDir ? <Folder className="h-3.5 w-3.5 shrink-0 text-muted" /> : <FileText className="h-3.5 w-3.5 shrink-0 opacity-70" />}
-                    <span className={`truncate font-mono text-xs ${f.isDir ? "text-muted" : ""}`}>{f.name}</span>
-                    {dirty && f.name === active && <span className="text-warn text-xs">●</span>}
-                    <button className="ml-auto opacity-0 group-hover:opacity-100 text-danger" title="Delete" onClick={(e) => { e.stopPropagation(); removeEntry(f); }}><Trash2 className="h-3.5 w-3.5" /></button>
-                  </div>
+                buildTree(files).map((n) => (
+                  <TreeItem key={n.path} node={n} depth={0} active={active} dirty={dirty} collapsed={collapsedDirs} onToggle={toggleDir} onSelect={select} onDelete={removeEntry} />
                 ))}
             </div>
           </div>

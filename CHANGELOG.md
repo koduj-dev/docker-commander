@@ -9,10 +9,11 @@ All notable changes to Docker Commander are documented here. The format follows
 ### Added
 - **Compose projects** — create and edit a managed project *folder* (a compose
   file plus sidecar configs / scripts / init files) in a built-in multi-file
-  editor, then **deploy it with the host's `docker compose` CLI**. Deployed
-  projects appear on the Stacks page (lifecycle + view-compose reused). Targets
-  the local Docker host; Deploy/Down are disabled when the compose CLI isn't
-  present.
+  **tree editor**, then **deploy it with the host's `docker compose` CLI** —
+  including selecting **compose profiles** to enable. Import/export a project as
+  a `.zip`, redeploy, and bring it down. Deployed projects appear on the Stacks
+  page (lifecycle + view-compose reused), and link back and forth. Targets the
+  local Docker host; Deploy/Down are disabled when the compose CLI isn't present.
 - **Compose stacks (discover & manage)** — a Stacks view that groups containers
   by their `com.docker.compose.project` label (so stacks started with the
   `docker compose` CLI show up too), with start / stop / restart / remove for a

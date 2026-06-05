@@ -411,9 +411,49 @@ func (s *Server) handleRenameProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// handleDeployProject runs `docker compose up -d` in the project folder.
+// handleDeployProject runs `docker compose up -d` (with any selected profiles).
 func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
-	s.runProjectCompose(w, r, docker.ComposeUp, "deploy")
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	if !docker.ComposeAvailable(r.Context()) {
+		writeErr(w, http.StatusPreconditionFailed, "the `docker compose` CLI is not available on the host running Docker Commander")
+		return
+	}
+	var body struct {
+		Profiles []string `json:"profiles"`
+	}
+	_ = decodeJSON(r, &body) // body is optional (empty → no profiles)
+	out, err := docker.ComposeUp(r.Context(), s.projectRoot(p.ID), p.Slug, body.Profiles)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "output": out})
+		return
+	}
+	s.audit(r, "project.deploy", p.Slug, strings.Join(body.Profiles, ","))
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out})
+}
+
+// handleProjectProfiles lists the compose profiles defined in the project.
+func (s *Server) handleProjectProfiles(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	if !docker.ComposeAvailable(r.Context()) {
+		writeJSON(w, http.StatusOK, map[string]any{"profiles": []string{}})
+		return
+	}
+	profiles, err := docker.ComposeProfiles(r.Context(), s.projectRoot(p.ID), p.Slug)
+	if err != nil {
+		// Best-effort: an invalid compose file just means no profiles to offer.
+		writeJSON(w, http.StatusOK, map[string]any{"profiles": []string{}, "error": err.Error()})
+		return
+	}
+	if profiles == nil {
+		profiles = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"profiles": profiles})
 }
 
 // handleDownProject runs `docker compose down`.

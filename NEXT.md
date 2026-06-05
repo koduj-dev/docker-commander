@@ -44,6 +44,7 @@ encrypted secrets), useful locally out of the box, and friendly to ops
 - **Alert-rule import/export** — JSON bundle of rules. _Why: reproducible setups across deployments._
 - **Section-gated WebSocket** — the shared stats/logs WS (`/api/ws`) is not section-gated today; RBAC is enforced on REST. _Why: tighten read access for restricted users._
 - **Container create from compose / templates** — beyond the single-container form. _Why: real stacks._
+- **Per-host monitoring health** — track each host's reachability in the monitor (the events stream already backs off exponentially when a host is down) and surface it: a 🔴 "unreachable" indicator on the Hosts page (and per-host badge), plus an optional alert when a host goes offline / recovers. _Why: when a host drops (laptop offline, daemon down) you want to *see* it, not just find retries in the log._
 
 ## ⚠️ Gotchas worth remembering
 

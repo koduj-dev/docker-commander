@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -26,10 +27,33 @@ func composeProbe(ctx context.Context, bin string) bool {
 	return exec.CommandContext(cctx, bin, "compose", "version").Run() == nil
 }
 
-// ComposeUp runs `docker compose -p <slug> up -d` in dir and returns the
-// combined stdout+stderr (for display) alongside any error.
-func ComposeUp(ctx context.Context, dir, slug string) (string, error) {
-	return runCompose(ctx, dir, slug, "up", "-d")
+// ComposeUp runs `docker compose -p <slug> [--profile p…] up -d` in dir and
+// returns the combined stdout+stderr (for display) alongside any error.
+func ComposeUp(ctx context.Context, dir, slug string, profiles []string) (string, error) {
+	args := make([]string, 0, len(profiles)*2+2)
+	for _, p := range profiles {
+		if p = strings.TrimSpace(p); p != "" {
+			args = append(args, "--profile", p)
+		}
+	}
+	args = append(args, "up", "-d")
+	return runCompose(ctx, dir, slug, args...)
+}
+
+// ComposeProfiles lists the profiles defined in the project's compose file
+// (`docker compose config --profiles`), one per line.
+func ComposeProfiles(ctx context.Context, dir, slug string) ([]string, error) {
+	out, err := runCompose(ctx, dir, slug, "config", "--profiles")
+	if err != nil {
+		return nil, err
+	}
+	var profiles []string
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			profiles = append(profiles, line)
+		}
+	}
+	return profiles, nil
 }
 
 // ComposeDown runs `docker compose -p <slug> down` in dir (removes containers

@@ -239,8 +239,10 @@ export const api = {
     req<{ ok: boolean }>("PUT", `/api/projects/${id}/files`, { name, content }),
   deleteProjectFile: (id: number, path: string) =>
     req<{ ok: boolean }>("DELETE", `/api/projects/${id}/files?path=${encodeURIComponent(path)}`),
-  deployProject: (id: number) =>
-    req<{ ok: boolean; output?: string; error?: string }>("POST", `/api/projects/${id}/deploy`),
+  projectProfiles: (id: number) =>
+    req<{ profiles: string[]; error?: string }>("GET", `/api/projects/${id}/profiles`),
+  deployProject: (id: number, profiles: string[] = []) =>
+    req<{ ok: boolean; output?: string; error?: string }>("POST", `/api/projects/${id}/deploy`, { profiles }),
   downProject: (id: number) =>
     req<{ ok: boolean; output?: string; error?: string }>("POST", `/api/projects/${id}/down`),
   restartProject: (id: number) =>
