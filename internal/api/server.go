@@ -115,6 +115,18 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/stacks/{project}/compose", s.handleStackCompose)
 			r.Post("/stacks/{project}/{action}", s.handleStackAction)
 
+			// Compose projects: managed folders deployed via the docker compose
+			// CLI on the host running DC (local-only — these routes ignore ?host=).
+			r.Get("/projects", s.handleListProjects)
+			r.Post("/projects", s.handleCreateProject)
+			r.Get("/projects/{id}", s.handleGetProject)
+			r.Delete("/projects/{id}", s.handleDeleteProject)
+			r.Get("/projects/{id}/files", s.handleListProjectFiles)
+			r.Put("/projects/{id}/files", s.handleWriteProjectFile)
+			r.Delete("/projects/{id}/files", s.handleDeleteProjectFile)
+			r.Post("/projects/{id}/deploy", s.handleDeployProject)
+			r.Post("/projects/{id}/down", s.handleDownProject)
+
 			r.Get("/images", s.handleListImages)
 			r.Get("/images/history", s.handleImageHistory)
 			r.Get("/images/save", s.handleSaveImage)
