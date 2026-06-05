@@ -13,6 +13,22 @@ type ComposeView = { project: string; loading: boolean; path?: string; content?:
 type Hover = { c: StackContainer; x: number; y: number };
 const TOOLTIP_W = 288; // matches w-72
 
+// stackHealth: green = all running & healthy, red = nothing running, yellow =
+// partial or an unhealthy container.
+function stackHealth(s: Stack): "green" | "yellow" | "red" {
+  if (s.running === 0) return "red";
+  const unhealthy = s.containers.some((c) => /unhealthy/i.test(c.status));
+  if (s.running === s.containers.length && !unhealthy) return "green";
+  return "yellow";
+}
+
+function StackLed({ s }: { s: Stack }) {
+  const h = stackHealth(s);
+  const cls = h === "green" ? "bg-ok text-ok" : h === "yellow" ? "bg-warn text-warn" : "bg-danger text-danger";
+  const title = h === "green" ? "All running" : h === "yellow" ? "Partially running / unhealthy" : "Stopped";
+  return <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${cls}`} style={{ boxShadow: "0 0 6px currentColor" }} title={title} />;
+}
+
 function matchStack(s: Stack, q: string): boolean {
   if (s.project.toLowerCase().includes(q)) return true;
   return s.containers.some(
@@ -148,6 +164,7 @@ export function Stacks() {
                     <div className="flex items-start justify-between gap-3">
                       <button className="flex items-center gap-2 min-w-0 text-left" onClick={() => toggle(s.project)} title={isOpen ? "Collapse" : "Expand"}>
                         <ChevronRight className={`h-4 w-4 shrink-0 text-muted transition-transform ${isOpen ? "rotate-90" : ""}`} />
+                        <StackLed s={s} />
                         <Blocks className="h-4 w-4 text-accent shrink-0" />
                         <span className="font-medium truncate">{s.project}</span>
                         <span className="text-xs text-muted shrink-0">{s.running}/{s.containers.length} running</span>
