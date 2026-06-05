@@ -99,6 +99,15 @@ drivers, cgroup, and the current container/image counts.
 > describe that VM, not the Windows/macOS host — the Docker API can't see the
 > underlying OS. The **kernel** is the best hint (e.g. `…-WSL2` ⇒ Windows/WSL2).
 
+## Disabling a host
+The **⏻** button on a host card toggles it **disabled**. A disabled host is
+**ignored by the monitor** — no Docker-events stream, no stats sampling — and is
+dropped from the host switcher (there's nothing to view). This is the clean way
+to handle a host that's temporarily offline (a laptop that's been put away, a
+server being maintained): instead of the monitor retrying and logging errors,
+just disable it. Re-enable it with the same button when it's back. Disabling a
+host also drops its cached connection so nothing keeps reaching for it.
+
 ## SSH host-key verification
 On first contact with an SSH host the daemon's host key is checked against
 `~/.ssh/known_hosts`, then against a key you've trusted here:
