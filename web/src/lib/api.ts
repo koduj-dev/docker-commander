@@ -221,6 +221,15 @@ export const api = {
   // Compose projects (managed folders; local host only — no hostParam)
   projects: () => req<{ projects: Project[]; composeAvailable: boolean }>("GET", "/api/projects"),
   createProject: (name: string) => req<{ id: number; slug: string }>("POST", "/api/projects", { name }),
+  importProject: async (name: string, file: File) => {
+    const res = await fetch(`/api/projects/import?name=${encodeURIComponent(name)}`, {
+      method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/zip" }, body: file,
+    });
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : null;
+    if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText);
+    return data as { id: number; slug: string; files: number };
+  },
   renameProject: (id: number, name: string) => req<{ ok: boolean }>("PATCH", `/api/projects/${id}`, { name }),
   deleteProject: (id: number, force = false) =>
     req<{ ok: boolean; error?: string; output?: string }>("DELETE", `/api/projects/${id}${force ? "?force=1" : ""}`),

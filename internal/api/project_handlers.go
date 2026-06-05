@@ -2,8 +2,10 @@ package api
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -25,7 +27,8 @@ import (
 
 const (
 	maxProjectFiles     = 100
-	maxProjectFileBytes = 1 << 20 // 1 MiB per file
+	maxProjectFileBytes = 1 << 20  // 1 MiB per file
+	maxImportBytes      = 32 << 20 // 32 MiB for an imported .zip
 )
 
 // starterCompose seeds a new project so the editor isn't empty. The top-level
@@ -137,6 +140,70 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 
 	s.audit(r, "project.create", slug, "")
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "slug": slug})
+}
+
+// handleImportProject creates a project from an uploaded .zip (the request body
+// is the zip; ?name= sets the display name). Entries are written through the
+// same path sandbox as normal file writes.
+func (s *Server) handleImportProject(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	if name == "" {
+		writeErr(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	data, err := io.ReadAll(io.LimitReader(r.Body, maxImportBytes))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "could not read upload")
+		return
+	}
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "not a valid .zip archive")
+		return
+	}
+
+	slug := slugify(name)
+	id, err := s.store.CreateProject(r.Context(), &store.Project{Name: name, Slug: slug, CreatedBy: currentUsername(r)})
+	if errors.Is(err, store.ErrDuplicate) {
+		writeErr(w, http.StatusConflict, "a project with the name \""+slug+"\" already exists")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	root := s.projectRoot(id)
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		_ = s.store.DeleteProject(r.Context(), id)
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	count := 0
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() || count >= maxProjectFiles {
+			continue
+		}
+		full, err := safeJoin(root, f.Name) // rejects traversal/absolute
+		if err != nil || f.UncompressedSize64 > maxProjectFileBytes {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			continue
+		}
+		content, _ := io.ReadAll(io.LimitReader(rc, maxProjectFileBytes))
+		rc.Close()
+		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+			continue
+		}
+		if os.WriteFile(full, content, 0o600) == nil {
+			count++
+		}
+	}
+
+	s.audit(r, "project.import", slug, "")
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "slug": slug, "files": count})
 }
 
 // handleGetProject returns a single project's metadata.

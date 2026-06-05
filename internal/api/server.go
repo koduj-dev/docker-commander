@@ -119,6 +119,7 @@ func (s *Server) Handler() http.Handler {
 			// CLI on the host running DC (local-only — these routes ignore ?host=).
 			r.Get("/projects", s.handleListProjects)
 			r.Post("/projects", s.handleCreateProject)
+			r.Post("/projects/import", s.handleImportProject)
 			r.Get("/projects/{id}", s.handleGetProject)
 			r.Patch("/projects/{id}", s.handleRenameProject)
 			r.Delete("/projects/{id}", s.handleDeleteProject)

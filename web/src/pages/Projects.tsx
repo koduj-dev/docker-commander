@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
-  FolderGit2, Plus, Rocket, Square, RotateCw, Trash2, X, FilePlus, FolderPlus, Upload, Loader2,
-  ExternalLink, Save, FileText, Folder, Terminal, Pencil, ChevronRight, Download,
+  FolderGit2, Plus, Rocket, Square, Trash2, X, FilePlus, FolderPlus, Upload, Loader2,
+  ExternalLink, Save, FileText, Folder, Terminal, Pencil, ChevronRight, Download, Search,
 } from "lucide-react";
 import { api, ApiError } from "../lib/api";
 import type { Project, ProjectFile, Stack } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner, StateBadge } from "../components/ui";
 import { useDialogs } from "../components/Dialog";
+import { getPref, setPref } from "../lib/prefs";
 import { useDockerEventTick } from "../lib/dockerEvents";
 
 type Output = { title: string; text: string; ok: boolean };
@@ -40,6 +41,8 @@ export function Projects() {
   const [editing, setEditing] = useState<Project | null>(null);
   const [output, setOutput] = useState<Output | null>(null);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [query, setQuery] = useState(() => getPref<string>("projects.query", ""));
+  const [showNew, setShowNew] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const dialogs = useDialogs();
   const tick = useDockerEventTick();
@@ -68,17 +71,8 @@ export function Projects() {
 
   const toggleExpand = (id: number) => setExpanded((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
-  const newProject = async () => {
-    const name = await dialogs.prompt({ title: "New project", label: "Project name", placeholder: "My app" });
-    if (!name) return;
-    try {
-      const r = await api.createProject(name);
-      load();
-      setEditing({ id: r.id, name, slug: r.slug, composeFile: "compose.yml", createdBy: "", createdAt: "", updatedAt: "" });
-    } catch (e) {
-      dialogs.alert({ title: "Could not create project", message: e instanceof ApiError ? e.message : "unknown error" });
-    }
-  };
+  const setSearch = (q: string) => { setQuery(q); setPref("projects.query", q); };
+  const onCreated = (p: Project) => { setShowNew(false); load(); setEditing(p); };
 
   const rename = async (p: Project) => {
     const name = await dialogs.prompt({ title: "Rename project", label: "Display name (the identifier won't change)", defaultValue: p.name });
@@ -124,10 +118,12 @@ export function Projects() {
     return (<><PageHeader title="Projects" /><div className="p-6 flex items-center gap-2 text-muted"><Spinner /> Loading…</div></>);
 
   const editStack = editing ? stackBySlug.get(editing.slug) : undefined;
+  const q = query.trim().toLowerCase();
+  const shown = q ? projects.filter((p) => p.name.toLowerCase().includes(q) || p.slug.toLowerCase().includes(q)) : projects;
 
   return (
     <>
-      <PageHeader title="Projects" actions={<button className="btn-primary px-3 py-1.5 text-sm" onClick={newProject}><Plus className="h-4 w-4" /> New project</button>} />
+      <PageHeader title="Projects" actions={<button className="btn-primary px-3 py-1.5 text-sm" onClick={() => setShowNew(true)}><Plus className="h-4 w-4" /> New project</button>} />
       <div className="p-6 space-y-3">
         {!composeAvailable && (
           <div className="card p-3 text-sm text-warn flex items-center gap-2">
@@ -140,7 +136,18 @@ export function Projects() {
         {projects.length === 0 ? (
           <EmptyState title="No projects yet" hint="Create a project to edit a compose file plus its sidecar configs and scripts, then deploy it." />
         ) : (
-          projects.map((p) => {
+          <>
+            <div className="flex items-center gap-3">
+              <div className="relative flex-1">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted" />
+                <input className="input pl-8 py-1.5" placeholder="Filter projects…" value={query} onChange={(e) => setSearch(e.target.value)} />
+              </div>
+              <span className="text-xs text-muted shrink-0">{shown.length} of {projects.length}</span>
+            </div>
+            {shown.length === 0 ? (
+              <p className="text-sm text-muted">No projects match “{query}”.</p>
+            ) : (
+              shown.map((p) => {
             const stack = stackBySlug.get(p.slug);
             const st = projectState(stack);
             const acting = busy === p.slug;
@@ -164,7 +171,7 @@ export function Projects() {
                         <button className="btn-ghost px-2 py-1" title="Rename" onClick={() => rename(p)}><Pencil className="h-4 w-4" /></button>
                         {st.deployed ? (
                           <>
-                            <button className="btn-ghost px-2 py-1 disabled:opacity-40" title="Restart" disabled={!composeAvailable} onClick={() => runCompose(p, "restart")}><RotateCw className="h-4 w-4" /></button>
+                            <button className="btn-ghost px-2 py-1 text-accent disabled:opacity-40" title="Redeploy (docker compose up -d)" disabled={!composeAvailable} onClick={() => runCompose(p, "deploy")}><Rocket className="h-4 w-4" /></button>
                             <button className="btn-ghost px-2 py-1 disabled:opacity-40" title="Down" disabled={!composeAvailable} onClick={() => runCompose(p, "down")}><Square className="h-4 w-4" /></button>
                             <Link className="btn-ghost px-2 py-1" title="Open in Stacks" to={`/stacks?focus=${encodeURIComponent(p.slug)}`}><ExternalLink className="h-4 w-4" /></Link>
                           </>
@@ -200,8 +207,12 @@ export function Projects() {
               </div>
             );
           })
+            )}
+          </>
         )}
       </div>
+
+      {showNew && <NewProjectModal onClose={() => setShowNew(false)} onCreated={onCreated} />}
 
       {editing && (
         <ProjectEditor
@@ -227,6 +238,58 @@ export function Projects() {
         </div>
       )}
     </>
+  );
+}
+
+// NewProjectModal creates a project from a name, optionally importing a .zip.
+function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreated: (p: Project) => void }) {
+  const [name, setName] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    const n = name.trim();
+    if (!n) return;
+    setBusy(true); setErr("");
+    try {
+      const r = file ? await api.importProject(n, file) : await api.createProject(n);
+      onCreated({ id: r.id, name: n, slug: r.slug, composeFile: "compose.yml", createdBy: "", createdAt: "", updatedAt: "" });
+    } catch (e2) {
+      setErr(e2 instanceof ApiError ? e2.message : "could not create project");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+      <form className="card w-full max-w-md flex flex-col" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+        <div className="flex items-center gap-3 p-4 border-b border-border">
+          <FolderGit2 className="h-4 w-4 text-accent" />
+          <div className="font-medium">New project</div>
+          <button type="button" className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-4 space-y-3">
+          <label className="block">
+            <span className="label">Project name</span>
+            <input autoFocus className="input" value={name} placeholder="My app" onChange={(e) => setName(e.target.value)} />
+          </label>
+          <label className="block">
+            <span className="label">Import from .zip (optional)</span>
+            <input type="file" accept=".zip,application/zip" className="input py-1.5" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            {file && <span className="text-xs text-muted">Will import {file.name}</span>}
+          </label>
+          {err && <p className="text-sm text-danger">{err}</p>}
+        </div>
+        <div className="flex justify-end gap-2 p-4 border-t border-border">
+          <button type="button" className="btn-ghost px-3 py-1.5 text-sm" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40" disabled={!name.trim() || busy}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} {file ? "Import" : "Create"}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 
@@ -327,12 +390,12 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
             <div className="text-xs text-muted font-mono">{project.slug}</div>
           </div>
           <div className="flex items-center gap-1 ml-auto">
-            <a className="btn-ghost px-2 py-1.5" title="Download project as .zip" href={api.projectDownloadUrl(project.id)}><Download className="h-4 w-4" /></a>
-            <button className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40" disabled={!composeAvailable || busy === "deploy"} onClick={() => runCompose("deploy")} title={composeAvailable ? "docker compose up -d" : "docker compose CLI not available"}>
+            <a className="btn-ghost px-2 h-8" title="Download project as .zip" href={api.projectDownloadUrl(project.id)}><Download className="h-4 w-4" /></a>
+            <button className="btn-primary px-3 h-8 text-sm disabled:opacity-40" disabled={!composeAvailable || busy === "deploy"} onClick={() => runCompose("deploy")} title={composeAvailable ? "docker compose up -d" : "docker compose CLI not available"}>
               {busy === "deploy" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />} {deployed ? "Redeploy" : "Deploy"}
             </button>
-            <button className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40" disabled={!composeAvailable || !deployed || busy === "down"} onClick={() => runCompose("down")} title={deployed ? "docker compose down" : "not deployed"}>Down</button>
-            <button className="btn-ghost px-2 py-1.5" onClick={onClose}><X className="h-4 w-4" /></button>
+            <button className="btn-ghost px-3 h-8 text-sm disabled:opacity-40" disabled={!composeAvailable || !deployed || busy === "down"} onClick={() => runCompose("down")} title={deployed ? "docker compose down" : "not deployed"}>Down</button>
+            <button className="btn-ghost px-2 h-8" onClick={onClose}><X className="h-4 w-4" /></button>
           </div>
         </div>
 
