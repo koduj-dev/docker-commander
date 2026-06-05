@@ -30,10 +30,13 @@ function writeCache(rows: HostPortProbe[]) {
 
 // OpenPorts is a host-wide map of published ports across all running
 // containers, with active service detection. It scans on demand (probing every
-// port is an active network action) and remembers the last scan per host.
-export function OpenPorts() {
+// port is an active network action) and remembers the last scan per host. The
+// cached scan is filtered to the containers still running (it `tick`s with the
+// dashboard's Docker events) so a stopped container's stale ports drop out.
+export function OpenPorts({ tick = 0 }: { tick?: number }) {
   const [rows, setRows] = useState<HostPortProbe[] | null>(null);
   const [scannedAt, setScannedAt] = useState<number | null>(null);
+  const [running, setRunning] = useState<Set<string> | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -44,6 +47,14 @@ export function OpenPorts() {
       setScannedAt(c.at);
     }
   }, []);
+
+  // Track which containers are currently running; refresh on lifecycle events.
+  useEffect(() => {
+    api
+      .containers()
+      .then((cs) => setRunning(new Set(cs.filter((c) => c.state === "running").map((c) => c.id))))
+      .catch(() => {});
+  }, [tick]);
 
   const scan = async () => {
     setBusy(true);
@@ -60,6 +71,10 @@ export function OpenPorts() {
     }
   };
 
+  // Only show ports of containers that are still running (the scan is cached, so
+  // a container stopped since the scan would otherwise linger).
+  const visible = rows && running ? rows.filter((r) => running.has(r.containerId)) : rows ?? [];
+
   return (
     <div>
       <div className="flex items-center gap-3 mb-3">
@@ -74,8 +89,8 @@ export function OpenPorts() {
 
       {rows === null ? (
         <p className="text-sm text-muted">Scan the host's published ports to see what's listening on each one.</p>
-      ) : rows.length === 0 ? (
-        <p className="text-sm text-muted">No published ports on this host.</p>
+      ) : visible.length === 0 ? (
+        <p className="text-sm text-muted">No published ports on running containers — rescan after changes.</p>
       ) : (
         <div className="card overflow-hidden">
           <table className="w-full text-sm">
@@ -87,7 +102,7 @@ export function OpenPorts() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, i) => (
+              {visible.map((r, i) => (
                 <tr key={i} className="border-t border-border">
                   <td className="px-3 py-2 font-medium truncate max-w-[14rem]">{r.containerName}</td>
                   <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">

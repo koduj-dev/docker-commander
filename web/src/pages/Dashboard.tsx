@@ -62,7 +62,7 @@ export function Dashboard() {
 
         <ResourceBreakdown tick={tick} />
 
-        <OpenPorts />
+        <OpenPorts tick={tick} />
 
         <div>
           <div className="flex items-baseline justify-between mb-3">
