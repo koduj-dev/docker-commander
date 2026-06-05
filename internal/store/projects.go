@@ -66,6 +66,13 @@ func (s *Store) ProjectByID(ctx context.Context, id int64) (*Project, error) {
 		FROM projects WHERE id = ?`, id))
 }
 
+// UpdateProjectName changes the display name (the slug stays immutable).
+func (s *Store) UpdateProjectName(ctx context.Context, id int64, name string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE projects SET name = ?, updated_at = ? WHERE id = ?`,
+		name, time.Now().UTC().Format(time.RFC3339), id)
+	return err
+}
+
 // TouchProject bumps updated_at (called when a file changes).
 func (s *Store) TouchProject(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE projects SET updated_at = ? WHERE id = ?`,

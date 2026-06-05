@@ -81,6 +81,14 @@
   body {
     @apply bg-bg text-text font-sans antialiased;
   }
+  /* Tailwind v4 dropped the default pointer cursor on buttons; restore it for
+     interactive elements so clickable things feel clickable. */
+  button:not(:disabled),
+  [role="button"]:not(:disabled),
+  label[for],
+  summary {
+    cursor: pointer;
+  }
   /* Native <select> dropdowns render their <option>s with the OS default
      (white) background. On our dark theme that gave white-on-white text, so
      pin option colours explicitly. */

@@ -120,10 +120,12 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/projects", s.handleListProjects)
 			r.Post("/projects", s.handleCreateProject)
 			r.Get("/projects/{id}", s.handleGetProject)
+			r.Patch("/projects/{id}", s.handleRenameProject)
 			r.Delete("/projects/{id}", s.handleDeleteProject)
 			r.Get("/projects/{id}/files", s.handleListProjectFiles)
 			r.Put("/projects/{id}/files", s.handleWriteProjectFile)
 			r.Delete("/projects/{id}/files", s.handleDeleteProjectFile)
+			r.Post("/projects/{id}/files/dir", s.handleMakeProjectDir)
 			r.Post("/projects/{id}/deploy", s.handleDeployProject)
 			r.Post("/projects/{id}/down", s.handleDownProject)
 

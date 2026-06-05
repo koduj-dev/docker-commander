@@ -221,9 +221,11 @@ export const api = {
   // Compose projects (managed folders; local host only — no hostParam)
   projects: () => req<{ projects: Project[]; composeAvailable: boolean }>("GET", "/api/projects"),
   createProject: (name: string) => req<{ id: number; slug: string }>("POST", "/api/projects", { name }),
+  renameProject: (id: number, name: string) => req<{ ok: boolean }>("PATCH", `/api/projects/${id}`, { name }),
   deleteProject: (id: number, force = false) =>
     req<{ ok: boolean; error?: string; output?: string }>("DELETE", `/api/projects/${id}${force ? "?force=1" : ""}`),
   projectFiles: (id: number) => req<ProjectFile[]>("GET", `/api/projects/${id}/files`),
+  makeProjectDir: (id: number, name: string) => req<{ ok: boolean }>("POST", `/api/projects/${id}/files/dir`, { name }),
   writeProjectFile: (id: number, name: string, content: string) =>
     req<{ ok: boolean }>("PUT", `/api/projects/${id}/files`, { name, content }),
   deleteProjectFile: (id: number, path: string) =>

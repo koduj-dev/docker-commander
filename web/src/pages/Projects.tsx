@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  FolderGit2, Plus, Rocket, Square, Trash2, X, FilePlus, Upload, Loader2,
-  ExternalLink, Save, FileText, Terminal,
+  FolderGit2, Plus, Rocket, Square, Trash2, X, FilePlus, FolderPlus, Upload, Loader2,
+  ExternalLink, Save, FileText, Folder, Terminal, Pencil,
 } from "lucide-react";
 import { api, ApiError } from "../lib/api";
 import type { Project, ProjectFile, Stack } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
+import { useDialogs } from "../components/Dialog";
 import { useDockerEventTick } from "../lib/dockerEvents";
 
 type Output = { title: string; text: string; ok: boolean };
@@ -27,6 +28,7 @@ export function Projects() {
   const [busy, setBusy] = useState(""); // slug acting
   const [editing, setEditing] = useState<Project | null>(null);
   const [output, setOutput] = useState<Output | null>(null);
+  const dialogs = useDialogs();
   const tick = useDockerEventTick();
 
   const load = useCallback(() => {
@@ -42,16 +44,22 @@ export function Projects() {
   }, [stacks]);
 
   const newProject = async () => {
-    const name = window.prompt("Project name");
-    if (!name?.trim()) return;
+    const name = await dialogs.prompt({ title: "New project", label: "Project name", placeholder: "My app" });
+    if (!name) return;
     try {
-      const r = await api.createProject(name.trim());
+      const r = await api.createProject(name);
       load();
-      // open the editor for the fresh project
-      setEditing({ id: r.id, name: name.trim(), slug: r.slug, composeFile: "compose.yml", createdBy: "", createdAt: "", updatedAt: "" });
+      setEditing({ id: r.id, name, slug: r.slug, composeFile: "compose.yml", createdBy: "", createdAt: "", updatedAt: "" });
     } catch (e) {
-      alert(e instanceof ApiError ? e.message : "could not create project");
+      dialogs.alert({ title: "Could not create project", message: e instanceof ApiError ? e.message : "unknown error" });
     }
+  };
+
+  const rename = async (p: Project) => {
+    const name = await dialogs.prompt({ title: "Rename project", label: "Display name (the identifier won't change)", defaultValue: p.name });
+    if (!name || name === p.name) return;
+    try { await api.renameProject(p.id, name); load(); }
+    catch (e) { dialogs.alert({ title: "Rename failed", message: e instanceof Error ? e.message : "unknown error" }); }
   };
 
   const runCompose = async (p: Project, kind: "deploy" | "down") => {
@@ -68,19 +76,19 @@ export function Projects() {
   };
 
   const remove = async (p: Project) => {
-    if (!window.confirm(`Delete project "${p.name}"? This removes its folder and files.`)) return;
+    if (!(await dialogs.confirm({ title: `Delete project "${p.name}"?`, message: "This removes its folder and all files.", danger: true, confirmLabel: "Delete" }))) return;
     setBusy(p.slug);
     try {
       await api.deleteProject(p.id);
       load();
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
-        if (window.confirm(`"${p.name}" is currently deployed. Run docker compose down and delete it anyway?`)) {
+        if (await dialogs.confirm({ title: `"${p.name}" is deployed`, message: "Run docker compose down and delete it anyway?", danger: true, confirmLabel: "Down & delete" })) {
           try { await api.deleteProject(p.id, true); load(); }
-          catch (e2) { alert(e2 instanceof Error ? e2.message : "delete failed"); }
+          catch (e2) { dialogs.alert({ title: "Delete failed", message: e2 instanceof Error ? e2.message : "unknown error" }); }
         }
       } else {
-        alert(e instanceof Error ? e.message : "delete failed");
+        dialogs.alert({ title: "Delete failed", message: e instanceof Error ? e.message : "unknown error" });
       }
     } finally {
       setBusy("");
@@ -89,6 +97,8 @@ export function Projects() {
 
   if (!projects)
     return (<><PageHeader title="Projects" /><div className="p-6 flex items-center gap-2 text-muted"><Spinner /> Loading…</div></>);
+
+  const editStack = editing ? stackBySlug.get(editing.slug) : undefined;
 
   return (
     <>
@@ -121,6 +131,7 @@ export function Projects() {
                   {acting ? <Loader2 className="h-4 w-4 animate-spin text-muted" /> : (
                     <>
                       <button className="btn-ghost px-2 py-1" title="Edit files" onClick={() => setEditing(p)}><FileText className="h-4 w-4" /></button>
+                      <button className="btn-ghost px-2 py-1" title="Rename" onClick={() => rename(p)}><Pencil className="h-4 w-4" /></button>
                       <button className="btn-ghost px-2 py-1 disabled:opacity-40" title={composeAvailable ? "Deploy" : "docker compose CLI not available"} disabled={!composeAvailable} onClick={() => runCompose(p, "deploy")}><Rocket className="h-4 w-4" /></button>
                       {st.deployed && <button className="btn-ghost px-2 py-1 disabled:opacity-40" title="Down" disabled={!composeAvailable} onClick={() => runCompose(p, "down")}><Square className="h-4 w-4" /></button>}
                       {st.deployed && <Link className="btn-ghost px-2 py-1" title="Open in Stacks" to="/stacks"><ExternalLink className="h-4 w-4" /></Link>}
@@ -138,6 +149,7 @@ export function Projects() {
         <ProjectEditor
           project={editing}
           composeAvailable={composeAvailable}
+          deployed={!!editStack}
           onClose={() => { setEditing(null); load(); }}
           onOutput={(o) => { setOutput(o); load(); }}
         />
@@ -161,71 +173,83 @@ export function Projects() {
 }
 
 // ProjectEditor is a multi-file editor over the project folder: a left file
-// list (add / delete / upload) and a right textarea, plus Deploy / Down.
-function ProjectEditor({ project, composeAvailable, onClose, onOutput }: {
-  project: Project; composeAvailable: boolean; onClose: () => void; onOutput: (o: Output) => void;
+// list (add file / add folder / upload / delete) and a right textarea, plus
+// Deploy / Down.
+function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput }: {
+  project: Project; composeAvailable: boolean; deployed: boolean; onClose: () => void; onOutput: (o: Output) => void;
 }) {
   const [files, setFiles] = useState<ProjectFile[] | null>(null);
   const [active, setActive] = useState<string>("");
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState("");
+  const dialogs = useDialogs();
   const uploadRef = useRef<HTMLInputElement>(null);
 
   const original = files?.find((f) => f.name === active)?.content ?? "";
-  const dirty = files != null && draft !== original;
+  const dirty = files != null && active !== "" && draft !== original;
 
   const loadFiles = useCallback((select?: string) => {
     api.projectFiles(project.id).then((fs) => {
       setFiles(fs);
-      const next = select ?? active ?? "";
-      const pick = fs.find((f) => f.name === next) ?? fs.find((f) => f.name === "compose.yml") ?? fs[0];
-      if (pick) { setActive(pick.name); setDraft(pick.content); }
+      setActive((cur) => {
+        const want = select ?? cur;
+        const pick = fs.find((f) => !f.isDir && f.name === want) ?? fs.find((f) => f.name === "compose.yml") ?? fs.find((f) => !f.isDir);
+        if (pick) setDraft(pick.content);
+        return pick?.name ?? "";
+      });
     }).catch(() => setFiles([]));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
   useEffect(() => loadFiles(), [loadFiles]);
 
-  const select = (name: string) => {
+  const select = async (name: string) => {
     if (name === active) return;
-    if (dirty && !window.confirm("Discard unsaved changes to this file?")) return;
-    const f = files?.find((x) => x.name === name);
+    if (dirty && !(await dialogs.confirm({ title: "Discard unsaved changes?", message: "This file has unsaved edits.", danger: true, confirmLabel: "Discard" }))) return;
     setActive(name);
-    setDraft(f?.content ?? "");
+    setDraft(files?.find((x) => x.name === name)?.content ?? "");
   };
 
   const save = async () => {
     setBusy("save");
     try { await api.writeProjectFile(project.id, active, draft); loadFiles(active); }
-    catch (e) { alert(e instanceof Error ? e.message : "save failed"); }
+    catch (e) { dialogs.alert({ title: "Save failed", message: e instanceof Error ? e.message : "unknown error" }); }
     finally { setBusy(""); }
   };
 
   const addFile = async () => {
-    const name = window.prompt("New file name (e.g. nginx.conf or scripts/init.sh)");
-    if (!name?.trim()) return;
+    const name = await dialogs.prompt({ title: "New file", label: "File name", placeholder: "nginx.conf or scripts/init.sh" });
+    if (!name) return;
     setBusy("add");
-    try { await api.writeProjectFile(project.id, name.trim(), ""); loadFiles(name.trim()); }
-    catch (e) { alert(e instanceof Error ? e.message : "could not add file"); }
+    try { await api.writeProjectFile(project.id, name, ""); loadFiles(name); }
+    catch (e) { dialogs.alert({ title: "Could not add file", message: e instanceof Error ? e.message : "unknown error" }); }
     finally { setBusy(""); }
   };
 
-  const removeFile = async (name: string) => {
-    if (!window.confirm(`Delete file "${name}"?`)) return;
+  const addDir = async () => {
+    const name = await dialogs.prompt({ title: "New folder", label: "Folder name", placeholder: "config" });
+    if (!name) return;
+    setBusy("dir");
+    try { await api.makeProjectDir(project.id, name); loadFiles(); }
+    catch (e) { dialogs.alert({ title: "Could not create folder", message: e instanceof Error ? e.message : "unknown error" }); }
+    finally { setBusy(""); }
+  };
+
+  const removeEntry = async (f: ProjectFile) => {
+    if (!(await dialogs.confirm({ title: `Delete ${f.isDir ? "folder" : "file"} "${f.name}"?`, danger: true, confirmLabel: "Delete" }))) return;
     setBusy("del");
-    try { await api.deleteProjectFile(project.id, name); loadFiles(name === active ? undefined : active); }
-    catch (e) { alert(e instanceof Error ? e.message : "delete failed"); }
+    try { await api.deleteProjectFile(project.id, f.name); loadFiles(f.name === active ? undefined : active); }
+    catch (e) { dialogs.alert({ title: "Delete failed", message: e instanceof Error ? e.message : "unknown error (folders must be empty)" }); }
     finally { setBusy(""); }
   };
 
   const upload = async (file: File) => {
     setBusy("upload");
     try { await api.writeProjectFile(project.id, file.name, await file.text()); loadFiles(file.name); }
-    catch (e) { alert(e instanceof Error ? e.message : "upload failed"); }
+    catch (e) { dialogs.alert({ title: "Upload failed", message: e instanceof Error ? e.message : "unknown error" }); }
     finally { setBusy(""); if (uploadRef.current) uploadRef.current.value = ""; }
   };
 
-  const deploy = async (kind: "deploy" | "down") => {
-    if (dirty && !window.confirm("You have unsaved changes. Deploy with the last saved files?")) return;
+  const runCompose = async (kind: "deploy" | "down") => {
+    if (dirty && !(await dialogs.confirm({ title: "Unsaved changes", message: "Deploy with the last saved files?", confirmLabel: "Continue" }))) return;
     setBusy(kind);
     try {
       const r = kind === "deploy" ? await api.deployProject(project.id) : await api.downProject(project.id);
@@ -234,6 +258,8 @@ function ProjectEditor({ project, composeAvailable, onClose, onOutput }: {
       onOutput({ title: `${project.name} — ${kind}`, text: e instanceof Error ? e.message : "failed", ok: false });
     } finally { setBusy(""); }
   };
+
+  const activeFile = files?.find((f) => f.name === active);
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
@@ -245,10 +271,10 @@ function ProjectEditor({ project, composeAvailable, onClose, onOutput }: {
             <div className="text-xs text-muted font-mono">{project.slug}</div>
           </div>
           <div className="flex items-center gap-1 ml-auto">
-            <button className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40" disabled={!composeAvailable || busy === "deploy"} onClick={() => deploy("deploy")} title={composeAvailable ? "docker compose up -d" : "docker compose CLI not available"}>
+            <button className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40" disabled={!composeAvailable || busy === "deploy"} onClick={() => runCompose("deploy")} title={composeAvailable ? "docker compose up -d" : "docker compose CLI not available"}>
               {busy === "deploy" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />} Deploy
             </button>
-            <button className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40" disabled={!composeAvailable || busy === "down"} onClick={() => deploy("down")}>Down</button>
+            <button className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40" disabled={!composeAvailable || !deployed || busy === "down"} onClick={() => runCompose("down")} title={deployed ? "docker compose down" : "not deployed"}>Down</button>
             <button className="btn-ghost px-2 py-1.5" onClick={onClose}><X className="h-4 w-4" /></button>
           </div>
         </div>
@@ -259,6 +285,7 @@ function ProjectEditor({ project, composeAvailable, onClose, onOutput }: {
             <div className="flex items-center gap-1 p-2 border-b border-border">
               <span className="text-xs uppercase tracking-wide text-muted px-1">Files</span>
               <button className="btn-ghost px-1.5 py-1 ml-auto" title="New file" onClick={addFile}><FilePlus className="h-4 w-4" /></button>
+              <button className="btn-ghost px-1.5 py-1" title="New folder" onClick={addDir}><FolderPlus className="h-4 w-4" /></button>
               <button className="btn-ghost px-1.5 py-1" title="Upload file" onClick={() => uploadRef.current?.click()}><Upload className="h-4 w-4" /></button>
               <input ref={uploadRef} type="file" className="hidden" onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
             </div>
@@ -266,11 +293,15 @@ function ProjectEditor({ project, composeAvailable, onClose, onOutput }: {
               {files === null ? <div className="p-3 text-muted text-sm flex items-center gap-2"><Spinner /> …</div> :
                 files.length === 0 ? <div className="p-3 text-muted text-xs">No files</div> :
                 files.map((f) => (
-                  <div key={f.name} className={`group flex items-center gap-1 rounded px-2 py-1 text-sm cursor-pointer ${f.name === active ? "bg-accent/15 text-accent" : "hover:bg-panel2"}`} onClick={() => select(f.name)}>
-                    <FileText className="h-3.5 w-3.5 shrink-0 opacity-70" />
-                    <span className="truncate font-mono text-xs">{f.name}</span>
+                  <div
+                    key={f.name}
+                    className={`group flex items-center gap-1 rounded px-2 py-1 text-sm ${f.isDir ? "" : "cursor-pointer"} ${f.name === active ? "bg-accent/15 text-accent" : "hover:bg-panel2"}`}
+                    onClick={() => !f.isDir && select(f.name)}
+                  >
+                    {f.isDir ? <Folder className="h-3.5 w-3.5 shrink-0 text-muted" /> : <FileText className="h-3.5 w-3.5 shrink-0 opacity-70" />}
+                    <span className={`truncate font-mono text-xs ${f.isDir ? "text-muted" : ""}`}>{f.name}</span>
                     {dirty && f.name === active && <span className="text-warn text-xs">●</span>}
-                    <button className="ml-auto opacity-0 group-hover:opacity-100 text-danger" title="Delete file" onClick={(e) => { e.stopPropagation(); removeFile(f.name); }}><Trash2 className="h-3.5 w-3.5" /></button>
+                    <button className="ml-auto opacity-0 group-hover:opacity-100 text-danger" title="Delete" onClick={(e) => { e.stopPropagation(); removeEntry(f); }}><Trash2 className="h-3.5 w-3.5" /></button>
                   </div>
                 ))}
             </div>
@@ -284,7 +315,7 @@ function ProjectEditor({ project, composeAvailable, onClose, onOutput }: {
                 {busy === "save" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Save
               </button>
             </div>
-            {files && files.find((f) => f.name === active)?.tooLarge ? (
+            {activeFile?.tooLarge ? (
               <div className="p-4 text-sm text-muted">This file is too large to edit here.</div>
             ) : (
               <textarea

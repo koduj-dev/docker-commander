@@ -27,13 +27,19 @@ const (
 	maxProjectFileBytes = 1 << 20 // 1 MiB per file
 )
 
-// starterCompose seeds a new project so the editor isn't empty.
-const starterCompose = `services:
+// starterCompose seeds a new project so the editor isn't empty. The top-level
+// name matches the slug (the -p flag we deploy with still wins, but it reads
+// nicely and documents the project name).
+func starterCompose(slug string) string {
+	return "name: " + slug + `
+
+services:
   app:
     image: nginx:alpine
     ports:
       - "8080:80"
 `
+}
 
 type projectJSON struct {
 	ID          int64  `json:"id"`
@@ -58,6 +64,7 @@ type projectFileJSON struct {
 	Name     string `json:"name"`
 	Size     int64  `json:"size"`
 	Content  string `json:"content"`
+	IsDir    bool   `json:"isDir,omitempty"`
 	TooLarge bool   `json:"tooLarge,omitempty"`
 }
 
@@ -125,7 +132,7 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "could not create project folder: "+err.Error())
 		return
 	}
-	_ = os.WriteFile(filepath.Join(root, "compose.yml"), []byte(starterCompose), 0o600)
+	_ = os.WriteFile(filepath.Join(root, "compose.yml"), []byte(starterCompose(slug)), 0o600)
 
 	s.audit(r, "project.create", slug, "")
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "slug": slug})
@@ -183,15 +190,19 @@ func (s *Server) handleListProjectFiles(w http.ResponseWriter, r *http.Request) 
 	root := s.projectRoot(p.ID)
 	var out []projectFileJSON
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
+		if err != nil || path == root || d.Type()&fs.ModeSymlink != 0 {
 			return err
+		}
+		rel, _ := filepath.Rel(root, path)
+		name := filepath.ToSlash(rel)
+		if d.IsDir() {
+			out = append(out, projectFileJSON{Name: name, IsDir: true})
+			return nil
 		}
 		info, err := d.Info()
 		if err != nil {
 			return err
 		}
-		rel, _ := filepath.Rel(root, path)
-		name := filepath.ToSlash(rel)
 		if info.Size() > maxProjectFileBytes {
 			out = append(out, projectFileJSON{Name: name, Size: info.Size(), TooLarge: true})
 			return nil
@@ -274,6 +285,59 @@ func (s *Server) handleDeleteProjectFile(w http.ResponseWriter, r *http.Request)
 	}
 	_ = s.store.TouchProject(r.Context(), p.ID)
 	s.audit(r, "project.file.delete", p.Slug, r.URL.Query().Get("path"))
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleMakeProjectDir creates an (empty) folder in the project.
+func (s *Server) handleMakeProjectDir(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	full, err := safeJoin(s.projectRoot(p.ID), body.Name)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := os.MkdirAll(full, 0o700); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "project.dir.create", p.Slug, body.Name)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleRenameProject changes the display name. The slug (compose project name)
+// is immutable, so deployments stay stable.
+func (s *Server) handleRenameProject(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		writeErr(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if err := s.store.UpdateProjectName(r.Context(), p.ID, name); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "project.rename", p.Slug, name)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

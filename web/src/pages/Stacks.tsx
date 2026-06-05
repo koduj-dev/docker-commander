@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Blocks, Play, Square, RotateCw, Trash2, Loader2, FileText, X, ChevronRight, Search, Copy, Check, Download } from "lucide-react";
+import { Blocks, Play, Square, RotateCw, Trash2, Loader2, FileText, X, ChevronRight, Search, Copy, Check, Download, FolderGit2 } from "lucide-react";
 import { api } from "../lib/api";
 import type { Stack, StackContainer } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
@@ -45,10 +45,13 @@ export function Stacks() {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => getPref("stacks.collapsed", {}));
   const [hover, setHover] = useState<Hover | null>(null);
   const [copied, setCopied] = useState(false);
+  const [managed, setManaged] = useState<Set<string>>(new Set());
   const tick = useDockerEventTick();
 
   const load = useCallback(() => {
     api.stacks().then(setStacks).catch(() => setStacks([]));
+    // Which stacks are DC-managed projects (so we can link back to them).
+    api.projects().then((r) => setManaged(new Set(r.projects.map((p) => p.slug)))).catch(() => {});
   }, []);
   useEffect(() => load(), [load, tick]);
 
@@ -184,6 +187,9 @@ export function Stacks() {
                           <Loader2 className="h-4 w-4 animate-spin text-muted" />
                         ) : (
                           <>
+                            {managed.has(s.project) && (
+                              <Link className="btn-ghost px-2 py-1 text-accent" title="Managed project — open in Projects" to="/projects"><FolderGit2 className="h-4 w-4" /></Link>
+                            )}
                             {s.configFile && (
                               <button className="btn-ghost px-2 py-1" title="View compose file" onClick={() => viewCompose(s.project)}><FileText className="h-4 w-4" /></button>
                             )}

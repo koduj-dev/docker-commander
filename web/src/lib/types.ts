@@ -296,6 +296,7 @@ export interface ProjectFile {
   name: string;
   size: number;
   content: string;
+  isDir?: boolean;
   tooLarge?: boolean;
 }
 
