@@ -58,21 +58,39 @@ func (s *Server) handleCreateHost(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]int64{"id": id})
 }
 
-// handleUpdateHost updates a host's per-host alert email override.
+// handleUpdateHost updates a host's per-host alert email override and/or its
+// disabled flag (fields are optional — only those present are changed).
 func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	var b struct {
-		AlertEmail string `json:"alertEmail"`
+		AlertEmail *string `json:"alertEmail"`
+		Disabled   *bool   `json:"disabled"`
 	}
 	if err := decodeJSON(r, &b); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if err := s.store.SetHostAlertEmail(r.Context(), id, b.AlertEmail); err != nil {
-		writeErr(w, http.StatusInternalServerError, "could not update host")
-		return
+	if b.AlertEmail != nil {
+		if err := s.store.SetHostAlertEmail(r.Context(), id, *b.AlertEmail); err != nil {
+			writeErr(w, http.StatusInternalServerError, "could not update host")
+			return
+		}
+		s.audit(r, "host.update", chi.URLParam(r, "id"), *b.AlertEmail)
 	}
-	s.audit(r, "host.update", chi.URLParam(r, "id"), b.AlertEmail)
+	if b.Disabled != nil {
+		if err := s.store.SetHostDisabled(r.Context(), id, *b.Disabled); err != nil {
+			writeErr(w, http.StatusInternalServerError, "could not update host")
+			return
+		}
+		// Drop the cached client/SSH connection so nothing keeps hitting a
+		// disabled host; the monitor stops watching it on its next reconcile.
+		s.docker.Disconnect(id)
+		action := "host.enable"
+		if *b.Disabled {
+			action = "host.disable"
+		}
+		s.audit(r, action, chi.URLParam(r, "id"), "")
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

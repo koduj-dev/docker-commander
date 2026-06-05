@@ -23,13 +23,14 @@ type Host struct {
 	TLSKey     string
 	HostKey    string // pinned SSH host public key (authorized_keys line); ssh hosts only
 	AlertEmail string // per-host alert recipient override (falls back to global SMTP To)
+	Disabled   bool   // when true the monitor ignores this host (no events/stats)
 	CreatedAt  time.Time
 }
 
 // ListHosts returns all configured hosts ordered by name.
 func (s *Store) ListHosts(ctx context.Context) ([]Host, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, kind, address, tls_ca, tls_cert, tls_key, host_key, alert_email, created_at
+		SELECT id, name, kind, address, tls_ca, tls_cert, tls_key, host_key, alert_email, disabled, created_at
 		FROM hosts ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -40,9 +41,11 @@ func (s *Store) ListHosts(ctx context.Context) ([]Host, error) {
 	for rows.Next() {
 		var h Host
 		var created string
-		if err := rows.Scan(&h.ID, &h.Name, &h.Kind, &h.Address, &h.TLSCA, &h.TLSCert, &h.TLSKey, &h.HostKey, &h.AlertEmail, &created); err != nil {
+		var disabled int
+		if err := rows.Scan(&h.ID, &h.Name, &h.Kind, &h.Address, &h.TLSCA, &h.TLSCert, &h.TLSKey, &h.HostKey, &h.AlertEmail, &disabled, &created); err != nil {
 			return nil, err
 		}
+		h.Disabled = disabled != 0
 		h.CreatedAt, _ = time.Parse(time.RFC3339, created)
 		out = append(out, h)
 	}
@@ -53,16 +56,18 @@ func (s *Store) ListHosts(ctx context.Context) ([]Host, error) {
 func (s *Store) HostByID(ctx context.Context, id int64) (*Host, error) {
 	var h Host
 	var created string
+	var disabled int
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, name, kind, address, tls_ca, tls_cert, tls_key, host_key, alert_email, created_at
+		SELECT id, name, kind, address, tls_ca, tls_cert, tls_key, host_key, alert_email, disabled, created_at
 		FROM hosts WHERE id = ?`, id).
-		Scan(&h.ID, &h.Name, &h.Kind, &h.Address, &h.TLSCA, &h.TLSCert, &h.TLSKey, &h.HostKey, &h.AlertEmail, &created)
+		Scan(&h.ID, &h.Name, &h.Kind, &h.Address, &h.TLSCA, &h.TLSCert, &h.TLSKey, &h.HostKey, &h.AlertEmail, &disabled, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
+	h.Disabled = disabled != 0
 	h.CreatedAt, _ = time.Parse(time.RFC3339, created)
 	return &h, nil
 }
@@ -83,6 +88,16 @@ func (s *Store) CreateHost(ctx context.Context, h *Host) (int64, error) {
 // SetHostAlertEmail sets a host's per-host alert recipient override.
 func (s *Store) SetHostAlertEmail(ctx context.Context, id int64, email string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE hosts SET alert_email = ? WHERE id = ?`, email, id)
+	return err
+}
+
+// SetHostDisabled toggles whether the monitor ignores a host.
+func (s *Store) SetHostDisabled(ctx context.Context, id int64, disabled bool) error {
+	v := 0
+	if disabled {
+		v = 1
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE hosts SET disabled = ? WHERE id = ?`, v, id)
 	return err
 }
 

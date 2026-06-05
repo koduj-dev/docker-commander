@@ -47,7 +47,15 @@ func (m *Monitor) monitoredHosts(ctx context.Context) []store.Host {
 	if err != nil || len(hosts) == 0 {
 		return []store.Host{{ID: 0, Name: "local"}}
 	}
-	return hosts
+	// Skip hosts the operator has disabled — the monitor stops watching events
+	// and sampling stats for them (e.g. a laptop that's offline).
+	out := make([]store.Host, 0, len(hosts))
+	for _, h := range hosts {
+		if !h.Disabled {
+			out = append(out, h)
+		}
+	}
+	return out
 }
 
 // Monitor is the long-running alert engine.

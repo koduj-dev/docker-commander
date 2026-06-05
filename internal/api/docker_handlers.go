@@ -24,7 +24,7 @@ func (s *Server) handleListHosts(w http.ResponseWriter, r *http.Request) {
 	for _, h := range hosts {
 		out = append(out, map[string]any{
 			"id": h.ID, "name": h.Name, "kind": h.Kind, "address": h.Address,
-			"alertEmail": h.AlertEmail,
+			"alertEmail": h.AlertEmail, "disabled": h.Disabled,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

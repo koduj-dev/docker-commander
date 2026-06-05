@@ -43,6 +43,7 @@ export interface Host {
   kind: string; // local | tcp | ssh
   address: string;
   alertEmail?: string;
+  disabled?: boolean;
 }
 
 export interface PortSpec {

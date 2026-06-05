@@ -144,6 +144,8 @@ export const api = {
   deleteHost: (id: number) => req<{ ok: boolean }>("DELETE", `/api/hosts/${id}`),
   updateHostAlertEmail: (id: number, alertEmail: string) =>
     req<{ ok: boolean }>("PATCH", `/api/hosts/${id}`, { alertEmail }),
+  setHostDisabled: (id: number, disabled: boolean) =>
+    req<{ ok: boolean }>("PATCH", `/api/hosts/${id}`, { disabled }),
   testHost: (id: number) =>
     req<{
       ok: boolean;
