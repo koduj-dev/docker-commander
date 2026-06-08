@@ -9,12 +9,12 @@ two cover installation and configuration.
 - [Dashboard](dashboard.md) — host overview, disk usage, running containers
 - [Containers](containers.md) — create/run, lifecycle, console, files, logs, processes
 - [Stacks](stacks.md) — Compose stacks: discover, lifecycle, view compose file
-- [Projects](projects.md) — managed Compose folders: edit, deploy, profiles, import/export
+- [Projects](projects.md) — managed Compose folders: edit + live validation, deploy, profiles, templates, import/export
 - [Images](images.md) — pull, build, push, tag, save/load/import, history, prune
-- [Volumes](volumes.md) — list, inspect, create, remove, prune
+- [Volumes](volumes.md) — list, inspect, create, remove, prune, browse files
 
 ## Network
-- [Networks & Topology](networks.md) — networks and the connectivity graph
+- [Networks & Topology](networks.md) — manage networks (create/connect/disconnect/prune) and the connectivity graph
 
 ## Observability
 - [Logs](logs.md) — aggregated streaming, regex search, structured parse rules
@@ -30,7 +30,7 @@ two cover installation and configuration.
 
 ## Operations
 - [Getting started](getting-started.md) — first run, 2FA, the basics
-- [Deployment](deployment.md) — running on a server (systemd, HTTPS, config, logs, health)
+- [Deployment](deployment.md) — running on a server (systemd, HTTPS, config, logs, health, self-update)
 - [Changelog](../CHANGELOG.md) — what changed in each release
 
 ---
