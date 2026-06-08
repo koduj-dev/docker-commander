@@ -97,6 +97,17 @@ function TreeItem({ node, depth, active, dirty, collapsed, currentDir, onToggle,
   );
 }
 
+// isComposeFile reports whether a project file is a compose entry file that
+// `docker compose` discovers by default (root-level compose.yaml/.yml,
+// docker-compose.yaml/.yml and their .override variants), plus the project's
+// configured compose file. Validation is scoped to these.
+function isComposeFile(name: string, configured: string): boolean {
+  if (!name) return false;
+  if (name === configured) return true;
+  if (name.includes("/")) return false; // compose files live at the project root
+  return /^(docker-)?compose(\.override)?\.ya?ml$/.test(name.toLowerCase());
+}
+
 // downloadText triggers a client-side download of in-memory text.
 function downloadText(name: string, content: string) {
   const url = URL.createObjectURL(new Blob([content], { type: "text/plain" }));
@@ -395,7 +406,7 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
   // anchors/merge keys/interpolation resolved), no save required.
   const composeFileName = project.composeFile || "compose.yml";
   useEffect(() => {
-    if (!composeAvailable || active !== composeFileName) {
+    if (!composeAvailable || !isComposeFile(active, composeFileName)) {
       setLiveVal({ status: "idle" });
       return;
     }
@@ -541,7 +552,7 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
   };
 
   const activeFile = files?.find((f) => f.name === active);
-  const onComposeFile = active === composeFileName; // validation belongs to the compose file
+  const onComposeFile = isComposeFile(active, composeFileName); // validation belongs to the compose file(s)
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
