@@ -23,6 +23,7 @@ import type {
   PortProbe,
   Registry,
   Project,
+  FileApi,
   ProjectFile,
   ResourceOverview,
   SmtpConfig,
@@ -203,6 +204,45 @@ export const api = {
     return req<{ ok: boolean; error?: string }>("DELETE", `/api/containers/${id}/files?${params.toString()}`);
   },
 
+  // Volume file browser (a throwaway helper container mounts the volume).
+  listVolumeFiles: (name: string, p: string) => {
+    const params = new URLSearchParams({ path: p });
+    const h = getHostId();
+    if (h != null) params.set("host", String(h));
+    return req<{ ok: boolean; path: string; entries: FileEntry[] | null; error?: string }>("GET", `/api/volumes/${encodeURIComponent(name)}/files?${params.toString()}`);
+  },
+  volumeFileDownloadUrl: (name: string, p: string) => {
+    const params = new URLSearchParams({ path: p });
+    const h = getHostId();
+    if (h != null) params.set("host", String(h));
+    return `/api/volumes/${encodeURIComponent(name)}/files/download?${params.toString()}`;
+  },
+  uploadVolumeFile: async (name: string, destDir: string, file: File) => {
+    const params = new URLSearchParams({ path: destDir, name: file.name });
+    const h = getHostId();
+    if (h != null) params.set("host", String(h));
+    const res = await fetch(`/api/volumes/${encodeURIComponent(name)}/files/upload?${params.toString()}`, {
+      method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/octet-stream" }, body: file,
+    });
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : null;
+    if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText);
+    return data as { ok: boolean; error?: string; bytes?: number };
+  },
+  deleteVolumeFile: (name: string, p: string) => {
+    const params = new URLSearchParams({ path: p });
+    const h = getHostId();
+    if (h != null) params.set("host", String(h));
+    return req<{ ok: boolean; error?: string }>("DELETE", `/api/volumes/${encodeURIComponent(name)}/files?${params.toString()}`);
+  },
+  closeVolumeBrowser: (name: string) => {
+    const params = new URLSearchParams();
+    const h = getHostId();
+    if (h != null) params.set("host", String(h));
+    const q = params.toString();
+    return req<{ ok: boolean }>("DELETE", `/api/volumes/${encodeURIComponent(name)}/browse${q ? "?" + q : ""}`);
+  },
+
   createContainer: (spec: CreateSpec) =>
     req<{ ok: boolean; id?: string; error?: string }>("POST", `/api/containers${hostParam()}`, spec),
   renameContainer: (id: string, name: string) =>
@@ -379,3 +419,23 @@ export const api = {
       `/api/metrics/history?container=${encodeURIComponent(container)}&metric=${metric}&range=${range}${hostParam("&")}`
     ),
 };
+
+// File-browser adapters: the FileBrowser component works over a FileApi, so the
+// same UI serves both containers and volumes.
+export function fileApiForContainer(id: string): FileApi {
+  return {
+    list: (p) => api.listFiles(id, p),
+    upload: (dir, file) => api.uploadFile(id, dir, file),
+    del: (p) => api.deleteFile(id, p),
+    downloadUrl: (p) => api.downloadFileUrl(id, p),
+  };
+}
+
+export function fileApiForVolume(name: string): FileApi {
+  return {
+    list: (p) => api.listVolumeFiles(name, p),
+    upload: (dir, file) => api.uploadVolumeFile(name, dir, file),
+    del: (p) => api.deleteVolumeFile(name, p),
+    downloadUrl: (p) => api.volumeFileDownloadUrl(name, p),
+  };
+}

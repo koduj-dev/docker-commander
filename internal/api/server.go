@@ -163,6 +163,12 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/volumes", s.handleCreateVolume)
 			r.Post("/volumes/prune", s.handlePruneVolumes)
 			r.Delete("/volumes/{name}", s.handleRemoveVolume)
+			// Volume file browser (via a throwaway helper container).
+			r.Get("/volumes/{name}/files", s.handleListVolumeFiles)
+			r.Get("/volumes/{name}/files/download", s.handleDownloadVolumeFile)
+			r.Post("/volumes/{name}/files/upload", s.handleUploadVolumeFile)
+			r.Delete("/volumes/{name}/files", s.handleDeleteVolumeFile)
+			r.Delete("/volumes/{name}/browse", s.handleCloseVolumeBrowser)
 			r.Get("/version", s.handleVersion)
 			r.Get("/prefs", s.handleGetPrefs)
 			r.Put("/prefs", s.handleSetPrefs)

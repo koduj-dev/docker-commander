@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { Database, Trash2, Loader2, Eraser, FileSearch, Plus, Boxes } from "lucide-react";
-import { api } from "../lib/api";
+import { Database, Trash2, Loader2, Eraser, FileSearch, Plus, Boxes, FolderOpen, X } from "lucide-react";
+import { api, fileApiForVolume } from "../lib/api";
 import type { VolumeSummary } from "../lib/types";
 import { relTime } from "../lib/format";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
 import { InspectModal } from "../components/InspectModal";
+import { FileBrowser } from "../components/FileBrowser";
 import { useListControls, SearchBar, Pager, type StatusOption } from "../components/ListControls";
 
 const VOLUME_STATUSES: StatusOption<VolumeSummary>[] = [
@@ -30,7 +31,14 @@ export function Volumes() {
   const [notice, setNotice] = useState("");
   const [pruning, setPruning] = useState(false);
   const [inspect, setInspect] = useState<VolumeSummary | null>(null);
+  const [browse, setBrowse] = useState<VolumeSummary | null>(null);
   const [showForm, setShowForm] = useState(false);
+
+  // Closing the browser also tears down the helper container DC spun up.
+  const closeBrowse = () => {
+    if (browse) api.closeVolumeBrowser(browse.name).catch(() => {});
+    setBrowse(null);
+  };
 
   const load = useCallback(() => {
     api.volumes().then(setVols).catch(() => setVols([]));
@@ -118,6 +126,7 @@ export function Volumes() {
                       )}
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
+                      <button className="btn-ghost px-2 py-1" title="Browse files" onClick={() => setBrowse(v)}><FolderOpen className="h-4 w-4" /></button>
                       <button className="btn-ghost px-2 py-1" title="Inspect (raw JSON)" onClick={() => setInspect(v)}><FileSearch className="h-4 w-4" /></button>
                       <button className="btn-ghost px-2 py-1 text-danger" title="Remove volume" disabled={busy[v.name]} onClick={() => remove(v)}>
                         {busy[v.name] ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
@@ -132,6 +141,20 @@ export function Volumes() {
         )}
       </div>
       {inspect && <InspectModal kind="volume" id={inspect.name} title={inspect.name} onClose={() => setInspect(null)} />}
+
+      {browse && (
+        <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={closeBrowse}>
+          <div className="w-[80vw] max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 mb-2">
+              <Database className="h-4 w-4 text-accent shrink-0" />
+              <span className="font-medium break-all">{browse.name}</span>
+              <span className="text-xs text-muted">— volume files</span>
+              <button className="btn-ghost px-2 py-1.5 ml-auto" title="Close" onClick={closeBrowse}><X className="h-4 w-4" /></button>
+            </div>
+            <FileBrowser fs={fileApiForVolume(browse.name)} />
+          </div>
+        </div>
+      )}
     </>
   );
 }

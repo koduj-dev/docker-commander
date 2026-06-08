@@ -97,6 +97,9 @@ func run() error {
 	mon := monitor.New(st, dm, hist)
 	go mon.Run(shutdownCtx)
 
+	// Clear any volume-browser helper containers left over from a previous run.
+	go dm.ReapAllVolumeHelpers(shutdownCtx)
+
 	// Serve the embedded SPA unless running in dev mode (Vite serves the UI).
 	webFS := serveWebFS(cfg)
 
