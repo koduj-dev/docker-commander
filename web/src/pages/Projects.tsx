@@ -108,6 +108,14 @@ function isComposeFile(name: string, configured: string): boolean {
   return /^(docker-)?compose(\.override)?\.ya?ml$/.test(name.toLowerCase());
 }
 
+// isDockerfile reports whether a file is a Dockerfile (Dockerfile, Dockerfile.*,
+// *.dockerfile) — these can live in subdirectories, unlike compose files.
+function isDockerfile(name: string): boolean {
+  if (!name) return false;
+  const base = (name.split("/").pop() ?? "").toLowerCase();
+  return base === "dockerfile" || base.startsWith("dockerfile.") || base.endsWith(".dockerfile");
+}
+
 // downloadText triggers a client-side download of in-memory text.
 function downloadText(name: string, content: string) {
   const url = URL.createObjectURL(new Blob([content], { type: "text/plain" }));
@@ -551,8 +559,22 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
     } finally { setBusy(""); }
   };
 
+  // checkDockerfile lints the active Dockerfile (unsaved buffer) via
+  // `docker build --check`; results go to the shared output panel. It's a button
+  // (not live) because the check resolves base-image metadata from the registry.
+  const checkDockerfile = async () => {
+    setBusy("dfcheck");
+    try {
+      const r = await api.checkDockerfile(project.id, draft);
+      onOutput({ title: `${active} — check`, text: r.valid ? (r.output || "✓ no issues found") : (r.error || "issues found"), ok: r.valid });
+    } catch (e) {
+      onOutput({ title: `${active} — check`, text: e instanceof Error ? e.message : "failed", ok: false });
+    } finally { setBusy(""); }
+  };
+
   const activeFile = files?.find((f) => f.name === active);
   const onComposeFile = isComposeFile(active, composeFileName); // validation belongs to the compose file(s)
+  const onDockerfile = isDockerfile(active);
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
@@ -636,6 +658,11 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
                 {onComposeFile && (
                   <button className="btn-ghost px-2 py-1 text-xs disabled:opacity-40" disabled={!composeAvailable || busy === "validate"} onClick={validate} title={composeAvailable ? "Re-validate (docker compose config)" : "docker compose CLI not available"}>
                     {busy === "validate" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} Validate
+                  </button>
+                )}
+                {onDockerfile && (
+                  <button className="btn-ghost px-2 py-1 text-xs disabled:opacity-40" disabled={busy === "dfcheck"} onClick={checkDockerfile} title="Lint this Dockerfile (docker build --check)">
+                    {busy === "dfcheck" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} Check
                   </button>
                 )}
                 <button className="btn-ghost px-2 py-1 text-xs disabled:opacity-40" disabled={!active} title="Download this file" onClick={downloadActive}><Download className="h-3.5 w-3.5" /></button>

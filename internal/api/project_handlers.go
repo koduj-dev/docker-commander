@@ -624,6 +624,37 @@ func (s *Server) overlayProject(id int64, name, content string) (string, error) 
 	return tmp, nil
 }
 
+// handleCheckDockerfile lints a Dockerfile with `docker build --check` (no build
+// steps run). The {content} body is the unsaved editor buffer. Returns 200 even
+// when the check finds problems so the UI can show the message.
+func (s *Server) handleCheckDockerfile(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.loadProject(w, r); !ok {
+		return
+	}
+	if !docker.BuildCheckAvailable(r.Context()) {
+		writeJSON(w, http.StatusOK, map[string]any{"valid": false, "unavailable": true,
+			"error": "`docker build --check` (BuildKit/buildx) is not available on the host running Docker Commander"})
+		return
+	}
+	var body struct {
+		Content string `json:"content"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	out, err := docker.DockerfileCheck(r.Context(), body.Content)
+	out = strings.TrimSpace(out)
+	if err != nil {
+		if out == "" {
+			out = err.Error()
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"valid": false, "error": out})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"valid": true, "output": out})
+}
+
 // handleProjectProfiles lists the compose profiles defined in the project.
 func (s *Server) handleProjectProfiles(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.loadProject(w, r)

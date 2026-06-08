@@ -337,6 +337,9 @@ export const api = {
   // (server copies the project + overlays that file); without it, the on-disk files.
   validateProject: (id: number, overlay?: { name: string; content: string }) =>
     req<{ valid: boolean; error?: string; unavailable?: boolean }>("POST", `/api/projects/${id}/validate`, overlay),
+  // Lint a Dockerfile via `docker build --check` (no build steps run).
+  checkDockerfile: (id: number, content: string) =>
+    req<{ valid: boolean; output?: string; error?: string; unavailable?: boolean }>("POST", `/api/projects/${id}/dockerfile-check`, { content }),
   deployProject: (id: number, profiles: string[] = []) =>
     req<{ ok: boolean; output?: string; error?: string }>("POST", `/api/projects/${id}/deploy`, { profiles }),
   downProject: (id: number) =>
