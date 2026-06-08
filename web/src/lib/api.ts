@@ -474,25 +474,41 @@ export const api = {
 };
 
 // File-browser adapters: the FileBrowser component works over a FileApi, so the
-// same UI serves both containers and volumes.
+// same UI serves both containers and volumes. Adapters are cached per id/name so
+// inline JSX use (`<FileBrowser fs={fileApiForContainer(id)} />`) returns the
+// same object reference across re-renders — a fresh object would reset the
+// browser's state and trigger needless reloads.
+const containerFileApis = new Map<string, FileApi>();
+const volumeFileApis = new Map<string, FileApi>();
+
 export function fileApiForContainer(id: string): FileApi {
-  return {
-    list: (p) => api.listFiles(id, p),
-    upload: (dir, file) => api.uploadFile(id, dir, file),
-    uploadExtract: (dir, file) => api.extractFile(id, dir, file),
-    mkdir: (p) => api.mkdirFile(id, p),
-    del: (p) => api.deleteFile(id, p),
-    downloadUrl: (p) => api.downloadFileUrl(id, p),
-  };
+  let fs = containerFileApis.get(id);
+  if (!fs) {
+    fs = {
+      list: (p) => api.listFiles(id, p),
+      upload: (dir, file) => api.uploadFile(id, dir, file),
+      uploadExtract: (dir, file) => api.extractFile(id, dir, file),
+      mkdir: (p) => api.mkdirFile(id, p),
+      del: (p) => api.deleteFile(id, p),
+      downloadUrl: (p) => api.downloadFileUrl(id, p),
+    };
+    containerFileApis.set(id, fs);
+  }
+  return fs;
 }
 
 export function fileApiForVolume(name: string): FileApi {
-  return {
-    list: (p) => api.listVolumeFiles(name, p),
-    upload: (dir, file) => api.uploadVolumeFile(name, dir, file),
-    uploadExtract: (dir, file) => api.extractVolumeFile(name, dir, file),
-    mkdir: (p) => api.mkdirVolumeFile(name, p),
-    del: (p) => api.deleteVolumeFile(name, p),
-    downloadUrl: (p) => api.volumeFileDownloadUrl(name, p),
-  };
+  let fs = volumeFileApis.get(name);
+  if (!fs) {
+    fs = {
+      list: (p) => api.listVolumeFiles(name, p),
+      upload: (dir, file) => api.uploadVolumeFile(name, dir, file),
+      uploadExtract: (dir, file) => api.extractVolumeFile(name, dir, file),
+      mkdir: (p) => api.mkdirVolumeFile(name, p),
+      del: (p) => api.deleteVolumeFile(name, p),
+      downloadUrl: (p) => api.volumeFileDownloadUrl(name, p),
+    };
+    volumeFileApis.set(name, fs);
+  }
+  return fs;
 }

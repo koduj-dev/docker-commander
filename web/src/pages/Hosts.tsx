@@ -74,8 +74,13 @@ export function Hosts() {
   };
 
   const toggleDisabled = async (h: Host) => {
-    await api.setHostDisabled(h.id, !h.disabled);
-    load();
+    try {
+      await api.setHostDisabled(h.id, !h.disabled);
+    } catch (e) {
+      dialogs.alert({ title: "Could not change host state", message: e instanceof Error ? e.message : "request failed" });
+    } finally {
+      load();
+    }
   };
 
   if (!hosts) return (<><PageHeader title="Hosts" /><div className="p-6 flex items-center gap-2 text-muted"><Spinner /> Loading…</div></>);
