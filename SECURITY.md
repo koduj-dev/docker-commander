@@ -47,6 +47,12 @@ A few things worth knowing when assessing a report:
   (AES-256-GCM) with a per-install key in the data directory.
 - Reaching remote daemons over **plain TCP without TLS** is insecure by design;
   prefer SSH or TLS. See [docs/hosts.md](docs/hosts.md).
+- **Self-update executes downloaded code, so it's verified.**
+  `dockercmd --self-upgrade` only installs a GitHub release asset whose
+  **SHA-256** matches the digest GitHub records (falling back to the release's
+  `SHA256SUMS`), then replaces the binary atomically. The periodic update *check*
+  (the admin banner) is an outbound call to the GitHub API and can be disabled
+  with `DC_UPDATE_CHECK=0` on air-gapped hosts.
 
 Generally **out of scope:** issues that require an already-compromised host or
 data directory, exposing the app without the documented protections, or
