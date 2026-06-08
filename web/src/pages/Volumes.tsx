@@ -7,6 +7,7 @@ import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
 import { InspectModal } from "../components/InspectModal";
 import { FileBrowser } from "../components/FileBrowser";
+import { useDialogs } from "../components/Dialog";
 import { useListControls, SearchBar, Pager, type StatusOption } from "../components/ListControls";
 
 const VOLUME_STATUSES: StatusOption<VolumeSummary>[] = [
@@ -33,6 +34,7 @@ export function Volumes() {
   const [inspect, setInspect] = useState<VolumeSummary | null>(null);
   const [browse, setBrowse] = useState<VolumeSummary | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const dialogs = useDialogs();
 
   // Closing the browser also tears down the helper container DC spun up.
   const closeBrowse = () => {
@@ -48,6 +50,7 @@ export function Volumes() {
   const controls = useListControls(vols ?? [], matchVolume, { storageKey: "volumes", statuses: VOLUME_STATUSES });
 
   const remove = async (v: VolumeSummary, force = false) => {
+    if (!force && !(await dialogs.confirm({ title: "Remove volume", message: <>Permanently remove <code className="font-mono text-text">{v.name}</code> and all its data?</>, danger: true, confirmLabel: "Remove" }))) return;
     setBusy((b) => ({ ...b, [v.name]: true }));
     setErr((e) => ({ ...e, [v.name]: "" }));
     try {
@@ -62,6 +65,7 @@ export function Volumes() {
   };
 
   const prune = async () => {
+    if (!(await dialogs.confirm({ title: "Prune unused volumes", message: "Remove every volume not used by any container? This permanently deletes their data.", danger: true, confirmLabel: "Prune" }))) return;
     setPruning(true);
     setNotice("");
     try {

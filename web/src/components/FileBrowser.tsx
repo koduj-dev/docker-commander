@@ -83,6 +83,7 @@ export function FileBrowser({ fs }: { fs: FileApi }) {
   };
 
   const del = async (entry: FileEntry) => {
+    if (!(await dialogs.confirm({ title: `Delete ${entry.isDir ? "folder" : "file"}`, message: <>Delete <code className="font-mono text-text">{entry.name}</code>?</>, danger: true, confirmLabel: "Delete" }))) return;
     const full = joinPath(path, entry.name);
     setBusy(full);
     try {

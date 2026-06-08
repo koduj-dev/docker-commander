@@ -11,6 +11,7 @@ import { InspectModal } from "../components/InspectModal";
 import { PushModal } from "../components/PushModal";
 import { BuildModal } from "../components/BuildModal";
 import { LoadModal, triggerDownload } from "../components/LoadModal";
+import { useDialogs } from "../components/Dialog";
 import { useListControls, SearchBar, Pager, type StatusOption } from "../components/ListControls";
 
 const IMAGE_STATUSES: StatusOption<ImageSummary>[] = [
@@ -38,6 +39,7 @@ export function Images() {
   const [push, setPush] = useState<ImageSummary | null>(null);
   const [showBuild, setShowBuild] = useState(false);
   const [showLoad, setShowLoad] = useState(false);
+  const dialogs = useDialogs();
 
   const load = useCallback(() => {
     api.images().then(setImages).catch(() => setImages([]));
@@ -47,6 +49,8 @@ export function Images() {
   const controls = useListControls(images ?? [], matchImage, { storageKey: "images", statuses: IMAGE_STATUSES });
 
   const remove = async (img: ImageSummary, force = false) => {
+    const label = (img.repoTags ?? []).find((t) => t && t !== "<none>:<none>") ?? shortId(img.id);
+    if (!force && !(await dialogs.confirm({ title: "Remove image", message: <>Remove the image <code className="font-mono text-text">{label}</code>?</>, danger: true, confirmLabel: "Remove" }))) return;
     const id = img.id;
     setBusy((b) => ({ ...b, [id]: true }));
     setErr((e) => ({ ...e, [id]: "" }));
@@ -65,6 +69,7 @@ export function Images() {
   };
 
   const prune = async () => {
+    if (!(await dialogs.confirm({ title: "Prune images", message: "Remove all dangling (untagged) images?", danger: true, confirmLabel: "Prune" }))) return;
     setPruning(true);
     setNotice("");
     try {
