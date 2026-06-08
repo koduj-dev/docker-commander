@@ -317,6 +317,19 @@ export const api = {
     req<{ ok: boolean }>("PUT", `/api/projects/${id}/files`, { name, content }),
   deleteProjectFile: (id: number, path: string) =>
     req<{ ok: boolean }>("DELETE", `/api/projects/${id}/files?path=${encodeURIComponent(path)}`),
+  // Raw (octet-stream) upload + download for binary/data files that can't go
+  // through the JSON text editor. Projects are local-only — no host param.
+  projectFileDownloadUrl: (id: number, name: string) =>
+    `/api/projects/${id}/files/raw?path=${encodeURIComponent(name)}`,
+  uploadProjectFile: async (id: number, name: string, file: File) => {
+    const res = await fetch(`/api/projects/${id}/files/raw?path=${encodeURIComponent(name)}`, {
+      method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/octet-stream" }, body: file,
+    });
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : null;
+    if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText);
+    return data as { ok: boolean; error?: string; bytes?: number };
+  },
   projectProfiles: (id: number) =>
     req<{ profiles: string[]; error?: string }>("GET", `/api/projects/${id}/profiles`),
   deployProject: (id: number, profiles: string[] = []) =>

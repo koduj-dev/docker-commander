@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"golang.org/x/text/unicode/norm"
@@ -72,6 +73,13 @@ type projectFileJSON struct {
 	Content  string `json:"content"`
 	IsDir    bool   `json:"isDir,omitempty"`
 	TooLarge bool   `json:"tooLarge,omitempty"`
+	Binary   bool   `json:"binary,omitempty"`
+}
+
+// looksBinary reports whether data is non-text (invalid UTF-8 or contains a NUL
+// byte) — such files are surfaced as download-only instead of editable text.
+func looksBinary(data []byte) bool {
+	return !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0
 }
 
 // projectRoot derives a project's folder from its ID (never stored, so renames
@@ -281,6 +289,13 @@ func (s *Server) handleListProjectFiles(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			return err
 		}
+		if looksBinary(data) {
+			// Binary/data files (datasets, images, archives) live alongside the
+			// compose file but can't be edited as text — surface them as
+			// download-only with no content payload.
+			out = append(out, projectFileJSON{Name: name, Size: info.Size(), Binary: true})
+			return nil
+		}
 		out = append(out, projectFileJSON{Name: name, Size: info.Size(), Content: string(data)})
 		return nil
 	})
@@ -336,6 +351,80 @@ func (s *Server) handleWriteProjectFile(w http.ResponseWriter, r *http.Request) 
 	_ = s.store.TouchProject(r.Context(), p.ID)
 	s.audit(r, "project.file.write", p.Slug, body.Name)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleUploadProjectFileRaw stores a raw (possibly binary) file in the project
+// folder from an octet-stream body — ?path=<name>. Lets datasets/binaries live
+// alongside the compose file without passing through the JSON text editor.
+func (s *Server) handleUploadProjectFileRaw(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	root := s.projectRoot(p.ID)
+	name := r.URL.Query().Get("path")
+	full, err := safeJoin(root, name)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// Enforce the file-count cap when adding a new file.
+	if _, statErr := os.Stat(full); errors.Is(statErr, os.ErrNotExist) {
+		if n, _ := countFiles(root); n >= maxProjectFiles {
+			writeErr(w, http.StatusBadRequest, "too many files in this project")
+			return
+		}
+	}
+	data, err := io.ReadAll(io.LimitReader(r.Body, maxProjectFileBytes+1))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if len(data) > maxProjectFileBytes {
+		writeErr(w, http.StatusRequestEntityTooLarge, "file too large")
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := os.WriteFile(full, data, 0o600); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	_ = s.store.TouchProject(r.Context(), p.ID)
+	s.audit(r, "project.file.upload", p.Slug, name)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "bytes": len(data)})
+}
+
+// handleDownloadProjectFile streams one file from the project folder (?path=)
+// as an attachment — works for both text and binary files.
+func (s *Server) handleDownloadProjectFile(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	name := r.URL.Query().Get("path")
+	full, err := safeJoin(s.projectRoot(p.ID), name)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	f, err := os.Open(full)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "file not found")
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || info.IsDir() {
+		writeErr(w, http.StatusBadRequest, "not a file")
+		return
+	}
+	s.audit(r, "project.file.download", p.Slug, name)
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+filepath.Base(full)+"\"")
+	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
 }
 
 // handleDeleteProjectFile removes one file (?path=).

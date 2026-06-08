@@ -310,6 +310,7 @@ export interface ProjectFile {
   content: string;
   isDir?: boolean;
   tooLarge?: boolean;
+  binary?: boolean;
 }
 
 export interface PortProbe {

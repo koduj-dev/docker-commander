@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { Link, useSearchParams } from "react-router-dom";
 import {
   FolderGit2, Plus, Rocket, Square, Trash2, X, FilePlus, FolderPlus, Upload, Loader2,
-  ExternalLink, Save, FileText, Folder, Terminal, Pencil, ChevronRight, Download, Search,
+  ExternalLink, Save, FileText, FileBox, Folder, Terminal, Pencil, ChevronRight, Download, Search,
 } from "lucide-react";
+import { bytes as fmtBytes } from "../lib/format";
 import { api, ApiError } from "../lib/api";
 import type { Project, ProjectFile, Stack } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
@@ -23,7 +24,7 @@ function projectState(stack: Stack | undefined): { cls: string; label: string; d
   return { cls: "bg-warn text-warn", label: "Partial", deployed: true };
 }
 
-type TreeNode = { name: string; path: string; isDir: boolean; children: TreeNode[] };
+type TreeNode = { name: string; path: string; isDir: boolean; binary?: boolean; children: TreeNode[] };
 
 // buildTree turns the flat file list (paths like "config/app.conf") into a
 // nested tree, materialising intermediate folders.
@@ -44,7 +45,7 @@ function buildTree(files: ProjectFile[]): TreeNode[] {
     const slash = f.name.lastIndexOf("/");
     if (f.isDir) { ensureDir(f.name); continue; }
     const parent = ensureDir(slash >= 0 ? f.name.slice(0, slash) : "");
-    parent.children.push({ name: f.name.slice(slash + 1), path: f.name, isDir: false, children: [] });
+    parent.children.push({ name: f.name.slice(slash + 1), path: f.name, isDir: false, binary: f.binary, children: [] });
   }
   const sort = (n: TreeNode) => {
     n.children.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
@@ -84,7 +85,9 @@ function TreeItem({ node, depth, active, dirty, collapsed, currentDir, onToggle,
   const isActive = node.path === active;
   return (
     <div className={`group flex items-center gap-1 rounded px-2 py-1 text-sm cursor-pointer ${isActive ? "bg-accent/15 text-accent" : "hover:bg-panel2"}`} style={pad} onClick={() => onSelect(node.path)}>
-      <FileText className="h-3.5 w-3.5 shrink-0 opacity-70" />
+      {node.binary
+        ? <FileBox className="h-3.5 w-3.5 shrink-0 opacity-70" />
+        : <FileText className="h-3.5 w-3.5 shrink-0 opacity-70" />}
       <span className="truncate font-mono text-xs">{node.name}</span>
       {dirty && isActive && <span className="text-warn text-xs">●</span>}
       <button className="ml-auto opacity-0 group-hover:opacity-100 text-danger" title="Delete file" onClick={(e) => { e.stopPropagation(); onDelete({ name: node.path, isDir: false }); }}><Trash2 className="h-3.5 w-3.5" /></button>
@@ -468,9 +471,23 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
   const upload = async (file: File) => {
     const full = currentDir ? `${currentDir}/${file.name}` : file.name;
     setBusy("upload");
-    try { await api.writeProjectFile(project.id, full, await file.text()); loadFiles(full); }
+    // Raw octet-stream upload preserves bytes for binary/data files (and works
+    // for text too). loadFiles re-reads, so a text file becomes editable.
+    try { await api.uploadProjectFile(project.id, full, file); loadFiles(full); }
     catch (e) { dialogs.alert({ title: "Upload failed", message: e instanceof Error ? e.message : "unknown error" }); }
     finally { setBusy(""); if (uploadRef.current) uploadRef.current.value = ""; }
+  };
+
+  // downloadActive saves the currently-selected file: binary/too-large files
+  // stream from the server (raw bytes), text files download the in-memory draft.
+  const downloadActive = () => {
+    if (activeFile?.binary || activeFile?.tooLarge) {
+      const a = document.createElement("a");
+      a.href = api.projectFileDownloadUrl(project.id, active);
+      a.click();
+    } else {
+      downloadText(active, draft);
+    }
   };
 
   const runCompose = async (kind: Kind) => {
@@ -554,14 +571,19 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
             <div className="flex items-center gap-2 p-2 border-b border-border">
               <span className="text-xs font-mono text-muted truncate">{active || "—"}</span>
               <div className="ml-auto flex items-center gap-1">
-                <button className="btn-ghost px-2 py-1 text-xs disabled:opacity-40" disabled={!active} title="Download this file" onClick={() => downloadText(active, draft)}><Download className="h-3.5 w-3.5" /></button>
-                <button className="btn-primary px-3 py-1 text-xs disabled:opacity-40" disabled={!dirty || busy === "save" || !active} onClick={save}>
+                <button className="btn-ghost px-2 py-1 text-xs disabled:opacity-40" disabled={!active} title="Download this file" onClick={downloadActive}><Download className="h-3.5 w-3.5" /></button>
+                <button className="btn-primary px-3 py-1 text-xs disabled:opacity-40" disabled={!dirty || busy === "save" || !active || activeFile?.binary} onClick={save}>
                   {busy === "save" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Save
                 </button>
               </div>
             </div>
             {activeFile?.tooLarge ? (
               <div className="p-4 text-sm text-muted">This file is too large to edit here.</div>
+            ) : activeFile?.binary ? (
+              <div className="p-4 flex flex-col items-start gap-3 text-sm text-muted">
+                <div className="flex items-center gap-2"><FileBox className="h-4 w-4" /> Binary file ({fmtBytes(activeFile.size)}) — can't be edited as text.</div>
+                <button className="btn-ghost px-3 py-1.5 text-xs" onClick={downloadActive}><Download className="h-3.5 w-3.5" /> Download</button>
+              </div>
             ) : (
               <textarea
                 className="flex-1 w-full resize-none bg-bg text-text font-mono text-sm p-3 focus:outline-none"

@@ -1,11 +1,95 @@
 package api
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/go-chi/chi/v5"
+
+	"github.com/koduj-dev/docker-commander/internal/config"
+	"github.com/koduj-dev/docker-commander/internal/store"
 )
+
+// newProjectServer builds a minimal Server (store + temp data dir) plus one
+// project — enough to exercise the project file handlers without auth/docker.
+func newProjectServer(t *testing.T) (*Server, int64) {
+	t.Helper()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	id, err := st.CreateProject(context.Background(), &store.Project{Name: "demo", Slug: "demo", CreatedBy: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Server{cfg: config.Config{DataDir: t.TempDir()}, store: st}, id
+}
+
+// projectReq builds a request carrying the chi {id} URL param.
+func projectReq(method, target string, id int64, body io.Reader) *http.Request {
+	r := httptest.NewRequest(method, target, body)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", strconv.FormatInt(id, 10))
+	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+}
+
+func TestProjectBinaryFileRoundTrip(t *testing.T) {
+	srv, id := newProjectServer(t)
+	png := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01, 0xff, 0xfe}
+
+	// Upload raw bytes.
+	w := httptest.NewRecorder()
+	srv.handleUploadProjectFileRaw(w, projectReq("POST", "/api/projects/1/files/raw?path=logo.png", id, bytes.NewReader(png)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("upload status = %d, body %s", w.Code, w.Body)
+	}
+
+	// List should flag it binary and carry no content payload.
+	w = httptest.NewRecorder()
+	srv.handleListProjectFiles(w, projectReq("GET", "/api/projects/1/files", id, nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("list status = %d", w.Code)
+	}
+	var files []projectFileJSON
+	if err := json.Unmarshal(w.Body.Bytes(), &files); err != nil {
+		t.Fatal(err)
+	}
+	var got *projectFileJSON
+	for i := range files {
+		if files[i].Name == "logo.png" {
+			got = &files[i]
+		}
+	}
+	if got == nil {
+		t.Fatal("logo.png not listed")
+	}
+	if !got.Binary {
+		t.Error("logo.png should be flagged binary")
+	}
+	if got.Content != "" {
+		t.Error("binary file should not carry content")
+	}
+
+	// Download must return the exact original bytes.
+	w = httptest.NewRecorder()
+	srv.handleDownloadProjectFile(w, projectReq("GET", "/api/projects/1/files/raw?path=logo.png", id, nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("download status = %d", w.Code)
+	}
+	if !bytes.Equal(w.Body.Bytes(), png) {
+		t.Errorf("downloaded bytes differ: got %v want %v", w.Body.Bytes(), png)
+	}
+}
 
 func TestSafeJoin(t *testing.T) {
 	root := t.TempDir()
@@ -34,6 +118,31 @@ func TestSafeJoin(t *testing.T) {
 	if err := os.Symlink("/etc/hostname", link); err == nil {
 		if _, err := safeJoin(root, "link.yml"); err == nil {
 			t.Error("symlink should be rejected")
+		}
+	}
+}
+
+func TestLooksBinary(t *testing.T) {
+	text := [][]byte{
+		[]byte("version: \"3\"\nservices:\n  web:\n    image: nginx\n"),
+		[]byte("#!/bin/sh\necho hello\n"),
+		[]byte(""),
+		[]byte("příliš žluťoučký kůň úpěl ďábelské ódy"), // valid UTF-8 with diacritics
+	}
+	for _, b := range text {
+		if looksBinary(b) {
+			t.Errorf("text wrongly flagged as binary: %q", b)
+		}
+	}
+
+	binary := [][]byte{
+		{0x00, 0x01, 0x02, 0x03},             // NUL byte
+		{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a}, // PNG header (invalid UTF-8)
+		{0xff, 0xd8, 0xff, 0xe0},             // JPEG header
+	}
+	for _, b := range binary {
+		if !looksBinary(b) {
+			t.Errorf("binary wrongly flagged as text: %v", b)
 		}
 	}
 }
