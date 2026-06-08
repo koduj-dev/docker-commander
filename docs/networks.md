@@ -2,6 +2,8 @@
 
 [← Manual index](README.md)
 
+![Networks](images/networks.png)
+
 ## Networks
 A card per network with driver, scope, subnets, an **internal / external** flag
 and the attached-container count. Search and filter (**in use / unused /
@@ -14,6 +16,9 @@ internal / all**) as elsewhere.
 - **Prune unused** (header) — remove every network not used by any container.
 
 ### Network detail
+
+![Network detail](images/network_detail.png)
+
 Click a card to open its detail modal, which shows the network's attached
 containers as a **list** or a **graph** (toggle, top-right):
 
@@ -27,6 +32,9 @@ containers as a **list** or a **graph** (toggle, top-right):
   containers attached — disconnect them first.
 
 ## Topology
+
+![Topology](images/topology.png)
+
 An interactive graph of **containers ↔ networks** (React Flow), laid out with a
 force-directed simulation so containers cluster around their networks and the
 whole graph spreads across the width (rather than one tall column).

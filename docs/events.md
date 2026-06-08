@@ -2,6 +2,8 @@
 
 [← Manual index](README.md)
 
+![Events](images/events.png)
+
 A live feed of **Docker daemon events** for the selected host, streamed over a
 WebSocket.
 

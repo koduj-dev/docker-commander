@@ -2,6 +2,8 @@
 
 [← Manual index](README.md)
 
+![Hosts](images/hosts.png)
+
 Manage the Docker daemons Docker Commander talks to. The **local** host exists
 out of the box; add remote ones and switch between them with the sidebar
 switcher. Every view, stream and the alert engine bind to the selected host.

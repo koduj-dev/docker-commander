@@ -2,6 +2,8 @@
 
 [← Manual index](README.md)
 
+![Stacks](images/stacks.png)
+
 A **stack** is a group of containers that share a Compose project — Docker
 Commander discovers them from the standard `com.docker.compose.project` label,
 so **stacks started with the `docker compose` CLI on the host show up here too**,
