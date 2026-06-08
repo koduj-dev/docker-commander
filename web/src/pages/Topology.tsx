@@ -17,10 +17,10 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import dagre from "@dagrejs/dagre";
-import { Boxes, Maximize2, Network as NetworkIcon, Search } from "lucide-react";
+import { Boxes, Maximize2, Network as NetworkIcon, Search, Share2, List } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
-import type { Topology as Topo } from "../lib/types";
+import type { Topology as Topo, TopoContainer } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { Spinner, EmptyState } from "../components/ui";
 import { FloatingEdge } from "../components/FloatingEdge";
@@ -94,18 +94,23 @@ const edgeTypes = { floating: FloatingEdge };
 
 // ---- Layout -----------------------------------------------------------------
 
+// containerMatches applies the state / stack / search filters shared by the
+// graph and the list view.
+function containerMatches(c: TopoContainer, filters: TopoFilters): boolean {
+  if (!filters.showStopped && c.state !== "running") return false;
+  if (filters.stack && (c.stack ?? "") !== filters.stack) return false;
+  const q = filters.search.trim().toLowerCase();
+  if (q && !(c.name.toLowerCase().includes(q) || c.image.toLowerCase().includes(q) || (c.stack ?? "").toLowerCase().includes(q))) return false;
+  return true;
+}
+
 function layout(topo: Topo, filters: TopoFilters): { nodes: Node[]; edges: Edge[] } {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: "LR", nodesep: 22, ranksep: 240, marginx: 20, marginy: 20 });
 
   const q = filters.search.trim().toLowerCase();
-  const containers = (topo.containers ?? []).filter((c) => {
-    if (!filters.showStopped && c.state !== "running") return false;
-    if (filters.stack && (c.stack ?? "") !== filters.stack) return false;
-    if (q && !(c.name.toLowerCase().includes(q) || c.image.toLowerCase().includes(q) || (c.stack ?? "").toLowerCase().includes(q))) return false;
-    return true;
-  });
+  const containers = (topo.containers ?? []).filter((c) => containerMatches(c, filters));
   const visibleContainerIds = new Set(containers.map((c) => c.id));
   // Keep only links whose container is visible after the filters.
   const links = (topo.links ?? []).filter((l) => visibleContainerIds.has(l.containerId));
@@ -175,6 +180,7 @@ export function Topology() {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [filters, setFilters] = useState<TopoFilters>({ hideEmptyNetworks: false, showStopped: true, search: "", stack: "" });
+  const [view, setView] = useState<"graph" | "list">("graph");
   const stacks = useMemo(() => [...new Set((topo?.containers ?? []).map((c) => c.stack).filter((s): s is string => !!s))].sort(), [topo]);
   const counts = useMemo(() => ({
     networks: nodes.filter((n) => n.type === "network").length,
@@ -243,14 +249,20 @@ export function Topology() {
                 {stacks.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
             )}
-            <FilterToggle label="Hide empty" active={filters.hideEmptyNetworks} onClick={() => setFilters((f) => ({ ...f, hideEmptyNetworks: !f.hideEmptyNetworks }))} />
+            {view === "graph" && <FilterToggle label="Hide empty" active={filters.hideEmptyNetworks} onClick={() => setFilters((f) => ({ ...f, hideEmptyNetworks: !f.hideEmptyNetworks }))} />}
             <FilterToggle label="Show stopped" active={filters.showStopped} onClick={() => setFilters((f) => ({ ...f, showStopped: !f.showStopped }))} />
+            <div className="flex rounded-md border border-border overflow-hidden">
+              <button className={clsx("px-2 py-1.5", view === "graph" ? "bg-accent/15 text-accent" : "bg-panel2 text-muted hover:text-text")} title="Graph view" onClick={() => setView("graph")}><Share2 className="h-3.5 w-3.5" /></button>
+              <button className={clsx("px-2 py-1.5", view === "list" ? "bg-accent/15 text-accent" : "bg-panel2 text-muted hover:text-text")} title="List view" onClick={() => setView("list")}><List className="h-3.5 w-3.5" /></button>
+            </div>
           </div>
         }
       />
       <div className="p-6">
         {!topo ? (
           <div className="flex items-center gap-2 text-muted"><Spinner /> Building graph…</div>
+        ) : view === "list" ? (
+          <TopoList topo={topo} filters={filters} onOpen={(cid) => navigate(`/containers/${cid}`)} />
         ) : nodes.length === 0 ? (
           <EmptyState title="Nothing to show" hint="No networks with attached containers match the current filters." />
         ) : (
@@ -293,6 +305,64 @@ export function Topology() {
         )}
       </div>
     </>
+  );
+}
+
+// TopoList is the compact, dense alternative to the graph: a filterable table of
+// containers with the networks (and IPs) each is attached to.
+function TopoList({ topo, filters, onOpen }: { topo: Topo; filters: TopoFilters; onOpen: (cid: string) => void }) {
+  const netById = useMemo(() => new Map((topo.networks ?? []).map((n) => [n.id, n.name])), [topo]);
+  const linksByContainer = useMemo(() => {
+    const m = new Map<string, { net: string; ip: string }[]>();
+    for (const l of topo.links ?? []) {
+      const arr = m.get(l.containerId) ?? [];
+      arr.push({ net: netById.get(l.networkId) ?? l.networkId.slice(0, 12), ip: l.ipAddress });
+      m.set(l.containerId, arr);
+    }
+    return m;
+  }, [topo, netById]);
+
+  const rows = (topo.containers ?? []).filter((c) => containerMatches(c, filters));
+  if (rows.length === 0) return <EmptyState title="No containers match" hint="Adjust the search, stack or state filters." />;
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="px-3 py-2 text-xs text-muted border-b border-border">{rows.length} container{rows.length === 1 ? "" : "s"}</div>
+      <table className="w-full text-sm">
+        <thead className="text-xs uppercase tracking-wide text-muted bg-panel2">
+          <tr>
+            <th className="text-left font-medium px-3 py-2">Container</th>
+            <th className="text-left font-medium px-3 py-2">Image</th>
+            <th className="text-left font-medium px-3 py-2">Stack</th>
+            <th className="text-left font-medium px-3 py-2">Networks</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((c) => {
+            const links = linksByContainer.get(c.id) ?? [];
+            return (
+              <tr key={c.id} className="border-t border-border hover:bg-panel2/40 cursor-pointer" onClick={() => onOpen(c.id)}>
+                <td className="px-3 py-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={clsx("h-2 w-2 rounded-full shrink-0", c.state === "running" ? "bg-ok" : c.state === "paused" ? "bg-warn" : "bg-danger")} />
+                    <span className="font-medium truncate">{c.name}</span>
+                  </div>
+                </td>
+                <td className="px-3 py-2 text-muted font-mono text-xs truncate max-w-[14rem]">{c.image}</td>
+                <td className="px-3 py-2 text-muted text-xs">{c.stack || "—"}</td>
+                <td className="px-3 py-2">
+                  <div className="flex flex-wrap gap-1">
+                    {links.length === 0 ? <span className="text-[10px] text-muted">—</span> : links.map((l, i) => (
+                      <span key={i} className="text-[10px] font-mono bg-accent/10 text-accent rounded px-1.5 py-0.5" title={l.ip || undefined}>{l.net}{l.ip ? ` · ${l.ip}` : ""}</span>
+                    ))}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
