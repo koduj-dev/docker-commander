@@ -26,6 +26,16 @@ export interface AppSettings {
   localhostNo2fa: boolean;
 }
 
+export interface UpdateStatus {
+  current: string;
+  latest?: string;
+  updateAvailable: boolean;
+  url?: string;
+  publishedAt?: string;
+  disabled?: boolean;
+  error?: string;
+}
+
 export interface LdapConfig {
   enabled: boolean;
   url: string;

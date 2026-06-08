@@ -33,6 +33,7 @@ type Server struct {
 	history      history.Store
 	metricsToken string
 	webFS        fs.FS // built SPA assets, or nil in dev mode
+	update       *updateChecker
 }
 
 // NewServer constructs the API server.
@@ -40,6 +41,7 @@ func NewServer(cfg config.Config, st *store.Store, authSvc *auth.Service, mw *au
 	return &Server{
 		cfg: cfg, store: st, auth: authSvc, mw: mw, docker: dm, hub: hub,
 		monitor: mon, history: hist, metricsToken: cfg.MetricsToken, webFS: webFS,
+		update: newUpdateChecker(cfg.Version, cfg.UpdateCheck),
 	}
 }
 
@@ -84,6 +86,7 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/ldap", s.handleGetLDAP)
 			r.Put("/ldap", s.handleSetLDAP)
 			r.Post("/ldap/test", s.handleTestLDAP)
+			r.Get("/update", s.handleUpdateStatus) // admin-only (section "__admin")
 
 			r.Get("/hosts", s.handleListHosts)
 			r.Post("/hosts", s.handleCreateHost)

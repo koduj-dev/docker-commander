@@ -5,6 +5,7 @@ import type {
   AlertEvent,
   AlertRule,
   AppSettings,
+  UpdateStatus,
   AuditEntry,
   LdapConfig,
   ManagedUser,
@@ -412,6 +413,7 @@ export const api = {
   pruneVolumes: () => req<{ deleted: string[] | null; spaceReclaimed: number }>("POST", `/api/volumes/prune${hostParam()}`),
   topology: () => req<Topology>("GET", `/api/topology${hostParam()}`),
   version: () => req<{ version: string }>("GET", "/api/version"),
+  updateStatus: () => req<UpdateStatus>("GET", "/api/update"), // admin-only
   prefs: () => req<Record<string, unknown>>("GET", "/api/prefs"),
   savePrefs: (obj: Record<string, unknown>) => req<{ ok: boolean }>("PUT", "/api/prefs", obj),
   system: () => req<SystemInfo>("GET", `/api/system${hostParam()}`),
