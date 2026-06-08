@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
+import CodeMirror from "@uiw/react-codemirror";
 import { EditorView } from "@codemirror/view";
 import { type Text } from "@codemirror/state";
 import { StreamLanguage, type LanguageSupport } from "@codemirror/language";
@@ -9,7 +9,7 @@ import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { dockerFile } from "@codemirror/legacy-modes/mode/dockerfile";
 import { properties } from "@codemirror/legacy-modes/mode/properties";
 import { oneDark } from "@codemirror/theme-one-dark";
-import { linter, lintGutter, forceLinting, type Diagnostic } from "@codemirror/lint";
+import { lintGutter, setDiagnostics, type Diagnostic } from "@codemirror/lint";
 import { parseDocument } from "yaml";
 import type { Extension } from "@codemirror/state";
 
@@ -194,8 +194,24 @@ const dcTheme = EditorView.theme({
   ".cm-scroller": { fontSize: "13px" },
 }, { dark: true });
 
-// CodeEditor: syntax highlighting + inline diagnostics (client syntax linters
+// allDiagnostics combines the client syntax checks with the resolved server
+// results for the open file.
+function allDiagnostics(view: EditorView, filename: string, check: ServerCheck): Diagnostic[] {
+  const lower = filename.toLowerCase();
+  const diags: Diagnostic[] = [];
+  if (/\.ya?ml$/.test(lower)) diags.push(...yamlSource(view));
+  else if (/\.json$/.test(lower)) diags.push(...jsonSource(view));
+  else if (isEnvFile(filename)) diags.push(...envSource(view));
+  diags.push(...resolveServerDiags(check, view));
+  return diags;
+}
+
+// CodeEditor: syntax highlighting + inline diagnostics (client syntax checks
 // plus server validation results) in an app-matched dark theme.
+//
+// Diagnostics are pushed imperatively with setDiagnostics rather than via a
+// linter() source: the server result arrives asynchronously (no edit), and
+// dispatching directly is reliable where forceLinting proved not to repaint.
 export function CodeEditor({ value, onChange, filename, readOnly, serverCheck }: {
   value: string;
   onChange?: (v: string) => void;
@@ -203,38 +219,24 @@ export function CodeEditor({ value, onChange, filename, readOnly, serverCheck }:
   readOnly?: boolean;
   serverCheck?: ServerCheck;
 }) {
-  const cmRef = useRef<ReactCodeMirrorRef>(null);
-  const checkRef = useRef<ServerCheck>(serverCheck ?? null);
+  const viewRef = useRef<EditorView | null>(null);
 
-  // Re-run the server linter whenever the latest result changes.
+  // Recompute + push diagnostics on edits, file switches and new server results.
   useEffect(() => {
-    checkRef.current = serverCheck ?? null;
-    const view = cmRef.current?.view;
-    if (view) forceLinting(view);
-  }, [serverCheck]);
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch(setDiagnostics(view.state, allDiagnostics(view, filename, serverCheck ?? null)));
+  }, [value, filename, serverCheck]);
 
   const extensions = useMemo<Extension[]>(() => {
-    const lower = filename.toLowerCase();
     const lang = languageFor(filename);
-    const exts: Extension[] = [dcTheme];
+    const exts: Extension[] = [dcTheme, lintGutter()];
     if (lang) exts.push(lang as LanguageSupport | Extension);
-    // ONE linter combining client syntax checks + authoritative server results,
-    // so a single forceLinting() (on a new server result) re-renders both.
-    exts.push(linter((view) => {
-      const diags: Diagnostic[] = [];
-      if (/\.ya?ml$/.test(lower)) diags.push(...yamlSource(view));
-      else if (/\.json$/.test(lower)) diags.push(...jsonSource(view));
-      else if (isEnvFile(filename)) diags.push(...envSource(view));
-      diags.push(...resolveServerDiags(checkRef.current, view));
-      return diags;
-    }, { delay: 150 }));
-    exts.push(lintGutter());
     return exts;
   }, [filename]);
 
   return (
     <CodeMirror
-      ref={cmRef}
       value={value}
       onChange={onChange}
       theme={oneDark}
@@ -243,6 +245,7 @@ export function CodeEditor({ value, onChange, filename, readOnly, serverCheck }:
       height="100%"
       style={{ height: "100%", overflow: "hidden" }}
       basicSetup={{ lineNumbers: true, foldGutter: true, highlightActiveLine: true, autocompletion: true, tabSize: 2 }}
+      onCreateEditor={(view) => { viewRef.current = view; }}
     />
   );
 }
