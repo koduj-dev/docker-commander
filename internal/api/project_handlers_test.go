@@ -49,6 +49,42 @@ func projectReq(method, target string, id int64, body io.Reader) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
 }
 
+func TestOverlayProject(t *testing.T) {
+	srv, id := newProjectServer(t)
+	root := srv.projectRoot(id)
+	if err := os.WriteFile(filepath.Join(root, "compose.yml"), []byte("services: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "config"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "config", "app.conf"), []byte("orig\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tmp, err := srv.overlayProject(id, "compose.yml", "services:\n  web:\n    image: nginx\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmp)
+
+	if tmp == root {
+		t.Error("overlay must use a separate temp dir, not the project root")
+	}
+	// The named file carries the unsaved content...
+	if got, _ := os.ReadFile(filepath.Join(tmp, "compose.yml")); !strings.Contains(string(got), "nginx") {
+		t.Errorf("overlay not applied: %q", got)
+	}
+	// ...and sibling files are copied verbatim (so relative refs still resolve).
+	if got, _ := os.ReadFile(filepath.Join(tmp, "config", "app.conf")); string(got) != "orig\n" {
+		t.Errorf("sibling not copied: %q", got)
+	}
+	// The on-disk project is untouched.
+	if got, _ := os.ReadFile(filepath.Join(root, "compose.yml")); string(got) != "services: {}\n" {
+		t.Errorf("overlay must not mutate the on-disk file: %q", got)
+	}
+}
+
 func TestProjectBinaryFileRoundTrip(t *testing.T) {
 	srv, id := newProjectServer(t)
 	png := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01, 0xff, 0xfe}

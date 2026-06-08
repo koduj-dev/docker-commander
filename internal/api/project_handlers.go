@@ -535,6 +535,11 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 // schema / anchor / interpolation errors before deploying. It returns 200 even
 // for an invalid file — the check ran, it just found problems — so the UI can
 // show the error message inline.
+//
+// With an optional {name, content} body it validates the *unsaved* editor
+// buffer: the project is copied to a temp dir, the named file overlaid with the
+// posted content, and compose config run there. This powers live validation in
+// the editor without forcing a save first.
 func (s *Server) handleValidateProject(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.loadProject(w, r)
 	if !ok {
@@ -545,7 +550,25 @@ func (s *Server) handleValidateProject(w http.ResponseWriter, r *http.Request) {
 			"error": "the `docker compose` CLI is not available on the host running Docker Commander"})
 		return
 	}
-	out, err := docker.ComposeConfig(r.Context(), s.projectRoot(p.ID), p.Slug)
+
+	dir := s.projectRoot(p.ID)
+	// Optional unsaved-overlay body (decodeJSON tolerates an empty body → the
+	// button validates the on-disk files).
+	var body struct {
+		Name    string `json:"name"`
+		Content string `json:"content"`
+	}
+	if err := decodeJSON(r, &body); err == nil && body.Name != "" {
+		tmp, err := s.overlayProject(p.ID, body.Name, body.Content)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		defer os.RemoveAll(tmp)
+		dir = tmp
+	}
+
+	out, err := docker.ComposeConfig(r.Context(), dir, p.Slug)
 	if err != nil {
 		msg := strings.TrimSpace(out)
 		if msg == "" {
@@ -554,8 +577,51 @@ func (s *Server) handleValidateProject(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"valid": false, "error": msg})
 		return
 	}
-	s.audit(r, "project.validate", p.Slug, "")
 	writeJSON(w, http.StatusOK, map[string]any{"valid": true})
+}
+
+// overlayProject copies the project folder to a fresh temp dir and overlays the
+// named file with content, returning the temp dir (caller removes it). Used to
+// validate unsaved editor buffers against the real (multi-file) project.
+func (s *Server) overlayProject(id int64, name, content string) (string, error) {
+	root := s.projectRoot(id)
+	tmp, err := os.MkdirTemp("", "dc-validate-*")
+	if err != nil {
+		return "", err
+	}
+	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || p == root || d.Type()&fs.ModeSymlink != 0 {
+			return err
+		}
+		rel, _ := filepath.Rel(root, p)
+		dst := filepath.Join(tmp, rel)
+		if d.IsDir() {
+			return os.MkdirAll(dst, 0o700)
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(dst, data, 0o600)
+	})
+	if err != nil {
+		os.RemoveAll(tmp)
+		return "", err
+	}
+	full, err := safeJoin(tmp, name)
+	if err != nil {
+		os.RemoveAll(tmp)
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+		os.RemoveAll(tmp)
+		return "", err
+	}
+	if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
+		os.RemoveAll(tmp)
+		return "", err
+	}
+	return tmp, nil
 }
 
 // handleProjectProfiles lists the compose profiles defined in the project.

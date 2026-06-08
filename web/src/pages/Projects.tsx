@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type
 import { Link, useSearchParams } from "react-router-dom";
 import {
   FolderGit2, Plus, Rocket, Square, Trash2, X, FilePlus, FolderPlus, Upload, Loader2,
-  ExternalLink, Save, FileText, FileBox, Folder, Terminal, Pencil, ChevronRight, Download, Search, CheckCircle2,
+  ExternalLink, Save, FileText, FileBox, Folder, Terminal, Pencil, ChevronRight, Download, Search, CheckCircle2, AlertCircle,
 } from "lucide-react";
 import { bytes as fmtBytes } from "../lib/format";
 import { api, ApiError } from "../lib/api";
@@ -380,12 +380,32 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
   const [selectedProfiles, setSelectedProfiles] = useState<string[]>(() => getPref<string[]>(`projects.profiles.${project.slug}`, []));
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
   const [currentDir, setCurrentDir] = useState(""); // where New file/folder land
+  const [liveVal, setLiveVal] = useState<{ status: "idle" | "checking" | "ok" | "error"; message?: string }>({ status: "idle" });
+  const valSeq = useRef(0);
   const dialogs = useDialogs();
   const uploadRef = useRef<HTMLInputElement>(null);
 
   const dirOf = (path: string) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
 
   useEffect(() => { api.projectProfiles(project.id).then((r) => setProfiles(r.profiles)).catch(() => {}); }, [project.id]);
+
+  // Live compose validation: debounce edits to a YAML file and validate the
+  // *unsaved* buffer server-side (the same `docker compose config` used to
+  // deploy — anchors/merge keys/interpolation resolved), no save required.
+  useEffect(() => {
+    if (!composeAvailable || !active || !/\.ya?ml$/.test(active.toLowerCase())) {
+      setLiveVal({ status: "idle" });
+      return;
+    }
+    const seq = ++valSeq.current;
+    const t = setTimeout(() => {
+      setLiveVal((v) => ({ ...v, status: "checking" }));
+      api.validateProject(project.id, { name: active, content: draft })
+        .then((r) => { if (seq === valSeq.current) setLiveVal(r.unavailable ? { status: "idle" } : r.valid ? { status: "ok" } : { status: "error", message: r.error }); })
+        .catch(() => { if (seq === valSeq.current) setLiveVal({ status: "idle" }); });
+    }, 800);
+    return () => clearTimeout(t);
+  }, [active, draft, composeAvailable, project.id]);
   const toggleProfile = (p: string) => setSelectedProfiles((s) => {
     const next = s.includes(p) ? s.filter((x) => x !== p) : [...s, p];
     setPref(`projects.profiles.${project.slug}`, next);
@@ -507,10 +527,11 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
   // so YAML anchors/merge keys/interpolation resolve as they will at up time)
   // and shows the result in the shared output panel.
   const validate = async () => {
-    if (dirty && !(await dialogs.confirm({ title: "Unsaved changes", message: "Validate the last saved files?", confirmLabel: "Validate" }))) return;
     setBusy("validate");
     try {
-      const r = await api.validateProject(project.id);
+      // Validate the current (possibly unsaved) editor state — overlay the
+      // active file if one is open, else the on-disk project.
+      const r = await api.validateProject(project.id, active ? { name: active, content: draft } : undefined);
       onOutput({ title: `${project.name} — validate`, text: r.valid ? "✓ compose file is valid" : (r.error || "invalid compose file"), ok: r.valid });
     } catch (e) {
       onOutput({ title: `${project.name} — validate`, text: e instanceof Error ? e.message : "failed", ok: false });
@@ -589,6 +610,17 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
           <div className="flex-1 flex flex-col min-w-0">
             <div className="flex items-center gap-2 p-2 border-b border-border">
               <span className="text-xs font-mono text-muted truncate">{active || "—"}</span>
+              {liveVal.status !== "idle" && (
+                <span className="text-[11px] flex items-center gap-1 shrink-0" title={liveVal.message}>
+                  {liveVal.status === "checking" ? (
+                    <><Loader2 className="h-3 w-3 animate-spin text-muted" /><span className="text-muted">checking…</span></>
+                  ) : liveVal.status === "ok" ? (
+                    <><CheckCircle2 className="h-3 w-3 text-ok" /><span className="text-ok">valid</span></>
+                  ) : (
+                    <><AlertCircle className="h-3 w-3 text-danger" /><span className="text-danger">invalid</span></>
+                  )}
+                </span>
+              )}
               <div className="ml-auto flex items-center gap-1">
                 <button className="btn-ghost px-2 py-1 text-xs disabled:opacity-40" disabled={!active} title="Download this file" onClick={downloadActive}><Download className="h-3.5 w-3.5" /></button>
                 <button className="btn-primary px-3 py-1 text-xs disabled:opacity-40" disabled={!dirty || busy === "save" || !active || activeFile?.binary} onClick={save}>
@@ -596,6 +628,9 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
                 </button>
               </div>
             </div>
+            {liveVal.status === "error" && liveVal.message && (
+              <div className="px-3 py-1.5 text-xs text-danger bg-danger/10 border-b border-danger/30 font-mono whitespace-pre-wrap break-words max-h-24 overflow-auto">{liveVal.message}</div>
+            )}
             {activeFile?.tooLarge ? (
               <div className="p-4 text-sm text-muted">This file is too large to edit here.</div>
             ) : activeFile?.binary ? (
