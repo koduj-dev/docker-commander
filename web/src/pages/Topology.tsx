@@ -33,7 +33,14 @@ export function Topology() {
   // Defer the search so typing stays responsive — the force layout only
   // recomputes once typing settles, not on every keystroke.
   const deferredSearch = useDeferredValue(filters.search);
-  const effFilters = useMemo(() => ({ ...filters, search: deferredSearch }), [filters, deferredSearch]);
+  // Depend on the individual non-search fields (not the whole `filters` object,
+  // which gets a new reference on every keystroke) so effFilters — and the force
+  // layout it drives — stays stable while typing and only updates once the
+  // deferred search settles.
+  const effFilters = useMemo<TopoFilters>(
+    () => ({ hideEmptyNetworks: filters.hideEmptyNetworks, showStopped: filters.showStopped, stack: filters.stack, search: deferredSearch }),
+    [filters.hideEmptyNetworks, filters.showStopped, filters.stack, deferredSearch],
+  );
   const stats = useMemo(() => (topo ? topoStats(topo, effFilters) : { networks: 0, containers: 0 }), [topo, effFilters]);
 
   useEffect(() => {
