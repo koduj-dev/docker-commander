@@ -136,5 +136,6 @@ Initial release: a single CGO-free Go binary with an embedded React UI.
   per-section permissions / read-only, feature flags, audit log, optional LDAP;
   secrets encrypted at rest.
 
+[1.2.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.2.0
 [1.1.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.1.0
 [1.0.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.0.0

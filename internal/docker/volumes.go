@@ -3,7 +3,6 @@ package docker
 import (
 	"context"
 	"sort"
-	"strings"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
@@ -64,7 +63,9 @@ func (m *Manager) ListVolumes(ctx context.Context, hostID int64) ([]VolumeSummar
 			InUseBy: usage[v.Name],
 		})
 	}
-	sort.SliceStable(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
+	// Volume names are unique, so cmpFold's case-sensitive fallback is a
+	// sufficient deterministic tie-breaker for names differing only by case.
+	sort.SliceStable(out, func(i, j int) bool { return cmpFold(out[i].Name, out[j].Name) < 0 })
 	return out, nil
 }
 

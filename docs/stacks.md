@@ -25,7 +25,7 @@ DC-managed projects) a link back to the [Project](projects.md).
   named volumes are kept (like `docker compose down`).
 - **View compose file** — reads the stack's `compose.yml` from the host (the
   path comes from the `com.docker.compose.project.config_files` label): directly
-  for the local daemon, over **SSH** for ssh hosts. Plain-TCP hosts can't reach
+  for the local daemon, over **SSH** for SSH hosts. Plain-TCP hosts can't reach
   the host filesystem. **Copy** or **download** it from the viewer.
 
 ## Tips
