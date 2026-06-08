@@ -9,7 +9,7 @@ import (
 
 // createLabeled starts an alpine container with the given Compose labels via
 // the raw client (CreateSpec doesn't expose labels).
-func createLabeled(t *testing.T, m *Manager, ctx context.Context, name string, labels map[string]string) string {
+func createLabeled(ctx context.Context, t *testing.T, m *Manager, name string, labels map[string]string) string {
 	t.Helper()
 	cli, err := m.Client(ctx, 0)
 	if err != nil {
@@ -24,19 +24,19 @@ func createLabeled(t *testing.T, m *Manager, ctx context.Context, name string, l
 	if err := cli.ContainerStart(ctx, created.ID, container.StartOptions{}); err != nil {
 		t.Fatalf("start %s: %v", name, err)
 	}
-	t.Cleanup(func() { rmContainer(t, m, ctx, created.ID) })
+	t.Cleanup(func() { rmContainer(ctx, t, m, created.ID) })
 	return created.ID
 }
 
 func TestIntegrationStacks(t *testing.T) {
 	m, ctx := newManager(t)
-	ensureImage(t, m, ctx)
+	ensureImage(ctx, t, m)
 
 	const project = "dctest_stack"
-	createLabeled(t, m, ctx, "dctest_stack_web", map[string]string{
+	createLabeled(ctx, t, m, "dctest_stack_web", map[string]string{
 		labelComposeProject: project, labelComposeService: "web",
 	})
-	createLabeled(t, m, ctx, "dctest_stack_db", map[string]string{
+	createLabeled(ctx, t, m, "dctest_stack_db", map[string]string{
 		labelComposeProject: project, labelComposeService: "db",
 	})
 

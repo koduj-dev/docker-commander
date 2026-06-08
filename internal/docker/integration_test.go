@@ -42,7 +42,7 @@ func newManager(t *testing.T) (*Manager, context.Context) {
 const testImage = "alpine:latest"
 
 // ensureImage makes sure alpine is present (pulling it exercises PullImage).
-func ensureImage(t *testing.T, m *Manager, ctx context.Context) {
+func ensureImage(ctx context.Context, t *testing.T, m *Manager) {
 	t.Helper()
 	imgs, _ := m.ListImages(ctx, 0)
 	for _, im := range imgs {
@@ -58,7 +58,7 @@ func ensureImage(t *testing.T, m *Manager, ctx context.Context) {
 }
 
 // rawClient returns the underlying client for cleanup ops the Manager doesn't expose.
-func rmContainer(t *testing.T, m *Manager, ctx context.Context, id string) {
+func rmContainer(ctx context.Context, t *testing.T, m *Manager, id string) {
 	cli, err := m.Client(ctx, 0)
 	if err != nil {
 		return
@@ -66,9 +66,9 @@ func rmContainer(t *testing.T, m *Manager, ctx context.Context, id string) {
 	_ = cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true})
 }
 
-func startTestContainer(t *testing.T, m *Manager, ctx context.Context, name string) string {
+func startTestContainer(ctx context.Context, t *testing.T, m *Manager, name string) string {
 	t.Helper()
-	ensureImage(t, m, ctx)
+	ensureImage(ctx, t, m)
 	id, err := m.CreateContainer(ctx, 0, CreateSpec{
 		Image: testImage, Name: name, Cmd: []string{"sleep", "300"},
 		Env: []string{"FOO=bar"}, Start: true,
@@ -76,7 +76,7 @@ func startTestContainer(t *testing.T, m *Manager, ctx context.Context, name stri
 	if err != nil {
 		t.Fatalf("CreateContainer: %v", err)
 	}
-	t.Cleanup(func() { rmContainer(t, m, ctx, id) })
+	t.Cleanup(func() { rmContainer(ctx, t, m, id) })
 	return id
 }
 
@@ -107,7 +107,7 @@ func TestIntegrationSystemAndLists(t *testing.T) {
 
 func TestIntegrationContainerLifecycle(t *testing.T) {
 	m, ctx := newManager(t)
-	id := startTestContainer(t, m, ctx, "dctest_life")
+	id := startTestContainer(ctx, t, m, "dctest_life")
 
 	d, err := m.InspectContainer(ctx, 0, id)
 	if err != nil || d.State != "running" {
@@ -179,7 +179,7 @@ func TestIntegrationContainerLifecycle(t *testing.T) {
 
 func TestIntegrationImagesTransfer(t *testing.T) {
 	m, ctx := newManager(t)
-	ensureImage(t, m, ctx)
+	ensureImage(ctx, t, m)
 
 	if err := m.TagImage(ctx, 0, testImage, "dctest-xfer:1"); err != nil {
 		t.Fatalf("TagImage: %v", err)
@@ -270,7 +270,7 @@ func TestIntegrationNetworkRemove(t *testing.T) {
 
 func TestIntegrationLogsAndEvents(t *testing.T) {
 	m, ctx := newManager(t)
-	id := startTestContainer(t, m, ctx, "dctest_logs")
+	id := startTestContainer(ctx, t, m, "dctest_logs")
 
 	// StreamLogs: tail a bit; bounded by a short context.
 	lctx, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -304,7 +304,7 @@ func TestIntegrationLogsAndEvents(t *testing.T) {
 
 func TestIntegrationProbePorts(t *testing.T) {
 	m, ctx := newManager(t)
-	ensureImage(t, m, ctx) // alpine is already present — no extra pull
+	ensureImage(ctx, t, m) // alpine is already present — no extra pull
 	id, err := m.CreateContainer(ctx, 0, CreateSpec{
 		Image: testImage, Name: "dctest_probe", Cmd: []string{"sleep", "300"}, Start: true,
 		Ports: []PortSpec{{ContainerPort: "80", HostPort: "0"}}, // published; nothing listens
@@ -312,7 +312,7 @@ func TestIntegrationProbePorts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateContainer: %v", err)
 	}
-	t.Cleanup(func() { rmContainer(t, m, ctx, id) })
+	t.Cleanup(func() { rmContainer(ctx, t, m, id) })
 
 	// Host-wide scan: the published port appears (closed, since nothing listens).
 	host, err := m.ProbeHostPorts(ctx, 0)
@@ -340,7 +340,7 @@ func TestIntegrationProbePorts(t *testing.T) {
 
 func TestIntegrationResourceOverview(t *testing.T) {
 	m, ctx := newManager(t)
-	id := startTestContainer(t, m, ctx, "dctest_overview")
+	id := startTestContainer(ctx, t, m, "dctest_overview")
 
 	ov, err := m.ResourceOverview(ctx, 0)
 	if err != nil {
@@ -365,7 +365,7 @@ func TestIntegrationResourceOverview(t *testing.T) {
 
 func TestIntegrationExecAndStats(t *testing.T) {
 	m, ctx := newManager(t)
-	id := startTestContainer(t, m, ctx, "dctest_exec")
+	id := startTestContainer(ctx, t, m, "dctest_exec")
 
 	// Exec a command over a TTY, write to stdin, read merged output.
 	sess, err := m.ExecAttach(ctx, 0, id, []string{"sh", "-c", "echo hello-exec"}, 80, 24)
@@ -405,7 +405,7 @@ func TestIntegrationExecAndStats(t *testing.T) {
 
 func TestIntegrationBuildImage(t *testing.T) {
 	m, ctx := newManager(t)
-	ensureImage(t, m, ctx)
+	ensureImage(ctx, t, m)
 
 	// Minimal build context: a Dockerfile that just adds a label (no RUN, so it
 	// needs nothing beyond the base image already pulled by ensureImage).
@@ -431,7 +431,7 @@ func TestIntegrationBuildImage(t *testing.T) {
 
 func TestIntegrationImportAndRegistryLogin(t *testing.T) {
 	m, ctx := newManager(t)
-	id := startTestContainer(t, m, ctx, "dctest_import")
+	id := startTestContainer(ctx, t, m, "dctest_import")
 
 	// Export the container's filesystem and re-import it as a fresh image.
 	rc, err := m.ExportContainer(ctx, 0, id)

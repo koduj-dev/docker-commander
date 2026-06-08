@@ -23,6 +23,8 @@ var (
 	composeOK   bool
 )
 
+// ComposeAvailable reports whether the `docker compose` CLI is usable on the
+// host. The result is probed once and cached for the process lifetime.
 func ComposeAvailable(ctx context.Context) bool {
 	// Probe with a fresh background context (its own timeout below), not the
 	// caller's: a cancelled/timed-out first request must not cache "unavailable"

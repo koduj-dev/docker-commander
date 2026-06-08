@@ -791,9 +791,8 @@ func TestAPIPermissionEnforcement(t *testing.T) {
 	}
 
 	// the viewer uses its own cookie jar
-	viewer := admin
 	jar, _ := cookiejar.New(nil)
-	viewer = &apiClient{t: t, c: &http.Client{Jar: jar}, url: admin.url}
+	viewer := &apiClient{t: t, c: &http.Client{Jar: jar}, url: admin.url}
 	if code, _ := viewer.do("POST", "/api/auth/login", map[string]string{"username": "viewer", "password": "viewerpass123"}); code != 200 {
 		t.Fatalf("viewer login: %d", code)
 	}
