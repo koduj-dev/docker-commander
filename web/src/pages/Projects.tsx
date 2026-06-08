@@ -7,6 +7,7 @@ import {
 import { bytes as fmtBytes } from "../lib/format";
 import { api, ApiError } from "../lib/api";
 import type { Project, ProjectFile, Stack, ComposeModel, ComposeService } from "../lib/types";
+import type { ServerCheck } from "../components/CodeEditor";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner, StateBadge } from "../components/ui";
 import { useDialogs } from "../components/Dialog";
@@ -496,7 +497,8 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
   const [selectedProfiles, setSelectedProfiles] = useState<string[]>(() => getPref<string[]>(`projects.profiles.${project.slug}`, []));
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
   const [currentDir, setCurrentDir] = useState(""); // where New file/folder land
-  const [liveVal, setLiveVal] = useState<{ status: "idle" | "checking" | "ok" | "error"; message?: string; warnings?: string[] }>({ status: "idle" });
+  const [liveVal, setLiveVal] = useState<"idle" | "checking" | "ok" | "warning" | "error">("idle");
+  const [serverCheck, setServerCheck] = useState<ServerCheck>(null);
   const [summary, setSummary] = useState<ComposeModel | null>(null);
   const valSeq = useRef(0);
   const dialogs = useDialogs();
@@ -506,25 +508,43 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
 
   useEffect(() => { api.projectProfiles(project.id).then((r) => setProfiles(r.profiles)).catch(() => {}); }, [project.id]);
 
-  // Live compose validation: validation is a property of the compose file, so it
-  // only runs while that file is open. Debounce edits and validate the *unsaved*
-  // buffer server-side (the same `docker compose config` used to deploy —
-  // anchors/merge keys/interpolation resolved), no save required.
+  // Live validation: compose files are checked with `docker compose config` and
+  // Dockerfiles with `docker build --check`, both over the *unsaved* buffer (no
+  // save required). Results render as inline diagnostics in the editor; the chip
+  // shows the overall status. Validation is a property of those files, so it
+  // only runs while one of them is open.
   const composeFileName = project.composeFile || "compose.yml";
+  const onComposeFile = isComposeFile(active, composeFileName);
+  const onDockerfileActive = !onComposeFile && isDockerfile(active);
   useEffect(() => {
-    if (!composeAvailable || !isComposeFile(active, composeFileName)) {
-      setLiveVal({ status: "idle" });
+    if (!composeAvailable || (!onComposeFile && !onDockerfileActive)) {
+      setLiveVal("idle"); setServerCheck(null);
       return;
     }
     const seq = ++valSeq.current;
+    const stale = () => seq !== valSeq.current;
     const t = setTimeout(() => {
-      setLiveVal((v) => ({ ...v, status: "checking" }));
-      api.validateProject(project.id, { name: active, content: draft })
-        .then((r) => { if (seq === valSeq.current) setLiveVal(r.unavailable ? { status: "idle" } : r.valid ? { status: "ok", warnings: r.warnings } : { status: "error", message: r.error }); })
-        .catch(() => { if (seq === valSeq.current) setLiveVal({ status: "idle" }); });
-    }, 800);
+      setLiveVal("checking");
+      if (onDockerfileActive) {
+        api.checkDockerfile(project.id, draft)
+          .then((r) => { if (stale()) return;
+            if (r.unavailable) { setLiveVal("idle"); setServerCheck(null); return; }
+            setServerCheck({ kind: "dockerfile", output: r.output });
+            setLiveVal(r.level);
+          })
+          .catch(() => { if (!stale()) { setLiveVal("idle"); setServerCheck(null); } });
+      } else {
+        api.validateProject(project.id, { name: active, content: draft })
+          .then((r) => { if (stale()) return;
+            if (r.unavailable) { setLiveVal("idle"); setServerCheck(null); return; }
+            if (!r.valid) { setServerCheck({ kind: "compose", error: r.error }); setLiveVal("error"); }
+            else { setServerCheck({ kind: "compose", warnings: r.warnings }); setLiveVal(r.warnings?.length ? "warning" : "ok"); }
+          })
+          .catch(() => { if (!stale()) { setLiveVal("idle"); setServerCheck(null); } });
+      }
+    }, onDockerfileActive ? 1200 : 800);
     return () => clearTimeout(t);
-  }, [active, draft, composeAvailable, project.id, composeFileName]);
+  }, [active, draft, composeAvailable, project.id, onComposeFile, onDockerfileActive]);
   const toggleProfile = (p: string) => setSelectedProfiles((s) => {
     const next = s.includes(p) ? s.filter((x) => x !== p) : [...s, p];
     setPref(`projects.profiles.${project.slug}`, next);
@@ -642,21 +662,6 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
     } finally { setBusy(""); }
   };
 
-  // validate runs `docker compose config` server-side (the real deploy parser,
-  // so YAML anchors/merge keys/interpolation resolve as they will at up time)
-  // and shows the result in the shared output panel.
-  const validate = async () => {
-    setBusy("validate");
-    try {
-      // Validate the current (possibly unsaved) editor state — overlay the
-      // active file if one is open, else the on-disk project.
-      const r = await api.validateProject(project.id, active ? { name: active, content: draft } : undefined);
-      onOutput({ title: `${project.name} — validate`, text: r.valid ? "✓ compose file is valid" : (r.error || "invalid compose file"), ok: r.valid });
-    } catch (e) {
-      onOutput({ title: `${project.name} — validate`, text: e instanceof Error ? e.message : "failed", ok: false });
-    } finally { setBusy(""); }
-  };
-
   // openSummary fetches the resolved compose model and shows the overview modal.
   const openSummary = async () => {
     setBusy("summary");
@@ -681,22 +686,7 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
     } finally { setBusy(""); }
   };
 
-  // checkDockerfile lints the active Dockerfile (unsaved buffer) via
-  // `docker build --check`; results go to the shared output panel. It's a button
-  // (not live) because the check resolves base-image metadata from the registry.
-  const checkDockerfile = async () => {
-    setBusy("dfcheck");
-    try {
-      const r = await api.checkDockerfile(project.id, draft);
-      onOutput({ title: `${active} — check`, text: r.valid ? (r.output || "✓ no issues found") : (r.error || "issues found"), ok: r.valid });
-    } catch (e) {
-      onOutput({ title: `${active} — check`, text: e instanceof Error ? e.message : "failed", ok: false });
-    } finally { setBusy(""); }
-  };
-
   const activeFile = files?.find((f) => f.name === active);
-  const onComposeFile = isComposeFile(active, composeFileName); // validation belongs to the compose file(s)
-  const onDockerfile = isDockerfile(active);
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
@@ -765,13 +755,13 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
           <div className="flex-1 flex flex-col min-w-0">
             <div className="flex items-center gap-2 p-2 border-b border-border">
               <span className="text-xs font-mono text-muted truncate">{active || "—"}</span>
-              {liveVal.status !== "idle" && (
-                <span className="text-[11px] flex items-center gap-1 shrink-0" title={liveVal.message ?? liveVal.warnings?.join("\n")}>
-                  {liveVal.status === "checking" ? (
+              {liveVal !== "idle" && (
+                <span className="text-[11px] flex items-center gap-1 shrink-0" title="Issues are underlined inline in the editor">
+                  {liveVal === "checking" ? (
                     <><Loader2 className="h-3 w-3 animate-spin text-muted" /><span className="text-muted">checking…</span></>
-                  ) : liveVal.status === "ok" && liveVal.warnings?.length ? (
-                    <><AlertTriangle className="h-3 w-3 text-warn" /><span className="text-warn">{liveVal.warnings.length} warning{liveVal.warnings.length === 1 ? "" : "s"}</span></>
-                  ) : liveVal.status === "ok" ? (
+                  ) : liveVal === "warning" ? (
+                    <><AlertTriangle className="h-3 w-3 text-warn" /><span className="text-warn">warnings</span></>
+                  ) : liveVal === "ok" ? (
                     <><CheckCircle2 className="h-3 w-3 text-ok" /><span className="text-ok">valid</span></>
                   ) : (
                     <><AlertCircle className="h-3 w-3 text-danger" /><span className="text-danger">invalid</span></>
@@ -779,11 +769,6 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
                 </span>
               )}
               <div className="ml-auto flex items-center gap-1">
-                {onComposeFile && (
-                  <button className="btn-ghost px-2 py-1 text-xs disabled:opacity-40" disabled={!composeAvailable || busy === "validate"} onClick={validate} title={composeAvailable ? "Re-validate (docker compose config)" : "docker compose CLI not available"}>
-                    {busy === "validate" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} Validate
-                  </button>
-                )}
                 {onComposeFile && (
                   <button className="btn-ghost px-2 py-1 text-xs disabled:opacity-40" disabled={!composeAvailable || busy === "resolve"} onClick={showResolved} title="Show the fully-resolved compose (anchors/interpolation/extends flattened)">
                     {busy === "resolve" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />} Resolved
@@ -794,25 +779,12 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
                     {busy === "summary" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Boxes className="h-3.5 w-3.5" />} Summary
                   </button>
                 )}
-                {onDockerfile && (
-                  <button className="btn-ghost px-2 py-1 text-xs disabled:opacity-40" disabled={busy === "dfcheck"} onClick={checkDockerfile} title="Lint this Dockerfile (docker build --check)">
-                    {busy === "dfcheck" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} Check
-                  </button>
-                )}
                 <button className="btn-ghost px-2 py-1 text-xs disabled:opacity-40" disabled={!active} title="Download this file" onClick={downloadActive}><Download className="h-3.5 w-3.5" /></button>
                 <button className="btn-primary px-3 py-1 text-xs disabled:opacity-40" disabled={!dirty || busy === "save" || !active || activeFile?.binary} onClick={save}>
                   {busy === "save" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Save
                 </button>
               </div>
             </div>
-            {liveVal.status === "error" && liveVal.message && (
-              <div className="px-3 py-1.5 text-xs text-danger bg-danger/10 border-b border-danger/30 font-mono whitespace-pre-wrap break-words max-h-24 overflow-auto">{liveVal.message}</div>
-            )}
-            {liveVal.status === "ok" && !!liveVal.warnings?.length && (
-              <div className="px-3 py-1.5 text-xs text-warn bg-warn/10 border-b border-warn/30 max-h-24 overflow-auto">
-                {liveVal.warnings.map((wmsg, i) => <div key={i} className="break-words">⚠ {wmsg}</div>)}
-              </div>
-            )}
             {activeFile?.tooLarge ? (
               <div className="p-4 text-sm text-muted">This file is too large to edit here.</div>
             ) : activeFile?.binary ? (
@@ -823,7 +795,7 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
             ) : active ? (
               <div className="flex-1 min-h-0 overflow-hidden">
                 <Suspense fallback={<div className="h-full grid place-items-center text-muted"><Spinner /></div>}>
-                  <CodeEditor filename={active} value={draft} onChange={setDraft} />
+                  <CodeEditor filename={active} value={draft} onChange={setDraft} serverCheck={serverCheck} />
                 </Suspense>
               </div>
             ) : (

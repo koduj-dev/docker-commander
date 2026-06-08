@@ -346,7 +346,7 @@ export const api = {
     req<{ ok: boolean; model?: ComposeModel; error?: string }>("POST", `/api/projects/${id}/summary`, overlay),
   // Lint a Dockerfile via `docker build --check` (no build steps run).
   checkDockerfile: (id: number, content: string) =>
-    req<{ valid: boolean; output?: string; error?: string; unavailable?: boolean }>("POST", `/api/projects/${id}/dockerfile-check`, { content }),
+    req<{ level: "ok" | "warning" | "error"; output?: string; unavailable?: boolean }>("POST", `/api/projects/${id}/dockerfile-check`, { content }),
   deployProject: (id: number, profiles: string[] = []) =>
     req<{ ok: boolean; output?: string; error?: string }>("POST", `/api/projects/${id}/deploy`, { profiles }),
   downProject: (id: number) =>

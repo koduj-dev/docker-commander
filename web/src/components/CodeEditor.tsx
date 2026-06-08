@@ -1,6 +1,7 @@
-import { useMemo } from "react";
-import CodeMirror from "@uiw/react-codemirror";
+import { useEffect, useMemo, useRef } from "react";
+import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import { EditorView } from "@codemirror/view";
+import { type Text } from "@codemirror/state";
 import { StreamLanguage, type LanguageSupport } from "@codemirror/language";
 import { yaml } from "@codemirror/lang-yaml";
 import { json, jsonParseLinter } from "@codemirror/lang-json";
@@ -8,14 +9,23 @@ import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { dockerFile } from "@codemirror/legacy-modes/mode/dockerfile";
 import { properties } from "@codemirror/legacy-modes/mode/properties";
 import { oneDark } from "@codemirror/theme-one-dark";
-import { linter, lintGutter, type Diagnostic } from "@codemirror/lint";
+import { linter, lintGutter, forceLinting, type Diagnostic } from "@codemirror/lint";
 import { parseDocument } from "yaml";
 import type { Extension } from "@codemirror/state";
 
+// ServerCheck is the latest authoritative validation result for the open file —
+// from `docker compose config` (compose) or `docker build --check` (dockerfile).
+// CodeEditor resolves these messages to inline diagnostics so they sit on the
+// relevant line, just like the client-side syntax linters.
+export type ServerCheck =
+  | { kind: "compose"; error?: string; warnings?: string[] }
+  | { kind: "dockerfile"; output?: string }
+  | null;
+
+// ---- client-side syntax linters ---------------------------------------------
+
 // yamlLinter parses YAML with the `yaml` library — which resolves anchors (&),
-// aliases (*) and merge keys (<<) — and surfaces parse errors/warnings as inline
-// diagnostics. This catches malformed YAML (incl. broken anchors) as you type,
-// before the authoritative server-side `docker compose config` check.
+// aliases (*) and merge keys (<<) — and surfaces parse errors/warnings inline.
 const yamlLinter = linter((view) => {
   const text = view.state.doc.toString();
   if (!text.trim()) return [];
@@ -65,14 +75,100 @@ const envLinter = linter((view) => {
   return out;
 });
 
-// isEnvFile matches .env, .env.* (e.g. .env.local) and *.env.
 function isEnvFile(name: string): boolean {
   const base = (name.split("/").pop() ?? "").toLowerCase();
   return base === ".env" || base.startsWith(".env.") || base.endsWith(".env");
 }
 
-// languageFor picks a CodeMirror language from a file name. Compose/sidecar
-// projects are mostly YAML, with shell scripts, Dockerfiles and *.conf/.env.
+// ---- server-result → inline diagnostics -------------------------------------
+
+function lineRange(doc: Text, ln: number): { from: number; to: number } {
+  const n = ln >= 1 && ln <= doc.lines ? ln : 1;
+  const line = doc.line(n);
+  return { from: line.from, to: line.to };
+}
+
+// cleanComposeMessage strips the noisy "validating <path>:" / "yaml:" prefixes.
+function cleanComposeMessage(s: string): string {
+  return s.replace(/^validating\s+\S+:\s*/i, "").replace(/^yaml:\s*/i, "").trim();
+}
+
+// composePathRange resolves a leading compose path in the error (e.g.
+// "services.web.ports") to a node range in the document via the YAML parser.
+function composePathRange(errorText: string, docText: string): { from: number; to: number } | null {
+  const m = /\b((?:services|networks|volumes|configs|secrets)(?:\.[A-Za-z0-9_.-]+)+)/.exec(errorText);
+  if (!m) return null;
+  const path = m[1].split(".").filter(Boolean);
+  try {
+    const node = parseDocument(docText).getIn(path, true) as { range?: [number, number, number] } | undefined;
+    if (node?.range) return { from: node.range[0], to: node.range[1] };
+  } catch { /* fall through */ }
+  return null;
+}
+
+// findVarRange locates a ${VAR} (or $VAR) occurrence in the document text.
+function findVarRange(docText: string, varName: string): { from: number; to: number } | null {
+  for (const p of [`\${${varName}}`, `\${${varName}:`, `\${${varName}-`]) {
+    const i = docText.indexOf(p);
+    if (i >= 0) return { from: i, to: i + p.length };
+  }
+  const m = new RegExp("\\$" + varName + "\\b").exec(docText);
+  return m ? { from: m.index, to: m.index + m[0].length } : null;
+}
+
+// parseDockerfileDiags turns `docker build --check` output into line diagnostics:
+// each WARNING/ERROR block ends with a `Dockerfile:<line>` reference.
+function parseDockerfileDiags(output: string, doc: Text): Diagnostic[] {
+  const out: Diagnostic[] = [];
+  let cur: { sev: "error" | "warning"; parts: string[] } | null = null;
+  for (const raw of output.split("\n")) {
+    const ln = raw.trim();
+    const head = /^(WARNING|ERROR):\s*(.*)$/.exec(ln);
+    const df = /^Dockerfile:(\d+)/.exec(ln);
+    if (head) {
+      cur = { sev: head[1] === "ERROR" ? "error" : "warning", parts: [head[2].replace(/\s*-\s*https?:\/\/\S+$/, "")] };
+    } else if (df && cur) {
+      const r = lineRange(doc, parseInt(df[1], 10));
+      out.push({ ...r, severity: cur.sev, message: cur.parts.filter(Boolean).join(" — ") });
+      cur = null;
+    } else if (cur && ln && !ln.startsWith("---") && !/^\d+\s*\|/.test(ln) && !ln.startsWith("Check complete")) {
+      cur.parts.push(ln);
+    }
+  }
+  // Flush a trailing block that never hit a Dockerfile:<line> reference.
+  if (cur) out.push({ ...lineRange(doc, 1), severity: cur.sev, message: cur.parts.filter(Boolean).join(" — ") });
+  return out;
+}
+
+function resolveServerDiags(check: ServerCheck, view: EditorView): Diagnostic[] {
+  if (!check) return [];
+  const doc = view.state.doc;
+  const docText = doc.toString();
+  const len = doc.length;
+  const clamp = (n: number) => Math.max(0, Math.min(n, len));
+  const mk = (r: { from: number; to: number } | null, severity: "error" | "warning", message: string): Diagnostic => {
+    const range = r ?? lineRange(doc, 1);
+    return { from: clamp(range.from), to: clamp(Math.max(range.to, range.from + 1)), severity, message };
+  };
+  const out: Diagnostic[] = [];
+  if (check.kind === "compose") {
+    if (check.error) {
+      const lm = /line (\d+)/.exec(check.error);
+      const range = lm ? lineRange(doc, parseInt(lm[1], 10)) : composePathRange(check.error, docText);
+      out.push(mk(range, "error", cleanComposeMessage(check.error)));
+    }
+    for (const wmsg of check.warnings ?? []) {
+      const vn = /"([A-Za-z_][A-Za-z0-9_]*)"\s+variable is not set/.exec(wmsg)?.[1];
+      out.push(mk(vn ? findVarRange(docText, vn) : null, "warning", wmsg));
+    }
+  } else if (check.kind === "dockerfile") {
+    out.push(...parseDockerfileDiags(check.output ?? "", doc));
+  }
+  return out;
+}
+
+// ---- theme + component ------------------------------------------------------
+
 function languageFor(name: string): Extension | null {
   const lower = name.toLowerCase();
   const base = lower.split("/").pop() ?? lower;
@@ -84,8 +180,6 @@ function languageFor(name: string): Extension | null {
   return null;
 }
 
-// dcTheme blends one-dark's token colors with the app's own background/border
-// palette so the editor sits flush inside the panel.
 const dcTheme = EditorView.theme({
   "&": { backgroundColor: "#0b0f17", color: "#e6ebf4", height: "100%" },
   ".cm-content": { caretColor: "#2496ed", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
@@ -97,28 +191,42 @@ const dcTheme = EditorView.theme({
   ".cm-scroller": { fontSize: "13px" },
 }, { dark: true });
 
-// CodeEditor is a thin CodeMirror wrapper used by the project file editor:
-// syntax highlighting by file name, app-matched dark theme.
-export function CodeEditor({ value, onChange, filename, readOnly }: {
+// CodeEditor: syntax highlighting + inline diagnostics (client syntax linters
+// plus server validation results) in an app-matched dark theme.
+export function CodeEditor({ value, onChange, filename, readOnly, serverCheck }: {
   value: string;
   onChange?: (v: string) => void;
   filename: string;
   readOnly?: boolean;
+  serverCheck?: ServerCheck;
 }) {
+  const cmRef = useRef<ReactCodeMirrorRef>(null);
+  const checkRef = useRef<ServerCheck>(serverCheck ?? null);
+
+  // Re-run the server linter whenever the latest result changes.
+  useEffect(() => {
+    checkRef.current = serverCheck ?? null;
+    const view = cmRef.current?.view;
+    if (view) forceLinting(view);
+  }, [serverCheck]);
+
   const extensions = useMemo<Extension[]>(() => {
     const lower = filename.toLowerCase();
     const lang = languageFor(filename);
     const exts: Extension[] = [dcTheme];
     if (lang) exts.push(lang as LanguageSupport | Extension);
-    // Live, file-type-aware diagnostics.
-    if (/\.ya?ml$/.test(lower)) exts.push(yamlLinter, lintGutter()); // anchor-aware YAML
-    else if (/\.json$/.test(lower)) exts.push(linter(jsonParseLinter()), lintGutter());
-    else if (isEnvFile(filename)) exts.push(envLinter, lintGutter());
+    if (/\.ya?ml$/.test(lower)) exts.push(yamlLinter);
+    else if (/\.json$/.test(lower)) exts.push(linter(jsonParseLinter()));
+    else if (isEnvFile(filename)) exts.push(envLinter);
+    // Authoritative server results, resolved to inline positions.
+    exts.push(linter((view) => resolveServerDiags(checkRef.current, view), { delay: 150 }));
+    exts.push(lintGutter());
     return exts;
   }, [filename]);
 
   return (
     <CodeMirror
+      ref={cmRef}
       value={value}
       onChange={onChange}
       theme={oneDark}

@@ -721,14 +721,20 @@ func (s *Server) handleCheckDockerfile(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := docker.DockerfileCheck(r.Context(), body.Content)
 	out = strings.TrimSpace(out)
-	if err != nil {
-		if out == "" {
-			out = err.Error()
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"valid": false, "error": out})
-		return
+	// Classify by the check output: a parse error is hard ("error"), lint findings
+	// are "warning", a clean check is "ok". (Exit code can't tell them apart — both
+	// lint warnings and parse errors are non-zero.)
+	level := "ok"
+	switch {
+	case strings.Contains(out, "ERROR:"):
+		level = "error"
+	case strings.Contains(out, "WARNING:"):
+		level = "warning"
+	case out == "" && err != nil:
+		level = "error"
+		out = err.Error()
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"valid": true, "output": out})
+	writeJSON(w, http.StatusOK, map[string]any{"level": level, "output": out})
 }
 
 // handleProjectProfiles lists the compose profiles defined in the project.
