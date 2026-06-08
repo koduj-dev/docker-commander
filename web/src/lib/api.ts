@@ -411,7 +411,14 @@ export const api = {
   testRegistry: (id: number) => req<{ ok: boolean; error?: string }>("POST", `/api/registries/${id}/test${hostParam()}`),
 
   networks: () => req<NetworkSummary[]>("GET", `/api/networks${hostParam()}`),
+  createNetwork: (b: { name: string; driver?: string; subnet?: string; gateway?: string; internal?: boolean; attachable?: boolean }) =>
+    req<{ ok: boolean; id?: string; error?: string }>("POST", `/api/networks${hostParam()}`, b),
   deleteNetwork: (id: string) => req<{ ok: boolean; error?: string }>("DELETE", `/api/networks/${id}${hostParam()}`),
+  pruneNetworks: () => req<{ deleted: string[] | null }>("POST", `/api/networks/prune${hostParam()}`),
+  connectNetwork: (id: string, container: string) =>
+    req<{ ok: boolean; error?: string }>("POST", `/api/networks/${id}/connect${hostParam()}`, { container }),
+  disconnectNetwork: (id: string, container: string, force = false) =>
+    req<{ ok: boolean; error?: string }>("POST", `/api/networks/${id}/disconnect${hostParam()}`, { container, force }),
 
   volumes: () => req<VolumeSummary[]>("GET", `/api/volumes${hostParam()}`),
   createVolume: (b: { name: string; driver?: string }) =>

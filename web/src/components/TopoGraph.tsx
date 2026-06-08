@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   Background,
   BackgroundVariant,
@@ -16,9 +16,10 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { forceSimulation, forceLink, forceManyBody, forceCollide, forceX, forceY, type SimulationNodeDatum } from "d3-force";
-import { Boxes, Network as NetworkIcon } from "lucide-react";
+import { Boxes, Network as NetworkIcon, Unplug } from "lucide-react";
 import clsx from "clsx";
 import type { Topology as Topo, TopoContainer } from "../lib/types";
+import { EmptyState } from "./ui";
 import { FloatingEdge } from "./FloatingEdge";
 
 export interface TopoFilters {
@@ -205,5 +206,77 @@ export function TopoGraph({ topo, filters, onContainerClick, minimap = true }: {
         <MiniMap pannable zoomable className="bg-panel2!" nodeColor={(n) => (n.type === "network" ? "#2496ed" : "#2dd4a7")} maskColor="rgba(11,15,23,0.7)" />
       )}
     </ReactFlow>
+  );
+}
+
+// TopoList is the compact, dense alternative to the graph: a filterable table of
+// containers with the networks (and IPs) each is attached to. When onDisconnect
+// is given, each row gets a disconnect action (used in the network detail).
+export function TopoList({ topo, filters, onOpen, onDisconnect }: {
+  topo: Topo;
+  filters: TopoFilters;
+  onOpen: (cid: string) => void;
+  onDisconnect?: (cid: string, name: string) => void;
+}) {
+  const netById = useMemo(() => new Map((topo.networks ?? []).map((n) => [n.id, n.name])), [topo]);
+  const linksByContainer = useMemo(() => {
+    const m = new Map<string, { net: string; ip: string }[]>();
+    for (const l of topo.links ?? []) {
+      const arr = m.get(l.containerId) ?? [];
+      arr.push({ net: netById.get(l.networkId) ?? l.networkId.slice(0, 12), ip: l.ipAddress });
+      m.set(l.containerId, arr);
+    }
+    return m;
+  }, [topo, netById]);
+
+  const rows = (topo.containers ?? []).filter((c) => containerMatches(c, filters));
+  if (rows.length === 0) return <EmptyState title="No containers match" hint="Adjust the search, stack or state filters." />;
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="px-3 py-2 text-xs text-muted border-b border-border">{rows.length} container{rows.length === 1 ? "" : "s"}</div>
+      <table className="w-full text-sm">
+        <thead className="text-xs uppercase tracking-wide text-muted bg-panel2">
+          <tr>
+            <th className="text-left font-medium px-3 py-2">Container</th>
+            <th className="text-left font-medium px-3 py-2">Image</th>
+            <th className="text-left font-medium px-3 py-2">Stack</th>
+            <th className="text-left font-medium px-3 py-2">Networks</th>
+            {onDisconnect && <th className="px-3 py-2"></th>}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((c) => {
+            const links = linksByContainer.get(c.id) ?? [];
+            return (
+              <tr key={c.id} className="border-t border-border hover:bg-panel2/40">
+                <td className="px-3 py-2 cursor-pointer" onClick={() => onOpen(c.id)}>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={clsx("h-2 w-2 rounded-full shrink-0", c.state === "running" ? "bg-ok" : c.state === "paused" ? "bg-warn" : "bg-danger")} />
+                    <span className="font-medium truncate">{c.name}</span>
+                  </div>
+                </td>
+                <td className="px-3 py-2 text-muted font-mono text-xs truncate max-w-[14rem] cursor-pointer" onClick={() => onOpen(c.id)}>{c.image}</td>
+                <td className="px-3 py-2 text-muted text-xs">{c.stack || "—"}</td>
+                <td className="px-3 py-2">
+                  <div className="flex flex-wrap gap-1">
+                    {links.length === 0 ? <span className="text-[10px] text-muted">—</span> : links.map((l, i) => (
+                      <span key={i} className="text-[10px] font-mono bg-accent/10 text-accent rounded px-1.5 py-0.5" title={l.ip || undefined}>{l.net}{l.ip ? ` · ${l.ip}` : ""}</span>
+                    ))}
+                  </div>
+                </td>
+                {onDisconnect && (
+                  <td className="px-3 py-2 text-right">
+                    <button className="btn-ghost px-2 py-1 text-xs text-danger" title="Disconnect from this network" onClick={() => onDisconnect(c.id, c.name)}>
+                      <Unplug className="h-3.5 w-3.5" />
+                    </button>
+                  </td>
+                )}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }

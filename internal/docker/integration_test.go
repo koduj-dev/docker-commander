@@ -268,6 +268,51 @@ func TestIntegrationNetworkRemove(t *testing.T) {
 	}
 }
 
+func TestIntegrationNetworkLifecycle(t *testing.T) {
+	m, ctx := newManager(t)
+	cli, err := m.Client(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	id, err := m.CreateNetwork(ctx, 0, NetworkCreateRequest{Name: "dctest_netlife", Driver: "bridge", Subnet: "172.31.99.0/24"})
+	if err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+	t.Cleanup(func() { _ = cli.NetworkRemove(ctx, id) })
+
+	cid := startTestContainer(ctx, t, m, "dctest_netlife_c")
+	if err := m.ConnectNetwork(ctx, 0, id, cid); err != nil {
+		t.Fatalf("ConnectNetwork: %v", err)
+	}
+	if err := m.DisconnectNetwork(ctx, 0, id, cid, false); err != nil {
+		t.Errorf("DisconnectNetwork: %v", err)
+	}
+	if err := m.RemoveNetwork(ctx, 0, id); err != nil {
+		t.Errorf("RemoveNetwork: %v", err)
+	}
+
+	// Prune removes an unused network.
+	id2, err := m.CreateNetwork(ctx, 0, NetworkCreateRequest{Name: "dctest_netprune"})
+	if err != nil {
+		t.Fatalf("CreateNetwork(2): %v", err)
+	}
+	t.Cleanup(func() { _ = cli.NetworkRemove(ctx, id2) })
+	deleted, err := m.PruneNetworks(ctx, 0)
+	if err != nil {
+		t.Fatalf("PruneNetworks: %v", err)
+	}
+	found := false
+	for _, n := range deleted {
+		if n == "dctest_netprune" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("prune should have removed dctest_netprune, got %v", deleted)
+	}
+}
+
 func TestIntegrationLogsAndEvents(t *testing.T) {
 	m, ctx := newManager(t)
 	id := startTestContainer(ctx, t, m, "dctest_logs")

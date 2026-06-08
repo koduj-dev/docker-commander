@@ -7,7 +7,7 @@ import type { Topology as Topo } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { Spinner, EmptyState } from "../components/ui";
 import { getPref, setPref } from "../lib/prefs";
-import { TopoGraph, topoStats, containerMatches, type TopoFilters } from "../components/TopoGraph";
+import { TopoGraph, TopoList, topoStats, type TopoFilters } from "../components/TopoGraph";
 
 type TopoPrefs = { hideEmptyNetworks?: boolean; showStopped?: boolean; stack?: string; view?: "graph" | "list" };
 
@@ -88,64 +88,6 @@ export function Topology() {
         )}
       </div>
     </>
-  );
-}
-
-// TopoList is the compact, dense alternative to the graph: a filterable table of
-// containers with the networks (and IPs) each is attached to.
-function TopoList({ topo, filters, onOpen }: { topo: Topo; filters: TopoFilters; onOpen: (cid: string) => void }) {
-  const netById = useMemo(() => new Map((topo.networks ?? []).map((n) => [n.id, n.name])), [topo]);
-  const linksByContainer = useMemo(() => {
-    const m = new Map<string, { net: string; ip: string }[]>();
-    for (const l of topo.links ?? []) {
-      const arr = m.get(l.containerId) ?? [];
-      arr.push({ net: netById.get(l.networkId) ?? l.networkId.slice(0, 12), ip: l.ipAddress });
-      m.set(l.containerId, arr);
-    }
-    return m;
-  }, [topo, netById]);
-
-  const rows = (topo.containers ?? []).filter((c) => containerMatches(c, filters));
-  if (rows.length === 0) return <EmptyState title="No containers match" hint="Adjust the search, stack or state filters." />;
-
-  return (
-    <div className="card overflow-hidden">
-      <div className="px-3 py-2 text-xs text-muted border-b border-border">{rows.length} container{rows.length === 1 ? "" : "s"}</div>
-      <table className="w-full text-sm">
-        <thead className="text-xs uppercase tracking-wide text-muted bg-panel2">
-          <tr>
-            <th className="text-left font-medium px-3 py-2">Container</th>
-            <th className="text-left font-medium px-3 py-2">Image</th>
-            <th className="text-left font-medium px-3 py-2">Stack</th>
-            <th className="text-left font-medium px-3 py-2">Networks</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((c) => {
-            const links = linksByContainer.get(c.id) ?? [];
-            return (
-              <tr key={c.id} className="border-t border-border hover:bg-panel2/40 cursor-pointer" onClick={() => onOpen(c.id)}>
-                <td className="px-3 py-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className={clsx("h-2 w-2 rounded-full shrink-0", c.state === "running" ? "bg-ok" : c.state === "paused" ? "bg-warn" : "bg-danger")} />
-                    <span className="font-medium truncate">{c.name}</span>
-                  </div>
-                </td>
-                <td className="px-3 py-2 text-muted font-mono text-xs truncate max-w-[14rem]">{c.image}</td>
-                <td className="px-3 py-2 text-muted text-xs">{c.stack || "—"}</td>
-                <td className="px-3 py-2">
-                  <div className="flex flex-wrap gap-1">
-                    {links.length === 0 ? <span className="text-[10px] text-muted">—</span> : links.map((l, i) => (
-                      <span key={i} className="text-[10px] font-mono bg-accent/10 text-accent rounded px-1.5 py-0.5" title={l.ip || undefined}>{l.net}{l.ip ? ` · ${l.ip}` : ""}</span>
-                    ))}
-                  </div>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
   );
 }
 
