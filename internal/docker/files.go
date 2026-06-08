@@ -6,8 +6,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"path"
 	"strconv"
 	"strings"
 
@@ -16,9 +18,25 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 )
 
-// maxExtractBytes caps a .zip upload (buffered in memory for random access);
-// .tar/.tar.gz stream straight through.
+// maxExtractBytes caps both the buffered .zip upload (it needs random access)
+// and the total uncompressed output, so a small archive can't expand into an
+// unbounded tar stream (zip-bomb). .tar/.tar.gz stream straight through.
 const maxExtractBytes = 512 << 20 // 512 MiB
+
+// archiveEntryName sanitises a zip entry path: it must be a relative path that
+// stays within the destination. Returns the cleaned name and false if the entry
+// should be skipped (absolute path, or a ".." escape — zip-slip).
+func archiveEntryName(name string) (string, bool) {
+	name = strings.TrimSpace(strings.ReplaceAll(name, "\\", "/"))
+	if name == "" || path.IsAbs(name) {
+		return "", false
+	}
+	clean := path.Clean(name)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", false
+	}
+	return clean, true
+}
 
 // FileEntry is one item in a container directory listing.
 type FileEntry struct {
@@ -198,17 +216,29 @@ func (m *Manager) UploadExtract(ctx context.Context, hostID int64, id, destDir, 
 		pr, pw := io.Pipe()
 		go func() {
 			tw := tar.NewWriter(pw)
+			var written int64
 			for _, f := range zr.File {
-				if strings.Contains(f.Name, "..") { // skip zip-slip entries
-					continue
+				name, ok := archiveEntryName(f.Name)
+				if !ok {
+					continue // zip-slip / absolute path
 				}
 				fi := f.FileInfo()
+				// Only regular files and directories — skip symlinks, devices, etc.
+				if !fi.IsDir() && !fi.Mode().IsRegular() {
+					continue
+				}
+				if !fi.IsDir() {
+					if written += int64(f.UncompressedSize64); written > maxExtractBytes {
+						pw.CloseWithError(errors.New("archive expands beyond the size limit (possible zip bomb)"))
+						return
+					}
+				}
 				hdr, err := tar.FileInfoHeader(fi, "")
 				if err != nil {
 					pw.CloseWithError(err)
 					return
 				}
-				hdr.Name = f.Name // preserve the relative path
+				hdr.Name = name // cleaned relative path
 				if err := tw.WriteHeader(hdr); err != nil {
 					pw.CloseWithError(err)
 					return

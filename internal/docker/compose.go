@@ -24,7 +24,11 @@ var (
 )
 
 func ComposeAvailable(ctx context.Context) bool {
-	composeOnce.Do(func() { composeOK = composeProbe(ctx, "docker") })
+	// Probe with a fresh background context (its own timeout below), not the
+	// caller's: a cancelled/timed-out first request must not cache "unavailable"
+	// for the whole process lifetime via sync.Once.
+	_ = ctx
+	composeOnce.Do(func() { composeOK = composeProbe(context.Background(), "docker") })
 	return composeOK
 }
 

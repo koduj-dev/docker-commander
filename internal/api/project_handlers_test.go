@@ -32,7 +32,13 @@ func newProjectServer(t *testing.T) (*Server, int64) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &Server{cfg: config.Config{DataDir: t.TempDir()}, store: st}, id
+	srv := &Server{cfg: config.Config{DataDir: t.TempDir()}, store: st}
+	// The project folder exists in the real flow (created at project creation);
+	// mirror that so safeJoin's sandbox resolution has a root to anchor on.
+	if err := os.MkdirAll(srv.projectRoot(id), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return srv, id
 }
 
 // projectReq builds a request carrying the chi {id} URL param.
@@ -113,11 +119,19 @@ func TestSafeJoin(t *testing.T) {
 		}
 	}
 
-	// A symlink target is rejected (escape guard).
+	// A symlink target (final component) escaping root is rejected.
 	link := filepath.Join(root, "link.yml")
 	if err := os.Symlink("/etc/hostname", link); err == nil {
 		if _, err := safeJoin(root, "link.yml"); err == nil {
 			t.Error("symlink should be rejected")
+		}
+	}
+
+	// A symlinked *parent* directory escaping root is rejected too (the file
+	// itself doesn't exist yet, but writing through it would land outside root).
+	if err := os.Symlink("/etc", filepath.Join(root, "escape")); err == nil {
+		if _, err := safeJoin(root, "escape/passwd"); err == nil {
+			t.Error("a write through a symlinked parent dir should be rejected")
 		}
 	}
 }

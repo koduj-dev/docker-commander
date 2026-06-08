@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/docker/docker/api/types/events"
@@ -30,7 +31,13 @@ func (m *Manager) WatchEvents(ctx context.Context, hostID int64, fn func(Event))
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case err := <-errs:
+		case err, ok := <-errs:
+			if !ok {
+				// The SDK closed the error channel (e.g. daemon restart / stream
+				// ended) without a value — surface a real error so the caller
+				// logs and reconnects instead of silently backing off.
+				return errors.New("docker event stream closed")
+			}
 			return err
 		case msg := <-msgs:
 			fn(Event{

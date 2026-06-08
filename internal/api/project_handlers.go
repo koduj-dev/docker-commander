@@ -146,7 +146,15 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "could not create project folder: "+err.Error())
 		return
 	}
-	_ = os.WriteFile(filepath.Join(root, "compose.yml"), []byte(starterCompose(slug)), 0o600)
+	// The starter compose.yml must land on disk — without it deploy/edit break.
+	// Roll back the row + folder if the write fails (don't return a 200 over a
+	// half-created project).
+	if err := os.WriteFile(filepath.Join(root, "compose.yml"), []byte(starterCompose(slug)), 0o600); err != nil {
+		_ = os.RemoveAll(root)
+		_ = s.store.DeleteProject(r.Context(), id)
+		writeErr(w, http.StatusInternalServerError, "could not write compose.yml: "+err.Error())
+		return
+	}
 
 	s.audit(r, "project.create", slug, "")
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "slug": slug})
@@ -589,11 +597,12 @@ func (s *Server) handleDownloadProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	root := s.projectRoot(p.ID)
-	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", `attachment; filename="`+p.Slug+`.zip"`)
-	zw := zip.NewWriter(w)
-	defer zw.Close()
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	// Build the archive in memory (projects are bounded by maxProjectFiles ×
+	// maxProjectFileBytes) so a mid-walk read error becomes a clean 500 instead
+	// of a silently truncated zip streamed under a 200.
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
 			return err
 		}
@@ -609,6 +618,18 @@ func (s *Server) handleDownloadProject(w http.ResponseWriter, r *http.Request) {
 		_, err = fw.Write(data)
 		return err
 	})
+	if err == nil {
+		err = zw.Close()
+	} else {
+		_ = zw.Close()
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not build project archive: "+err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+p.Slug+`.zip"`)
+	_, _ = w.Write(buf.Bytes())
 }
 
 func (s *Server) runProjectCompose(w http.ResponseWriter, r *http.Request, fn func(ctx context.Context, dir, slug string) (string, error), action string) {
@@ -681,10 +702,41 @@ func safeJoin(root, name string) (string, error) {
 	if full != root && !strings.HasPrefix(full, root+string(os.PathSeparator)) {
 		return "", errors.New("invalid file path")
 	}
-	if fi, err := os.Lstat(full); err == nil && fi.Mode()&os.ModeSymlink != 0 {
-		return "", errors.New("symlinks are not allowed")
+	// Reject a symlink anywhere along the path escaping the sandbox — not just at
+	// the final component, but any parent dir too (e.g. config -> /etc). Resolve
+	// the deepest part that already exists and confirm it still lives under root.
+	if err := assertWithinRoot(root, full); err != nil {
+		return "", err
 	}
 	return full, nil
+}
+
+// assertWithinRoot resolves symlinks in the existing portion of p and verifies
+// the result stays inside root. The non-existent tail (yet-to-be-created dirs/
+// files) is composed of literal, traversal-free names, so once the deepest
+// existing ancestor resolves within root the full path is safe.
+func assertWithinRoot(root, p string) error {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return err
+	}
+	for cur := p; ; {
+		resolved, err := filepath.EvalSymlinks(cur)
+		if err == nil {
+			if resolved != realRoot && !strings.HasPrefix(resolved, realRoot+string(os.PathSeparator)) {
+				return errors.New("path escapes the project directory")
+			}
+			return nil
+		}
+		if !os.IsNotExist(err) {
+			return err
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return errors.New("path escapes the project directory")
+		}
+		cur = parent
+	}
 }
 
 // countFiles counts regular files under root.

@@ -19,8 +19,8 @@ import (
 // in-container file operations (exec ls/rm + docker cp) against it. Helpers are
 // labelled so we can find, hide (ListContainers skips them) and reap them.
 const (
-	volfsLabel = "dc.volfs"       // value = the volume name
-	volfsImage = "busybox:latest" // tiny; has ls / rm / sh
+	volfsLabel = "dc.volfs"     // value = the volume name
+	volfsImage = "busybox:1.37" // tiny; has ls / rm / sh. Pinned (not :latest) so volume browsing is deterministic across installs.
 	volfsMount = "/data"
 	volfsTTL   = 2 * time.Hour // reap helpers older than this
 )
