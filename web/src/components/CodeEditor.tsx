@@ -3,7 +3,7 @@ import CodeMirror from "@uiw/react-codemirror";
 import { EditorView } from "@codemirror/view";
 import { StreamLanguage, type LanguageSupport } from "@codemirror/language";
 import { yaml } from "@codemirror/lang-yaml";
-import { json } from "@codemirror/lang-json";
+import { json, jsonParseLinter } from "@codemirror/lang-json";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { dockerFile } from "@codemirror/legacy-modes/mode/dockerfile";
 import { properties } from "@codemirror/legacy-modes/mode/properties";
@@ -33,6 +33,43 @@ const yamlLinter = linter((view) => {
   }
   return out;
 });
+
+// envLinter checks .env files: every non-comment line must be KEY=value, with
+// warnings for duplicate keys (last value wins) and unusual variable names.
+const envLinter = linter((view) => {
+  const out: Diagnostic[] = [];
+  const seen = new Set<string>();
+  const doc = view.state.doc;
+  for (let i = 1; i <= doc.lines; i++) {
+    const line = doc.line(i);
+    const t = line.text.trim();
+    if (t === "" || t.startsWith("#")) continue;
+    const eq = line.text.indexOf("=");
+    if (eq < 0) {
+      out.push({ from: line.from, to: line.to, severity: "error", message: "expected KEY=value (no '=' on this line)" });
+      continue;
+    }
+    const key = line.text.slice(0, eq).replace(/^\s*export\s+/, "").trim();
+    if (key === "") {
+      out.push({ from: line.from, to: line.from + eq + 1, severity: "error", message: "missing key before '='" });
+      continue;
+    }
+    if (!/^[A-Za-z_][A-Za-z0-9_.]*$/.test(key)) {
+      out.push({ from: line.from, to: line.from + eq, severity: "warning", message: `unusual variable name "${key}"` });
+    }
+    if (seen.has(key)) {
+      out.push({ from: line.from, to: line.from + eq, severity: "warning", message: `duplicate key "${key}" — the last value wins` });
+    }
+    seen.add(key);
+  }
+  return out;
+});
+
+// isEnvFile matches .env, .env.* (e.g. .env.local) and *.env.
+function isEnvFile(name: string): boolean {
+  const base = (name.split("/").pop() ?? "").toLowerCase();
+  return base === ".env" || base.startsWith(".env.") || base.endsWith(".env");
+}
 
 // languageFor picks a CodeMirror language from a file name. Compose/sidecar
 // projects are mostly YAML, with shell scripts, Dockerfiles and *.conf/.env.
@@ -69,11 +106,14 @@ export function CodeEditor({ value, onChange, filename, readOnly }: {
   readOnly?: boolean;
 }) {
   const extensions = useMemo<Extension[]>(() => {
+    const lower = filename.toLowerCase();
     const lang = languageFor(filename);
     const exts: Extension[] = [dcTheme];
     if (lang) exts.push(lang as LanguageSupport | Extension);
-    // Live YAML diagnostics (anchor-aware) for compose/sidecar YAML files.
-    if (/\.ya?ml$/.test(filename.toLowerCase())) exts.push(yamlLinter, lintGutter());
+    // Live, file-type-aware diagnostics.
+    if (/\.ya?ml$/.test(lower)) exts.push(yamlLinter, lintGutter()); // anchor-aware YAML
+    else if (/\.json$/.test(lower)) exts.push(linter(jsonParseLinter()), lintGutter());
+    else if (isEnvFile(filename)) exts.push(envLinter, lintGutter());
     return exts;
   }, [filename]);
 
