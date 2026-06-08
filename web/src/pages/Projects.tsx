@@ -389,11 +389,13 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
 
   useEffect(() => { api.projectProfiles(project.id).then((r) => setProfiles(r.profiles)).catch(() => {}); }, [project.id]);
 
-  // Live compose validation: debounce edits to a YAML file and validate the
-  // *unsaved* buffer server-side (the same `docker compose config` used to
-  // deploy — anchors/merge keys/interpolation resolved), no save required.
+  // Live compose validation: validation is a property of the compose file, so it
+  // only runs while that file is open. Debounce edits and validate the *unsaved*
+  // buffer server-side (the same `docker compose config` used to deploy —
+  // anchors/merge keys/interpolation resolved), no save required.
+  const composeFileName = project.composeFile || "compose.yml";
   useEffect(() => {
-    if (!composeAvailable || !active || !/\.ya?ml$/.test(active.toLowerCase())) {
+    if (!composeAvailable || active !== composeFileName) {
       setLiveVal({ status: "idle" });
       return;
     }
@@ -405,7 +407,7 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
         .catch(() => { if (seq === valSeq.current) setLiveVal({ status: "idle" }); });
     }, 800);
     return () => clearTimeout(t);
-  }, [active, draft, composeAvailable, project.id]);
+  }, [active, draft, composeAvailable, project.id, composeFileName]);
   const toggleProfile = (p: string) => setSelectedProfiles((s) => {
     const next = s.includes(p) ? s.filter((x) => x !== p) : [...s, p];
     setPref(`projects.profiles.${project.slug}`, next);
@@ -539,6 +541,7 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
   };
 
   const activeFile = files?.find((f) => f.name === active);
+  const onComposeFile = active === composeFileName; // validation belongs to the compose file
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
@@ -556,9 +559,6 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
           </div>
           <div className="flex items-center gap-1 ml-auto">
             <a className="btn-ghost px-2 h-8" title="Download project as .zip" href={api.projectDownloadUrl(project.id)}><Download className="h-4 w-4" /></a>
-            <button className="btn-ghost px-3 h-8 text-sm disabled:opacity-40" disabled={!composeAvailable || busy === "validate"} onClick={validate} title={composeAvailable ? "docker compose config (validate)" : "docker compose CLI not available"}>
-              {busy === "validate" ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} Validate
-            </button>
             <button className="btn-primary px-3 h-8 text-sm disabled:opacity-40" disabled={!composeAvailable || busy === "deploy"} onClick={() => runCompose("deploy")} title={composeAvailable ? "docker compose up -d" : "docker compose CLI not available"}>
               {busy === "deploy" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />} {deployed ? "Redeploy" : "Deploy"}
             </button>
@@ -622,6 +622,11 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
                 </span>
               )}
               <div className="ml-auto flex items-center gap-1">
+                {onComposeFile && (
+                  <button className="btn-ghost px-2 py-1 text-xs disabled:opacity-40" disabled={!composeAvailable || busy === "validate"} onClick={validate} title={composeAvailable ? "Re-validate (docker compose config)" : "docker compose CLI not available"}>
+                    {busy === "validate" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} Validate
+                  </button>
+                )}
                 <button className="btn-ghost px-2 py-1 text-xs disabled:opacity-40" disabled={!active} title="Download this file" onClick={downloadActive}><Download className="h-3.5 w-3.5" /></button>
                 <button className="btn-primary px-3 py-1 text-xs disabled:opacity-40" disabled={!dirty || busy === "save" || !active || activeFile?.binary} onClick={save}>
                   {busy === "save" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Save
