@@ -104,6 +104,26 @@ func ComposeResolvedConfig(ctx context.Context, dir, slug string) (string, error
 	return stdout.String(), nil
 }
 
+// ComposeConfigJSON returns the resolved compose model as JSON
+// (`docker compose config --format json`) — used to build a project overview
+// (services, ports, volumes) and detect issues like duplicate host ports.
+func ComposeConfigJSON(ctx context.Context, dir, slug string) ([]byte, error) {
+	cctx, cancel := context.WithTimeout(ctx, composeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, "docker", "compose", "-p", slug, "config", "--format", "json")
+	cmd.Dir = dir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return nil, errors.New(msg)
+		}
+		return nil, err
+	}
+	return stdout.Bytes(), nil
+}
+
 // ComposeWarnings extracts the human-readable messages from `level=warning`
 // lines in compose CLI output (e.g. `The "X" variable is not set`), which the
 // CLI prints to stderr even for an otherwise-valid file.

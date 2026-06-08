@@ -314,6 +314,25 @@ export interface Project {
   updatedAt: string;
 }
 
+export interface ComposeService {
+  image?: string;
+  build?: { context?: string; dockerfile?: string } | string;
+  ports?: { target?: number; published?: string; protocol?: string; mode?: string }[];
+  volumes?: ({ type?: string; source?: string; target?: string } | string)[];
+  depends_on?: Record<string, unknown> | string[];
+  restart?: string;
+  profiles?: string[];
+}
+
+export interface ComposeModel {
+  name?: string;
+  services?: Record<string, ComposeService>;
+  networks?: Record<string, unknown>;
+  volumes?: Record<string, unknown>;
+  configs?: Record<string, unknown>;
+  secrets?: Record<string, unknown>;
+}
+
 export interface ProjectFile {
   name: string;
   size: number;

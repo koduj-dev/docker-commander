@@ -6,6 +6,7 @@ import type {
   AlertRule,
   AppSettings,
   UpdateStatus,
+  ComposeModel,
   AuditEntry,
   LdapConfig,
   ManagedUser,
@@ -340,6 +341,9 @@ export const api = {
   // Fully-resolved compose config (anchors/interpolation/extends flattened).
   resolveProject: (id: number, overlay?: { name: string; content: string }) =>
     req<{ ok: boolean; config?: string; error?: string }>("POST", `/api/projects/${id}/resolve`, overlay),
+  // Resolved compose model (JSON) for the overview / port-conflict check.
+  projectSummary: (id: number, overlay?: { name: string; content: string }) =>
+    req<{ ok: boolean; model?: ComposeModel; error?: string }>("POST", `/api/projects/${id}/summary`, overlay),
   // Lint a Dockerfile via `docker build --check` (no build steps run).
   checkDockerfile: (id: number, content: string) =>
     req<{ valid: boolean; output?: string; error?: string; unavailable?: boolean }>("POST", `/api/projects/${id}/dockerfile-check`, { content }),

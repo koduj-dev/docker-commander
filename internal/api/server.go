@@ -138,6 +138,7 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/projects/{id}/profiles", s.handleProjectProfiles)
 			r.Post("/projects/{id}/validate", s.handleValidateProject)
 			r.Post("/projects/{id}/resolve", s.handleResolveProject)
+			r.Post("/projects/{id}/summary", s.handleProjectSummary)
 			r.Post("/projects/{id}/dockerfile-check", s.handleCheckDockerfile)
 			r.Post("/projects/{id}/deploy", s.handleDeployProject)
 			r.Post("/projects/{id}/down", s.handleDownProject)

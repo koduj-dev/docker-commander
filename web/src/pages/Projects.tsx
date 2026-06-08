@@ -2,11 +2,11 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type
 import { Link, useSearchParams } from "react-router-dom";
 import {
   FolderGit2, Plus, Rocket, Square, Trash2, X, FilePlus, FolderPlus, Upload, Loader2,
-  ExternalLink, Save, FileText, FileBox, Folder, Terminal, Pencil, ChevronRight, Download, Search, CheckCircle2, AlertCircle, AlertTriangle, Eye,
+  ExternalLink, Save, FileText, FileBox, Folder, Terminal, Pencil, ChevronRight, Download, Search, CheckCircle2, AlertCircle, AlertTriangle, Eye, Boxes,
 } from "lucide-react";
 import { bytes as fmtBytes } from "../lib/format";
 import { api, ApiError } from "../lib/api";
-import type { Project, ProjectFile, Stack } from "../lib/types";
+import type { Project, ProjectFile, Stack, ComposeModel, ComposeService } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner, StateBadge } from "../components/ui";
 import { useDialogs } from "../components/Dialog";
@@ -106,6 +106,89 @@ function isComposeFile(name: string, configured: string): boolean {
   if (name === configured) return true;
   if (name.includes("/")) return false; // compose files live at the project root
   return /^(docker-)?compose(\.override)?\.ya?ml$/.test(name.toLowerCase());
+}
+
+// portConflicts finds host ports published by more than one service in the
+// resolved compose model.
+function portConflicts(model: ComposeModel): string[] {
+  const byKey = new Map<string, string[]>();
+  for (const [name, svc] of Object.entries(model.services ?? {})) {
+    for (const p of svc.ports ?? []) {
+      if (!p.published) continue;
+      const key = `${p.published}/${p.protocol ?? "tcp"}`;
+      byKey.set(key, [...(byKey.get(key) ?? []), name]);
+    }
+  }
+  const out: string[] = [];
+  for (const [key, svcs] of byKey) {
+    if (svcs.length > 1) out.push(`Host port ${key} is published by ${svcs.join(", ")}`);
+  }
+  return out;
+}
+
+function buildLabel(b: ComposeService["build"]): string {
+  if (!b) return "";
+  if (typeof b === "string") return `build: ${b}`;
+  return b.context ? `build: ${b.context}` : "build";
+}
+
+// ComposeSummaryModal renders an overview of the resolved compose model:
+// services with their image/ports/volumes, top-level resources, and any
+// duplicate-host-port conflicts.
+function ComposeSummaryModal({ model, onClose }: { model: ComposeModel; onClose: () => void }) {
+  const conflicts = portConflicts(model);
+  const services = Object.entries(model.services ?? {});
+  const tops: [string, string[]][] = [
+    ["Networks", Object.keys(model.networks ?? {})],
+    ["Volumes", Object.keys(model.volumes ?? {})],
+    ["Configs", Object.keys(model.configs ?? {})],
+    ["Secrets", Object.keys(model.secrets ?? {})],
+  ];
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+      <div className="card w-[70vw] max-w-3xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2 p-4 border-b border-border">
+          <Boxes className="h-4 w-4 text-accent" />
+          <span className="font-medium">Compose summary</span>
+          {model.name && <span className="text-xs text-muted font-mono">{model.name}</span>}
+          <button className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-4 overflow-auto space-y-3">
+          {conflicts.length > 0 && (
+            <div className="text-xs text-warn bg-warn/10 border border-warn/30 rounded-md p-2.5 space-y-1">
+              {conflicts.map((c, i) => <div key={i}>⚠ {c}</div>)}
+            </div>
+          )}
+          {services.length === 0 ? (
+            <div className="text-sm text-muted">No services defined.</div>
+          ) : services.map(([name, svc]) => (
+            <div key={name} className="border border-border rounded-md p-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-medium text-sm">{name}</span>
+                <span className="text-xs text-muted font-mono break-all">{svc.image ?? buildLabel(svc.build)}</span>
+                {svc.restart && <span className="text-[10px] bg-panel2 rounded px-1.5 py-0.5 text-muted">{svc.restart}</span>}
+              </div>
+              {!!svc.ports?.length && (
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {svc.ports.map((p, i) => <span key={i} className="text-[10px] font-mono bg-accent/10 text-accent rounded px-1.5 py-0.5">{p.published ?? "?"}→{p.target}/{p.protocol ?? "tcp"}</span>)}
+                </div>
+              )}
+              {!!svc.volumes?.length && (
+                <div className="mt-1.5 space-y-0.5 text-[11px] text-muted font-mono">
+                  {svc.volumes.map((v, i) => <div key={i} className="break-all">{typeof v === "string" ? v : `${v.source ?? v.type ?? "?"} → ${v.target}`}</div>)}
+                </div>
+              )}
+            </div>
+          ))}
+          <div className="flex flex-wrap gap-x-6 gap-y-1.5 text-xs pt-1">
+            {tops.filter(([, names]) => names.length > 0).map(([label, names]) => (
+              <div key={label}><span className="text-muted">{label}:</span> <span className="font-mono">{names.join(", ")}</span></div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // isDockerfile reports whether a file is a Dockerfile (Dockerfile, Dockerfile.*,
@@ -400,6 +483,7 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
   const [currentDir, setCurrentDir] = useState(""); // where New file/folder land
   const [liveVal, setLiveVal] = useState<{ status: "idle" | "checking" | "ok" | "error"; message?: string; warnings?: string[] }>({ status: "idle" });
+  const [summary, setSummary] = useState<ComposeModel | null>(null);
   const valSeq = useRef(0);
   const dialogs = useDialogs();
   const uploadRef = useRef<HTMLInputElement>(null);
@@ -559,6 +643,18 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
     } finally { setBusy(""); }
   };
 
+  // openSummary fetches the resolved compose model and shows the overview modal.
+  const openSummary = async () => {
+    setBusy("summary");
+    try {
+      const r = await api.projectSummary(project.id, active ? { name: active, content: draft } : undefined);
+      if (r.ok && r.model) setSummary(r.model);
+      else onOutput({ title: `${project.name} — summary`, text: r.error || "could not parse compose", ok: false });
+    } catch (e) {
+      onOutput({ title: `${project.name} — summary`, text: e instanceof Error ? e.message : "failed", ok: false });
+    } finally { setBusy(""); }
+  };
+
   // showResolved displays the fully-resolved compose (anchors/interpolation/
   // extends flattened — what `up` actually deploys) in the output panel.
   const showResolved = async () => {
@@ -679,6 +775,11 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
                     {busy === "resolve" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />} Resolved
                   </button>
                 )}
+                {onComposeFile && (
+                  <button className="btn-ghost px-2 py-1 text-xs disabled:opacity-40" disabled={!composeAvailable || busy === "summary"} onClick={openSummary} title="Services / ports / volumes overview + port-conflict check">
+                    {busy === "summary" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Boxes className="h-3.5 w-3.5" />} Summary
+                  </button>
+                )}
                 {onDockerfile && (
                   <button className="btn-ghost px-2 py-1 text-xs disabled:opacity-40" disabled={busy === "dfcheck"} onClick={checkDockerfile} title="Lint this Dockerfile (docker build --check)">
                     {busy === "dfcheck" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} Check
@@ -717,6 +818,7 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
           </div>
         </div>
       </div>
+      {summary && <ComposeSummaryModal model={summary} onClose={() => setSummary(null)} />}
     </div>
   );
 }

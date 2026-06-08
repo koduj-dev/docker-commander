@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
@@ -662,6 +663,41 @@ func (s *Server) overlayProject(id int64, name, content string) (string, error) 
 		return "", err
 	}
 	return tmp, nil
+}
+
+// handleProjectSummary returns the resolved compose model as JSON so the UI can
+// render a services/ports/volumes overview and flag duplicate host ports.
+// Accepts the same optional {name, content} overlay as validation.
+func (s *Server) handleProjectSummary(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	if !docker.ComposeAvailable(r.Context()) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false,
+			"error": "the `docker compose` CLI is not available on the host running Docker Commander"})
+		return
+	}
+	dir := s.projectRoot(p.ID)
+	var body struct {
+		Name    string `json:"name"`
+		Content string `json:"content"`
+	}
+	if err := decodeJSON(r, &body); err == nil && body.Name != "" {
+		tmp, err := s.overlayProject(p.ID, body.Name, body.Content)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		defer os.RemoveAll(tmp)
+		dir = tmp
+	}
+	raw, err := docker.ComposeConfigJSON(r.Context(), dir, p.Slug)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "model": json.RawMessage(raw)})
 }
 
 // handleCheckDockerfile lints a Dockerfile with `docker build --check` (no build
