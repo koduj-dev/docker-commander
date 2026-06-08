@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   FolderGit2, Plus, Rocket, Square, Trash2, X, FilePlus, FolderPlus, Upload, Loader2,
@@ -10,6 +10,8 @@ import type { Project, ProjectFile, Stack } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner, StateBadge } from "../components/ui";
 import { useDialogs } from "../components/Dialog";
+// CodeMirror is ~440 KB — load it only when a project editor is actually opened.
+const CodeEditor = lazy(() => import("../components/CodeEditor").then((m) => ({ default: m.CodeEditor })));
 import { getPref, setPref } from "../lib/prefs";
 import { useDockerEventTick } from "../lib/dockerEvents";
 
@@ -584,15 +586,14 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
                 <div className="flex items-center gap-2"><FileBox className="h-4 w-4" /> Binary file ({fmtBytes(activeFile.size)}) — can't be edited as text.</div>
                 <button className="btn-ghost px-3 py-1.5 text-xs" onClick={downloadActive}><Download className="h-3.5 w-3.5" /> Download</button>
               </div>
+            ) : active ? (
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <Suspense fallback={<div className="h-full grid place-items-center text-muted"><Spinner /></div>}>
+                  <CodeEditor filename={active} value={draft} onChange={setDraft} />
+                </Suspense>
+              </div>
             ) : (
-              <textarea
-                className="flex-1 w-full resize-none bg-bg text-text font-mono text-sm p-3 focus:outline-none"
-                spellCheck={false}
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                placeholder={active ? "" : "Select or add a file"}
-                disabled={!active}
-              />
+              <div className="flex-1 grid place-items-center text-sm text-muted">Select or add a file</div>
             )}
           </div>
         </div>
