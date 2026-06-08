@@ -2,6 +2,8 @@
 
 [← Manual index](README.md)
 
+![Projects](images/projects.png)
+
 A **Project** is a managed Compose *folder*: a compose file plus its sidecar
 files (configs copied into containers, `.sh` scripts, init files, …) that Docker
 Commander stores and edits for you, then deploys by running the real
@@ -26,6 +28,9 @@ containers — for free. A deployed project also appears on the
   precedence over a template.
 
 ## The editor
+
+![Project editor](images/project_editor.png)
+
 A modal with a **file tree** on the left and a **CodeMirror** editor on the
 right, with syntax highlighting for YAML, JSON, shell, Dockerfiles and
 `.conf` / `.env` files.
