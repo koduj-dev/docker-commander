@@ -39,23 +39,27 @@ func main() {
 }
 
 // wantsSelfUpgrade reports whether the user invoked the standalone
-// `--self-upgrade` action (intercepted before the server config flags parse).
-func wantsSelfUpgrade() bool {
+// `--self-upgrade` action (intercepted before the server config flags parse),
+// and whether `--check` was passed (report only, don't install).
+func wantsSelfUpgrade() (yes, checkOnly bool) {
 	for _, a := range os.Args[1:] {
 		if a == "--" {
-			return false
+			break
 		}
-		if a == "-self-upgrade" || a == "--self-upgrade" {
-			return true
+		switch a {
+		case "-self-upgrade", "--self-upgrade":
+			yes = true
+		case "-check", "--check":
+			checkOnly = true
 		}
 	}
-	return false
+	return yes, checkOnly
 }
 
 func run() error {
 	// Standalone CLI actions run instead of starting the server.
-	if wantsSelfUpgrade() {
-		return selfupdate.Run(context.Background(), version, os.Stdout)
+	if up, checkOnly := wantsSelfUpgrade(); up {
+		return selfupdate.Run(context.Background(), version, os.Stdout, checkOnly)
 	}
 
 	cfg, err := config.Load()

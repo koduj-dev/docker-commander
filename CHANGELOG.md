@@ -13,7 +13,8 @@ All notable changes to Docker Commander are documented here. The format follows
   Releases API against the running version (cached; `DC_UPDATE_CHECK=0` disables
   the outbound call), plus a **`dockercmd --self-upgrade`** command that downloads
   the right OS/arch asset, **verifies its SHA-256**, and atomically replaces the
-  running binary.
+  running binary. `--self-upgrade --check` reports whether an update is waiting
+  without installing it.
 - **Volume file browser** — browse, upload, download, delete and create folders
   inside a named volume (via a short-lived helper container, so it works on
   local / TCP / SSH hosts). **Upload & extract** a `.zip` / `.tar` / `.tar.gz`

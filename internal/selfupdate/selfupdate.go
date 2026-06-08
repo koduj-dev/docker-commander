@@ -45,9 +45,10 @@ type ghRelease struct {
 	Assets  []ghAsset `json:"assets"`
 }
 
-// Run performs the upgrade, writing human-readable progress to w. It is a no-op
-// (with a message) when the running version is already current.
-func Run(ctx context.Context, current string, w io.Writer) error {
+// Run checks for a newer release and, unless checkOnly is set, downloads and
+// installs it. Progress is written to w; it is a no-op (with a message) when the
+// running version is already current.
+func Run(ctx context.Context, current string, w io.Writer, checkOnly bool) error {
 	ctx, cancel := context.WithTimeout(ctx, httpTimeout)
 	defer cancel()
 
@@ -61,6 +62,16 @@ func Run(ctx context.Context, current string, w io.Writer) error {
 
 	if !version.Less(current, rel.TagName) {
 		fmt.Fprintln(w, "Already up to date.")
+		return nil
+	}
+
+	// --check: report that an update is waiting, but don't download anything.
+	if checkOnly {
+		fmt.Fprintf(w, "Update available: %s → %s\n", current, latest)
+		if rel.HTMLURL != "" {
+			fmt.Fprintf(w, "  %s\n", rel.HTMLURL)
+		}
+		fmt.Fprintln(w, "Run `dockercmd --self-upgrade` to install it.")
 		return nil
 	}
 
