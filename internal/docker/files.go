@@ -228,7 +228,9 @@ func (m *Manager) UploadExtract(ctx context.Context, hostID int64, id, destDir, 
 					continue
 				}
 				if !fi.IsDir() {
-					if written += int64(f.UncompressedSize64); written > maxExtractBytes {
+					// Reject before adding so a bogus declared size can't overflow
+					// int64 and bypass the cap (uint64 compare against the budget).
+					if f.UncompressedSize64 > uint64(maxExtractBytes-written) {
 						pw.CloseWithError(errors.New("archive expands beyond the size limit (possible zip bomb)"))
 						return
 					}
@@ -249,12 +251,15 @@ func (m *Manager) UploadExtract(ctx context.Context, hostID int64, id, destDir, 
 						pw.CloseWithError(err)
 						return
 					}
-					_, err = io.Copy(tw, rc)
+					// Bound the copy by the declared size (the tar header) and by
+					// the *actual* bytes written — never an unbounded io.Copy.
+					n, err := io.Copy(tw, io.LimitReader(rc, int64(f.UncompressedSize64)))
 					rc.Close()
 					if err != nil {
 						pw.CloseWithError(err)
 						return
 					}
+					written += n
 				}
 			}
 			pw.CloseWithError(tw.Close())

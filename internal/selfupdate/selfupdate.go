@@ -88,6 +88,13 @@ func Run(ctx context.Context, current string, w io.Writer, checkOnly bool) error
 		exe = resolved
 	}
 
+	// Resolve the expected checksum *before* downloading, so we fail closed if no
+	// verifiable digest exists.
+	want, err := expectedSHA256(ctx, rel, asset)
+	if err != nil {
+		return err
+	}
+
 	fmt.Fprintf(w, "Downloading %s (%.1f MiB)…\n", asset.Name, float64(asset.Size)/(1<<20))
 	tmp, sum, err := download(ctx, exe, asset.URL)
 	if err != nil {
@@ -95,7 +102,7 @@ func Run(ctx context.Context, current string, w io.Writer, checkOnly bool) error
 	}
 	defer os.Remove(tmp) // harmless once the rename has consumed tmp
 
-	if err := verifyDigest(asset.Digest, sum); err != nil {
+	if err := verifyDigest("sha256:"+want, sum); err != nil {
 		return err
 	}
 	fmt.Fprintf(w, "Checksum OK (sha256:%s)\n", sum)
@@ -180,6 +187,53 @@ func download(ctx context.Context, exe, url string) (path, sum string, err error
 		return "", "", err
 	}
 	return f.Name(), hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// expectedSHA256 returns the SHA-256 the release records for the asset: the
+// asset's own `digest` field when GitHub populates it, otherwise the entry for
+// it in the release's `SHA256SUMS` asset. Returns an error when neither exists —
+// we never install without a checksum to verify against.
+func expectedSHA256(ctx context.Context, rel *ghRelease, asset *ghAsset) (string, error) {
+	if d := strings.TrimPrefix(strings.TrimSpace(asset.Digest), "sha256:"); d != "" {
+		return d, nil
+	}
+
+	var sumsURL string
+	for i := range rel.Assets {
+		if rel.Assets[i].Name == "SHA256SUMS" {
+			sumsURL = rel.Assets[i].URL
+			break
+		}
+	}
+	if sumsURL == "" {
+		return "", errors.New("release provides no SHA-256 digest or SHA256SUMS to verify against")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sumsURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", userAgent)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("SHA256SUMS: %s", resp.Status)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", err
+	}
+	// Lines are "<hex>  <name>" (a leading "*" on the name marks binary mode).
+	for _, line := range strings.Split(string(data), "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 2 && strings.TrimPrefix(f[len(f)-1], "*") == asset.Name {
+			return f[0], nil
+		}
+	}
+	return "", fmt.Errorf("SHA256SUMS has no entry for %q", asset.Name)
 }
 
 // verifyDigest compares the downloaded SHA-256 against the digest GitHub records

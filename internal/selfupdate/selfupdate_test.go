@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,34 @@ import (
 	"runtime"
 	"testing"
 )
+
+func TestExpectedSHA256(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "abc123  dockercmd-linux-amd64\ndef456  *dockercmd-darwin-arm64\n")
+	}))
+	defer srv.Close()
+
+	rel := &ghRelease{Assets: []ghAsset{
+		{Name: "dockercmd-linux-amd64"}, // no digest → falls back to SHA256SUMS
+		{Name: "SHA256SUMS", URL: srv.URL},
+	}}
+
+	// Fallback to the SHA256SUMS asset when the per-asset digest is missing.
+	if got, err := expectedSHA256(context.Background(), rel, &rel.Assets[0]); err != nil || got != "abc123" {
+		t.Fatalf("SHA256SUMS fallback = %q, %v; want abc123", got, err)
+	}
+
+	// A present digest is used directly (no SUMS lookup).
+	rel.Assets[0].Digest = "sha256:DEADBEEF"
+	if got, _ := expectedSHA256(context.Background(), rel, &rel.Assets[0]); got != "DEADBEEF" {
+		t.Errorf("digest path = %q; want DEADBEEF", got)
+	}
+
+	// No digest and no SHA256SUMS → hard error (never install unverified).
+	if _, err := expectedSHA256(context.Background(), &ghRelease{Assets: []ghAsset{{Name: "x"}}}, &ghAsset{Name: "x"}); err == nil {
+		t.Error("missing checksum source must error")
+	}
+}
 
 func TestVerifyDigest(t *testing.T) {
 	if err := verifyDigest("sha256:ABCDEF", "abcdef"); err != nil {

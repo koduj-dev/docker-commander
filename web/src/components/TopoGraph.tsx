@@ -262,6 +262,7 @@ export function TopoList({ topo, filters, onOpen, onDisconnect }: {
         <tbody>
           {rows.map((c) => {
             const links = linksByContainer.get(c.id) ?? [];
+            const ports = publishedPorts(c);
             return (
               <tr key={c.id} className="border-t border-border hover:bg-panel2/40">
                 <td className="px-3 py-2 cursor-pointer" onClick={() => onOpen(c.id)}>
@@ -274,7 +275,7 @@ export function TopoList({ topo, filters, onOpen, onDisconnect }: {
                 <td className="px-3 py-2 text-muted text-xs">{c.stack || "—"}</td>
                 <td className="px-3 py-2">
                   <div className="flex flex-wrap gap-1">
-                    {publishedPorts(c).length === 0 ? <span className="text-[10px] text-muted">—</span> : publishedPorts(c).map((p, i) => (
+                    {ports.length === 0 ? <span className="text-[10px] text-muted">—</span> : ports.map((p, i) => (
                       <span key={i} className="text-[10px] font-mono bg-panel2 rounded px-1.5 py-0.5 text-muted">{p}</span>
                     ))}
                   </div>
