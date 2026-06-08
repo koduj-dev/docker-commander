@@ -3,6 +3,7 @@ package docker
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os/exec"
 	"strings"
 	"sync"
@@ -79,6 +80,53 @@ func ComposeProfiles(ctx context.Context, dir, slug string) ([]string, error) {
 // a file/line reference).
 func ComposeConfig(ctx context.Context, dir, slug string) (string, error) {
 	return runCompose(ctx, dir, slug, "config", "--quiet")
+}
+
+// ComposeResolvedConfig returns the fully-resolved compose configuration
+// (`docker compose config` without --quiet): anchors, merge keys, ${VAR}
+// interpolation and extends/include flattened into one canonical YAML — exactly
+// what `up` will deploy. Only stdout (the YAML) is returned; on failure the
+// error carries stderr.
+func ComposeResolvedConfig(ctx context.Context, dir, slug string) (string, error) {
+	cctx, cancel := context.WithTimeout(ctx, composeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, "docker", "compose", "-p", slug, "config")
+	cmd.Dir = dir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return "", errors.New(msg)
+		}
+		return "", err
+	}
+	return stdout.String(), nil
+}
+
+// ComposeWarnings extracts the human-readable messages from `level=warning`
+// lines in compose CLI output (e.g. `The "X" variable is not set`), which the
+// CLI prints to stderr even for an otherwise-valid file.
+func ComposeWarnings(out string) []string {
+	var ws []string
+	for _, ln := range strings.Split(out, "\n") {
+		if !strings.Contains(ln, "level=warning") {
+			continue
+		}
+		i := strings.Index(ln, `msg="`)
+		if i < 0 {
+			continue
+		}
+		rest := ln[i+len(`msg="`):]
+		j := strings.LastIndex(rest, `"`)
+		if j < 0 {
+			continue
+		}
+		if msg := strings.TrimSpace(strings.ReplaceAll(rest[:j], `\"`, `"`)); msg != "" {
+			ws = append(ws, msg)
+		}
+	}
+	return ws
 }
 
 // ComposeDown runs `docker compose -p <slug> down` in dir (removes containers

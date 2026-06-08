@@ -577,7 +577,47 @@ func (s *Server) handleValidateProject(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"valid": false, "error": msg})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"valid": true})
+	resp := map[string]any{"valid": true}
+	// Surface non-fatal warnings (unset ${VAR}, deprecated keys) even on success.
+	if ws := docker.ComposeWarnings(out); len(ws) > 0 {
+		resp["warnings"] = ws
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleResolveProject returns the fully-resolved compose config (anchors,
+// merge keys, interpolation and extends flattened) — what `up` actually
+// deploys. Accepts the same optional {name, content} overlay as validation.
+func (s *Server) handleResolveProject(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	if !docker.ComposeAvailable(r.Context()) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false,
+			"error": "the `docker compose` CLI is not available on the host running Docker Commander"})
+		return
+	}
+	dir := s.projectRoot(p.ID)
+	var body struct {
+		Name    string `json:"name"`
+		Content string `json:"content"`
+	}
+	if err := decodeJSON(r, &body); err == nil && body.Name != "" {
+		tmp, err := s.overlayProject(p.ID, body.Name, body.Content)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		defer os.RemoveAll(tmp)
+		dir = tmp
+	}
+	out, err := docker.ComposeResolvedConfig(r.Context(), dir, p.Slug)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "config": out})
 }
 
 // overlayProject copies the project folder to a fresh temp dir and overlays the

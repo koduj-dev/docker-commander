@@ -336,7 +336,10 @@ export const api = {
   // With an overlay {name, content} it validates the unsaved editor buffer
   // (server copies the project + overlays that file); without it, the on-disk files.
   validateProject: (id: number, overlay?: { name: string; content: string }) =>
-    req<{ valid: boolean; error?: string; unavailable?: boolean }>("POST", `/api/projects/${id}/validate`, overlay),
+    req<{ valid: boolean; error?: string; unavailable?: boolean; warnings?: string[] }>("POST", `/api/projects/${id}/validate`, overlay),
+  // Fully-resolved compose config (anchors/interpolation/extends flattened).
+  resolveProject: (id: number, overlay?: { name: string; content: string }) =>
+    req<{ ok: boolean; config?: string; error?: string }>("POST", `/api/projects/${id}/resolve`, overlay),
   // Lint a Dockerfile via `docker build --check` (no build steps run).
   checkDockerfile: (id: number, content: string) =>
     req<{ valid: boolean; output?: string; error?: string; unavailable?: boolean }>("POST", `/api/projects/${id}/dockerfile-check`, { content }),
