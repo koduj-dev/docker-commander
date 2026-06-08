@@ -52,7 +52,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
       {pending && (
         <div className="fixed inset-0 z-[80] bg-black/60 grid place-items-center p-6" onClick={() => settle(false)}>
           <form
-            className="card w-full max-w-md flex flex-col"
+            className="card w-full max-w-xl flex flex-col"
             onClick={(e) => e.stopPropagation()}
             onSubmit={(e) => { e.preventDefault(); settle(true); }}
           >
