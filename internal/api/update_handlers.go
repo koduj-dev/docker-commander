@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/koduj-dev/docker-commander/internal/version"
 )
 
 const (
@@ -108,51 +109,10 @@ func (u *updateChecker) fetch(ctx context.Context) updateStatus {
 	out.Latest = strings.TrimPrefix(rel.TagName, "v")
 	out.URL = rel.HTMLURL
 	out.PublishedAt = rel.PublishedAt
-	out.UpdateAvailable = semverLess(u.current, rel.TagName)
+	out.UpdateAvailable = version.Less(u.current, rel.TagName)
 	return out
 }
 
 func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.update.status(r.Context()))
-}
-
-// semverLess reports whether version a is strictly older than b. Versions are
-// compared as dotted major.minor.patch (a leading "v" and any "-pre"/"+build"
-// suffix are ignored). Unparseable versions (e.g. "dev") are treated as
-// not-older, so a dev build never nags about updates.
-func semverLess(a, b string) bool {
-	av, aok := parseVer(a)
-	bv, bok := parseVer(b)
-	if !aok || !bok {
-		return false
-	}
-	for i := 0; i < 3; i++ {
-		if av[i] != bv[i] {
-			return av[i] < bv[i]
-		}
-	}
-	return false
-}
-
-func parseVer(s string) ([3]int, bool) {
-	s = strings.TrimPrefix(strings.TrimSpace(s), "v")
-	if i := strings.IndexAny(s, "-+"); i >= 0 {
-		s = s[:i]
-	}
-	if s == "" {
-		return [3]int{}, false
-	}
-	parts := strings.Split(s, ".")
-	if len(parts) > 3 {
-		return [3]int{}, false
-	}
-	var out [3]int
-	for i := range parts {
-		n, err := strconv.Atoi(parts[i])
-		if err != nil || n < 0 {
-			return [3]int{}, false
-		}
-		out[i] = n
-	}
-	return out, true
 }
