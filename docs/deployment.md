@@ -22,6 +22,7 @@ list. Key ones:
 | `DC_METRICS_TOKEN` | (open) | bearer token guarding `/metrics` |
 | `DC_REDIS_ADDR` | (memory) | Redis for metric history |
 | `DC_METRICS_RETENTION` | `6h` | history retention |
+| `DC_UPDATE_CHECK` | `1` | check GitHub Releases for a newer version (admin banner); set `0` to disable the outbound call |
 
 Docker connection honours `DOCKER_HOST` / `DOCKER_CERT_PATH`.
 
@@ -123,6 +124,25 @@ location / {
 
 > Behind a proxy, **keep the localhost 2FA exemption off** — it trusts the
 > connection address, which becomes the proxy. See [Settings](settings.md).
+
+## Self-update
+Docker Commander compares the running build against the latest **GitHub
+Release** and shows an admin **"update available"** banner when a newer version
+exists. The check is cached and runs server-side; set `DC_UPDATE_CHECK=0` to
+disable the outbound call on air-gapped hosts.
+
+To upgrade the binary:
+
+```bash
+dockercmd --self-upgrade           # download, verify SHA-256, replace in place
+dockercmd --self-upgrade --check   # only report whether an update is waiting
+```
+
+`--self-upgrade` fetches the release asset for your OS/arch, **verifies its
+SHA-256**, and atomically replaces the running binary (preserving its
+permissions). The binary must be writable by the invoking user; **restart** the
+service afterwards to run the new version. (Installed from a package manager?
+Update through that instead.)
 
 ## Backup
 Back up `DC_DATA_DIR` — it holds the SQLite database and the keys that sign
