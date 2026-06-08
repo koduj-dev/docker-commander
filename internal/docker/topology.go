@@ -32,6 +32,7 @@ type TopoContainer struct {
 	Name  string `json:"name"`
 	Image string `json:"image"`
 	State string `json:"state"`
+	Stack string `json:"stack,omitempty"` // compose project, for grouping/filtering
 }
 
 // TopoLink is an edge: a container attached to a network with an assigned IP.
@@ -60,6 +61,7 @@ func (m *Manager) Topology(ctx context.Context, hostID int64) (*Topology, error)
 	for _, c := range rawContainers {
 		top.Containers = append(top.Containers, TopoContainer{
 			ID: c.ID, Name: cleanName(c.Names), Image: c.Image, State: string(c.State),
+			Stack: c.Labels[labelComposeProject],
 		})
 		if c.NetworkSettings == nil {
 			continue

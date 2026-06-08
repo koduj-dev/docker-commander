@@ -249,6 +249,7 @@ export interface TopoContainer {
   name: string;
   image: string;
   state: string;
+  stack?: string;
 }
 
 export interface TopoLink {

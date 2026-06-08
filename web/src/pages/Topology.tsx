@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Background,
@@ -17,7 +17,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import dagre from "@dagrejs/dagre";
-import { Boxes, Maximize2, Network as NetworkIcon } from "lucide-react";
+import { Boxes, Maximize2, Network as NetworkIcon, Search } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import type { Topology as Topo } from "../lib/types";
@@ -28,6 +28,8 @@ import { FloatingEdge } from "../components/FloatingEdge";
 interface TopoFilters {
   hideEmptyNetworks: boolean;
   showStopped: boolean;
+  search: string;
+  stack: string; // "" = all stacks
 }
 
 const NET_W = 200;
@@ -97,17 +99,25 @@ function layout(topo: Topo, filters: TopoFilters): { nodes: Node[]; edges: Edge[
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: "LR", nodesep: 22, ranksep: 240, marginx: 20, marginy: 20 });
 
-  const containers = (topo.containers ?? []).filter((c) => filters.showStopped || c.state === "running");
+  const q = filters.search.trim().toLowerCase();
+  const containers = (topo.containers ?? []).filter((c) => {
+    if (!filters.showStopped && c.state !== "running") return false;
+    if (filters.stack && (c.stack ?? "") !== filters.stack) return false;
+    if (q && !(c.name.toLowerCase().includes(q) || c.image.toLowerCase().includes(q) || (c.stack ?? "").toLowerCase().includes(q))) return false;
+    return true;
+  });
   const visibleContainerIds = new Set(containers.map((c) => c.id));
-  // Keep only links whose container is visible after the state filter.
+  // Keep only links whose container is visible after the filters.
   const links = (topo.links ?? []).filter((l) => visibleContainerIds.has(l.containerId));
 
   // Only show containers that are actually attached to something — isolated
   // containers add noise to a connectivity diagram.
   const linkedContainers = new Set(links.map((l) => l.containerId));
-  // A network with no visible attached containers is "empty"; optionally hide.
+  // A network with no visible attached containers is "empty"; hide when asked,
+  // and always while a search/stack filter is narrowing the view.
+  const hideEmpty = filters.hideEmptyNetworks || !!q || !!filters.stack;
   const linkedNetworks = new Set(links.map((l) => l.networkId));
-  const networks = (topo.networks ?? []).filter((n) => !filters.hideEmptyNetworks || linkedNetworks.has(n.id));
+  const networks = (topo.networks ?? []).filter((n) => !hideEmpty || linkedNetworks.has(n.id));
   const visibleNetworkIds = new Set(networks.map((n) => n.id));
 
   for (const n of networks) {
@@ -164,7 +174,12 @@ export function Topology() {
   const [topo, setTopo] = useState<Topo | null>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
-  const [filters, setFilters] = useState<TopoFilters>({ hideEmptyNetworks: false, showStopped: true });
+  const [filters, setFilters] = useState<TopoFilters>({ hideEmptyNetworks: false, showStopped: true, search: "", stack: "" });
+  const stacks = useMemo(() => [...new Set((topo?.containers ?? []).map((c) => c.stack).filter((s): s is string => !!s))].sort(), [topo]);
+  const counts = useMemo(() => ({
+    networks: nodes.filter((n) => n.type === "network").length,
+    containers: nodes.filter((n) => n.type === "container").length,
+  }), [nodes]);
   const navigate = useNavigate();
   const wrapRef = useRef<HTMLDivElement>(null);
   const rfRef = useRef<ReactFlowInstance<Node, Edge> | null>(null);
@@ -218,7 +233,17 @@ export function Topology() {
         title="Topology"
         actions={
           <div className="flex items-center gap-2">
-            <FilterToggle label="Hide empty networks" active={filters.hideEmptyNetworks} onClick={() => setFilters((f) => ({ ...f, hideEmptyNetworks: !f.hideEmptyNetworks }))} />
+            <div className="relative">
+              <Search className="h-3.5 w-3.5 text-muted absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input className="input pl-7 py-1.5 h-8 w-44 text-sm" placeholder="Find container…" value={filters.search} onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))} />
+            </div>
+            {stacks.length > 0 && (
+              <select className="input py-1.5 h-8 text-sm w-36" value={filters.stack} onChange={(e) => setFilters((f) => ({ ...f, stack: e.target.value }))} title="Filter by compose stack">
+                <option value="">All stacks</option>
+                {stacks.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            )}
+            <FilterToggle label="Hide empty" active={filters.hideEmptyNetworks} onClick={() => setFilters((f) => ({ ...f, hideEmptyNetworks: !f.hideEmptyNetworks }))} />
             <FilterToggle label="Show stopped" active={filters.showStopped} onClick={() => setFilters((f) => ({ ...f, showStopped: !f.showStopped }))} />
           </div>
         }
@@ -230,6 +255,9 @@ export function Topology() {
           <EmptyState title="Nothing to show" hint="No networks with attached containers match the current filters." />
         ) : (
           <div ref={wrapRef} className="dc-topo card overflow-hidden relative bg-bg" style={{ height: "calc(100vh - 9rem)" }}>
+            <div className="absolute top-3 left-3 z-10 text-[11px] text-muted bg-panel2/80 backdrop-blur-sm rounded-md px-2 py-1 border border-border">
+              {counts.containers} container{counts.containers === 1 ? "" : "s"} · {counts.networks} network{counts.networks === 1 ? "" : "s"}
+            </div>
             <button
               className="btn-ghost absolute top-3 right-3 z-10 px-2 py-1.5"
               title="Toggle fullscreen"

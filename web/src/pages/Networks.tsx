@@ -9,9 +9,22 @@ import { EmptyState, Spinner } from "../components/ui";
 import { useDialogs } from "../components/Dialog";
 import { InspectModal } from "../components/InspectModal";
 import { shortId } from "../lib/format";
+import { useListControls, SearchBar, Pager, type StatusOption } from "../components/ListControls";
 
 // Predefined networks the daemon won't let you remove.
 const PREDEFINED = new Set(["bridge", "host", "none"]);
+
+const NETWORK_STATUSES: StatusOption<NetworkSummary>[] = [
+  { value: "all", label: "All networks" },
+  { value: "used", label: "In use", test: (n) => (n.containers ?? []).length > 0 },
+  { value: "unused", label: "Unused", test: (n) => (n.containers ?? []).length === 0 },
+  { value: "internal", label: "Internal", test: (n) => n.internal },
+];
+
+function matchNetwork(n: NetworkSummary, q: string): boolean {
+  return n.name.toLowerCase().includes(q) || n.driver.toLowerCase().includes(q) ||
+    (n.subnets ?? []).some((s) => s.toLowerCase().includes(q)) || n.scope.toLowerCase().includes(q);
+}
 
 export function Networks() {
   const [nets, setNets] = useState<NetworkSummary[] | null>(null);
@@ -24,17 +37,21 @@ export function Networks() {
   }, []);
   useEffect(() => load(), [load]);
 
+  const controls = useListControls(nets ?? [], matchNetwork, { storageKey: "networks", statuses: NETWORK_STATUSES });
+
   return (
     <>
       <PageHeader title="Networks" />
-      <div className="p-6">
+      <div className="p-6 space-y-4">
         {!nets ? (
           <div className="flex items-center gap-2 text-muted"><Spinner /> Loading…</div>
         ) : nets.length === 0 ? (
           <EmptyState title="No networks found" />
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {nets.map((n) => (
+          <>
+            <SearchBar controls={controls} placeholder="Search networks by name, driver, subnet, scope…" />
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {controls.pageItems.map((n) => (
               <button
                 key={n.id}
                 onClick={() => setActive(n)}
@@ -62,7 +79,9 @@ export function Networks() {
                 <div className="text-xs text-accent mt-3">View topology →</div>
               </button>
             ))}
-          </div>
+            </div>
+            <Pager controls={controls} />
+          </>
         )}
       </div>
       {active && <NetworkModal net={active} topo={topo} onClose={() => setActive(null)} onChanged={() => { setActive(null); load(); }} />}
