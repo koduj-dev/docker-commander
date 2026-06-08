@@ -26,7 +26,7 @@ export type ServerCheck =
 
 // yamlLinter parses YAML with the `yaml` library — which resolves anchors (&),
 // aliases (*) and merge keys (<<) — and surfaces parse errors/warnings inline.
-const yamlLinter = linter((view) => {
+function yamlSource(view: EditorView): Diagnostic[] {
   const text = view.state.doc.toString();
   if (!text.trim()) return [];
   const doc = parseDocument(text);
@@ -42,11 +42,11 @@ const yamlLinter = linter((view) => {
     out.push({ from: clamp(from), to: clamp(Math.max(to, from + 1)), severity: "warning", message: wmsg.message });
   }
   return out;
-});
+}
 
-// envLinter checks .env files: every non-comment line must be KEY=value, with
+// envSource checks .env files: every non-comment line must be KEY=value, with
 // warnings for duplicate keys (last value wins) and unusual variable names.
-const envLinter = linter((view) => {
+function envSource(view: EditorView): Diagnostic[] {
   const out: Diagnostic[] = [];
   const seen = new Set<string>();
   const doc = view.state.doc;
@@ -73,7 +73,10 @@ const envLinter = linter((view) => {
     seen.add(key);
   }
   return out;
-});
+}
+
+// jsonSource underlines JSON syntax errors.
+const jsonSource = jsonParseLinter();
 
 function isEnvFile(name: string): boolean {
   const base = (name.split("/").pop() ?? "").toLowerCase();
@@ -215,11 +218,16 @@ export function CodeEditor({ value, onChange, filename, readOnly, serverCheck }:
     const lang = languageFor(filename);
     const exts: Extension[] = [dcTheme];
     if (lang) exts.push(lang as LanguageSupport | Extension);
-    if (/\.ya?ml$/.test(lower)) exts.push(yamlLinter);
-    else if (/\.json$/.test(lower)) exts.push(linter(jsonParseLinter()));
-    else if (isEnvFile(filename)) exts.push(envLinter);
-    // Authoritative server results, resolved to inline positions.
-    exts.push(linter((view) => resolveServerDiags(checkRef.current, view), { delay: 150 }));
+    // ONE linter combining client syntax checks + authoritative server results,
+    // so a single forceLinting() (on a new server result) re-renders both.
+    exts.push(linter((view) => {
+      const diags: Diagnostic[] = [];
+      if (/\.ya?ml$/.test(lower)) diags.push(...yamlSource(view));
+      else if (/\.json$/.test(lower)) diags.push(...jsonSource(view));
+      else if (isEnvFile(filename)) diags.push(...envSource(view));
+      diags.push(...resolveServerDiags(checkRef.current, view));
+      return diags;
+    }, { delay: 150 }));
     exts.push(lintGutter());
     return exts;
   }, [filename]);
