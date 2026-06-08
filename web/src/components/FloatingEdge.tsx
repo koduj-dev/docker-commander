@@ -1,4 +1,4 @@
-import { getBezierPath, useInternalNode, type EdgeProps, type InternalNode, type Node } from "@xyflow/react";
+import { getStraightPath, useInternalNode, type EdgeProps, type InternalNode, type Node } from "@xyflow/react";
 
 // Floating edges anchor to the *boundary* of each node along the line joining
 // the two node centres, instead of to a fixed Left/Right handle. That keeps the
@@ -36,7 +36,7 @@ export function FloatingEdge({ id, source, target, markerEnd, style }: EdgeProps
   const s = intersection(sourceNode, targetNode);
   const t = intersection(targetNode, sourceNode);
 
-  const [path] = getBezierPath({ sourceX: s.x, sourceY: s.y, targetX: t.x, targetY: t.y });
+  const [path] = getStraightPath({ sourceX: s.x, sourceY: s.y, targetX: t.x, targetY: t.y });
 
   return <path id={id} className="react-flow__edge-path" d={path} markerEnd={markerEnd} style={style} />;
 }

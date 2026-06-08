@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { Boxes, FileSearch, Network as NetworkIcon, Trash2, X } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { FileSearch, Network as NetworkIcon, Trash2, X } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import type { NetworkSummary, Topology } from "../lib/types";
@@ -8,6 +8,7 @@ import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
 import { useDialogs } from "../components/Dialog";
 import { InspectModal } from "../components/InspectModal";
+import { TopoGraph } from "../components/TopoGraph";
 import { shortId } from "../lib/format";
 import { useListControls, SearchBar, Pager, type StatusOption } from "../components/ListControls";
 
@@ -106,6 +107,7 @@ function NetworkModal({ net, topo, onClose, onChanged }: { net: NetworkSummary; 
   const [delErr, setDelErr] = useState("");
   const isPredefined = PREDEFINED.has(net.name);
   const dialogs = useDialogs();
+  const navigate = useNavigate();
 
   const del = async () => {
     if (!(await dialogs.confirm({ title: "Remove network", message: <>Remove the network <code className="font-mono text-text">{net.name}</code>?</>, danger: true, confirmLabel: "Remove" }))) return;
@@ -134,19 +136,17 @@ function NetworkModal({ net, topo, onClose, onChanged }: { net: NetworkSummary; 
       .filter(Boolean) as { id: string; name: string; state: string; ip: string }[];
   }, [topo, net.id]);
 
-  // Star layout geometry. Radius is derived from the count so neighbouring
-  // cards never overlap (chord between adjacent cards >= card width + gap).
-  const CARD_W = 168, CARD_H = 48;
-  const n = Math.max(members.length, 2);
-  const r = Math.max(150, Math.ceil((CARD_W + 28) / (2 * Math.sin(Math.PI / n))));
-  const W = 2 * r + CARD_W + 80;
-  const H = 2 * r + CARD_H + 100;
-  const cx = W / 2, cy = H / 2;
-
-  const positions = members.map((_, i) => {
-    const angle = (i / members.length) * Math.PI * 2 - Math.PI / 2;
-    return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
-  });
+  // A topology subset scoped to this network — fed to the same TopoGraph the
+  // Topology page uses, so the detail view renders identically.
+  const subTopo = useMemo<Topology>(() => {
+    if (!topo) return { networks: [], containers: [], links: [] };
+    const memberIds = new Set((topo.links ?? []).filter((l) => l.networkId === net.id).map((l) => l.containerId));
+    return {
+      networks: (topo.networks ?? []).filter((n) => n.id === net.id),
+      containers: (topo.containers ?? []).filter((c) => memberIds.has(c.id)),
+      links: (topo.links ?? []).filter((l) => l.networkId === net.id),
+    };
+  }, [topo, net.id]);
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onClick={onClose}>
@@ -183,50 +183,8 @@ function NetworkModal({ net, topo, onClose, onChanged }: { net: NetworkSummary; 
           ) : members.length === 0 ? (
             <EmptyState title="No containers attached" hint="This network has no connected containers." />
           ) : (
-            <div className="relative mx-auto max-h-[80vh] overflow-auto">
-             <div className="relative" style={{ width: W, height: H }}>
-              {/* edges (IP is shown on each container card, so no edge labels) */}
-              <svg className="absolute inset-0" width={W} height={H}>
-                {positions.map((p, i) => (
-                  <line key={i} x1={cx} y1={cy} x2={p.x} y2={p.y} stroke="#243047" strokeWidth={2} />
-                ))}
-              </svg>
-
-              {/* centre: the network — opaque bg so edges never show through it */}
-              <div
-                className="absolute rounded-xl border-2 border-accent/60 bg-panel shadow-lg grid place-items-center text-center z-10"
-                style={{ width: 130, height: 56, left: cx - 65, top: cy - 28 }}
-              >
-                <div>
-                  <div className="text-sm font-semibold flex items-center gap-1.5 justify-center">
-                    <NetworkIcon className="h-3.5 w-3.5 text-accent" /> {net.name}
-                  </div>
-                  <div className="text-[10px] text-muted">{net.driver}</div>
-                </div>
-              </div>
-
-              {/* containers around the ring */}
-              {members.map((m, i) => (
-                <Link
-                  key={m.id}
-                  to={`/containers/${m.id}`}
-                  className="absolute rounded-lg border bg-panel px-2.5 py-1.5 hover:border-accent/60 transition-colors"
-                  style={{
-                    width: CARD_W, height: CARD_H,
-                    left: positions[i].x - CARD_W / 2, top: positions[i].y - CARD_H / 2,
-                    borderColor: m.state === "running" ? "rgba(45,212,167,0.4)" : "#243047",
-                  }}
-                  title={`${m.name} (${m.ip})`}
-                >
-                  <div className="flex items-center gap-1.5">
-                    <span className={clsx("h-2 w-2 rounded-full shrink-0", m.state === "running" ? "bg-ok" : m.state === "paused" ? "bg-warn" : "bg-danger")} />
-                    <Boxes className="h-3.5 w-3.5 text-muted shrink-0" />
-                    <span className="text-xs font-medium truncate">{m.name}</span>
-                  </div>
-                  <div className="text-[10px] text-muted font-mono truncate">{m.ip || "—"}</div>
-                </Link>
-              ))}
-             </div>
+            <div className="dc-topo bg-bg rounded-lg border border-border overflow-hidden" style={{ height: "70vh" }}>
+              <TopoGraph topo={subTopo} filters={{ hideEmptyNetworks: false, showStopped: true, search: "", stack: "" }} onContainerClick={(id) => navigate(`/containers/${id}`)} minimap={false} />
             </div>
           )}
         </div>
