@@ -432,8 +432,20 @@ func (s *Server) handleDownloadProjectFile(w http.ResponseWriter, r *http.Reques
 	}
 	s.audit(r, "project.file.download", p.Slug, name)
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", "attachment; filename=\""+filepath.Base(full)+"\"")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+headerFilename(filepath.Base(full))+"\"")
 	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
+}
+
+// headerFilename replaces characters that aren't safe in a Content-Disposition
+// value (control chars, quotes, backslashes). Project filenames are
+// user-controlled and net/http panics when written into an invalid header.
+func headerFilename(name string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || r == '"' || r == '\\' {
+			return '_'
+		}
+		return r
+	}, name)
 }
 
 // handleDeleteProjectFile removes one file (?path=).
@@ -708,8 +720,9 @@ func (s *Server) handleCheckDockerfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !docker.BuildCheckAvailable(r.Context()) {
-		writeJSON(w, http.StatusOK, map[string]any{"valid": false, "unavailable": true,
-			"error": "`docker build --check` (BuildKit/buildx) is not available on the host running Docker Commander"})
+		// Same {level, output} shape as the success/error paths below.
+		writeJSON(w, http.StatusOK, map[string]any{"level": "error", "unavailable": true,
+			"output": "`docker build --check` (BuildKit/buildx) is not available on the host running Docker Commander"})
 		return
 	}
 	var body struct {

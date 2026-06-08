@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Maximize2, Search, Share2, List } from "lucide-react";
 import clsx from "clsx";
@@ -30,7 +30,11 @@ export function Topology() {
   }, [filters.hideEmptyNetworks, filters.showStopped, filters.stack, view]);
 
   const stacks = useMemo(() => [...new Set((topo?.containers ?? []).map((c) => c.stack).filter((s): s is string => !!s))].sort(), [topo]);
-  const stats = useMemo(() => (topo ? topoStats(topo, filters) : { networks: 0, containers: 0 }), [topo, filters]);
+  // Defer the search so typing stays responsive — the force layout only
+  // recomputes once typing settles, not on every keystroke.
+  const deferredSearch = useDeferredValue(filters.search);
+  const effFilters = useMemo(() => ({ ...filters, search: deferredSearch }), [filters, deferredSearch]);
+  const stats = useMemo(() => (topo ? topoStats(topo, effFilters) : { networks: 0, containers: 0 }), [topo, effFilters]);
 
   useEffect(() => {
     api.topology().then(setTopo).catch(() => setTopo({ networks: [], containers: [], links: [] }));
@@ -72,7 +76,7 @@ export function Topology() {
         {!topo ? (
           <div className="flex items-center gap-2 text-muted"><Spinner /> Building graph…</div>
         ) : view === "list" ? (
-          <TopoList topo={topo} filters={filters} onOpen={(cid) => navigate(`/containers/${cid}`)} />
+          <TopoList topo={topo} filters={effFilters} onOpen={(cid) => navigate(`/containers/${cid}`)} />
         ) : stats.networks === 0 && stats.containers === 0 ? (
           <EmptyState title="Nothing to show" hint="No networks with attached containers match the current filters." />
         ) : (
@@ -83,7 +87,7 @@ export function Topology() {
             <button className="btn-ghost absolute top-3 right-3 z-10 px-2 py-1.5" title="Toggle fullscreen" onClick={toggleFullscreen}>
               <Maximize2 className="h-4 w-4" />
             </button>
-            <TopoGraph topo={topo} filters={filters} onContainerClick={(cid) => navigate(`/containers/${cid}`)} />
+            <TopoGraph topo={topo} filters={effFilters} onContainerClick={(cid) => navigate(`/containers/${cid}`)} />
           </div>
         )}
       </div>
