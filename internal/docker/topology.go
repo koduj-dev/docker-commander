@@ -28,11 +28,12 @@ type TopoNetwork struct {
 
 // TopoContainer is a container node in the topology graph.
 type TopoContainer struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Image string `json:"image"`
-	State string `json:"state"`
-	Stack string `json:"stack,omitempty"` // compose project, for grouping/filtering
+	ID    string        `json:"id"`
+	Name  string        `json:"name"`
+	Image string        `json:"image"`
+	State string        `json:"state"`
+	Stack string        `json:"stack,omitempty"` // compose project, for grouping/filtering
+	Ports []PortMapping `json:"ports,omitempty"` // published ports, for the list views
 }
 
 // TopoLink is an edge: a container attached to a network with an assigned IP.
@@ -59,9 +60,16 @@ func (m *Manager) Topology(ctx context.Context, hostID int64) (*Topology, error)
 	// so stopped/exited containers would vanish from the graph. The container
 	// list carries every container's configured networks regardless of state.
 	for _, c := range rawContainers {
+		var ports []PortMapping
+		for _, p := range c.Ports {
+			if p.PublicPort == 0 {
+				continue // only host-published ports are interesting here
+			}
+			ports = append(ports, PortMapping{IP: p.IP, PrivatePort: p.PrivatePort, PublicPort: p.PublicPort, Type: p.Type})
+		}
 		top.Containers = append(top.Containers, TopoContainer{
 			ID: c.ID, Name: cleanName(c.Names), Image: c.Image, State: string(c.State),
-			Stack: c.Labels[labelComposeProject],
+			Stack: c.Labels[labelComposeProject], Ports: ports,
 		})
 		if c.NetworkSettings == nil {
 			continue

@@ -250,6 +250,7 @@ export interface TopoContainer {
   image: string;
   state: string;
   stack?: string;
+  ports?: PortMapping[];
 }
 
 export interface TopoLink {

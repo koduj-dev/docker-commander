@@ -209,6 +209,19 @@ export function TopoGraph({ topo, filters, onContainerClick, minimap = true }: {
   );
 }
 
+// publishedPorts formats a container's host-published ports (deduped — IPv4 and
+// IPv6 bindings otherwise repeat).
+function publishedPorts(c: TopoContainer): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const p of c.ports ?? []) {
+    if (!p.publicPort) continue;
+    const s = `${p.publicPort}:${p.privatePort}/${p.type}`;
+    if (!seen.has(s)) { seen.add(s); out.push(s); }
+  }
+  return out;
+}
+
 // TopoList is the compact, dense alternative to the graph: a filterable table of
 // containers with the networks (and IPs) each is attached to. When onDisconnect
 // is given, each row gets a disconnect action (used in the network detail).
@@ -241,6 +254,7 @@ export function TopoList({ topo, filters, onOpen, onDisconnect }: {
             <th className="text-left font-medium px-3 py-2">Container</th>
             <th className="text-left font-medium px-3 py-2">Image</th>
             <th className="text-left font-medium px-3 py-2">Stack</th>
+            <th className="text-left font-medium px-3 py-2">Ports</th>
             <th className="text-left font-medium px-3 py-2">Networks</th>
             {onDisconnect && <th className="px-3 py-2"></th>}
           </tr>
@@ -258,6 +272,13 @@ export function TopoList({ topo, filters, onOpen, onDisconnect }: {
                 </td>
                 <td className="px-3 py-2 text-muted font-mono text-xs truncate max-w-[14rem] cursor-pointer" onClick={() => onOpen(c.id)}>{c.image}</td>
                 <td className="px-3 py-2 text-muted text-xs">{c.stack || "—"}</td>
+                <td className="px-3 py-2">
+                  <div className="flex flex-wrap gap-1">
+                    {publishedPorts(c).length === 0 ? <span className="text-[10px] text-muted">—</span> : publishedPorts(c).map((p, i) => (
+                      <span key={i} className="text-[10px] font-mono bg-panel2 rounded px-1.5 py-0.5 text-muted">{p}</span>
+                    ))}
+                  </div>
+                </td>
                 <td className="px-3 py-2">
                   <div className="flex flex-wrap gap-1">
                     {links.length === 0 ? <span className="text-[10px] text-muted">—</span> : links.map((l, i) => (

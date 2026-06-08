@@ -221,8 +221,8 @@ function NetworkModal({ net, topo, onClose, onChanged, onReload }: { net: Networ
               <button className="btn-ghost px-2 py-1.5 text-xs" title="Connect a container to this network" onClick={() => setConnectOpen((v) => !v)}><Plug className="h-4 w-4" /> Connect</button>
             )}
             <div className="flex rounded-md border border-border overflow-hidden">
-              <button className={clsx("px-2 py-1.5", view === "graph" ? "bg-accent/15 text-accent" : "text-muted hover:text-text")} title="Graph view" onClick={() => setView("graph")}><Share2 className="h-3.5 w-3.5" /></button>
               <button className={clsx("px-2 py-1.5", view === "list" ? "bg-accent/15 text-accent" : "text-muted hover:text-text")} title="List view" onClick={() => setView("list")}><List className="h-3.5 w-3.5" /></button>
+              <button className={clsx("px-2 py-1.5", view === "graph" ? "bg-accent/15 text-accent" : "text-muted hover:text-text")} title="Graph view" onClick={() => setView("graph")}><Share2 className="h-3.5 w-3.5" /></button>
             </div>
             <button className="btn-ghost px-2 py-1.5" title="Inspect (raw JSON)" onClick={() => setInspecting(true)}><FileSearch className="h-4 w-4" /></button>
             {!isPredefined && (
