@@ -25,6 +25,12 @@ function parseCreated(s: string): number {
   return Number.isNaN(ms) ? 0 : ms / 1000;
 }
 
+// Anonymous volumes are named with a 64-char hex hash — shorten those for
+// display (named volumes keep their full name).
+function volLabel(name: string): string {
+  return /^[0-9a-f]{64}$/.test(name) ? name.slice(0, 12) + "…" : name;
+}
+
 export function Volumes() {
   const [vols, setVols] = useState<VolumeSummary[] | null>(null);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
@@ -50,7 +56,7 @@ export function Volumes() {
   const controls = useListControls(vols ?? [], matchVolume, { storageKey: "volumes", statuses: VOLUME_STATUSES });
 
   const remove = async (v: VolumeSummary, force = false) => {
-    if (!force && !(await dialogs.confirm({ title: "Remove volume", message: <>Permanently remove <code className="font-mono text-text">{v.name}</code> and all its data?</>, danger: true, confirmLabel: "Remove" }))) return;
+    if (!force && !(await dialogs.confirm({ title: "Remove volume", message: <>Permanently remove <code className="font-mono text-text" title={v.name}>{volLabel(v.name)}</code> and all its data?</>, danger: true, confirmLabel: "Remove" }))) return;
     setBusy((b) => ({ ...b, [v.name]: true }));
     setErr((e) => ({ ...e, [v.name]: "" }));
     try {
@@ -112,7 +118,7 @@ export function Volumes() {
                     <Database className="h-5 w-5 text-accent shrink-0 mt-0.5" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-medium text-sm break-all">{v.name}</span>
+                        <span className="font-medium text-sm break-all" title={v.name}>{volLabel(v.name)}</span>
                         <span className="text-[10px] bg-panel2 rounded-sm px-1.5 py-0.5 text-muted">{v.driver}</span>
                         {inUse && (
                           <span className="text-[10px] bg-ok/15 text-ok rounded-sm px-1.5 py-0.5 inline-flex items-center gap-1">
