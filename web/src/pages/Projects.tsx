@@ -516,6 +516,9 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
   const composeFileName = project.composeFile || "compose.yml";
   const onComposeFile = isComposeFile(active, composeFileName);
   const onDockerfileActive = !onComposeFile && isDockerfile(active);
+  // Switching files clears the previous file's diagnostics immediately (the
+  // debounced re-check below would otherwise leave them hanging for ~1s).
+  useEffect(() => { setServerCheck(null); setLiveVal("idle"); }, [active]);
   useEffect(() => {
     if (!composeAvailable || (!onComposeFile && !onDockerfileActive)) {
       setLiveVal("idle"); setServerCheck(null);
