@@ -146,7 +146,7 @@ function layout(topo: Topo, filters: TopoFilters): { nodes: Node[]; edges: Edge[
 
   const edges: Edge[] = links
     .filter((l) => visibleNetworkIds.has(l.networkId))
-    .map((l, i) => ({ id: `e:${i}`, type: "floating", source: `n:${l.networkId}`, target: `c:${l.containerId}`, style: { stroke: "#3a4a66", strokeWidth: 1.5 } }));
+    .map((l, i) => ({ id: `e:${i}`, type: "floating", source: `n:${l.networkId}`, target: `c:${l.containerId}`, animated: true, style: { stroke: "#3a4a66", strokeWidth: 1.5 } }));
 
   return { nodes, edges };
 }

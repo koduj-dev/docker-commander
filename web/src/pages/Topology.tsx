@@ -6,14 +6,28 @@ import { api } from "../lib/api";
 import type { Topology as Topo } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { Spinner, EmptyState } from "../components/ui";
+import { getPref, setPref } from "../lib/prefs";
 import { TopoGraph, topoStats, containerMatches, type TopoFilters } from "../components/TopoGraph";
 
+type TopoPrefs = { hideEmptyNetworks?: boolean; showStopped?: boolean; stack?: string; view?: "graph" | "list" };
+
 export function Topology() {
+  const saved = getPref<TopoPrefs>("topology.prefs", {});
   const [topo, setTopo] = useState<Topo | null>(null);
-  const [filters, setFilters] = useState<TopoFilters>({ hideEmptyNetworks: true, showStopped: true, search: "", stack: "" });
-  const [view, setView] = useState<"graph" | "list">("graph");
+  const [filters, setFilters] = useState<TopoFilters>({
+    hideEmptyNetworks: saved.hideEmptyNetworks ?? true,
+    showStopped: saved.showStopped ?? false,
+    search: "",
+    stack: saved.stack ?? "",
+  });
+  const [view, setView] = useState<"graph" | "list">(saved.view ?? "graph");
   const navigate = useNavigate();
   const wrapRef = useRef<HTMLDivElement>(null);
+
+  // Remember the toggles / stack / view (not the ephemeral search) across reloads.
+  useEffect(() => {
+    setPref("topology.prefs", { hideEmptyNetworks: filters.hideEmptyNetworks, showStopped: filters.showStopped, stack: filters.stack, view });
+  }, [filters.hideEmptyNetworks, filters.showStopped, filters.stack, view]);
 
   const stacks = useMemo(() => [...new Set((topo?.containers ?? []).map((c) => c.stack).filter((s): s is string => !!s))].sort(), [topo]);
   const stats = useMemo(() => (topo ? topoStats(topo, filters) : { networks: 0, containers: 0 }), [topo, filters]);
