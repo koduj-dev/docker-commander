@@ -109,6 +109,51 @@ func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "bytes": len(data)})
 }
 
+// handleMakeDir creates a directory inside a container (?path = the new dir).
+func (s *Server) handleMakeDir(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	p := r.URL.Query().Get("path")
+	if p == "" || p == "/" {
+		writeErr(w, http.StatusBadRequest, "a non-root path is required")
+		return
+	}
+	if err := s.docker.MakeDir(r.Context(), hostID, id, p); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	s.audit(r, "container.file.mkdir", id, p)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleExtractFile extracts an uploaded archive (.zip/.tar/.tar.gz) into a
+// container directory. ?path is the destination, ?name the archive file name
+// (its extension picks the format); the body is the raw archive.
+func (s *Server) handleExtractFile(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	destDir := r.URL.Query().Get("path")
+	name := r.URL.Query().Get("name")
+	if destDir == "" || name == "" {
+		writeErr(w, http.StatusBadRequest, "path and name are required")
+		return
+	}
+	if err := s.docker.UploadExtract(r.Context(), hostID, id, destDir, name, r.Body); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	s.audit(r, "container.cp.extract", id, destDir+"/"+name)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {
 	hostID, err := s.resolveHostID(r)
 	if err != nil {

@@ -162,6 +162,7 @@ export function Volumes() {
 function VolumeForm({ onDone }: { onDone: () => void }) {
   const [name, setName] = useState("");
   const [driver, setDriver] = useState("local");
+  const [seed, setSeed] = useState<File | null>(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -170,12 +171,21 @@ function VolumeForm({ onDone }: { onDone: () => void }) {
     setErr(""); setBusy(true);
     try {
       const r = await api.createVolume({ name, driver });
-      if (r.ok) onDone();
-      else setErr(r.error ?? "failed");
+      if (!r.ok) { setErr(r.error ?? "failed"); setBusy(false); return; }
+      // Optionally seed the new volume by extracting an archive into it.
+      if (seed) {
+        try {
+          const ex = await api.extractVolumeFile(name, "/", seed);
+          if (!ex.ok) { setErr("volume created, but seeding failed: " + (ex.error ?? "")); setBusy(false); return; }
+        } catch (e2) {
+          setErr("volume created, but seeding failed: " + (e2 instanceof Error ? e2.message : "error")); setBusy(false); return;
+        } finally {
+          api.closeVolumeBrowser(name).catch(() => {});
+        }
+      }
+      onDone();
     } catch {
-      setErr("request failed");
-    } finally {
-      setBusy(false);
+      setErr("request failed"); setBusy(false);
     }
   };
 
@@ -190,6 +200,11 @@ function VolumeForm({ onDone }: { onDone: () => void }) {
           <label className="label">Driver</label>
           <input className="input font-mono" value={driver} onChange={(e) => setDriver(e.target.value)} placeholder="local" />
         </div>
+      </div>
+      <div>
+        <label className="label">Seed from archive (optional)</label>
+        <input type="file" accept=".zip,.tar,.tar.gz,.tgz,application/zip,application/x-tar,application/gzip" className="input py-1.5" onChange={(e) => setSeed(e.target.files?.[0] ?? null)} />
+        {seed && <p className="text-xs text-muted mt-1">Will extract <span className="font-mono">{seed.name}</span> into the new volume.</p>}
       </div>
       {err && <p className="text-sm text-danger">{err}</p>}
       <div className="flex justify-end gap-2">

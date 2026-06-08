@@ -1,7 +1,10 @@
 package docker
 
 import (
+	"archive/tar"
+	"archive/zip"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -12,6 +15,10 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 )
+
+// maxExtractBytes caps a .zip upload (buffered in memory for random access);
+// .tar/.tar.gz stream straight through.
+const maxExtractBytes = 512 << 20 // 512 MiB
 
 // FileEntry is one item in a container directory listing.
 type FileEntry struct {
@@ -135,6 +142,98 @@ func (m *Manager) CopyTo(ctx context.Context, hostID int64, id, destDir string, 
 		return err
 	}
 	return cli.CopyToContainer(ctx, id, destDir, content, container.CopyToContainerOptions{})
+}
+
+// MakeDir creates a directory inside the container (mkdir -p).
+func (m *Manager) MakeDir(ctx context.Context, hostID int64, id, path string) error {
+	cli, err := m.Client(ctx, hostID)
+	if err != nil {
+		return err
+	}
+	_, stderr, code, err := execCapture(ctx, cli, id, []string{"mkdir", "-p", path})
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		msg := strings.TrimSpace(stderr)
+		if msg == "" {
+			msg = "could not create directory"
+		}
+		return fmt.Errorf("%s", msg)
+	}
+	return nil
+}
+
+// UploadExtract streams an archive into destDir, extracting it. The Docker
+// CopyToContainer API takes a TAR and untars it (jailing traversal), so we
+// convert the upload to a TAR stream based on its extension.
+func (m *Manager) UploadExtract(ctx context.Context, hostID int64, id, destDir, filename string, body io.Reader) error {
+	cli, err := m.Client(ctx, hostID)
+	if err != nil {
+		return err
+	}
+	lower := strings.ToLower(filename)
+	switch {
+	case strings.HasSuffix(lower, ".tar"):
+		return cli.CopyToContainer(ctx, id, destDir, body, container.CopyToContainerOptions{})
+
+	case strings.HasSuffix(lower, ".tar.gz"), strings.HasSuffix(lower, ".tgz"):
+		gz, err := gzip.NewReader(body)
+		if err != nil {
+			return fmt.Errorf("not a valid gzip archive: %w", err)
+		}
+		defer gz.Close()
+		return cli.CopyToContainer(ctx, id, destDir, gz, container.CopyToContainerOptions{})
+
+	case strings.HasSuffix(lower, ".zip"):
+		data, err := io.ReadAll(io.LimitReader(body, maxExtractBytes))
+		if err != nil {
+			return err
+		}
+		zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+		if err != nil {
+			return fmt.Errorf("not a valid .zip archive: %w", err)
+		}
+		// Convert the zip to a TAR stream on the fly and hand it to the daemon.
+		pr, pw := io.Pipe()
+		go func() {
+			tw := tar.NewWriter(pw)
+			for _, f := range zr.File {
+				if strings.Contains(f.Name, "..") { // skip zip-slip entries
+					continue
+				}
+				fi := f.FileInfo()
+				hdr, err := tar.FileInfoHeader(fi, "")
+				if err != nil {
+					pw.CloseWithError(err)
+					return
+				}
+				hdr.Name = f.Name // preserve the relative path
+				if err := tw.WriteHeader(hdr); err != nil {
+					pw.CloseWithError(err)
+					return
+				}
+				if !fi.IsDir() {
+					rc, err := f.Open()
+					if err != nil {
+						pw.CloseWithError(err)
+						return
+					}
+					_, err = io.Copy(tw, rc)
+					rc.Close()
+					if err != nil {
+						pw.CloseWithError(err)
+						return
+					}
+				}
+			}
+			pw.CloseWithError(tw.Close())
+		}()
+		return cli.CopyToContainer(ctx, id, destDir, pr, container.CopyToContainerOptions{})
+
+	default:
+		return fmt.Errorf("unsupported archive (use .zip, .tar, .tar.gz or .tgz)")
+	}
 }
 
 // DeletePath removes a path inside the container (rm -rf).

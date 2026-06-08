@@ -102,6 +102,8 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/containers/{id}/files", s.handleListFiles)
 			r.Get("/containers/{id}/files/download", s.handleDownloadFile)
 			r.Post("/containers/{id}/files/upload", s.handleUploadFile)
+			r.Post("/containers/{id}/files/mkdir", s.handleMakeDir)
+			r.Post("/containers/{id}/files/extract", s.handleExtractFile)
 			r.Delete("/containers/{id}/files", s.handleDeleteFile)
 			// Static sub-routes registered before the {action} catch-all.
 			r.Post("/containers/{id}/rename", s.handleRenameContainer)
@@ -167,6 +169,8 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/volumes/{name}/files", s.handleListVolumeFiles)
 			r.Get("/volumes/{name}/files/download", s.handleDownloadVolumeFile)
 			r.Post("/volumes/{name}/files/upload", s.handleUploadVolumeFile)
+			r.Post("/volumes/{name}/files/mkdir", s.handleMakeVolumeDir)
+			r.Post("/volumes/{name}/files/extract", s.handleExtractVolumeFile)
 			r.Delete("/volumes/{name}/files", s.handleDeleteVolumeFile)
 			r.Delete("/volumes/{name}/browse", s.handleCloseVolumeBrowser)
 			r.Get("/version", s.handleVersion)

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Folder, File as FileIcon, Link2, Download, Trash2, Upload, RefreshCw, ChevronRight, Loader2 } from "lucide-react";
+import { Folder, File as FileIcon, Link2, Download, Trash2, Upload, RefreshCw, ChevronRight, Loader2, FolderPlus, FileArchive } from "lucide-react";
 import type { FileEntry, FileApi } from "../lib/types";
 import { bytes } from "../lib/format";
 import { Spinner } from "./ui";
+import { useDialogs } from "./Dialog";
 import { triggerDownload } from "./LoadModal";
 
 function joinPath(dir: string, name: string): string {
@@ -18,6 +19,8 @@ export function FileBrowser({ fs }: { fs: FileApi }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+  const extractRef = useRef<HTMLInputElement>(null);
+  const dialogs = useDialogs();
 
   const load = useCallback(async (p: string) => {
     setError(""); setEntries(null);
@@ -46,6 +49,36 @@ export function FileBrowser({ fs }: { fs: FileApi }) {
       setError("upload failed");
     } finally {
       setBusy(""); if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  const onExtract = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBusy("extract");
+    try {
+      const r = await fs.uploadExtract(path, file);
+      if (!r.ok) setError(r.error ?? "extract failed");
+      await load(path);
+    } catch {
+      setError("extract failed");
+    } finally {
+      setBusy(""); if (extractRef.current) extractRef.current.value = "";
+    }
+  };
+
+  const newFolder = async () => {
+    const name = await dialogs.prompt({ title: "New folder", label: "Folder name", placeholder: "data" });
+    if (!name) return;
+    setBusy("mkdir");
+    try {
+      const r = await fs.mkdir(joinPath(path, name));
+      if (!r.ok) setError(r.error ?? "could not create folder");
+      await load(path);
+    } catch {
+      setError("request failed");
+    } finally {
+      setBusy("");
     }
   };
 
@@ -89,6 +122,13 @@ export function FileBrowser({ fs }: { fs: FileApi }) {
         <button className="btn-ghost px-2 py-1.5 text-xs" title="Download current directory as tar" onClick={() => triggerDownload(fs.downloadUrl(path))}>
           <Download className="h-4 w-4" /> Dir
         </button>
+        <button className="btn-ghost px-2 py-1.5" title="New folder" onClick={newFolder} disabled={busy === "mkdir"}>
+          {busy === "mkdir" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FolderPlus className="h-4 w-4" />}
+        </button>
+        <button className="btn-ghost px-2.5 py-1.5 text-xs" onClick={() => extractRef.current?.click()} disabled={busy === "extract"} title="Upload a .zip / .tar / .tar.gz and extract it here">
+          {busy === "extract" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileArchive className="h-4 w-4" />} Extract
+        </button>
+        <input ref={extractRef} type="file" accept=".zip,.tar,.tar.gz,.tgz,application/zip,application/x-tar,application/gzip" className="hidden" onChange={onExtract} />
         <button className="btn-primary px-2.5 py-1.5 text-xs" onClick={() => fileRef.current?.click()} disabled={busy === "upload"}>
           {busy === "upload" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} Upload
         </button>

@@ -105,6 +105,47 @@ func (s *Server) handleUploadVolumeFile(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "bytes": len(data)})
 }
 
+func (s *Server) handleMakeVolumeDir(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	p := r.URL.Query().Get("path")
+	if p == "" || p == "/" {
+		writeErr(w, http.StatusBadRequest, "a non-root path is required")
+		return
+	}
+	if err := s.docker.VolumeMakeDir(r.Context(), hostID, name, p); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	s.audit(r, "volume.file.mkdir", name, p)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleExtractVolumeFile(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	destDir := r.URL.Query().Get("path")
+	fname := r.URL.Query().Get("name")
+	if destDir == "" || fname == "" {
+		writeErr(w, http.StatusBadRequest, "path and name are required")
+		return
+	}
+	if err := s.docker.VolumeUploadExtract(r.Context(), hostID, name, destDir, fname, r.Body); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	s.audit(r, "volume.cp.extract", name, destDir+"/"+fname)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func (s *Server) handleDeleteVolumeFile(w http.ResponseWriter, r *http.Request) {
 	hostID, err := s.resolveHostID(r)
 	if err != nil {

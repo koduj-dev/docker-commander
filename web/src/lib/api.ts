@@ -203,6 +203,24 @@ export const api = {
     if (h != null) params.set("host", String(h));
     return req<{ ok: boolean; error?: string }>("DELETE", `/api/containers/${id}/files?${params.toString()}`);
   },
+  mkdirFile: (id: string, p: string) => {
+    const params = new URLSearchParams({ path: p });
+    const h = getHostId();
+    if (h != null) params.set("host", String(h));
+    return req<{ ok: boolean; error?: string }>("POST", `/api/containers/${id}/files/mkdir?${params.toString()}`);
+  },
+  extractFile: async (id: string, destDir: string, file: File) => {
+    const params = new URLSearchParams({ path: destDir, name: file.name });
+    const h = getHostId();
+    if (h != null) params.set("host", String(h));
+    const res = await fetch(`/api/containers/${id}/files/extract?${params.toString()}`, {
+      method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/octet-stream" }, body: file,
+    });
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : null;
+    if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText);
+    return data as { ok: boolean; error?: string };
+  },
 
   // Volume file browser (a throwaway helper container mounts the volume).
   listVolumeFiles: (name: string, p: string) => {
@@ -234,6 +252,24 @@ export const api = {
     const h = getHostId();
     if (h != null) params.set("host", String(h));
     return req<{ ok: boolean; error?: string }>("DELETE", `/api/volumes/${encodeURIComponent(name)}/files?${params.toString()}`);
+  },
+  mkdirVolumeFile: (name: string, p: string) => {
+    const params = new URLSearchParams({ path: p });
+    const h = getHostId();
+    if (h != null) params.set("host", String(h));
+    return req<{ ok: boolean; error?: string }>("POST", `/api/volumes/${encodeURIComponent(name)}/files/mkdir?${params.toString()}`);
+  },
+  extractVolumeFile: async (name: string, destDir: string, file: File) => {
+    const params = new URLSearchParams({ path: destDir, name: file.name });
+    const h = getHostId();
+    if (h != null) params.set("host", String(h));
+    const res = await fetch(`/api/volumes/${encodeURIComponent(name)}/files/extract?${params.toString()}`, {
+      method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/octet-stream" }, body: file,
+    });
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : null;
+    if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText);
+    return data as { ok: boolean; error?: string };
   },
   closeVolumeBrowser: (name: string) => {
     const params = new URLSearchParams();
@@ -426,6 +462,8 @@ export function fileApiForContainer(id: string): FileApi {
   return {
     list: (p) => api.listFiles(id, p),
     upload: (dir, file) => api.uploadFile(id, dir, file),
+    uploadExtract: (dir, file) => api.extractFile(id, dir, file),
+    mkdir: (p) => api.mkdirFile(id, p),
     del: (p) => api.deleteFile(id, p),
     downloadUrl: (p) => api.downloadFileUrl(id, p),
   };
@@ -435,6 +473,8 @@ export function fileApiForVolume(name: string): FileApi {
   return {
     list: (p) => api.listVolumeFiles(name, p),
     upload: (dir, file) => api.uploadVolumeFile(name, dir, file),
+    uploadExtract: (dir, file) => api.extractVolumeFile(name, dir, file),
+    mkdir: (p) => api.mkdirVolumeFile(name, p),
     del: (p) => api.deleteVolumeFile(name, p),
     downloadUrl: (p) => api.volumeFileDownloadUrl(name, p),
   };

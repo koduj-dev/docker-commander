@@ -153,6 +153,24 @@ func (m *Manager) VolumeDeletePath(ctx context.Context, hostID int64, volume, p 
 	return m.DeletePath(ctx, hostID, id, volPath(p))
 }
 
+// VolumeMakeDir creates a directory inside a volume.
+func (m *Manager) VolumeMakeDir(ctx context.Context, hostID int64, volume, p string) error {
+	id, err := m.volumeHelper(ctx, hostID, volume)
+	if err != nil {
+		return err
+	}
+	return m.MakeDir(ctx, hostID, id, volPath(p))
+}
+
+// VolumeUploadExtract extracts an archive into a volume directory.
+func (m *Manager) VolumeUploadExtract(ctx context.Context, hostID int64, volume, destDir, filename string, body io.Reader) error {
+	id, err := m.volumeHelper(ctx, hostID, volume)
+	if err != nil {
+		return err
+	}
+	return m.UploadExtract(ctx, hostID, id, volPath(destDir), filename, body)
+}
+
 // CloseVolumeBrowser removes the helper container(s) for a volume (called when
 // the user closes the browser).
 func (m *Manager) CloseVolumeBrowser(ctx context.Context, hostID int64, volume string) {
