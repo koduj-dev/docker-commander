@@ -22,6 +22,10 @@ func (m *Manager) ListContainers(ctx context.Context, hostID int64) ([]Container
 
 	out := make([]ContainerSummary, 0, len(raw))
 	for _, c := range raw {
+		// Hide internal volume-browser helper containers from every view.
+		if c.Labels[volfsLabel] != "" {
+			continue
+		}
 		s := ContainerSummary{
 			ID:      c.ID,
 			Name:    cleanName(c.Names),

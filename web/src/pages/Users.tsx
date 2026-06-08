@@ -6,8 +6,10 @@ import type { AppSettings, ManagedUser } from "../lib/types";
 import { sectionLabel } from "../lib/sections";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
+import { useDialogs } from "../components/Dialog";
 
 export function Users() {
+  const dialogs = useDialogs();
   const [users, setUsers] = useState<ManagedUser[] | null>(null);
   const [allSections, setAllSections] = useState<string[]>([]);
   const [showForm, setShowForm] = useState(false);
@@ -22,6 +24,7 @@ export function Users() {
   useEffect(() => load(), [load]);
 
   const del = async (u: ManagedUser) => {
+    if (!(await dialogs.confirm({ title: "Delete user", message: <>Delete the account <code className="font-mono text-text">{u.username}</code>?</>, danger: true, confirmLabel: "Delete" }))) return;
     setErr("");
     const r = await api.deleteUser(u.id);
     if (!r.ok) setErr(r.error ?? "could not delete");

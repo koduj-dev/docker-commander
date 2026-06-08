@@ -5,10 +5,12 @@ import { api } from "../lib/api";
 import type { Registry } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
+import { useDialogs } from "../components/Dialog";
 
 type TestState = { ok: boolean; text: string } | "loading" | undefined;
 
 export function Registries() {
+  const dialogs = useDialogs();
   const [regs, setRegs] = useState<Registry[] | null>(null);
   const [tests, setTests] = useState<Record<number, TestState>>({});
   const [showForm, setShowForm] = useState(false);
@@ -28,8 +30,9 @@ export function Registries() {
     }
   };
 
-  const del = async (id: number) => {
-    await api.deleteRegistry(id);
+  const del = async (rg: Registry) => {
+    if (!(await dialogs.confirm({ title: "Delete registry", message: <>Delete the stored credentials for <code className="font-mono text-text">{rg.name}</code>?</>, danger: true, confirmLabel: "Delete" }))) return;
+    await api.deleteRegistry(rg.id);
     load();
   };
 
@@ -58,7 +61,7 @@ export function Registries() {
                     </div>
                     <div className="flex items-center gap-1">
                       <button className="btn-ghost px-2 py-1 text-xs" onClick={() => test(rg.id)}>Test</button>
-                      <button className="btn-ghost px-2 py-1 text-danger" title="Delete" onClick={() => del(rg.id)}><Trash2 className="h-4 w-4" /></button>
+                      <button className="btn-ghost px-2 py-1 text-danger" title="Delete" onClick={() => del(rg)}><Trash2 className="h-4 w-4" /></button>
                     </div>
                   </div>
                   {t && (

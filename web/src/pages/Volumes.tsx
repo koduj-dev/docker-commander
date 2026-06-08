@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
-import { Database, Trash2, Loader2, Eraser, FileSearch, Plus, Boxes } from "lucide-react";
-import { api } from "../lib/api";
+import { Database, Trash2, Loader2, Eraser, FileSearch, Plus, Boxes, FolderOpen, X } from "lucide-react";
+import { api, fileApiForVolume } from "../lib/api";
 import type { VolumeSummary } from "../lib/types";
 import { relTime } from "../lib/format";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
 import { InspectModal } from "../components/InspectModal";
+import { FileBrowser } from "../components/FileBrowser";
+import { useDialogs } from "../components/Dialog";
 import { useListControls, SearchBar, Pager, type StatusOption } from "../components/ListControls";
 
 const VOLUME_STATUSES: StatusOption<VolumeSummary>[] = [
@@ -23,6 +25,12 @@ function parseCreated(s: string): number {
   return Number.isNaN(ms) ? 0 : ms / 1000;
 }
 
+// Anonymous volumes are named with a 64-char hex hash — shorten those for
+// display (named volumes keep their full name).
+function volLabel(name: string): string {
+  return /^[0-9a-f]{64}$/.test(name) ? name.slice(0, 12) + "…" : name;
+}
+
 export function Volumes() {
   const [vols, setVols] = useState<VolumeSummary[] | null>(null);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
@@ -30,7 +38,15 @@ export function Volumes() {
   const [notice, setNotice] = useState("");
   const [pruning, setPruning] = useState(false);
   const [inspect, setInspect] = useState<VolumeSummary | null>(null);
+  const [browse, setBrowse] = useState<VolumeSummary | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const dialogs = useDialogs();
+
+  // Closing the browser also tears down the helper container DC spun up.
+  const closeBrowse = () => {
+    if (browse) api.closeVolumeBrowser(browse.name).catch(() => {});
+    setBrowse(null);
+  };
 
   const load = useCallback(() => {
     api.volumes().then(setVols).catch(() => setVols([]));
@@ -40,6 +56,7 @@ export function Volumes() {
   const controls = useListControls(vols ?? [], matchVolume, { storageKey: "volumes", statuses: VOLUME_STATUSES });
 
   const remove = async (v: VolumeSummary, force = false) => {
+    if (!force && !(await dialogs.confirm({ title: "Remove volume", message: <>Permanently remove <code className="font-mono text-text" title={v.name}>{volLabel(v.name)}</code> and all its data?</>, danger: true, confirmLabel: "Remove" }))) return;
     setBusy((b) => ({ ...b, [v.name]: true }));
     setErr((e) => ({ ...e, [v.name]: "" }));
     try {
@@ -54,6 +71,7 @@ export function Volumes() {
   };
 
   const prune = async () => {
+    if (!(await dialogs.confirm({ title: "Prune unused volumes", message: "Remove every volume not used by any container? This permanently deletes their data.", danger: true, confirmLabel: "Prune" }))) return;
     setPruning(true);
     setNotice("");
     try {
@@ -100,7 +118,7 @@ export function Volumes() {
                     <Database className="h-5 w-5 text-accent shrink-0 mt-0.5" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-medium text-sm break-all">{v.name}</span>
+                        <span className="font-medium text-sm break-all" title={v.name}>{volLabel(v.name)}</span>
                         <span className="text-[10px] bg-panel2 rounded-sm px-1.5 py-0.5 text-muted">{v.driver}</span>
                         {inUse && (
                           <span className="text-[10px] bg-ok/15 text-ok rounded-sm px-1.5 py-0.5 inline-flex items-center gap-1">
@@ -118,6 +136,7 @@ export function Volumes() {
                       )}
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
+                      <button className="btn-ghost px-2 py-1" title="Browse files" onClick={() => setBrowse(v)}><FolderOpen className="h-4 w-4" /></button>
                       <button className="btn-ghost px-2 py-1" title="Inspect (raw JSON)" onClick={() => setInspect(v)}><FileSearch className="h-4 w-4" /></button>
                       <button className="btn-ghost px-2 py-1 text-danger" title="Remove volume" disabled={busy[v.name]} onClick={() => remove(v)}>
                         {busy[v.name] ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
@@ -132,6 +151,20 @@ export function Volumes() {
         )}
       </div>
       {inspect && <InspectModal kind="volume" id={inspect.name} title={inspect.name} onClose={() => setInspect(null)} />}
+
+      {browse && (
+        <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={closeBrowse}>
+          <div className="w-[80vw] max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 mb-2">
+              <Database className="h-4 w-4 text-accent shrink-0" />
+              <span className="font-medium break-all">{browse.name}</span>
+              <span className="text-xs text-muted">— volume files</span>
+              <button className="btn-ghost px-2 py-1.5 ml-auto" title="Close" onClick={closeBrowse}><X className="h-4 w-4" /></button>
+            </div>
+            <FileBrowser fs={fileApiForVolume(browse.name)} />
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -139,6 +172,7 @@ export function Volumes() {
 function VolumeForm({ onDone }: { onDone: () => void }) {
   const [name, setName] = useState("");
   const [driver, setDriver] = useState("local");
+  const [seed, setSeed] = useState<File | null>(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -147,12 +181,21 @@ function VolumeForm({ onDone }: { onDone: () => void }) {
     setErr(""); setBusy(true);
     try {
       const r = await api.createVolume({ name, driver });
-      if (r.ok) onDone();
-      else setErr(r.error ?? "failed");
+      if (!r.ok) { setErr(r.error ?? "failed"); setBusy(false); return; }
+      // Optionally seed the new volume by extracting an archive into it.
+      if (seed) {
+        try {
+          const ex = await api.extractVolumeFile(name, "/", seed);
+          if (!ex.ok) { setErr("volume created, but seeding failed: " + (ex.error ?? "")); setBusy(false); return; }
+        } catch (e2) {
+          setErr("volume created, but seeding failed: " + (e2 instanceof Error ? e2.message : "error")); setBusy(false); return;
+        } finally {
+          api.closeVolumeBrowser(name).catch(() => {});
+        }
+      }
+      onDone();
     } catch {
-      setErr("request failed");
-    } finally {
-      setBusy(false);
+      setErr("request failed"); setBusy(false);
     }
   };
 
@@ -167,6 +210,11 @@ function VolumeForm({ onDone }: { onDone: () => void }) {
           <label className="label">Driver</label>
           <input className="input font-mono" value={driver} onChange={(e) => setDriver(e.target.value)} placeholder="local" />
         </div>
+      </div>
+      <div>
+        <label className="label">Seed from archive (optional)</label>
+        <input type="file" accept=".zip,.tar,.tar.gz,.tgz,application/zip,application/x-tar,application/gzip" className="input py-1.5" onChange={(e) => setSeed(e.target.files?.[0] ?? null)} />
+        {seed && <p className="text-xs text-muted mt-1">Will extract <span className="font-mono">{seed.name}</span> into the new volume.</p>}
       </div>
       {err && <p className="text-sm text-danger">{err}</p>}
       <div className="flex justify-end gap-2">

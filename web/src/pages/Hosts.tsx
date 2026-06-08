@@ -6,6 +6,7 @@ import type { Host } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
 import { HostDetailModal } from "../components/HostDetailModal";
+import { useDialogs } from "../components/Dialog";
 
 type TestResult = {
   ok: boolean;
@@ -23,6 +24,7 @@ export function Hosts() {
   const [trusting, setTrusting] = useState<Record<number, boolean>>({});
   const [showForm, setShowForm] = useState(false);
   const [detail, setDetail] = useState<Host | null>(null);
+  const dialogs = useDialogs();
 
   const load = useCallback(() => {
     api.hosts().then(setHosts).catch(() => setHosts([]));
@@ -65,8 +67,9 @@ export function Hosts() {
     }
   };
 
-  const del = async (id: number) => {
-    await api.deleteHost(id);
+  const del = async (h: Host) => {
+    if (!(await dialogs.confirm({ title: "Delete host", message: <>Remove the host <code className="font-mono text-text">{h.name}</code>? (Its containers aren't touched — only this connection.)</>, danger: true, confirmLabel: "Delete" }))) return;
+    await api.deleteHost(h.id);
     load();
   };
 
@@ -108,7 +111,7 @@ export function Hosts() {
                         </button>
                       )}
                       {h.kind !== "local" && (
-                        <button className="btn-ghost px-2 py-1 text-danger" title="Delete" onClick={() => del(h.id)}><Trash2 className="h-4 w-4" /></button>
+                        <button className="btn-ghost px-2 py-1 text-danger" title="Delete" onClick={() => del(h)}><Trash2 className="h-4 w-4" /></button>
                       )}
                     </div>
                   </div>

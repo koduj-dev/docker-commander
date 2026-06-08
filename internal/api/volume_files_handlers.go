@@ -10,15 +10,19 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) {
+// Volume file browser: a named volume has no path reachable through the Docker
+// API, so the docker layer mounts it in a throwaway helper container and reuses
+// the in-container file ops. These handlers mirror the container file browser.
+
+func (s *Server) handleListVolumeFiles(w http.ResponseWriter, r *http.Request) {
 	hostID, err := s.resolveHostID(r)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "no host configured")
 		return
 	}
-	id := chi.URLParam(r, "id")
+	name := chi.URLParam(r, "name")
 	p := r.URL.Query().Get("path")
-	entries, err := s.docker.ListPath(r.Context(), hostID, id, p)
+	entries, err := s.docker.VolumeListPath(r.Context(), hostID, name, p)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -26,27 +30,25 @@ func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": normPath(p), "entries": entries})
 }
 
-// handleDownloadFile streams a path out of the container. A single file is
-// extracted from the archive and sent as-is; a directory is sent as a tar.
-func (s *Server) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleDownloadVolumeFile(w http.ResponseWriter, r *http.Request) {
 	hostID, err := s.resolveHostID(r)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "no host configured")
 		return
 	}
-	id := chi.URLParam(r, "id")
+	name := chi.URLParam(r, "name")
 	p := r.URL.Query().Get("path")
 	if p == "" {
 		writeErr(w, http.StatusBadRequest, "path is required")
 		return
 	}
-	rc, stat, err := s.docker.CopyFrom(r.Context(), hostID, id, p)
+	rc, stat, err := s.docker.VolumeCopyFrom(r.Context(), hostID, name, p)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "docker error: "+err.Error())
 		return
 	}
 	defer rc.Close()
-	s.audit(r, "container.cp.download", id, p)
+	s.audit(r, "volume.cp.download", name, p)
 
 	if stat.Mode.IsDir() {
 		w.Header().Set("Content-Type", "application/x-tar")
@@ -54,7 +56,6 @@ func (s *Server) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(w, rc)
 		return
 	}
-	// Single file: pull the one entry out of the tar and stream its bytes.
 	tr := tar.NewReader(rc)
 	hdr, err := tr.Next()
 	if err != nil {
@@ -66,24 +67,19 @@ func (s *Server) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, tr)
 }
 
-// handleUploadFile writes an uploaded file into a container directory. The file
-// bytes are the raw request body; ?path is the destination directory and ?name
-// the file name to create there.
-func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleUploadVolumeFile(w http.ResponseWriter, r *http.Request) {
 	hostID, err := s.resolveHostID(r)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "no host configured")
 		return
 	}
-	id := chi.URLParam(r, "id")
+	name := chi.URLParam(r, "name")
 	destDir := r.URL.Query().Get("path")
-	name := path.Base(r.URL.Query().Get("name"))
-	if destDir == "" || name == "" || name == "." || name == "/" {
+	fname := path.Base(r.URL.Query().Get("name"))
+	if destDir == "" || fname == "" || fname == "." || fname == "/" {
 		writeErr(w, http.StatusBadRequest, "path and name are required")
 		return
 	}
-
-	// Buffer the upload so we know its size for the tar header.
 	data, err := io.ReadAll(io.LimitReader(r.Body, 1<<32)) // 4 GiB guard
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "read body failed")
@@ -91,7 +87,7 @@ func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
-	if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(data))}); err != nil {
+	if err := tw.WriteHeader(&tar.Header{Name: fname, Mode: 0o644, Size: int64(len(data))}); err != nil {
 		writeErr(w, http.StatusInternalServerError, "tar error")
 		return
 	}
@@ -101,83 +97,83 @@ func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	tw.Close()
 
-	if err := s.docker.CopyTo(r.Context(), hostID, id, destDir, &buf); err != nil {
+	if err := s.docker.VolumeCopyTo(r.Context(), hostID, name, destDir, &buf); err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	s.audit(r, "container.cp.upload", id, destDir+"/"+name)
+	s.audit(r, "volume.cp.upload", name, destDir+"/"+fname)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "bytes": len(data)})
 }
 
-// handleMakeDir creates a directory inside a container (?path = the new dir).
-func (s *Server) handleMakeDir(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleMakeVolumeDir(w http.ResponseWriter, r *http.Request) {
 	hostID, err := s.resolveHostID(r)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "no host configured")
 		return
 	}
-	id := chi.URLParam(r, "id")
+	name := chi.URLParam(r, "name")
 	p := r.URL.Query().Get("path")
 	if p == "" || p == "/" {
 		writeErr(w, http.StatusBadRequest, "a non-root path is required")
 		return
 	}
-	if err := s.docker.MakeDir(r.Context(), hostID, id, p); err != nil {
+	if err := s.docker.VolumeMakeDir(r.Context(), hostID, name, p); err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	s.audit(r, "container.file.mkdir", id, p)
+	s.audit(r, "volume.file.mkdir", name, p)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// handleExtractFile extracts an uploaded archive (.zip/.tar/.tar.gz) into a
-// container directory. ?path is the destination, ?name the archive file name
-// (its extension picks the format); the body is the raw archive.
-func (s *Server) handleExtractFile(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleExtractVolumeFile(w http.ResponseWriter, r *http.Request) {
 	hostID, err := s.resolveHostID(r)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "no host configured")
 		return
 	}
-	id := chi.URLParam(r, "id")
+	name := chi.URLParam(r, "name")
 	destDir := r.URL.Query().Get("path")
-	name := r.URL.Query().Get("name")
-	if destDir == "" || name == "" {
+	fname := r.URL.Query().Get("name")
+	if destDir == "" || fname == "" {
 		writeErr(w, http.StatusBadRequest, "path and name are required")
 		return
 	}
-	if err := s.docker.UploadExtract(r.Context(), hostID, id, destDir, name, r.Body); err != nil {
+	if err := s.docker.VolumeUploadExtract(r.Context(), hostID, name, destDir, fname, r.Body); err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	s.audit(r, "container.cp.extract", id, destDir+"/"+name)
+	s.audit(r, "volume.cp.extract", name, destDir+"/"+fname)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleDeleteVolumeFile(w http.ResponseWriter, r *http.Request) {
 	hostID, err := s.resolveHostID(r)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "no host configured")
 		return
 	}
-	id := chi.URLParam(r, "id")
+	name := chi.URLParam(r, "name")
 	p := r.URL.Query().Get("path")
 	if p == "" || p == "/" {
 		writeErr(w, http.StatusBadRequest, "a non-root path is required")
 		return
 	}
-	if err := s.docker.DeletePath(r.Context(), hostID, id, p); err != nil {
+	if err := s.docker.VolumeDeletePath(r.Context(), hostID, name, p); err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	s.audit(r, "container.file.delete", id, p)
+	s.audit(r, "volume.file.delete", name, p)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// normPath returns a clean absolute path, defaulting to "/".
-func normPath(p string) string {
-	if p == "" {
-		return "/"
+// handleCloseVolumeBrowser removes the volume's helper container (called when
+// the user closes the browser).
+func (s *Server) handleCloseVolumeBrowser(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
 	}
-	return path.Clean("/" + p)
+	s.docker.CloseVolumeBrowser(r.Context(), hostID, chi.URLParam(r, "name"))
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import type { ParseRule } from "../lib/types";
 import { compileRule, groupNames } from "../lib/parse";
 import { PARSE_PRESETS } from "../lib/parsePresets";
+import { useDialogs } from "./Dialog";
 
 // ParseRulesModal manages saved log-parsing rules: list, delete, and add with a
 // live validation/preview against a sample line.
@@ -14,6 +15,7 @@ export function ParseRulesModal({ sample, onClose, onChanged }: { sample: string
   const [pattern, setPattern] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const dialogs = useDialogs();
 
   const load = useCallback(() => { api.parseRules().then(setRules).catch(() => setRules([])); }, []);
   useEffect(() => load(), [load]);
@@ -37,7 +39,10 @@ export function ParseRulesModal({ sample, onClose, onChanged }: { sample: string
     } finally { setBusy(false); }
   };
 
-  const del = async (id: number) => { await api.deleteParseRule(id); load(); onChanged(); };
+  const del = async (r: ParseRule) => {
+    if (!(await dialogs.confirm({ title: "Delete parse rule", message: <>Delete the rule <code className="font-mono text-text">{r.name}</code>?</>, danger: true, confirmLabel: "Delete" }))) return;
+    await api.deleteParseRule(r.id); load(); onChanged();
+  };
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
@@ -53,7 +58,7 @@ export function ParseRulesModal({ sample, onClose, onChanged }: { sample: string
                 <div key={r.id} className="flex items-center gap-2 text-sm bg-panel2 rounded-md px-3 py-2">
                   <span className="font-medium">{r.name}</span>
                   <code className="text-xs text-muted font-mono truncate flex-1">{r.pattern}</code>
-                  <button className="btn-ghost px-1.5 py-1 text-danger" onClick={() => del(r.id)}><Trash2 className="h-3.5 w-3.5" /></button>
+                  <button className="btn-ghost px-1.5 py-1 text-danger" onClick={() => del(r)}><Trash2 className="h-3.5 w-3.5" /></button>
                 </div>
               ))}
             </div>

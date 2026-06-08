@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import type { AlertEvent, AlertRule, AlertType, Severity, SmtpConfig, Webhook } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
+import { useDialogs } from "../components/Dialog";
 
 type Tab = "feed" | "rules" | "webhooks" | "email";
 
@@ -129,12 +130,14 @@ function Rules() {
   }, []);
   useEffect(() => load(), [load]);
 
+  const dialogs = useDialogs();
   const toggle = async (r: AlertRule) => {
     await api.toggleAlertRule(r.id, !r.enabled);
     load();
   };
-  const del = async (id: number) => {
-    await api.deleteAlertRule(id);
+  const del = async (r: AlertRule) => {
+    if (!(await dialogs.confirm({ title: "Delete alert rule", message: <>Delete the rule <code className="font-mono text-text">{r.name}</code>?</>, danger: true, confirmLabel: "Delete" }))) return;
+    await api.deleteAlertRule(r.id);
     load();
   };
 
@@ -187,7 +190,7 @@ function Rules() {
                   <td className="px-4 py-2.5 text-right">
                     <div className="flex items-center justify-end gap-1">
                       <button className="btn-ghost px-2 py-1" title="Edit" onClick={() => { setShowForm(false); setEditing(r); }}><Pencil className="h-4 w-4" /></button>
-                      <button className="btn-ghost px-2 py-1 text-danger" title="Delete" onClick={() => del(r.id)}><Trash2 className="h-4 w-4" /></button>
+                      <button className="btn-ghost px-2 py-1 text-danger" title="Delete" onClick={() => del(r)}><Trash2 className="h-4 w-4" /></button>
                     </div>
                   </td>
                 </tr>
@@ -394,8 +397,10 @@ function Webhooks() {
   }, []);
   useEffect(() => load(), [load]);
 
-  const del = async (id: number) => {
-    await api.deleteWebhook(id);
+  const dialogs = useDialogs();
+  const del = async (h: Webhook) => {
+    if (!(await dialogs.confirm({ title: "Delete webhook", message: <>Delete the webhook <code className="font-mono text-text">{h.name}</code>?</>, danger: true, confirmLabel: "Delete" }))) return;
+    await api.deleteWebhook(h.id);
     load();
   };
 
@@ -425,7 +430,7 @@ function Webhooks() {
                 </div>
                 <div className="text-xs text-muted font-mono mt-1 break-all">{h.method} {h.url}</div>
               </div>
-              <button className="btn-ghost px-2 py-1 text-danger" title="Delete" onClick={() => del(h.id)}>
+              <button className="btn-ghost px-2 py-1 text-danger" title="Delete" onClick={() => del(h)}>
                 <Trash2 className="h-4 w-4" />
               </button>
             </div>

@@ -6,6 +6,7 @@ import { api } from "../lib/api";
 import type { NetworkSummary, Topology } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
+import { useDialogs } from "../components/Dialog";
 import { InspectModal } from "../components/InspectModal";
 import { shortId } from "../lib/format";
 
@@ -85,8 +86,10 @@ function NetworkModal({ net, topo, onClose, onChanged }: { net: NetworkSummary; 
   const [deleting, setDeleting] = useState(false);
   const [delErr, setDelErr] = useState("");
   const isPredefined = PREDEFINED.has(net.name);
+  const dialogs = useDialogs();
 
   const del = async () => {
+    if (!(await dialogs.confirm({ title: "Remove network", message: <>Remove the network <code className="font-mono text-text">{net.name}</code>?</>, danger: true, confirmLabel: "Remove" }))) return;
     setDeleting(true);
     setDelErr("");
     try {

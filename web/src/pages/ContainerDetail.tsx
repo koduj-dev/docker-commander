@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ArrowLeft, Camera, Download, FileSearch, Play, Radar, RotateCw, Settings, Square, X, Loader2 } from "lucide-react";
-import { api } from "../lib/api";
+import { api, fileApiForContainer } from "../lib/api";
 import type { ContainerDetail as Detail, DiffEntry, LogLine, PortMapping, PortProbe, StatsSample, TopResult } from "../lib/types";
 import { live, ensureLive } from "../lib/live";
 import { shortId } from "../lib/format";
@@ -130,7 +130,7 @@ export function ContainerDetail() {
         {tab === "logs" && <LogViewer lines={logs} />}
         {tab === "console" && (running ? <Terminal containerId={id} /> : <div className="text-sm text-muted">Container is not running — start it to open a shell.</div>)}
         {tab === "processes" && (running ? <ProcessTable id={id} /> : <div className="text-sm text-muted">Container is not running — no processes.</div>)}
-        {tab === "files" && (running ? <FileBrowser containerId={id} /> : <div className="text-sm text-muted">Container is not running — start it to browse its filesystem.</div>)}
+        {tab === "files" && (running ? <FileBrowser fs={fileApiForContainer(id)} /> : <div className="text-sm text-muted">Container is not running — start it to browse its filesystem.</div>)}
         {tab === "changes" && <DiffList id={id} />}
         {tab === "env" && <EnvList env={detail.env ?? []} />}
       </div>

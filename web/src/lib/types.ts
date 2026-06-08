@@ -153,6 +153,17 @@ export interface FileEntry {
   target?: string;
 }
 
+// FileApi abstracts the file operations so the FileBrowser works for both
+// containers and volumes (each builds an adapter over its own endpoints).
+export interface FileApi {
+  list: (path: string) => Promise<{ ok: boolean; entries?: FileEntry[] | null; path?: string; error?: string }>;
+  upload: (dir: string, file: File) => Promise<{ ok: boolean; error?: string }>;
+  uploadExtract: (dir: string, file: File) => Promise<{ ok: boolean; error?: string }>;
+  mkdir: (path: string) => Promise<{ ok: boolean; error?: string }>;
+  del: (path: string) => Promise<{ ok: boolean; error?: string }>;
+  downloadUrl: (path: string) => string;
+}
+
 export interface DiffEntry {
   kind: "modified" | "added" | "deleted" | "unknown";
   path: string;

@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import type { Stack, StackContainer } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { StateBadge, EmptyState, Spinner } from "../components/ui";
+import { useDialogs } from "../components/Dialog";
 import { useDockerEventTick } from "../lib/dockerEvents";
 import { getPref, setPref } from "../lib/prefs";
 import { shortId } from "../lib/format";
@@ -47,6 +48,7 @@ export function Stacks() {
   const [copied, setCopied] = useState(false);
   const [managed, setManaged] = useState<Set<string>>(new Set());
   const tick = useDockerEventTick();
+  const dialogs = useDialogs();
 
   const load = useCallback(() => {
     api.stacks().then(setStacks).catch(() => setStacks([]));
@@ -84,7 +86,12 @@ export function Stacks() {
   const act = async (project: string, action: string) => {
     if (
       action === "remove" &&
-      !window.confirm(`Remove stack "${project}"?\n\nThis force-removes its containers and the stack's Compose networks (named volumes are kept).`)
+      !(await dialogs.confirm({
+        title: "Remove stack",
+        message: <>Remove <code className="font-mono text-text">{project}</code>? This force-removes its containers and the stack's Compose networks (named volumes are kept).</>,
+        danger: true,
+        confirmLabel: "Remove",
+      }))
     )
       return;
     setBusy(project);

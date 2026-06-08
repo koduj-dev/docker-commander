@@ -1,34 +1,37 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Folder, File as FileIcon, Link2, Download, Trash2, Upload, RefreshCw, ChevronRight, Loader2 } from "lucide-react";
-import { api } from "../lib/api";
-import type { FileEntry } from "../lib/types";
+import { Folder, File as FileIcon, Link2, Download, Trash2, Upload, RefreshCw, ChevronRight, Loader2, FolderPlus, FileArchive } from "lucide-react";
+import type { FileEntry, FileApi } from "../lib/types";
 import { bytes } from "../lib/format";
 import { Spinner } from "./ui";
+import { useDialogs } from "./Dialog";
 import { triggerDownload } from "./LoadModal";
 
 function joinPath(dir: string, name: string): string {
   return dir === "/" ? "/" + name : dir + "/" + name;
 }
 
-// FileBrowser is an in-container file manager: navigate directories, download
-// files/dirs (docker cp), upload into the current directory, and delete paths.
-export function FileBrowser({ containerId }: { containerId: string }) {
+// FileBrowser is a file manager over a FileApi adapter: navigate directories,
+// download files/dirs, upload into the current directory, and delete paths.
+// The same UI serves containers (docker cp) and volumes (helper container).
+export function FileBrowser({ fs }: { fs: FileApi }) {
   const [path, setPath] = useState("/");
   const [entries, setEntries] = useState<FileEntry[] | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+  const extractRef = useRef<HTMLInputElement>(null);
+  const dialogs = useDialogs();
 
   const load = useCallback(async (p: string) => {
     setError(""); setEntries(null);
     try {
-      const r = await api.listFiles(containerId, p);
-      if (r.ok) { setEntries(r.entries ?? []); setPath(r.path); }
+      const r = await fs.list(p);
+      if (r.ok) { setEntries(r.entries ?? []); setPath(r.path ?? p); }
       else { setError(r.error ?? "could not list directory"); setEntries([]); }
     } catch {
       setError("request failed"); setEntries([]);
     }
-  }, [containerId]);
+  }, [fs]);
 
   useEffect(() => { load("/"); }, [load]);
 
@@ -39,7 +42,7 @@ export function FileBrowser({ containerId }: { containerId: string }) {
     if (!file) return;
     setBusy("upload");
     try {
-      const r = await api.uploadFile(containerId, path, file);
+      const r = await fs.upload(path, file);
       if (!r.ok) setError(r.error ?? "upload failed");
       await load(path);
     } catch {
@@ -49,11 +52,42 @@ export function FileBrowser({ containerId }: { containerId: string }) {
     }
   };
 
+  const onExtract = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBusy("extract");
+    try {
+      const r = await fs.uploadExtract(path, file);
+      if (!r.ok) setError(r.error ?? "extract failed");
+      await load(path);
+    } catch {
+      setError("extract failed");
+    } finally {
+      setBusy(""); if (extractRef.current) extractRef.current.value = "";
+    }
+  };
+
+  const newFolder = async () => {
+    const name = await dialogs.prompt({ title: "New folder", label: "Folder name", placeholder: "data" });
+    if (!name) return;
+    setBusy("mkdir");
+    try {
+      const r = await fs.mkdir(joinPath(path, name));
+      if (!r.ok) setError(r.error ?? "could not create folder");
+      await load(path);
+    } catch {
+      setError("request failed");
+    } finally {
+      setBusy("");
+    }
+  };
+
   const del = async (entry: FileEntry) => {
+    if (!(await dialogs.confirm({ title: `Delete ${entry.isDir ? "folder" : "file"}`, message: <>Delete <code className="font-mono text-text">{entry.name}</code>?</>, danger: true, confirmLabel: "Delete" }))) return;
     const full = joinPath(path, entry.name);
     setBusy(full);
     try {
-      const r = await api.deleteFile(containerId, full);
+      const r = await fs.del(full);
       if (!r.ok) setError(r.error ?? "delete failed");
       await load(path);
     } catch {
@@ -86,9 +120,16 @@ export function FileBrowser({ containerId }: { containerId: string }) {
           ))}
         </div>
         <button className="btn-ghost px-2 py-1.5" title="Refresh" onClick={() => load(path)}><RefreshCw className="h-4 w-4" /></button>
-        <button className="btn-ghost px-2 py-1.5 text-xs" title="Download current directory as tar" onClick={() => triggerDownload(api.downloadFileUrl(containerId, path))}>
+        <button className="btn-ghost px-2 py-1.5 text-xs" title="Download current directory as tar" onClick={() => triggerDownload(fs.downloadUrl(path))}>
           <Download className="h-4 w-4" /> Dir
         </button>
+        <button className="btn-ghost px-2 py-1.5" title="New folder" onClick={newFolder} disabled={busy === "mkdir"}>
+          {busy === "mkdir" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FolderPlus className="h-4 w-4" />}
+        </button>
+        <button className="btn-ghost px-2.5 py-1.5 text-xs" onClick={() => extractRef.current?.click()} disabled={busy === "extract"} title="Upload a .zip / .tar / .tar.gz and extract it here">
+          {busy === "extract" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileArchive className="h-4 w-4" />} Extract
+        </button>
+        <input ref={extractRef} type="file" accept=".zip,.tar,.tar.gz,.tgz,application/zip,application/x-tar,application/gzip" className="hidden" onChange={onExtract} />
         <button className="btn-primary px-2.5 py-1.5 text-xs" onClick={() => fileRef.current?.click()} disabled={busy === "upload"}>
           {busy === "upload" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} Upload
         </button>
@@ -124,7 +165,7 @@ export function FileBrowser({ containerId }: { containerId: string }) {
                     <td className="px-3 py-1.5 text-xs text-muted font-mono whitespace-nowrap hidden md:table-cell">{e.mode}</td>
                     <td className="px-3 py-1.5">
                       <div className="flex items-center justify-end gap-1">
-                        <button className="btn-ghost px-1.5 py-1" title="Download" onClick={() => triggerDownload(api.downloadFileUrl(containerId, full))}><Download className="h-3.5 w-3.5" /></button>
+                        <button className="btn-ghost px-1.5 py-1" title="Download" onClick={() => triggerDownload(fs.downloadUrl(full))}><Download className="h-3.5 w-3.5" /></button>
                         <button className="btn-ghost px-1.5 py-1 text-danger" title="Delete" disabled={busy === full} onClick={() => del(e)}>
                           {busy === full ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
                         </button>
