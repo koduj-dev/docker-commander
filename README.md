@@ -41,14 +41,14 @@ level filters, regex search and structured parsing.
 - **Dashboard** that updates in near real time (Docker events stream): host facts, disk usage, a **resource breakdown** (each container's share of host CPU/memory), and a **port scan** that fingerprints what's actually listening.
 - **Logs** — per-container tail, plus a global **aggregated** view with level detection, **regex search** and saved **parsing rules** that turn lines into structured columns.
 - Live **events** feed, container **diff** / **top**, **disk usage**, and raw JSON **inspect** for any object.
-- **Networks & topology** — an interactive containers ↔ networks graph (pan / zoom / fullscreen, filters).
+- **Networks & topology** — an interactive containers ↔ networks graph (force-directed, pan / zoom / fullscreen, **search**, **filter by compose stack**) with a compact **list view** (state, image, stack, ports, networks).
 
 **Control**
 - Containers: **create/run**, start/stop/restart/pause/kill, **rename**, **update** limits & restart policy, **commit** to an image, and an interactive **shell** (xterm.js).
-- **File browser** inside containers — list, download, upload, delete (`docker cp`).
+- **File browser** inside containers **and volumes** — list, download, upload (incl. **upload & extract** a `.zip`/`.tar`/`.tar.gz`), delete, create folders.
 - Images: pull (live progress), build, push, tag, save/load/import, history, prune.
-- Volumes & networks: list, inspect, create, remove, prune (see which containers use each volume).
-- **Compose** — discover & manage **Stacks** by label (CLI-created ones too: start/stop/restart/remove, view compose file), and **Projects**: managed compose *folders* (a compose file + sidecar configs/scripts) edited in a built-in **tree editor** and **deployed via the `docker compose` CLI** with **profile** selection and `.zip` import/export.
+- Volumes & networks: list, inspect, create, remove, prune; networks also **connect / disconnect** containers, with a per-network detail (graph or list).
+- **Compose** — discover & manage **Stacks** by label (CLI-created ones too: start/stop/restart/remove, view compose file), and **Projects**: managed compose *folders* edited in a built-in **code editor** (CodeMirror) with **live, inline validation** — compose (anchors/`${VAR}`-aware), **Dockerfile** (`docker build --check`), YAML/JSON/`.env` — plus a **Resolved** preview, a services/ports **Summary**, **templates**, and **deploy via the `docker compose` CLI** with **profiles** and `.zip` import/export.
 
 **Multi-host**
 - Manage **local**, **TCP(+TLS)** and **SSH** daemons; SSH **host keys are verified** (known_hosts / trust-on-first-use). Every view rebinds to the selected host, and the alert engine watches **all** hosts. A per-host **detail** panel shows the hardware / OS / engine, and a host can be **disabled** to take it out of monitoring (e.g. an offline laptop).
@@ -64,6 +64,7 @@ level filters, regex search and structured parsing.
 
 **Ops**
 - Single CGO-free binary, embedded UI, systemd unit, config file, **native HTTPS** (or behind a proxy), `/healthz` probe, and structured alert logging to the journal/syslog. See [Deployment](docs/deployment.md).
+- **Self-update** — an admin "update available" banner and a `dockercmd --self-upgrade` command (SHA-256-verified, atomic binary replace).
 
 ## 🏗️ Architecture
 
