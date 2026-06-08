@@ -210,10 +210,9 @@ func TestIntegrationImagesTransfer(t *testing.T) {
 		t.Errorf("LoadImage: %q err=%v", out, err)
 	}
 	t.Cleanup(func() { _, _ = m.RemoveImage(ctx, 0, "dctest-xfer:1", true) })
-
-	if _, err := m.PruneImages(ctx, 0); err != nil {
-		t.Errorf("PruneImages: %v", err)
-	}
+	// NOTE: PruneImages is host-global (removes EVERY dangling image), so it's
+	// deliberately not run here — it would wipe the developer's images. Cover it
+	// by hand on a throwaway host.
 }
 
 func TestIntegrationVolumes(t *testing.T) {
@@ -243,9 +242,9 @@ func TestIntegrationVolumes(t *testing.T) {
 	if err := m.RemoveVolume(ctx, 0, name, false); err != nil {
 		t.Errorf("RemoveVolume: %v", err)
 	}
-	if _, err := m.PruneVolumes(ctx, 0); err != nil {
-		t.Errorf("PruneVolumes: %v", err)
-	}
+	// NOTE: PruneVolumes is host-global (removes EVERY unused volume), so it's
+	// deliberately not run here — it would wipe the developer's volumes (and
+	// their data). Cover it by hand on a throwaway host.
 }
 
 func TestIntegrationNetworkRemove(t *testing.T) {
@@ -291,26 +290,10 @@ func TestIntegrationNetworkLifecycle(t *testing.T) {
 	if err := m.RemoveNetwork(ctx, 0, id); err != nil {
 		t.Errorf("RemoveNetwork: %v", err)
 	}
-
-	// Prune removes an unused network.
-	id2, err := m.CreateNetwork(ctx, 0, NetworkCreateRequest{Name: "dctest_netprune"})
-	if err != nil {
-		t.Fatalf("CreateNetwork(2): %v", err)
-	}
-	t.Cleanup(func() { _ = cli.NetworkRemove(ctx, id2) })
-	deleted, err := m.PruneNetworks(ctx, 0)
-	if err != nil {
-		t.Fatalf("PruneNetworks: %v", err)
-	}
-	found := false
-	for _, n := range deleted {
-		if n == "dctest_netprune" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("prune should have removed dctest_netprune, got %v", deleted)
-	}
+	// NOTE: PruneNetworks is deliberately NOT exercised here — `docker network
+	// prune` is host-global (it removes EVERY unused network, not just test
+	// ones), so running it against the developer's real daemon would wipe their
+	// networks. It's a thin SDK wrapper; cover it by hand on a throwaway host.
 }
 
 func TestIntegrationLogsAndEvents(t *testing.T) {
