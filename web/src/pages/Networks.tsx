@@ -150,7 +150,7 @@ function NetworkModal({ net, topo, onClose, onChanged }: { net: NetworkSummary; 
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onClick={onClose}>
-      <div className="card w-full max-w-3xl" onClick={(e) => e.stopPropagation()}>
+      <div className="card w-[92vw] max-w-[1400px]" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 h-14 border-b border-border">
           <div className="flex items-center gap-2 font-semibold">
             <NetworkIcon className="h-4 w-4 text-accent" />
@@ -183,7 +183,7 @@ function NetworkModal({ net, topo, onClose, onChanged }: { net: NetworkSummary; 
           ) : members.length === 0 ? (
             <EmptyState title="No containers attached" hint="This network has no connected containers." />
           ) : (
-            <div className="relative mx-auto max-h-[70vh] overflow-auto">
+            <div className="relative mx-auto max-h-[80vh] overflow-auto">
              <div className="relative" style={{ width: W, height: H }}>
               {/* edges (IP is shown on each container card, so no edge labels) */}
               <svg className="absolute inset-0" width={W} height={H}>

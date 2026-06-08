@@ -16,7 +16,7 @@ import {
   type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import dagre from "@dagrejs/dagre";
+import { forceSimulation, forceLink, forceManyBody, forceCollide, forceX, forceY, type SimulationNodeDatum } from "d3-force";
 import { Boxes, Maximize2, Network as NetworkIcon, Search, Share2, List } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
@@ -31,6 +31,9 @@ interface TopoFilters {
   search: string;
   stack: string; // "" = all stacks
 }
+
+type SimNode = SimulationNodeDatum & { id: string };
+type SimLink = { source: string; target: string };
 
 const NET_W = 200;
 const NET_H = 64;
@@ -105,10 +108,6 @@ function containerMatches(c: TopoContainer, filters: TopoFilters): boolean {
 }
 
 function layout(topo: Topo, filters: TopoFilters): { nodes: Node[]; edges: Edge[] } {
-  const g = new dagre.graphlib.Graph();
-  g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: "LR", nodesep: 22, ranksep: 240, marginx: 20, marginy: 20 });
-
   const q = filters.search.trim().toLowerCase();
   const containers = (topo.containers ?? []).filter((c) => containerMatches(c, filters));
   const visibleContainerIds = new Set(containers.map((c) => c.id));
@@ -124,22 +123,33 @@ function layout(topo: Topo, filters: TopoFilters): { nodes: Node[]; edges: Edge[
   const linkedNetworks = new Set(links.map((l) => l.networkId));
   const networks = (topo.networks ?? []).filter((n) => !hideEmpty || linkedNetworks.has(n.id));
   const visibleNetworkIds = new Set(networks.map((n) => n.id));
+  const shownContainers = containers.filter((c) => linkedContainers.has(c.id));
 
-  for (const n of networks) {
-    g.setNode(`n:${n.id}`, { width: NET_W, height: NET_H });
-  }
-  for (const c of containers) {
-    if (linkedContainers.has(c.id)) g.setNode(`c:${c.id}`, { width: CON_W, height: CON_H });
-  }
-  for (const l of links) {
-    if (visibleNetworkIds.has(l.networkId)) g.setEdge(`n:${l.networkId}`, `c:${l.containerId}`);
-  }
+  // Force-directed layout: containers cluster around the networks they're on and
+  // the whole graph spreads across 2D (instead of dagre's tall bipartite column).
+  // A fixed tick count gives a deterministic, drag-able result.
+  const simNodes: SimNode[] = [
+    ...networks.map((n) => ({ id: `n:${n.id}` })),
+    ...shownContainers.map((c) => ({ id: `c:${c.id}` })),
+  ];
+  const simLinks: SimLink[] = links
+    .filter((l) => visibleNetworkIds.has(l.networkId))
+    .map((l) => ({ source: `n:${l.networkId}`, target: `c:${l.containerId}` }));
 
-  dagre.layout(g);
+  forceSimulation(simNodes)
+    .force("link", forceLink<SimNode, SimLink>(simLinks).id((d) => d.id).distance(180).strength(0.6))
+    .force("charge", forceManyBody().strength(-1100))
+    .force("collide", forceCollide(115))
+    .force("x", forceX(0).strength(0.05))
+    .force("y", forceY(0).strength(0.07))
+    .stop()
+    .tick(340);
+
+  const pos = new Map(simNodes.map((n) => [n.id, { x: n.x ?? 0, y: n.y ?? 0 }]));
 
   const nodes: Node[] = [];
   for (const n of networks) {
-    const p = g.node(`n:${n.id}`);
+    const p = pos.get(`n:${n.id}`);
     if (!p) continue;
     nodes.push({
       id: `n:${n.id}`,
@@ -148,8 +158,8 @@ function layout(topo: Topo, filters: TopoFilters): { nodes: Node[]; edges: Edge[
       data: { label: n.name, driver: n.driver, subnet: (n.subnets ?? [])[0] ?? "" },
     });
   }
-  for (const c of containers) {
-    const p = g.node(`c:${c.id}`);
+  for (const c of shownContainers) {
+    const p = pos.get(`c:${c.id}`);
     if (!p) continue;
     nodes.push({
       id: `c:${c.id}`,
@@ -193,7 +203,7 @@ export function Topology() {
   // Keep the fit readable: a 50-container bipartite graph is very tall, so an
   // unclamped fitView shrinks nodes to dust. minZoom floors the fit zoom; users
   // pan / use the minimap / zoom out (down to the lower ReactFlow minZoom).
-  const FIT = { minZoom: 0.5, maxZoom: 1.2, padding: 0.12 };
+  const FIT = { minZoom: 0.2, maxZoom: 1.2, padding: 0.15 };
 
   useEffect(() => {
     api.topology().then(setTopo).catch(() => setTopo({ networks: [], containers: [], links: [] }));
