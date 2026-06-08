@@ -13,6 +13,7 @@ import { useDialogs } from "../components/Dialog";
 // CodeMirror is ~440 KB — load it only when a project editor is actually opened.
 const CodeEditor = lazy(() => import("../components/CodeEditor").then((m) => ({ default: m.CodeEditor })));
 import { getPref, setPref } from "../lib/prefs";
+import { PROJECT_TEMPLATES } from "../lib/projectTemplates";
 import { useDockerEventTick } from "../lib/dockerEvents";
 
 type Output = { title: string; text: string; ok: boolean };
@@ -422,6 +423,7 @@ export function Projects() {
 function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreated: (p: Project) => void }) {
   const [name, setName] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [template, setTemplate] = useState("empty");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -432,6 +434,11 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
     setBusy(true); setErr("");
     try {
       const r = file ? await api.importProject(n, file) : await api.createProject(n);
+      // Seed the chosen template's files (import takes precedence over a template).
+      if (!file && template !== "empty") {
+        const tpl = PROJECT_TEMPLATES.find((t) => t.id === template);
+        if (tpl) for (const f of tpl.files) await api.writeProjectFile(r.id, f.path, f.content);
+      }
       onCreated({ id: r.id, name: n, slug: r.slug, composeFile: "compose.yml", createdBy: "", createdAt: "", updatedAt: "" });
     } catch (e2) {
       setErr(e2 instanceof ApiError ? e2.message : "could not create project");
@@ -453,9 +460,16 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
             <input autoFocus className="input" value={name} placeholder="My app" onChange={(e) => setName(e.target.value)} />
           </label>
           <label className="block">
-            <span className="label">Import from .zip (optional)</span>
+            <span className="label">Start from a template</span>
+            <select className="input" value={template} disabled={!!file} onChange={(e) => setTemplate(e.target.value)}>
+              <option value="empty">Empty (starter compose.yml)</option>
+              {PROJECT_TEMPLATES.map((t) => <option key={t.id} value={t.id}>{t.name} — {t.description}</option>)}
+            </select>
+          </label>
+          <label className="block">
+            <span className="label">…or import from .zip</span>
             <input type="file" accept=".zip,application/zip" className="input py-1.5" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-            {file && <span className="text-xs text-muted">Will import {file.name}</span>}
+            {file && <span className="text-xs text-muted">Will import {file.name} (template ignored)</span>}
           </label>
           {err && <p className="text-sm text-danger">{err}</p>}
         </div>
