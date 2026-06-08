@@ -81,7 +81,12 @@ func (m *Manager) ListImages(ctx context.Context, hostID int64) ([]ImageSummary,
 		}
 		return "\uffff" + im.ID
 	}
-	sort.SliceStable(out, func(i, j int) bool { return sortKey(out[i]) < sortKey(out[j]) })
+	sort.SliceStable(out, func(i, j int) bool {
+		if ki, kj := sortKey(out[i]), sortKey(out[j]); ki != kj {
+			return ki < kj
+		}
+		return out[i].ID < out[j].ID // deterministic tie-break on equal keys
+	})
 	return out, nil
 }
 

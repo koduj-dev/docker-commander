@@ -26,6 +26,16 @@ export interface AppSettings {
   localhostNo2fa: boolean;
 }
 
+export interface UpdateStatus {
+  current: string;
+  latest?: string;
+  updateAvailable: boolean;
+  url?: string;
+  publishedAt?: string;
+  disabled?: boolean;
+  error?: string;
+}
+
 export interface LdapConfig {
   enabled: boolean;
   url: string;
@@ -239,6 +249,8 @@ export interface TopoContainer {
   name: string;
   image: string;
   state: string;
+  stack?: string;
+  ports?: PortMapping[];
 }
 
 export interface TopoLink {
@@ -304,12 +316,32 @@ export interface Project {
   updatedAt: string;
 }
 
+export interface ComposeService {
+  image?: string;
+  build?: { context?: string; dockerfile?: string } | string;
+  ports?: { target?: number; published?: string; protocol?: string; mode?: string }[];
+  volumes?: ({ type?: string; source?: string; target?: string } | string)[];
+  depends_on?: Record<string, unknown> | string[];
+  restart?: string;
+  profiles?: string[];
+}
+
+export interface ComposeModel {
+  name?: string;
+  services?: Record<string, ComposeService>;
+  networks?: Record<string, unknown>;
+  volumes?: Record<string, unknown>;
+  configs?: Record<string, unknown>;
+  secrets?: Record<string, unknown>;
+}
+
 export interface ProjectFile {
   name: string;
   size: number;
   content: string;
   isDir?: boolean;
   tooLarge?: boolean;
+  binary?: boolean;
 }
 
 export interface PortProbe {

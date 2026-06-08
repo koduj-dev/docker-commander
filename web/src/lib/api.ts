@@ -5,6 +5,8 @@ import type {
   AlertEvent,
   AlertRule,
   AppSettings,
+  UpdateStatus,
+  ComposeModel,
   AuditEntry,
   LdapConfig,
   ManagedUser,
@@ -317,8 +319,34 @@ export const api = {
     req<{ ok: boolean }>("PUT", `/api/projects/${id}/files`, { name, content }),
   deleteProjectFile: (id: number, path: string) =>
     req<{ ok: boolean }>("DELETE", `/api/projects/${id}/files?path=${encodeURIComponent(path)}`),
+  // Raw (octet-stream) upload + download for binary/data files that can't go
+  // through the JSON text editor. Projects are local-only — no host param.
+  projectFileDownloadUrl: (id: number, name: string) =>
+    `/api/projects/${id}/files/raw?path=${encodeURIComponent(name)}`,
+  uploadProjectFile: async (id: number, name: string, file: File) => {
+    const res = await fetch(`/api/projects/${id}/files/raw?path=${encodeURIComponent(name)}`, {
+      method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/octet-stream" }, body: file,
+    });
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : null;
+    if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText);
+    return data as { ok: boolean; error?: string; bytes?: number };
+  },
   projectProfiles: (id: number) =>
     req<{ profiles: string[]; error?: string }>("GET", `/api/projects/${id}/profiles`),
+  // With an overlay {name, content} it validates the unsaved editor buffer
+  // (server copies the project + overlays that file); without it, the on-disk files.
+  validateProject: (id: number, overlay?: { name: string; content: string }) =>
+    req<{ valid: boolean; error?: string; unavailable?: boolean; warnings?: string[] }>("POST", `/api/projects/${id}/validate`, overlay),
+  // Fully-resolved compose config (anchors/interpolation/extends flattened).
+  resolveProject: (id: number, overlay?: { name: string; content: string }) =>
+    req<{ ok: boolean; config?: string; error?: string }>("POST", `/api/projects/${id}/resolve`, overlay),
+  // Resolved compose model (JSON) for the overview / port-conflict check.
+  projectSummary: (id: number, overlay?: { name: string; content: string }) =>
+    req<{ ok: boolean; model?: ComposeModel; error?: string }>("POST", `/api/projects/${id}/summary`, overlay),
+  // Lint a Dockerfile via `docker build --check` (no build steps run).
+  checkDockerfile: (id: number, content: string) =>
+    req<{ level: "ok" | "warning" | "error"; output?: string; unavailable?: boolean }>("POST", `/api/projects/${id}/dockerfile-check`, { content }),
   deployProject: (id: number, profiles: string[] = []) =>
     req<{ ok: boolean; output?: string; error?: string }>("POST", `/api/projects/${id}/deploy`, { profiles }),
   downProject: (id: number) =>
@@ -383,7 +411,14 @@ export const api = {
   testRegistry: (id: number) => req<{ ok: boolean; error?: string }>("POST", `/api/registries/${id}/test${hostParam()}`),
 
   networks: () => req<NetworkSummary[]>("GET", `/api/networks${hostParam()}`),
+  createNetwork: (b: { name: string; driver?: string; subnet?: string; gateway?: string; internal?: boolean; attachable?: boolean }) =>
+    req<{ ok: boolean; id?: string; error?: string }>("POST", `/api/networks${hostParam()}`, b),
   deleteNetwork: (id: string) => req<{ ok: boolean; error?: string }>("DELETE", `/api/networks/${id}${hostParam()}`),
+  pruneNetworks: () => req<{ deleted: string[] | null }>("POST", `/api/networks/prune${hostParam()}`),
+  connectNetwork: (id: string, container: string) =>
+    req<{ ok: boolean; error?: string }>("POST", `/api/networks/${id}/connect${hostParam()}`, { container }),
+  disconnectNetwork: (id: string, container: string, force = false) =>
+    req<{ ok: boolean; error?: string }>("POST", `/api/networks/${id}/disconnect${hostParam()}`, { container, force }),
 
   volumes: () => req<VolumeSummary[]>("GET", `/api/volumes${hostParam()}`),
   createVolume: (b: { name: string; driver?: string }) =>
@@ -399,6 +434,7 @@ export const api = {
   pruneVolumes: () => req<{ deleted: string[] | null; spaceReclaimed: number }>("POST", `/api/volumes/prune${hostParam()}`),
   topology: () => req<Topology>("GET", `/api/topology${hostParam()}`),
   version: () => req<{ version: string }>("GET", "/api/version"),
+  updateStatus: () => req<UpdateStatus>("GET", "/api/update"), // admin-only
   prefs: () => req<Record<string, unknown>>("GET", "/api/prefs"),
   savePrefs: (obj: Record<string, unknown>) => req<{ ok: boolean }>("PUT", "/api/prefs", obj),
   system: () => req<SystemInfo>("GET", `/api/system${hostParam()}`),
@@ -457,25 +493,41 @@ export const api = {
 };
 
 // File-browser adapters: the FileBrowser component works over a FileApi, so the
-// same UI serves both containers and volumes.
+// same UI serves both containers and volumes. Adapters are cached per id/name so
+// inline JSX use (`<FileBrowser fs={fileApiForContainer(id)} />`) returns the
+// same object reference across re-renders — a fresh object would reset the
+// browser's state and trigger needless reloads.
+const containerFileApis = new Map<string, FileApi>();
+const volumeFileApis = new Map<string, FileApi>();
+
 export function fileApiForContainer(id: string): FileApi {
-  return {
-    list: (p) => api.listFiles(id, p),
-    upload: (dir, file) => api.uploadFile(id, dir, file),
-    uploadExtract: (dir, file) => api.extractFile(id, dir, file),
-    mkdir: (p) => api.mkdirFile(id, p),
-    del: (p) => api.deleteFile(id, p),
-    downloadUrl: (p) => api.downloadFileUrl(id, p),
-  };
+  let fs = containerFileApis.get(id);
+  if (!fs) {
+    fs = {
+      list: (p) => api.listFiles(id, p),
+      upload: (dir, file) => api.uploadFile(id, dir, file),
+      uploadExtract: (dir, file) => api.extractFile(id, dir, file),
+      mkdir: (p) => api.mkdirFile(id, p),
+      del: (p) => api.deleteFile(id, p),
+      downloadUrl: (p) => api.downloadFileUrl(id, p),
+    };
+    containerFileApis.set(id, fs);
+  }
+  return fs;
 }
 
 export function fileApiForVolume(name: string): FileApi {
-  return {
-    list: (p) => api.listVolumeFiles(name, p),
-    upload: (dir, file) => api.uploadVolumeFile(name, dir, file),
-    uploadExtract: (dir, file) => api.extractVolumeFile(name, dir, file),
-    mkdir: (p) => api.mkdirVolumeFile(name, p),
-    del: (p) => api.deleteVolumeFile(name, p),
-    downloadUrl: (p) => api.volumeFileDownloadUrl(name, p),
-  };
+  let fs = volumeFileApis.get(name);
+  if (!fs) {
+    fs = {
+      list: (p) => api.listVolumeFiles(name, p),
+      upload: (dir, file) => api.uploadVolumeFile(name, dir, file),
+      uploadExtract: (dir, file) => api.extractVolumeFile(name, dir, file),
+      mkdir: (p) => api.mkdirVolumeFile(name, p),
+      del: (p) => api.deleteVolumeFile(name, p),
+      downloadUrl: (p) => api.volumeFileDownloadUrl(name, p),
+    };
+    volumeFileApis.set(name, fs);
+  }
+  return fs;
 }

@@ -138,7 +138,9 @@ func (s *Server) handleExtractVolumeFile(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, "path and name are required")
 		return
 	}
-	if err := s.docker.VolumeUploadExtract(r.Context(), hostID, name, destDir, fname, r.Body); err != nil {
+	// Bound the streamed tar/tar.gz body, like the upload endpoints' 4 GiB guard.
+	body := http.MaxBytesReader(w, r.Body, 1<<32)
+	if err := s.docker.VolumeUploadExtract(r.Context(), hostID, name, destDir, fname, body); err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}

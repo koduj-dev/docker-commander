@@ -6,6 +6,57 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-06-08
+
+### Added
+- **Self-update** — an admin **"update available"** banner that checks the GitHub
+  Releases API against the running version (cached; `DC_UPDATE_CHECK=0` disables
+  the outbound call), plus a **`dockercmd --self-upgrade`** command that downloads
+  the right OS/arch asset, **verifies its SHA-256**, and atomically replaces the
+  running binary. `--self-upgrade --check` reports whether an update is waiting
+  without installing it.
+- **Volume file browser** — browse, upload, download, delete and create folders
+  inside a named volume (via a short-lived helper container, so it works on
+  local / TCP / SSH hosts). **Upload & extract** a `.zip` / `.tar` / `.tar.gz`
+  into a volume or container, and **seed a new volume** from an archive.
+- **Project editor — real code editing & validation:**
+  - A **CodeMirror 6** editor with YAML / JSON / shell / Dockerfile / `.conf`
+    highlighting (replacing the bare textarea).
+  - **Live, inline validation** of the *unsaved* buffer: compose via
+    `docker compose config` (anchors, merge keys, `${VAR}` interpolation and
+    `extends`/`include` resolved) shown as diagnostics on the right line;
+    instant YAML / JSON / `.env` syntax lint; **Dockerfile** lint via
+    `docker build --check`.
+  - Compose **warnings** (unset variables), a **Resolved** preview (the fully
+    flattened compose), and a **Summary** overview (services / ports / volumes +
+    a duplicate-host-port check).
+  - **Binary/data files** can live alongside the compose file (raw upload,
+    download-only in the tree).
+  - **New-project templates** — Nginx, Nginx + PHP-FPM, Postgres + Adminer, Node.
+- **Networks — full management** — **create** (driver, subnet, gateway, internal,
+  attachable), **connect** / **disconnect** containers, and **prune** unused
+  networks; plus search / status filter on the list.
+- **Topology at scale** — a **Find container** search, **filter by compose
+  stack**, a **force-directed 2D layout** (instead of one tall column), a compact
+  **list view** (with published ports), and a node-count badge. The network
+  detail reuses the same graph/list renderers.
+- **Confirmation dialogs** for every destructive action (delete / remove /
+  prune), app-wide, replacing one-click and `window.confirm`.
+
+### Changed
+- Topology defaults to **running containers only** and **hides empty networks**;
+  its filters persist across reloads. Edges are straight, animated lines.
+- Anonymous (hash-named) volumes are shown shortened (full name on hover); the
+  in-app confirm/prompt dialog is wider.
+
+### Fixed
+- Deterministic ordering for the container / network / volume / image / topology
+  lists (tie-break beyond a case-folded name).
+- Project file sandbox rejects a symlink anywhere along the path; archive extract
+  guards against zip-slip and zip-bombs; the extract endpoints bound the request
+  body. `ComposeAvailable` no longer caches a transient failure for the process
+  lifetime.
+
 ## [1.2.0] — 2026-06-05
 
 ### Added
@@ -136,5 +187,7 @@ Initial release: a single CGO-free Go binary with an embedded React UI.
   per-section permissions / read-only, feature flags, audit log, optional LDAP;
   secrets encrypted at rest.
 
+[1.3.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.3.0
+[1.2.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.2.0
 [1.1.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.1.0
 [1.0.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.0.0

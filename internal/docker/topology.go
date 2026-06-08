@@ -3,7 +3,6 @@ package docker
 import (
 	"context"
 	"sort"
-	"strings"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
@@ -29,10 +28,12 @@ type TopoNetwork struct {
 
 // TopoContainer is a container node in the topology graph.
 type TopoContainer struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Image string `json:"image"`
-	State string `json:"state"`
+	ID    string        `json:"id"`
+	Name  string        `json:"name"`
+	Image string        `json:"image"`
+	State string        `json:"state"`
+	Stack string        `json:"stack,omitempty"` // compose project, for grouping/filtering
+	Ports []PortMapping `json:"ports,omitempty"` // published ports, for the list views
 }
 
 // TopoLink is an edge: a container attached to a network with an assigned IP.
@@ -59,8 +60,16 @@ func (m *Manager) Topology(ctx context.Context, hostID int64) (*Topology, error)
 	// so stopped/exited containers would vanish from the graph. The container
 	// list carries every container's configured networks regardless of state.
 	for _, c := range rawContainers {
+		var ports []PortMapping
+		for _, p := range c.Ports {
+			if p.PublicPort == 0 {
+				continue // only host-published ports are interesting here
+			}
+			ports = append(ports, PortMapping{IP: p.IP, PrivatePort: p.PrivatePort, PublicPort: p.PublicPort, Type: p.Type})
+		}
 		top.Containers = append(top.Containers, TopoContainer{
 			ID: c.ID, Name: cleanName(c.Names), Image: c.Image, State: string(c.State),
+			Stack: c.Labels[labelComposeProject], Ports: ports,
 		})
 		if c.NetworkSettings == nil {
 			continue
@@ -97,10 +106,16 @@ func (m *Manager) Topology(ctx context.Context, hostID int64) (*Topology, error)
 	}
 	// Deterministic, alphabetical order so the graph is stable across reloads.
 	sort.SliceStable(top.Networks, func(i, j int) bool {
-		return strings.ToLower(top.Networks[i].Name) < strings.ToLower(top.Networks[j].Name)
+		if c := cmpFold(top.Networks[i].Name, top.Networks[j].Name); c != 0 {
+			return c < 0
+		}
+		return top.Networks[i].ID < top.Networks[j].ID
 	})
 	sort.SliceStable(top.Containers, func(i, j int) bool {
-		return strings.ToLower(top.Containers[i].Name) < strings.ToLower(top.Containers[j].Name)
+		if c := cmpFold(top.Containers[i].Name, top.Containers[j].Name); c != 0 {
+			return c < 0
+		}
+		return top.Containers[i].ID < top.Containers[j].ID
 	})
 	return top, nil
 }

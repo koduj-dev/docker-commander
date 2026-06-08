@@ -109,6 +109,90 @@ func (s *Server) handleRemoveNetwork(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+func (s *Server) handleCreateNetwork(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	var req docker.NetworkCreateRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if req.Name == "" {
+		writeErr(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	id, err := s.docker.CreateNetwork(r.Context(), hostID, req)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	s.audit(r, "network.create", req.Name, req.Driver)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
+}
+
+func (s *Server) handleConnectNetwork(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	var body struct {
+		Container string `json:"container"`
+	}
+	if err := decodeJSON(r, &body); err != nil || body.Container == "" {
+		writeErr(w, http.StatusBadRequest, "container is required")
+		return
+	}
+	if err := s.docker.ConnectNetwork(r.Context(), hostID, id, body.Container); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	s.audit(r, "network.connect", id, body.Container)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleDisconnectNetwork(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	var body struct {
+		Container string `json:"container"`
+		Force     bool   `json:"force"`
+	}
+	if err := decodeJSON(r, &body); err != nil || body.Container == "" {
+		writeErr(w, http.StatusBadRequest, "container is required")
+		return
+	}
+	if err := s.docker.DisconnectNetwork(r.Context(), hostID, id, body.Container, body.Force); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	s.audit(r, "network.disconnect", id, body.Container)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handlePruneNetworks(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	deleted, err := s.docker.PruneNetworks(r.Context(), hostID)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "docker error: "+err.Error())
+		return
+	}
+	s.audit(r, "network.prune", "", "")
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": deleted})
+}
+
 func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
 	hostID, err := s.resolveHostID(r)
 	if err != nil {

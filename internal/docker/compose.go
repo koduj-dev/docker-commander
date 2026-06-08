@@ -3,6 +3,7 @@ package docker
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os/exec"
 	"strings"
 	"sync"
@@ -23,8 +24,14 @@ var (
 	composeOK   bool
 )
 
+// ComposeAvailable reports whether the `docker compose` CLI is usable on the
+// host. The result is probed once and cached for the process lifetime.
 func ComposeAvailable(ctx context.Context) bool {
-	composeOnce.Do(func() { composeOK = composeProbe(ctx, "docker") })
+	// Probe with a fresh background context (its own timeout below), not the
+	// caller's: a cancelled/timed-out first request must not cache "unavailable"
+	// for the whole process lifetime via sync.Once.
+	_ = ctx
+	composeOnce.Do(func() { composeOK = composeProbe(context.Background(), "docker") })
 	return composeOK
 }
 
@@ -63,6 +70,83 @@ func ComposeProfiles(ctx context.Context, dir, slug string) ([]string, error) {
 		}
 	}
 	return profiles, nil
+}
+
+// ComposeConfig validates the project's compose file via
+// `docker compose config --quiet` — the same parser used to deploy, so YAML
+// anchors/aliases, merge keys (`<<`), `${VAR}` interpolation and
+// `extends`/`include` resolve exactly as they will at `up` time. On success it
+// prints nothing; on failure the combined output carries the error (often with
+// a file/line reference).
+func ComposeConfig(ctx context.Context, dir, slug string) (string, error) {
+	return runCompose(ctx, dir, slug, "config", "--quiet")
+}
+
+// ComposeResolvedConfig returns the fully-resolved compose configuration
+// (`docker compose config` without --quiet): anchors, merge keys, ${VAR}
+// interpolation and extends/include flattened into one canonical YAML — exactly
+// what `up` will deploy. Only stdout (the YAML) is returned; on failure the
+// error carries stderr.
+func ComposeResolvedConfig(ctx context.Context, dir, slug string) (string, error) {
+	cctx, cancel := context.WithTimeout(ctx, composeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, "docker", "compose", "-p", slug, "config")
+	cmd.Dir = dir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return "", errors.New(msg)
+		}
+		return "", err
+	}
+	return stdout.String(), nil
+}
+
+// ComposeConfigJSON returns the resolved compose model as JSON
+// (`docker compose config --format json`) — used to build a project overview
+// (services, ports, volumes) and detect issues like duplicate host ports.
+func ComposeConfigJSON(ctx context.Context, dir, slug string) ([]byte, error) {
+	cctx, cancel := context.WithTimeout(ctx, composeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, "docker", "compose", "-p", slug, "config", "--format", "json")
+	cmd.Dir = dir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return nil, errors.New(msg)
+		}
+		return nil, err
+	}
+	return stdout.Bytes(), nil
+}
+
+// ComposeWarnings extracts the human-readable messages from `level=warning`
+// lines in compose CLI output (e.g. `The "X" variable is not set`), which the
+// CLI prints to stderr even for an otherwise-valid file.
+func ComposeWarnings(out string) []string {
+	var ws []string
+	for _, ln := range strings.Split(out, "\n") {
+		if !strings.Contains(ln, "level=warning") {
+			continue
+		}
+		i := strings.Index(ln, `msg="`)
+		if i < 0 {
+			continue
+		}
+		rest := ln[i+len(`msg="`):]
+		j := strings.LastIndex(rest, `"`)
+		if j < 0 {
+			continue
+		}
+		if msg := strings.TrimSpace(strings.ReplaceAll(rest[:j], `\"`, `"`)); msg != "" {
+			ws = append(ws, msg)
+		}
+	}
+	return ws
 }
 
 // ComposeDown runs `docker compose -p <slug> down` in dir (removes containers

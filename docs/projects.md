@@ -18,19 +18,45 @@ containers — for free. A deployed project also appears on the
 ## Creating a project
 - **New project** — give it a name; an identifier (slug) is derived from it
   (lowercased, diacritics transliterated). A starter `compose.yml` is created.
+- **Template** — optionally start from a ready-made scaffold: **Nginx static
+  site**, **Nginx + PHP-FPM**, **Postgres + Adminer**, or a **Node** app (with a
+  Dockerfile). The template's files are seeded into the new project.
 - **Import** — in the New-project dialog, choose a `.zip` to import an existing
-  project folder (files are written through the same path sandbox).
+  project folder (files are written through the same path sandbox). Import takes
+  precedence over a template.
 
 ## The editor
-A modal with a **file tree** on the left and an editor on the right:
+A modal with a **file tree** on the left and a **CodeMirror** editor on the
+right, with syntax highlighting for YAML, JSON, shell, Dockerfiles and
+`.conf` / `.env` files.
+
 - **New file / New folder / Upload** create inside the **current folder** —
   click a folder (or open a file) to set it as the target; the toolbar shows
-  where new items land, with an × to go back to the project root.
+  where new items land, with an × to go back to the project root. Upload accepts
+  binary/data files too (shown download-only in the tree).
 - **Save** writes the open file; an unsaved-changes dot marks edits.
 - **Download** a single file (next to *Save*) or the **whole project as a
   `.zip`** (editor header).
 - **Profiles** — if the compose file defines `profiles`, a toggle bar lets you
   pick which ones to enable; the selection is remembered and applied on deploy.
+
+### Validation (live, while you edit)
+Validation runs on the **unsaved** buffer (no save needed) and shows results as
+**inline diagnostics** underlined on the relevant line, plus an at-a-glance
+status chip:
+
+- **Compose files** — `docker compose config` (the real deploy parser, so YAML
+  anchors, merge keys `<<`, `${VAR}` interpolation and `extends`/`include`
+  resolve as at `up` time). Unset-variable **warnings** are surfaced too.
+- **Dockerfiles** — `docker build --check` (BuildKit's linter; no build runs).
+- **YAML / JSON / `.env`** — instant client-side syntax lint.
+
+On the compose file, two extra actions sit in the editor toolbar:
+
+- **Resolved** — the fully-flattened compose (anchors / interpolation / extends
+  resolved) — exactly what `docker compose up` deploys.
+- **Summary** — an overview of services, published ports and volumes, with a
+  **duplicate-host-port** check.
 
 ## Lifecycle
 - **Deploy / Redeploy** — runs `docker compose up -d` (with the selected

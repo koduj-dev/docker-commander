@@ -1,15 +1,20 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   FolderGit2, Plus, Rocket, Square, Trash2, X, FilePlus, FolderPlus, Upload, Loader2,
-  ExternalLink, Save, FileText, Folder, Terminal, Pencil, ChevronRight, Download, Search,
+  ExternalLink, Save, FileText, FileBox, Folder, Terminal, Pencil, ChevronRight, Download, Search, CheckCircle2, AlertCircle, AlertTriangle, Eye, Boxes,
 } from "lucide-react";
+import { bytes as fmtBytes } from "../lib/format";
 import { api, ApiError } from "../lib/api";
-import type { Project, ProjectFile, Stack } from "../lib/types";
+import type { Project, ProjectFile, Stack, ComposeModel, ComposeService } from "../lib/types";
+import type { ServerCheck } from "../components/CodeEditor";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner, StateBadge } from "../components/ui";
 import { useDialogs } from "../components/Dialog";
+// CodeMirror is ~440 KB — load it only when a project editor is actually opened.
+const CodeEditor = lazy(() => import("../components/CodeEditor").then((m) => ({ default: m.CodeEditor })));
 import { getPref, setPref } from "../lib/prefs";
+import { PROJECT_TEMPLATES } from "../lib/projectTemplates";
 import { useDockerEventTick } from "../lib/dockerEvents";
 
 type Output = { title: string; text: string; ok: boolean };
@@ -23,7 +28,7 @@ function projectState(stack: Stack | undefined): { cls: string; label: string; d
   return { cls: "bg-warn text-warn", label: "Partial", deployed: true };
 }
 
-type TreeNode = { name: string; path: string; isDir: boolean; children: TreeNode[] };
+type TreeNode = { name: string; path: string; isDir: boolean; binary?: boolean; children: TreeNode[] };
 
 // buildTree turns the flat file list (paths like "config/app.conf") into a
 // nested tree, materialising intermediate folders.
@@ -44,7 +49,7 @@ function buildTree(files: ProjectFile[]): TreeNode[] {
     const slash = f.name.lastIndexOf("/");
     if (f.isDir) { ensureDir(f.name); continue; }
     const parent = ensureDir(slash >= 0 ? f.name.slice(0, slash) : "");
-    parent.children.push({ name: f.name.slice(slash + 1), path: f.name, isDir: false, children: [] });
+    parent.children.push({ name: f.name.slice(slash + 1), path: f.name, isDir: false, binary: f.binary, children: [] });
   }
   const sort = (n: TreeNode) => {
     n.children.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
@@ -84,12 +89,116 @@ function TreeItem({ node, depth, active, dirty, collapsed, currentDir, onToggle,
   const isActive = node.path === active;
   return (
     <div className={`group flex items-center gap-1 rounded px-2 py-1 text-sm cursor-pointer ${isActive ? "bg-accent/15 text-accent" : "hover:bg-panel2"}`} style={pad} onClick={() => onSelect(node.path)}>
-      <FileText className="h-3.5 w-3.5 shrink-0 opacity-70" />
+      {node.binary
+        ? <FileBox className="h-3.5 w-3.5 shrink-0 opacity-70" />
+        : <FileText className="h-3.5 w-3.5 shrink-0 opacity-70" />}
       <span className="truncate font-mono text-xs">{node.name}</span>
       {dirty && isActive && <span className="text-warn text-xs">●</span>}
       <button className="ml-auto opacity-0 group-hover:opacity-100 text-danger" title="Delete file" onClick={(e) => { e.stopPropagation(); onDelete({ name: node.path, isDir: false }); }}><Trash2 className="h-3.5 w-3.5" /></button>
     </div>
   );
+}
+
+// isComposeFile reports whether a project file is a compose entry file that
+// `docker compose` discovers by default (root-level compose.yaml/.yml,
+// docker-compose.yaml/.yml and their .override variants), plus the project's
+// configured compose file. Validation is scoped to these.
+function isComposeFile(name: string, configured: string): boolean {
+  if (!name) return false;
+  if (name === configured) return true;
+  if (name.includes("/")) return false; // compose files live at the project root
+  return /^(docker-)?compose(\.override)?\.ya?ml$/.test(name.toLowerCase());
+}
+
+// portConflicts finds host ports published by more than one service in the
+// resolved compose model.
+function portConflicts(model: ComposeModel): string[] {
+  const byKey = new Map<string, string[]>();
+  for (const [name, svc] of Object.entries(model.services ?? {})) {
+    for (const p of svc.ports ?? []) {
+      if (!p.published) continue;
+      const key = `${p.published}/${p.protocol ?? "tcp"}`;
+      byKey.set(key, [...(byKey.get(key) ?? []), name]);
+    }
+  }
+  const out: string[] = [];
+  for (const [key, svcs] of byKey) {
+    if (svcs.length > 1) out.push(`Host port ${key} is published by ${svcs.join(", ")}`);
+  }
+  return out;
+}
+
+function buildLabel(b: ComposeService["build"]): string {
+  if (!b) return "";
+  if (typeof b === "string") return `build: ${b}`;
+  return b.context ? `build: ${b.context}` : "build";
+}
+
+// ComposeSummaryModal renders an overview of the resolved compose model:
+// services with their image/ports/volumes, top-level resources, and any
+// duplicate-host-port conflicts.
+function ComposeSummaryModal({ model, onClose }: { model: ComposeModel; onClose: () => void }) {
+  const conflicts = portConflicts(model);
+  const services = Object.entries(model.services ?? {});
+  const tops: [string, string[]][] = [
+    ["Networks", Object.keys(model.networks ?? {})],
+    ["Volumes", Object.keys(model.volumes ?? {})],
+    ["Configs", Object.keys(model.configs ?? {})],
+    ["Secrets", Object.keys(model.secrets ?? {})],
+  ];
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+      <div className="card w-[70vw] max-w-3xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2 p-4 border-b border-border">
+          <Boxes className="h-4 w-4 text-accent" />
+          <span className="font-medium">Compose summary</span>
+          {model.name && <span className="text-xs text-muted font-mono">{model.name}</span>}
+          <button className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-4 overflow-auto space-y-3">
+          {conflicts.length > 0 && (
+            <div className="text-xs text-warn bg-warn/10 border border-warn/30 rounded-md p-2.5 space-y-1">
+              {conflicts.map((c, i) => <div key={i}>⚠ {c}</div>)}
+            </div>
+          )}
+          {services.length === 0 ? (
+            <div className="text-sm text-muted">No services defined.</div>
+          ) : services.map(([name, svc]) => (
+            <div key={name} className="border border-border rounded-md p-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-medium text-sm">{name}</span>
+                <span className="text-xs text-muted font-mono break-all">{svc.image ?? buildLabel(svc.build)}</span>
+                {svc.restart && <span className="text-[10px] bg-panel2 rounded px-1.5 py-0.5 text-muted">{svc.restart}</span>}
+              </div>
+              {!!svc.ports?.length && (
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {svc.ports.map((p, i) => <span key={i} className="text-[10px] font-mono bg-accent/10 text-accent rounded px-1.5 py-0.5">{p.published ?? "?"}→{p.target}/{p.protocol ?? "tcp"}</span>)}
+                </div>
+              )}
+              {!!svc.volumes?.length && (
+                <div className="mt-1.5 space-y-0.5 text-[11px] text-muted font-mono">
+                  {svc.volumes.map((v, i) => <div key={i} className="break-all">{typeof v === "string" ? v : `${v.source ?? v.type ?? "?"} → ${v.target}`}</div>)}
+                </div>
+              )}
+            </div>
+          ))}
+          <div className="flex flex-wrap gap-x-6 gap-y-1.5 text-xs pt-1">
+            {tops.filter(([, names]) => names.length > 0).map(([label, names]) => (
+              <div key={label}><span className="text-muted">{label}:</span> <span className="font-mono">{names.join(", ")}</span></div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// isDockerfile reports whether a file is a Dockerfile (Dockerfile, Dockerfile.*,
+// *.dockerfile) — these can live in subdirectories, unlike compose files.
+function isDockerfile(name: string): boolean {
+  if (!name) return false;
+  const base = (name.split("/").pop() ?? "").toLowerCase();
+  return base === "dockerfile" || base.startsWith("dockerfile.") || base.endsWith(".dockerfile");
 }
 
 // downloadText triggers a client-side download of in-memory text.
@@ -315,6 +424,7 @@ export function Projects() {
 function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreated: (p: Project) => void }) {
   const [name, setName] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [template, setTemplate] = useState("empty");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -325,6 +435,11 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
     setBusy(true); setErr("");
     try {
       const r = file ? await api.importProject(n, file) : await api.createProject(n);
+      // Seed the chosen template's files (import takes precedence over a template).
+      if (!file && template !== "empty") {
+        const tpl = PROJECT_TEMPLATES.find((t) => t.id === template);
+        if (tpl) for (const f of tpl.files) await api.writeProjectFile(r.id, f.path, f.content);
+      }
       onCreated({ id: r.id, name: n, slug: r.slug, composeFile: "compose.yml", createdBy: "", createdAt: "", updatedAt: "" });
     } catch (e2) {
       setErr(e2 instanceof ApiError ? e2.message : "could not create project");
@@ -346,9 +461,16 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
             <input autoFocus className="input" value={name} placeholder="My app" onChange={(e) => setName(e.target.value)} />
           </label>
           <label className="block">
-            <span className="label">Import from .zip (optional)</span>
+            <span className="label">Start from a template</span>
+            <select className="input" value={template} disabled={!!file} onChange={(e) => setTemplate(e.target.value)}>
+              <option value="empty">Empty (starter compose.yml)</option>
+              {PROJECT_TEMPLATES.map((t) => <option key={t.id} value={t.id}>{t.name} — {t.description}</option>)}
+            </select>
+          </label>
+          <label className="block">
+            <span className="label">…or import from .zip</span>
             <input type="file" accept=".zip,application/zip" className="input py-1.5" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-            {file && <span className="text-xs text-muted">Will import {file.name}</span>}
+            {file && <span className="text-xs text-muted">Will import {file.name} (template ignored)</span>}
           </label>
           {err && <p className="text-sm text-danger">{err}</p>}
         </div>
@@ -375,12 +497,57 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
   const [selectedProfiles, setSelectedProfiles] = useState<string[]>(() => getPref<string[]>(`projects.profiles.${project.slug}`, []));
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
   const [currentDir, setCurrentDir] = useState(""); // where New file/folder land
+  const [liveVal, setLiveVal] = useState<"idle" | "checking" | "ok" | "warning" | "error">("idle");
+  const [serverCheck, setServerCheck] = useState<ServerCheck>(null);
+  const [summary, setSummary] = useState<ComposeModel | null>(null);
+  const valSeq = useRef(0);
   const dialogs = useDialogs();
   const uploadRef = useRef<HTMLInputElement>(null);
 
   const dirOf = (path: string) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
 
   useEffect(() => { api.projectProfiles(project.id).then((r) => setProfiles(r.profiles)).catch(() => {}); }, [project.id]);
+
+  // Live validation: compose files are checked with `docker compose config` and
+  // Dockerfiles with `docker build --check`, both over the *unsaved* buffer (no
+  // save required). Results render as inline diagnostics in the editor; the chip
+  // shows the overall status. Validation is a property of those files, so it
+  // only runs while one of them is open.
+  const composeFileName = project.composeFile || "compose.yml";
+  const onComposeFile = isComposeFile(active, composeFileName);
+  const onDockerfileActive = !onComposeFile && isDockerfile(active);
+  // Switching files clears the previous file's diagnostics immediately (the
+  // debounced re-check below would otherwise leave them hanging for ~1s).
+  useEffect(() => { setServerCheck(null); setLiveVal("idle"); }, [active]);
+  useEffect(() => {
+    if (!composeAvailable || (!onComposeFile && !onDockerfileActive)) {
+      setLiveVal("idle"); setServerCheck(null);
+      return;
+    }
+    const seq = ++valSeq.current;
+    const stale = () => seq !== valSeq.current;
+    const t = setTimeout(() => {
+      setLiveVal("checking");
+      if (onDockerfileActive) {
+        api.checkDockerfile(project.id, draft)
+          .then((r) => { if (stale()) return;
+            if (r.unavailable) { setLiveVal("idle"); setServerCheck(null); return; }
+            setServerCheck({ kind: "dockerfile", output: r.output });
+            setLiveVal(r.level);
+          })
+          .catch(() => { if (!stale()) { setLiveVal("idle"); setServerCheck(null); } });
+      } else {
+        api.validateProject(project.id, { name: active, content: draft })
+          .then((r) => { if (stale()) return;
+            if (r.unavailable) { setLiveVal("idle"); setServerCheck(null); return; }
+            if (!r.valid) { setServerCheck({ kind: "compose", error: r.error }); setLiveVal("error"); }
+            else { setServerCheck({ kind: "compose", warnings: r.warnings }); setLiveVal(r.warnings?.length ? "warning" : "ok"); }
+          })
+          .catch(() => { if (!stale()) { setLiveVal("idle"); setServerCheck(null); } });
+      }
+    }, onDockerfileActive ? 1200 : 800);
+    return () => clearTimeout(t);
+  }, [active, draft, composeAvailable, project.id, onComposeFile, onDockerfileActive]);
   const toggleProfile = (p: string) => setSelectedProfiles((s) => {
     const next = s.includes(p) ? s.filter((x) => x !== p) : [...s, p];
     setPref(`projects.profiles.${project.slug}`, next);
@@ -468,9 +635,23 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
   const upload = async (file: File) => {
     const full = currentDir ? `${currentDir}/${file.name}` : file.name;
     setBusy("upload");
-    try { await api.writeProjectFile(project.id, full, await file.text()); loadFiles(full); }
+    // Raw octet-stream upload preserves bytes for binary/data files (and works
+    // for text too). loadFiles re-reads, so a text file becomes editable.
+    try { await api.uploadProjectFile(project.id, full, file); loadFiles(full); }
     catch (e) { dialogs.alert({ title: "Upload failed", message: e instanceof Error ? e.message : "unknown error" }); }
     finally { setBusy(""); if (uploadRef.current) uploadRef.current.value = ""; }
+  };
+
+  // downloadActive saves the currently-selected file: binary/too-large files
+  // stream from the server (raw bytes), text files download the in-memory draft.
+  const downloadActive = () => {
+    if (activeFile?.binary || activeFile?.tooLarge) {
+      const a = document.createElement("a");
+      a.href = api.projectFileDownloadUrl(project.id, active);
+      a.click();
+    } else {
+      downloadText(active, draft);
+    }
   };
 
   const runCompose = async (kind: Kind) => {
@@ -481,6 +662,30 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
       onOutput({ title: `${project.name} — ${kind}`, text: r.output || r.error || "(no output)", ok: r.ok });
     } catch (e) {
       onOutput({ title: `${project.name} — ${kind}`, text: e instanceof Error ? e.message : "failed", ok: false });
+    } finally { setBusy(""); }
+  };
+
+  // openSummary fetches the resolved compose model and shows the overview modal.
+  const openSummary = async () => {
+    setBusy("summary");
+    try {
+      const r = await api.projectSummary(project.id, active ? { name: active, content: draft } : undefined);
+      if (r.ok && r.model) setSummary(r.model);
+      else onOutput({ title: `${project.name} — summary`, text: r.error || "could not parse compose", ok: false });
+    } catch (e) {
+      onOutput({ title: `${project.name} — summary`, text: e instanceof Error ? e.message : "failed", ok: false });
+    } finally { setBusy(""); }
+  };
+
+  // showResolved displays the fully-resolved compose (anchors/interpolation/
+  // extends flattened — what `up` actually deploys) in the output panel.
+  const showResolved = async () => {
+    setBusy("resolve");
+    try {
+      const r = await api.resolveProject(project.id, active ? { name: active, content: draft } : undefined);
+      onOutput({ title: `${project.name} — resolved compose`, text: r.ok ? (r.config || "(empty)") : (r.error || "failed"), ok: r.ok });
+    } catch (e) {
+      onOutput({ title: `${project.name} — resolved compose`, text: e instanceof Error ? e.message : "failed", ok: false });
     } finally { setBusy(""); }
   };
 
@@ -553,28 +758,56 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
           <div className="flex-1 flex flex-col min-w-0">
             <div className="flex items-center gap-2 p-2 border-b border-border">
               <span className="text-xs font-mono text-muted truncate">{active || "—"}</span>
+              {liveVal !== "idle" && (
+                <span className="text-[11px] flex items-center gap-1 shrink-0" title="Issues are underlined inline in the editor">
+                  {liveVal === "checking" ? (
+                    <><Loader2 className="h-3 w-3 animate-spin text-muted" /><span className="text-muted">checking…</span></>
+                  ) : liveVal === "warning" ? (
+                    <><AlertTriangle className="h-3 w-3 text-warn" /><span className="text-warn">warnings</span></>
+                  ) : liveVal === "ok" ? (
+                    <><CheckCircle2 className="h-3 w-3 text-ok" /><span className="text-ok">valid</span></>
+                  ) : (
+                    <><AlertCircle className="h-3 w-3 text-danger" /><span className="text-danger">invalid</span></>
+                  )}
+                </span>
+              )}
               <div className="ml-auto flex items-center gap-1">
-                <button className="btn-ghost px-2 py-1 text-xs disabled:opacity-40" disabled={!active} title="Download this file" onClick={() => downloadText(active, draft)}><Download className="h-3.5 w-3.5" /></button>
-                <button className="btn-primary px-3 py-1 text-xs disabled:opacity-40" disabled={!dirty || busy === "save" || !active} onClick={save}>
+                {onComposeFile && (
+                  <button className="btn-ghost px-2 py-1 text-xs disabled:opacity-40" disabled={!composeAvailable || busy === "resolve"} onClick={showResolved} title="Show the fully-resolved compose (anchors/interpolation/extends flattened)">
+                    {busy === "resolve" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />} Resolved
+                  </button>
+                )}
+                {onComposeFile && (
+                  <button className="btn-ghost px-2 py-1 text-xs disabled:opacity-40" disabled={!composeAvailable || busy === "summary"} onClick={openSummary} title="Services / ports / volumes overview + port-conflict check">
+                    {busy === "summary" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Boxes className="h-3.5 w-3.5" />} Summary
+                  </button>
+                )}
+                <button className="btn-ghost px-2 py-1 text-xs disabled:opacity-40" disabled={!active} title="Download this file" onClick={downloadActive}><Download className="h-3.5 w-3.5" /></button>
+                <button className="btn-primary px-3 py-1 text-xs disabled:opacity-40" disabled={!dirty || busy === "save" || !active || activeFile?.binary} onClick={save}>
                   {busy === "save" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Save
                 </button>
               </div>
             </div>
             {activeFile?.tooLarge ? (
               <div className="p-4 text-sm text-muted">This file is too large to edit here.</div>
+            ) : activeFile?.binary ? (
+              <div className="p-4 flex flex-col items-start gap-3 text-sm text-muted">
+                <div className="flex items-center gap-2"><FileBox className="h-4 w-4" /> Binary file ({fmtBytes(activeFile.size)}) — can't be edited as text.</div>
+                <button className="btn-ghost px-3 py-1.5 text-xs" onClick={downloadActive}><Download className="h-3.5 w-3.5" /> Download</button>
+              </div>
+            ) : active ? (
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <Suspense fallback={<div className="h-full grid place-items-center text-muted"><Spinner /></div>}>
+                  <CodeEditor filename={active} value={draft} onChange={setDraft} serverCheck={serverCheck} />
+                </Suspense>
+              </div>
             ) : (
-              <textarea
-                className="flex-1 w-full resize-none bg-bg text-text font-mono text-sm p-3 focus:outline-none"
-                spellCheck={false}
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                placeholder={active ? "" : "Select or add a file"}
-                disabled={!active}
-              />
+              <div className="flex-1 grid place-items-center text-sm text-muted">Select or add a file</div>
             )}
           </div>
         </div>
       </div>
+      {summary && <ComposeSummaryModal model={summary} onClose={() => setSummary(null)} />}
     </div>
   );
 }

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite" // CGO-free SQLite driver, registered with database/sql
 
 	"github.com/koduj-dev/docker-commander/internal/crypto"
 )

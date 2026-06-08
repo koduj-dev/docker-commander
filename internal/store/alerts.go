@@ -53,6 +53,7 @@ type AlertEvent struct {
 
 // ---- Webhooks ---------------------------------------------------------------
 
+// ListWebhooks returns all configured webhooks.
 func (s *Store) ListWebhooks(ctx context.Context) ([]Webhook, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, name, url, method, headers, body_template, created_at FROM webhooks ORDER BY name`)
@@ -71,12 +72,14 @@ func (s *Store) ListWebhooks(ctx context.Context) ([]Webhook, error) {
 	return out, rows.Err()
 }
 
+// WebhookByID returns one webhook by ID (ErrNotFound if missing).
 func (s *Store) WebhookByID(ctx context.Context, id int64) (*Webhook, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, name, url, method, headers, body_template, created_at FROM webhooks WHERE id = ?`, id)
 	return scanWebhook(row)
 }
 
+// CreateWebhook inserts a webhook and returns its ID.
 func (s *Store) CreateWebhook(ctx context.Context, w *Webhook) (int64, error) {
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO webhooks (name, url, method, headers, body_template, created_at)
@@ -89,6 +92,7 @@ func (s *Store) CreateWebhook(ctx context.Context, w *Webhook) (int64, error) {
 	return res.LastInsertId()
 }
 
+// DeleteWebhook removes a webhook by ID.
 func (s *Store) DeleteWebhook(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM webhooks WHERE id = ?`, id)
 	return err
@@ -96,6 +100,7 @@ func (s *Store) DeleteWebhook(ctx context.Context, id int64) error {
 
 // ---- Alert rules ------------------------------------------------------------
 
+// ListAlertRules returns all alert rules.
 func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, name, enabled, type, target, config, severity, webhook_id, cooldown_sec, email, created_at
@@ -115,6 +120,7 @@ func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 	return out, rows.Err()
 }
 
+// CreateAlertRule inserts an alert rule and returns its ID.
 func (s *Store) CreateAlertRule(ctx context.Context, r *AlertRule) (int64, error) {
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO alert_rules (name, enabled, type, target, config, severity, webhook_id, cooldown_sec, email, created_at)
@@ -128,6 +134,7 @@ func (s *Store) CreateAlertRule(ctx context.Context, r *AlertRule) (int64, error
 	return res.LastInsertId()
 }
 
+// SetAlertRuleEnabled toggles an alert rule on or off.
 func (s *Store) SetAlertRuleEnabled(ctx context.Context, id int64, enabled bool) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE alert_rules SET enabled = ? WHERE id = ?`, boolToInt(enabled), id)
 	return err
@@ -145,6 +152,7 @@ func (s *Store) UpdateAlertRule(ctx context.Context, id int64, r *AlertRule) err
 	return err
 }
 
+// DeleteAlertRule removes an alert rule by ID.
 func (s *Store) DeleteAlertRule(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM alert_rules WHERE id = ?`, id)
 	return err
@@ -152,6 +160,7 @@ func (s *Store) DeleteAlertRule(ctx context.Context, id int64) error {
 
 // ---- Alert events -----------------------------------------------------------
 
+// InsertAlertEvent records a fired alert event and returns its ID.
 func (s *Store) InsertAlertEvent(ctx context.Context, e *AlertEvent) (int64, error) {
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO alert_events (rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name, message, value, created_at)
@@ -164,6 +173,7 @@ func (s *Store) InsertAlertEvent(ctx context.Context, e *AlertEvent) (int64, err
 	return res.LastInsertId()
 }
 
+// ListAlertEvents returns recent alert events (newest first), up to limit.
 func (s *Store) ListAlertEvents(ctx context.Context, limit int) ([]AlertEvent, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 200
@@ -195,11 +205,13 @@ func (s *Store) ListAlertEvents(ctx context.Context, limit int) ([]AlertEvent, e
 	return out, rows.Err()
 }
 
+// AckAlertEvent marks an alert event acknowledged.
 func (s *Store) AckAlertEvent(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE alert_events SET acknowledged = 1 WHERE id = ?`, id)
 	return err
 }
 
+// CountUnacknowledged returns the number of unacknowledged alert events.
 func (s *Store) CountUnacknowledged(ctx context.Context) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alert_events WHERE acknowledged = 0`).Scan(&n)

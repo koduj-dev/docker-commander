@@ -53,9 +53,34 @@ func (m *Manager) ListContainers(ctx context.Context, hostID int64) ([]Container
 		if ri != rj {
 			return ri
 		}
-		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+		if c := cmpFold(out[i].Name, out[j].Name); c != 0 {
+			return c < 0
+		}
+		return out[i].ID < out[j].ID
 	})
 	return out, nil
+}
+
+// cmpFold compares two names case-insensitively, then (on a fold-tie)
+// case-sensitively, returning -1/0/1. Callers add an ID tie-breaker for the
+// final 0 case so ordering is deterministic regardless of the daemon's order
+// (a plain folded compare leaves names differing only by case in arbitrary
+// order under a stable sort).
+func cmpFold(a, b string) int {
+	if la, lb := strings.ToLower(a), strings.ToLower(b); la != lb {
+		if la < lb {
+			return -1
+		}
+		return 1
+	}
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // InspectContainer returns the detailed view of a single container.
@@ -166,7 +191,12 @@ func (m *Manager) ListNetworks(ctx context.Context, hostID int64) ([]NetworkSumm
 		}
 		out = append(out, ns)
 	}
-	sort.SliceStable(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
+	sort.SliceStable(out, func(i, j int) bool {
+		if c := cmpFold(out[i].Name, out[j].Name); c != 0 {
+			return c < 0
+		}
+		return out[i].ID < out[j].ID
+	})
 	return out, nil
 }
 

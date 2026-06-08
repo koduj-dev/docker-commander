@@ -23,6 +23,7 @@ import (
 	"github.com/koduj-dev/docker-commander/internal/docker"
 	"github.com/koduj-dev/docker-commander/internal/history"
 	"github.com/koduj-dev/docker-commander/internal/monitor"
+	"github.com/koduj-dev/docker-commander/internal/selfupdate"
 	"github.com/koduj-dev/docker-commander/internal/store"
 	"github.com/koduj-dev/docker-commander/internal/ws"
 	"github.com/koduj-dev/docker-commander/web"
@@ -37,7 +38,30 @@ func main() {
 	}
 }
 
+// wantsSelfUpgrade reports whether the user invoked the standalone
+// `--self-upgrade` action (intercepted before the server config flags parse),
+// and whether `--check` was passed (report only, don't install).
+func wantsSelfUpgrade() (yes, checkOnly bool) {
+	for _, a := range os.Args[1:] {
+		if a == "--" {
+			break
+		}
+		switch a {
+		case "-self-upgrade", "--self-upgrade":
+			yes = true
+		case "-check", "--check":
+			checkOnly = true
+		}
+	}
+	return yes, checkOnly
+}
+
 func run() error {
+	// Standalone CLI actions run instead of starting the server.
+	if up, checkOnly := wantsSelfUpgrade(); up {
+		return selfupdate.Run(context.Background(), version, os.Stdout, checkOnly)
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		return err

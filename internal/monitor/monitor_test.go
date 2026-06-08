@@ -40,7 +40,7 @@ func newMonitor(t *testing.T) (*Monitor, *docker.Manager, *store.Store, context.
 	return New(st, dm, hist), dm, st, ctx
 }
 
-func startContainer(t *testing.T, dm *docker.Manager, ctx context.Context, name string) string {
+func startContainer(ctx context.Context, t *testing.T, dm *docker.Manager, name string) string {
 	t.Helper()
 	if err := dm.PullImage(ctx, 0, "alpine:latest", func(docker.PullProgress) {}); err != nil {
 		// alpine is usually already present; ignore pull errors and try create.
@@ -62,7 +62,7 @@ func startContainer(t *testing.T, dm *docker.Manager, ctx context.Context, name 
 func TestMonitorPollAndFire(t *testing.T) {
 	m, dm, st, ctx := newMonitor(t)
 	name := "dctest_mon"
-	id := startContainer(t, dm, ctx, name)
+	id := startContainer(ctx, t, dm, name)
 
 	// A resource rule (won't necessarily fire) + a state rule (we'll fire it).
 	_, _ = st.CreateAlertRule(ctx, &store.AlertRule{Name: "cpu", Type: "resource", Enabled: true, CooldownSec: 1, Config: `{"metric":"cpu","op":">","threshold":0,"durationSec":0}`})

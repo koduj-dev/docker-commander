@@ -53,7 +53,9 @@ export function OpenPorts({ tick = 0 }: { tick?: number }) {
     api
       .containers()
       .then((cs) => setRunning(new Set(cs.filter((c) => c.state === "running").map((c) => c.id))))
-      .catch(() => {});
+      // On error keep a previously-known set; otherwise fall back to empty (show
+      // nothing) rather than leaving `running` null and risking stale rows.
+      .catch(() => setRunning((prev) => prev ?? new Set<string>()));
   }, [tick]);
 
   const scan = async () => {
@@ -72,8 +74,9 @@ export function OpenPorts({ tick = 0 }: { tick?: number }) {
   };
 
   // Only show ports of containers that are still running (the scan is cached, so
-  // a container stopped since the scan would otherwise linger).
-  const visible = rows && running ? rows.filter((r) => running.has(r.containerId)) : rows ?? [];
+  // a container stopped since the scan would otherwise linger). While the running
+  // set is unknown, show nothing rather than risk surfacing stale rows.
+  const visible = running ? (rows ?? []).filter((r) => running.has(r.containerId)) : [];
 
   return (
     <div>
@@ -89,6 +92,8 @@ export function OpenPorts({ tick = 0 }: { tick?: number }) {
 
       {rows === null ? (
         <p className="text-sm text-muted">Scan the host's published ports to see what's listening on each one.</p>
+      ) : running === null ? (
+        <p className="text-sm text-muted flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking which containers are running…</p>
       ) : visible.length === 0 ? (
         <p className="text-sm text-muted">No published ports on running containers — rescan after changes.</p>
       ) : (

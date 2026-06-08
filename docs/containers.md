@@ -38,9 +38,11 @@ Tabs:
 - **Logs** — live `stdout`/`stderr` tail.
 - **Console** — an interactive shell (xterm.js) into the running container.
 - **Processes** — `docker top`, refreshed periodically.
-- **Files** — a file browser: navigate directories, **download** a file or a
-  whole directory (as a tar), **upload** into the current directory, and delete
-  paths (this is `docker cp` under the hood; needs a shell/`ls` in the image).
+- **Files** — a file browser: navigate directories, **create** folders,
+  **download** a file or a whole directory (as a tar), **upload** files or
+  **upload & extract** an archive (`.zip` / `.tar` / `.tar.gz`) into the current
+  directory, and delete paths (this is `docker cp` under the hood; needs a
+  shell/`ls` in the image).
 - **Changes** — filesystem changes since start (`docker diff`: added / modified
   / deleted).
 - **Env** — environment variables.

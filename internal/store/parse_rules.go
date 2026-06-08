@@ -14,6 +14,7 @@ type ParseRule struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
+// ListParseRules returns all saved log-parsing rules.
 func (s *Store) ListParseRules(ctx context.Context) ([]ParseRule, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, name, pattern, created_at FROM parse_rules ORDER BY name`)
 	if err != nil {
@@ -33,6 +34,7 @@ func (s *Store) ListParseRules(ctx context.Context) ([]ParseRule, error) {
 	return out, rows.Err()
 }
 
+// CreateParseRule inserts a parse rule and returns its ID.
 func (s *Store) CreateParseRule(ctx context.Context, name, pattern string) (int64, error) {
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO parse_rules (name, pattern, created_at) VALUES (?, ?, ?)`,
@@ -43,6 +45,7 @@ func (s *Store) CreateParseRule(ctx context.Context, name, pattern string) (int6
 	return res.LastInsertId()
 }
 
+// DeleteParseRule removes a parse rule by ID.
 func (s *Store) DeleteParseRule(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM parse_rules WHERE id = ?`, id)
 	return err

@@ -1,11 +1,12 @@
 import { Link, NavLink, useNavigate, useLocation, useNavigationType } from "react-router-dom";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Activity, Bell, Blocks, Boxes, Container, Database, FolderGit2, KeyRound, Layers, LayoutDashboard, Network, ScrollText, Server, Settings, Share2, Terminal, Users, LogOut } from "lucide-react";
+import { Activity, Bell, Blocks, Boxes, Container, Database, FolderGit2, KeyRound, Layers, LayoutDashboard, Network, ScrollText, Server, Settings, Share2, Terminal, Users, LogOut, ArrowUpCircle, ExternalLink, X } from "lucide-react";
 import clsx from "clsx";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../lib/api";
-import type { Host } from "../lib/types";
+import type { Host, UpdateStatus } from "../lib/types";
 import { getHostId, setHostId } from "../lib/host";
+import { getPref, setPref } from "../lib/prefs";
 
 // Navigation grouped into sections so the sidebar stays scannable as the
 // feature set grows.
@@ -249,7 +250,39 @@ export function Shell({ children }: { children: ReactNode }) {
           <VersionTag />
         </div>
       </aside>
-      <main ref={mainRef} className="overflow-auto">{children}</main>
+      <main ref={mainRef} className="overflow-auto">
+        <UpdateBanner admin={user?.role === "admin"} />
+        {children}
+      </main>
+    </div>
+  );
+}
+
+// UpdateBanner shows a dismissible "new version available" bar to admins. The
+// check is admin-gated server-side; dismissal is remembered per latest version
+// (in account prefs) so it reappears when a newer release lands.
+function UpdateBanner({ admin }: { admin?: boolean }) {
+  const [st, setSt] = useState<UpdateStatus | null>(null);
+  const [dismissed, setDismissed] = useState<string>(() => getPref("update.dismissed", ""));
+  useEffect(() => {
+    if (!admin) return;
+    api.updateStatus().then(setSt).catch(() => {});
+  }, [admin]);
+  if (!admin || !st?.updateAvailable || !st.latest || dismissed === st.latest) return null;
+  const dismiss = () => { setPref("update.dismissed", st.latest!); setDismissed(st.latest!); };
+  return (
+    <div className="flex items-center gap-3 px-6 py-2.5 bg-accent/10 border-b border-accent/30 text-sm">
+      <ArrowUpCircle className="h-4 w-4 text-accent shrink-0" />
+      <span>
+        Docker Commander <span className="font-semibold">{st.latest}</span> is available
+        <span className="text-muted"> — you're on {st.current}</span>
+      </span>
+      <a href={st.url} target="_blank" rel="noreferrer" className="btn-ghost px-2 py-1 text-xs ml-auto inline-flex items-center gap-1">
+        View release <ExternalLink className="h-3 w-3" />
+      </a>
+      <button className="btn-ghost px-1.5 py-1" title="Dismiss until the next release" onClick={dismiss}>
+        <X className="h-3.5 w-3.5" />
+      </button>
     </div>
   );
 }

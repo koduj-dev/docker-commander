@@ -60,6 +60,12 @@ go test ./...            # also runs integration tests (need Docker; some spin
 cd web && npx tsc --noEmit   # type-check the frontend
 ```
 
+> ⚠️ **The integration tests run against your *real local* Docker daemon.** They
+> create and clean up their own throwaway resources, but **never** add a
+> host-global operation (`docker {system,network,image,volume} prune`) to a
+> test — it would wipe the developer's own resources, not just the test's. If
+> you only want the safe, deterministic run, use `go test -short ./...`.
+
 Please add or update tests for behaviour you change. New backend code should
 come with coverage; heavy integration tests are gated behind `testing.Short()`
 so the default CI run stays deterministic.

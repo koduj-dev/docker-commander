@@ -33,6 +33,7 @@ type Server struct {
 	history      history.Store
 	metricsToken string
 	webFS        fs.FS // built SPA assets, or nil in dev mode
+	update       *updateChecker
 }
 
 // NewServer constructs the API server.
@@ -40,6 +41,7 @@ func NewServer(cfg config.Config, st *store.Store, authSvc *auth.Service, mw *au
 	return &Server{
 		cfg: cfg, store: st, auth: authSvc, mw: mw, docker: dm, hub: hub,
 		monitor: mon, history: hist, metricsToken: cfg.MetricsToken, webFS: webFS,
+		update: newUpdateChecker(cfg.Version, cfg.UpdateCheck),
 	}
 }
 
@@ -84,6 +86,7 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/ldap", s.handleGetLDAP)
 			r.Put("/ldap", s.handleSetLDAP)
 			r.Post("/ldap/test", s.handleTestLDAP)
+			r.Get("/update", s.handleUpdateStatus) // admin-only (section "__admin")
 
 			r.Get("/hosts", s.handleListHosts)
 			r.Post("/hosts", s.handleCreateHost)
@@ -127,10 +130,16 @@ func (s *Server) Handler() http.Handler {
 			r.Delete("/projects/{id}", s.handleDeleteProject)
 			r.Get("/projects/{id}/files", s.handleListProjectFiles)
 			r.Put("/projects/{id}/files", s.handleWriteProjectFile)
+			r.Post("/projects/{id}/files/raw", s.handleUploadProjectFileRaw)
+			r.Get("/projects/{id}/files/raw", s.handleDownloadProjectFile)
 			r.Delete("/projects/{id}/files", s.handleDeleteProjectFile)
 			r.Post("/projects/{id}/files/dir", s.handleMakeProjectDir)
 			r.Get("/projects/{id}/download", s.handleDownloadProject)
 			r.Get("/projects/{id}/profiles", s.handleProjectProfiles)
+			r.Post("/projects/{id}/validate", s.handleValidateProject)
+			r.Post("/projects/{id}/resolve", s.handleResolveProject)
+			r.Post("/projects/{id}/summary", s.handleProjectSummary)
+			r.Post("/projects/{id}/dockerfile-check", s.handleCheckDockerfile)
 			r.Post("/projects/{id}/deploy", s.handleDeployProject)
 			r.Post("/projects/{id}/down", s.handleDownProject)
 			r.Post("/projects/{id}/restart", s.handleRestartProject)
@@ -158,7 +167,11 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/inspect/{kind}", s.handleInspect)
 
 			r.Get("/networks", s.handleListNetworks)
+			r.Post("/networks", s.handleCreateNetwork)
+			r.Post("/networks/prune", s.handlePruneNetworks)
 			r.Delete("/networks/{id}", s.handleRemoveNetwork)
+			r.Post("/networks/{id}/connect", s.handleConnectNetwork)
+			r.Post("/networks/{id}/disconnect", s.handleDisconnectNetwork)
 			r.Get("/topology", s.handleTopology)
 
 			r.Get("/volumes", s.handleListVolumes)

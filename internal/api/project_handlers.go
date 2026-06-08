@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
@@ -13,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"golang.org/x/text/unicode/norm"
@@ -72,6 +74,13 @@ type projectFileJSON struct {
 	Content  string `json:"content"`
 	IsDir    bool   `json:"isDir,omitempty"`
 	TooLarge bool   `json:"tooLarge,omitempty"`
+	Binary   bool   `json:"binary,omitempty"`
+}
+
+// looksBinary reports whether data is non-text (invalid UTF-8 or contains a NUL
+// byte) — such files are surfaced as download-only instead of editable text.
+func looksBinary(data []byte) bool {
+	return !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0
 }
 
 // projectRoot derives a project's folder from its ID (never stored, so renames
@@ -138,7 +147,15 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "could not create project folder: "+err.Error())
 		return
 	}
-	_ = os.WriteFile(filepath.Join(root, "compose.yml"), []byte(starterCompose(slug)), 0o600)
+	// The starter compose.yml must land on disk — without it deploy/edit break.
+	// Roll back the row + folder if the write fails (don't return a 200 over a
+	// half-created project).
+	if err := os.WriteFile(filepath.Join(root, "compose.yml"), []byte(starterCompose(slug)), 0o600); err != nil {
+		_ = os.RemoveAll(root)
+		_ = s.store.DeleteProject(r.Context(), id)
+		writeErr(w, http.StatusInternalServerError, "could not write compose.yml: "+err.Error())
+		return
+	}
 
 	s.audit(r, "project.create", slug, "")
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "slug": slug})
@@ -281,6 +298,13 @@ func (s *Server) handleListProjectFiles(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			return err
 		}
+		if looksBinary(data) {
+			// Binary/data files (datasets, images, archives) live alongside the
+			// compose file but can't be edited as text — surface them as
+			// download-only with no content payload.
+			out = append(out, projectFileJSON{Name: name, Size: info.Size(), Binary: true})
+			return nil
+		}
 		out = append(out, projectFileJSON{Name: name, Size: info.Size(), Content: string(data)})
 		return nil
 	})
@@ -336,6 +360,80 @@ func (s *Server) handleWriteProjectFile(w http.ResponseWriter, r *http.Request) 
 	_ = s.store.TouchProject(r.Context(), p.ID)
 	s.audit(r, "project.file.write", p.Slug, body.Name)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleUploadProjectFileRaw stores a raw (possibly binary) file in the project
+// folder from an octet-stream body — ?path=<name>. Lets datasets/binaries live
+// alongside the compose file without passing through the JSON text editor.
+func (s *Server) handleUploadProjectFileRaw(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	root := s.projectRoot(p.ID)
+	name := r.URL.Query().Get("path")
+	full, err := safeJoin(root, name)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// Enforce the file-count cap when adding a new file.
+	if _, statErr := os.Stat(full); errors.Is(statErr, os.ErrNotExist) {
+		if n, _ := countFiles(root); n >= maxProjectFiles {
+			writeErr(w, http.StatusBadRequest, "too many files in this project")
+			return
+		}
+	}
+	data, err := io.ReadAll(io.LimitReader(r.Body, maxProjectFileBytes+1))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if len(data) > maxProjectFileBytes {
+		writeErr(w, http.StatusRequestEntityTooLarge, "file too large")
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := os.WriteFile(full, data, 0o600); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	_ = s.store.TouchProject(r.Context(), p.ID)
+	s.audit(r, "project.file.upload", p.Slug, name)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "bytes": len(data)})
+}
+
+// handleDownloadProjectFile streams one file from the project folder (?path=)
+// as an attachment — works for both text and binary files.
+func (s *Server) handleDownloadProjectFile(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	name := r.URL.Query().Get("path")
+	full, err := safeJoin(s.projectRoot(p.ID), name)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	f, err := os.Open(full)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "file not found")
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || info.IsDir() {
+		writeErr(w, http.StatusBadRequest, "not a file")
+		return
+	}
+	s.audit(r, "project.file.download", p.Slug, name)
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+filepath.Base(full)+"\"")
+	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
 }
 
 // handleDeleteProjectFile removes one file (?path=).
@@ -434,6 +532,211 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out})
 }
 
+// handleValidateProject runs `docker compose config` over the project to catch
+// schema / anchor / interpolation errors before deploying. It returns 200 even
+// for an invalid file — the check ran, it just found problems — so the UI can
+// show the error message inline.
+//
+// With an optional {name, content} body it validates the *unsaved* editor
+// buffer: the project is copied to a temp dir, the named file overlaid with the
+// posted content, and compose config run there. This powers live validation in
+// the editor without forcing a save first.
+func (s *Server) handleValidateProject(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	if !docker.ComposeAvailable(r.Context()) {
+		writeJSON(w, http.StatusOK, map[string]any{"valid": false, "unavailable": true,
+			"error": "the `docker compose` CLI is not available on the host running Docker Commander"})
+		return
+	}
+
+	dir := s.projectRoot(p.ID)
+	// Optional unsaved-overlay body (decodeJSON tolerates an empty body → the
+	// button validates the on-disk files).
+	var body struct {
+		Name    string `json:"name"`
+		Content string `json:"content"`
+	}
+	if err := decodeJSON(r, &body); err == nil && body.Name != "" {
+		tmp, err := s.overlayProject(p.ID, body.Name, body.Content)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		defer os.RemoveAll(tmp)
+		dir = tmp
+	}
+
+	out, err := docker.ComposeConfig(r.Context(), dir, p.Slug)
+	if err != nil {
+		msg := strings.TrimSpace(out)
+		if msg == "" {
+			msg = err.Error()
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"valid": false, "error": msg})
+		return
+	}
+	resp := map[string]any{"valid": true}
+	// Surface non-fatal warnings (unset ${VAR}, deprecated keys) even on success.
+	if ws := docker.ComposeWarnings(out); len(ws) > 0 {
+		resp["warnings"] = ws
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleResolveProject returns the fully-resolved compose config (anchors,
+// merge keys, interpolation and extends flattened) — what `up` actually
+// deploys. Accepts the same optional {name, content} overlay as validation.
+func (s *Server) handleResolveProject(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	if !docker.ComposeAvailable(r.Context()) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false,
+			"error": "the `docker compose` CLI is not available on the host running Docker Commander"})
+		return
+	}
+	dir := s.projectRoot(p.ID)
+	var body struct {
+		Name    string `json:"name"`
+		Content string `json:"content"`
+	}
+	if err := decodeJSON(r, &body); err == nil && body.Name != "" {
+		tmp, err := s.overlayProject(p.ID, body.Name, body.Content)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		defer os.RemoveAll(tmp)
+		dir = tmp
+	}
+	out, err := docker.ComposeResolvedConfig(r.Context(), dir, p.Slug)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "config": out})
+}
+
+// overlayProject copies the project folder to a fresh temp dir and overlays the
+// named file with content, returning the temp dir (caller removes it). Used to
+// validate unsaved editor buffers against the real (multi-file) project.
+func (s *Server) overlayProject(id int64, name, content string) (string, error) {
+	root := s.projectRoot(id)
+	tmp, err := os.MkdirTemp("", "dc-validate-*")
+	if err != nil {
+		return "", err
+	}
+	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || p == root || d.Type()&fs.ModeSymlink != 0 {
+			return err
+		}
+		rel, _ := filepath.Rel(root, p)
+		dst := filepath.Join(tmp, rel)
+		if d.IsDir() {
+			return os.MkdirAll(dst, 0o700)
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(dst, data, 0o600)
+	})
+	if err != nil {
+		os.RemoveAll(tmp)
+		return "", err
+	}
+	full, err := safeJoin(tmp, name)
+	if err != nil {
+		os.RemoveAll(tmp)
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+		os.RemoveAll(tmp)
+		return "", err
+	}
+	if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
+		os.RemoveAll(tmp)
+		return "", err
+	}
+	return tmp, nil
+}
+
+// handleProjectSummary returns the resolved compose model as JSON so the UI can
+// render a services/ports/volumes overview and flag duplicate host ports.
+// Accepts the same optional {name, content} overlay as validation.
+func (s *Server) handleProjectSummary(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	if !docker.ComposeAvailable(r.Context()) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false,
+			"error": "the `docker compose` CLI is not available on the host running Docker Commander"})
+		return
+	}
+	dir := s.projectRoot(p.ID)
+	var body struct {
+		Name    string `json:"name"`
+		Content string `json:"content"`
+	}
+	if err := decodeJSON(r, &body); err == nil && body.Name != "" {
+		tmp, err := s.overlayProject(p.ID, body.Name, body.Content)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		defer os.RemoveAll(tmp)
+		dir = tmp
+	}
+	raw, err := docker.ComposeConfigJSON(r.Context(), dir, p.Slug)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "model": json.RawMessage(raw)})
+}
+
+// handleCheckDockerfile lints a Dockerfile with `docker build --check` (no build
+// steps run). The {content} body is the unsaved editor buffer. Returns 200 even
+// when the check finds problems so the UI can show the message.
+func (s *Server) handleCheckDockerfile(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.loadProject(w, r); !ok {
+		return
+	}
+	if !docker.BuildCheckAvailable(r.Context()) {
+		writeJSON(w, http.StatusOK, map[string]any{"valid": false, "unavailable": true,
+			"error": "`docker build --check` (BuildKit/buildx) is not available on the host running Docker Commander"})
+		return
+	}
+	var body struct {
+		Content string `json:"content"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	out, err := docker.DockerfileCheck(r.Context(), body.Content)
+	out = strings.TrimSpace(out)
+	// Classify by the check output: a parse error is hard ("error"), lint findings
+	// are "warning", a clean check is "ok". (Exit code can't tell them apart — both
+	// lint warnings and parse errors are non-zero.)
+	level := "ok"
+	switch {
+	case strings.Contains(out, "ERROR:"):
+		level = "error"
+	case strings.Contains(out, "WARNING:"):
+		level = "warning"
+	case out == "" && err != nil:
+		level = "error"
+		out = err.Error()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"level": level, "output": out})
+}
+
 // handleProjectProfiles lists the compose profiles defined in the project.
 func (s *Server) handleProjectProfiles(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.loadProject(w, r)
@@ -473,11 +776,12 @@ func (s *Server) handleDownloadProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	root := s.projectRoot(p.ID)
-	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", `attachment; filename="`+p.Slug+`.zip"`)
-	zw := zip.NewWriter(w)
-	defer zw.Close()
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	// Build the archive in memory (projects are bounded by maxProjectFiles ×
+	// maxProjectFileBytes) so a mid-walk read error becomes a clean 500 instead
+	// of a silently truncated zip streamed under a 200.
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
 			return err
 		}
@@ -493,6 +797,18 @@ func (s *Server) handleDownloadProject(w http.ResponseWriter, r *http.Request) {
 		_, err = fw.Write(data)
 		return err
 	})
+	if err == nil {
+		err = zw.Close()
+	} else {
+		_ = zw.Close()
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not build project archive: "+err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+p.Slug+`.zip"`)
+	_, _ = w.Write(buf.Bytes())
 }
 
 func (s *Server) runProjectCompose(w http.ResponseWriter, r *http.Request, fn func(ctx context.Context, dir, slug string) (string, error), action string) {
@@ -565,10 +881,41 @@ func safeJoin(root, name string) (string, error) {
 	if full != root && !strings.HasPrefix(full, root+string(os.PathSeparator)) {
 		return "", errors.New("invalid file path")
 	}
-	if fi, err := os.Lstat(full); err == nil && fi.Mode()&os.ModeSymlink != 0 {
-		return "", errors.New("symlinks are not allowed")
+	// Reject a symlink anywhere along the path escaping the sandbox — not just at
+	// the final component, but any parent dir too (e.g. config -> /etc). Resolve
+	// the deepest part that already exists and confirm it still lives under root.
+	if err := assertWithinRoot(root, full); err != nil {
+		return "", err
 	}
 	return full, nil
+}
+
+// assertWithinRoot resolves symlinks in the existing portion of p and verifies
+// the result stays inside root. The non-existent tail (yet-to-be-created dirs/
+// files) is composed of literal, traversal-free names, so once the deepest
+// existing ancestor resolves within root the full path is safe.
+func assertWithinRoot(root, p string) error {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return err
+	}
+	for cur := p; ; {
+		resolved, err := filepath.EvalSymlinks(cur)
+		if err == nil {
+			if resolved != realRoot && !strings.HasPrefix(resolved, realRoot+string(os.PathSeparator)) {
+				return errors.New("path escapes the project directory")
+			}
+			return nil
+		}
+		if !os.IsNotExist(err) {
+			return err
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return errors.New("path escapes the project directory")
+		}
+		cur = parent
+	}
 }
 
 // countFiles counts regular files under root.

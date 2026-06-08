@@ -25,6 +25,10 @@ type Config struct {
 	SessionTTL time.Duration
 	// Dev enables developer conveniences (e.g. permissive CORS for Vite).
 	Dev bool
+	// UpdateCheck enables the periodic GitHub-release update check that backs
+	// the admin "update available" banner. On by default; set DC_UPDATE_CHECK=0
+	// (or -update-check=false) to disable outbound calls on air-gapped hosts.
+	UpdateCheck bool
 	// MetricsToken, when set, requires a bearer token to scrape /metrics.
 	// Empty means the endpoint is open (fine for loopback-only use).
 	MetricsToken string
@@ -83,6 +87,7 @@ func Load() (Config, error) {
 	flag.StringVar(&c.DataDir, "data-dir", envOr("DC_DATA_DIR", def), "directory for the database and secrets")
 	ttl := flag.Duration("session-ttl", 12*time.Hour, "session token lifetime")
 	flag.BoolVar(&c.Dev, "dev", lookup("DC_DEV") == "1", "enable development mode (permissive CORS)")
+	flag.BoolVar(&c.UpdateCheck, "update-check", lookup("DC_UPDATE_CHECK") != "0", "check GitHub for newer releases (set DC_UPDATE_CHECK=0 to disable)")
 	flag.StringVar(&c.MetricsToken, "metrics-token", lookup("DC_METRICS_TOKEN"), "require this bearer token to scrape /metrics (empty = open)")
 	flag.StringVar(&c.TLSCert, "tls-cert", lookup("DC_TLS_CERT"), "PEM TLS certificate path (enables HTTPS together with -tls-key)")
 	flag.StringVar(&c.TLSKey, "tls-key", lookup("DC_TLS_KEY"), "PEM TLS private-key path")

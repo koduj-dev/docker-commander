@@ -42,7 +42,12 @@ export function Stacks() {
   const [busy, setBusy] = useState(""); // project currently acting
   const [compose, setCompose] = useState<ComposeView | null>(null);
   const [query, setQuery] = useState(() => getPref<string>("stacks.query", ""));
-  const [health, setHealth] = useState(() => getPref<string>("stacks.health", "all"));
+  // Clamp the stored health filter to a known value — a stale/foreign pref must
+  // not leave the page filtering everything out with an out-of-range <select>.
+  const [health, setHealth] = useState(() => {
+    const v = getPref<string>("stacks.health", "all");
+    return ["all", "green", "yellow", "red"].includes(v) ? v : "all";
+  });
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => getPref("stacks.collapsed", {}));
   const [hover, setHover] = useState<Hover | null>(null);
   const [copied, setCopied] = useState(false);
@@ -144,7 +149,8 @@ export function Stacks() {
   };
   const downloadCompose = () => {
     if (!compose?.content) return;
-    const name = compose.path ? compose.path.split("/").pop() || "compose.yml" : `${compose.project}.compose.yml`;
+    // Split on both separators: a Windows daemon reports backslash paths.
+    const name = compose.path ? compose.path.split(/[/\\]/).pop() || "compose.yml" : `${compose.project}.compose.yml`;
     const url = URL.createObjectURL(new Blob([compose.content], { type: "text/yaml" }));
     const a = document.createElement("a");
     a.href = url;
