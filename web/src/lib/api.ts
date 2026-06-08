@@ -333,6 +333,8 @@ export const api = {
   },
   projectProfiles: (id: number) =>
     req<{ profiles: string[]; error?: string }>("GET", `/api/projects/${id}/profiles`),
+  validateProject: (id: number) =>
+    req<{ valid: boolean; error?: string; unavailable?: boolean }>("POST", `/api/projects/${id}/validate`),
   deployProject: (id: number, profiles: string[] = []) =>
     req<{ ok: boolean; output?: string; error?: string }>("POST", `/api/projects/${id}/deploy`, { profiles }),
   downProject: (id: number) =>

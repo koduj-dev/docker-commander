@@ -65,6 +65,16 @@ func ComposeProfiles(ctx context.Context, dir, slug string) ([]string, error) {
 	return profiles, nil
 }
 
+// ComposeConfig validates the project's compose file via
+// `docker compose config --quiet` — the same parser used to deploy, so YAML
+// anchors/aliases, merge keys (`<<`), `${VAR}` interpolation and
+// `extends`/`include` resolve exactly as they will at `up` time. On success it
+// prints nothing; on failure the combined output carries the error (often with
+// a file/line reference).
+func ComposeConfig(ctx context.Context, dir, slug string) (string, error) {
+	return runCompose(ctx, dir, slug, "config", "--quiet")
+}
+
 // ComposeDown runs `docker compose -p <slug> down` in dir (removes containers
 // and the project's networks; named volumes are kept, like the CLI default).
 func ComposeDown(ctx context.Context, dir, slug string) (string, error) {

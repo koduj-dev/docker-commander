@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type
 import { Link, useSearchParams } from "react-router-dom";
 import {
   FolderGit2, Plus, Rocket, Square, Trash2, X, FilePlus, FolderPlus, Upload, Loader2,
-  ExternalLink, Save, FileText, FileBox, Folder, Terminal, Pencil, ChevronRight, Download, Search,
+  ExternalLink, Save, FileText, FileBox, Folder, Terminal, Pencil, ChevronRight, Download, Search, CheckCircle2,
 } from "lucide-react";
 import { bytes as fmtBytes } from "../lib/format";
 import { api, ApiError } from "../lib/api";
@@ -503,6 +503,20 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
     } finally { setBusy(""); }
   };
 
+  // validate runs `docker compose config` server-side (the real deploy parser,
+  // so YAML anchors/merge keys/interpolation resolve as they will at up time)
+  // and shows the result in the shared output panel.
+  const validate = async () => {
+    if (dirty && !(await dialogs.confirm({ title: "Unsaved changes", message: "Validate the last saved files?", confirmLabel: "Validate" }))) return;
+    setBusy("validate");
+    try {
+      const r = await api.validateProject(project.id);
+      onOutput({ title: `${project.name} — validate`, text: r.valid ? "✓ compose file is valid" : (r.error || "invalid compose file"), ok: r.valid });
+    } catch (e) {
+      onOutput({ title: `${project.name} — validate`, text: e instanceof Error ? e.message : "failed", ok: false });
+    } finally { setBusy(""); }
+  };
+
   const activeFile = files?.find((f) => f.name === active);
 
   return (
@@ -521,6 +535,9 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
           </div>
           <div className="flex items-center gap-1 ml-auto">
             <a className="btn-ghost px-2 h-8" title="Download project as .zip" href={api.projectDownloadUrl(project.id)}><Download className="h-4 w-4" /></a>
+            <button className="btn-ghost px-3 h-8 text-sm disabled:opacity-40" disabled={!composeAvailable || busy === "validate"} onClick={validate} title={composeAvailable ? "docker compose config (validate)" : "docker compose CLI not available"}>
+              {busy === "validate" ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} Validate
+            </button>
             <button className="btn-primary px-3 h-8 text-sm disabled:opacity-40" disabled={!composeAvailable || busy === "deploy"} onClick={() => runCompose("deploy")} title={composeAvailable ? "docker compose up -d" : "docker compose CLI not available"}>
               {busy === "deploy" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />} {deployed ? "Redeploy" : "Deploy"}
             </button>

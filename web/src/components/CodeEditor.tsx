@@ -8,7 +8,31 @@ import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { dockerFile } from "@codemirror/legacy-modes/mode/dockerfile";
 import { properties } from "@codemirror/legacy-modes/mode/properties";
 import { oneDark } from "@codemirror/theme-one-dark";
+import { linter, lintGutter, type Diagnostic } from "@codemirror/lint";
+import { parseDocument } from "yaml";
 import type { Extension } from "@codemirror/state";
+
+// yamlLinter parses YAML with the `yaml` library — which resolves anchors (&),
+// aliases (*) and merge keys (<<) — and surfaces parse errors/warnings as inline
+// diagnostics. This catches malformed YAML (incl. broken anchors) as you type,
+// before the authoritative server-side `docker compose config` check.
+const yamlLinter = linter((view) => {
+  const text = view.state.doc.toString();
+  if (!text.trim()) return [];
+  const doc = parseDocument(text);
+  const len = view.state.doc.length;
+  const clamp = (n: number) => Math.max(0, Math.min(n, len));
+  const out: Diagnostic[] = [];
+  for (const e of doc.errors) {
+    const [from, to] = e.pos ?? [0, 1];
+    out.push({ from: clamp(from), to: clamp(Math.max(to, from + 1)), severity: "error", message: e.message });
+  }
+  for (const wmsg of doc.warnings) {
+    const [from, to] = wmsg.pos ?? [0, 1];
+    out.push({ from: clamp(from), to: clamp(Math.max(to, from + 1)), severity: "warning", message: wmsg.message });
+  }
+  return out;
+});
 
 // languageFor picks a CodeMirror language from a file name. Compose/sidecar
 // projects are mostly YAML, with shell scripts, Dockerfiles and *.conf/.env.
@@ -46,7 +70,11 @@ export function CodeEditor({ value, onChange, filename, readOnly }: {
 }) {
   const extensions = useMemo<Extension[]>(() => {
     const lang = languageFor(filename);
-    return [dcTheme, ...(lang ? [lang as LanguageSupport | Extension] : [])];
+    const exts: Extension[] = [dcTheme];
+    if (lang) exts.push(lang as LanguageSupport | Extension);
+    // Live YAML diagnostics (anchor-aware) for compose/sidecar YAML files.
+    if (/\.ya?ml$/.test(filename.toLowerCase())) exts.push(yamlLinter, lintGutter());
+    return exts;
   }, [filename]);
 
   return (

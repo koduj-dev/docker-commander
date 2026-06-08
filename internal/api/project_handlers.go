@@ -523,6 +523,33 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out})
 }
 
+// handleValidateProject runs `docker compose config` over the project to catch
+// schema / anchor / interpolation errors before deploying. It returns 200 even
+// for an invalid file — the check ran, it just found problems — so the UI can
+// show the error message inline.
+func (s *Server) handleValidateProject(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	if !docker.ComposeAvailable(r.Context()) {
+		writeJSON(w, http.StatusOK, map[string]any{"valid": false, "unavailable": true,
+			"error": "the `docker compose` CLI is not available on the host running Docker Commander"})
+		return
+	}
+	out, err := docker.ComposeConfig(r.Context(), s.projectRoot(p.ID), p.Slug)
+	if err != nil {
+		msg := strings.TrimSpace(out)
+		if msg == "" {
+			msg = err.Error()
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"valid": false, "error": msg})
+		return
+	}
+	s.audit(r, "project.validate", p.Slug, "")
+	writeJSON(w, http.StatusOK, map[string]any{"valid": true})
+}
+
 // handleProjectProfiles lists the compose profiles defined in the project.
 func (s *Server) handleProjectProfiles(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.loadProject(w, r)
