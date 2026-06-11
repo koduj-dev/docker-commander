@@ -49,23 +49,33 @@ sudo install -m755 "$BIN_SRC" "$BIN_DST"
 mkdir -p "$DATA_DIR" "$(dirname "$PLIST")"
 
 # --- write the LaunchAgent plist --------------------------------------------
+# XML-escape every value interpolated into the plist (parity with the Go
+# installer): a home dir containing '&' or '<' would otherwise produce a plist
+# that launchctl refuses to load.
+# (sed, not ${//}: bash 5.1+ treats '&' in a //-replacement as the matched text.)
+xml_escape() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+LABEL_X=$(xml_escape "$LABEL")
+BIN_X=$(xml_escape "$BIN_DST")
+DATA_X=$(xml_escape "$DATA_DIR")
+LOG_X=$(xml_escape "$LOG_DIR")
+
 echo "==> Writing $PLIST"
 cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key>            <string>$LABEL</string>
+  <key>Label</key>            <string>$LABEL_X</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$BIN_DST</string>
+    <string>$BIN_X</string>
     <string>-data-dir</string>
-    <string>$DATA_DIR</string>
+    <string>$DATA_X</string>
   </array>
   <key>RunAtLoad</key>        <true/>
   <key>KeepAlive</key>        <true/>
-  <key>StandardOutPath</key>  <string>$LOG_DIR/dockercmd.log</string>
-  <key>StandardErrorPath</key><string>$LOG_DIR/dockercmd.log</string>
+  <key>StandardOutPath</key>  <string>$LOG_X/dockercmd.log</string>
+  <key>StandardErrorPath</key><string>$LOG_X/dockercmd.log</string>
   <!-- Help the binary find the Docker Desktop CLI + socket. -->
   <key>EnvironmentVariables</key>
   <dict>

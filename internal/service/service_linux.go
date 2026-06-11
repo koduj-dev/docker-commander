@@ -59,8 +59,14 @@ func Install(w io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("look up %q to own the data dir: %w", svcUser, err)
 	}
-	uid, _ := strconv.Atoi(u.Uid)
-	gid, _ := strconv.Atoi(u.Gid)
+	uid, err := strconv.Atoi(u.Uid)
+	if err != nil {
+		return fmt.Errorf("parse uid %q for %q: %w", u.Uid, svcUser, err)
+	}
+	gid, err := strconv.Atoi(u.Gid)
+	if err != nil {
+		return fmt.Errorf("parse gid %q for %q: %w", u.Gid, svcUser, err)
+	}
 	if err := os.Chown(linuxDataDir, uid, gid); err != nil {
 		return fmt.Errorf("chown data dir: %w", err)
 	}
