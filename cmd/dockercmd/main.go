@@ -24,6 +24,7 @@ import (
 	"github.com/koduj-dev/docker-commander/internal/history"
 	"github.com/koduj-dev/docker-commander/internal/monitor"
 	"github.com/koduj-dev/docker-commander/internal/selfupdate"
+	"github.com/koduj-dev/docker-commander/internal/service"
 	"github.com/koduj-dev/docker-commander/internal/store"
 	"github.com/koduj-dev/docker-commander/internal/ws"
 	"github.com/koduj-dev/docker-commander/web"
@@ -56,10 +57,38 @@ func wantsSelfUpgrade() (yes, checkOnly bool) {
 	return yes, checkOnly
 }
 
+// serviceAction reports the standalone service-management action the user asked
+// for (install/uninstall/status), or "" to start the server normally. Like
+// `--self-upgrade`, these run instead of the server.
+func serviceAction() string {
+	for _, a := range os.Args[1:] {
+		if a == "--" {
+			break
+		}
+		switch a {
+		case "-install-service", "--install-service":
+			return "install"
+		case "-uninstall-service", "--uninstall-service":
+			return "uninstall"
+		case "-service-status", "--service-status":
+			return "status"
+		}
+	}
+	return ""
+}
+
 func run() error {
 	// Standalone CLI actions run instead of starting the server.
 	if up, checkOnly := wantsSelfUpgrade(); up {
 		return selfupdate.Run(context.Background(), version, os.Stdout, checkOnly)
+	}
+	switch serviceAction() {
+	case "install":
+		return service.Install(os.Stdout)
+	case "uninstall":
+		return service.Uninstall(os.Stdout)
+	case "status":
+		return service.Status(os.Stdout)
 	}
 
 	cfg, err := config.Load()

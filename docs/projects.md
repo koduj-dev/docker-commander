@@ -16,6 +16,10 @@ containers — for free. A deployed project also appears on the
 > independent of the host switcher, so Projects always target the **local**
 > Docker daemon. Deploy/Down are disabled (with a note) if the `docker compose`
 > CLI isn't installed where Docker Commander runs.
+>
+> Running under **systemd** and Deploy/Down are disabled even though
+> `docker compose` works in your shell? It's the `ProtectHome=true` hardening —
+> see the fix in [Deployment → Running as a service](deployment.md#running-as-a-service).
 
 ## Creating a project
 - **New project** — give it a name; an identifier (slug) is derived from it

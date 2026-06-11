@@ -134,19 +134,29 @@ list. The Docker connection also honours the standard `DOCKER_HOST` /
 | `-redis-password`    | `DC_REDIS_PASSWORD`    | (empty)            | Redis password; `DC_REDIS_DB` selects the DB index. |
 | `-metrics-retention` | `DC_METRICS_RETENTION` | `6h`               | History retention (e.g. `30m`, `24h`). |
 
-## 🖥️ Run as a service (Linux / systemd)
+## 🖥️ Run as a service
 
 The server keeps monitoring, alerting and metric history running 24/7 whether or
-not a browser is connected — on a server, run it under systemd:
+not a browser is connected — so run it as a background service. On Linux/macOS
+the binary installs itself:
 
 ```bash
-sudo install -m755 dockercmd /usr/local/bin/dockercmd
-sudo useradd --system --no-create-home --shell /usr/sbin/nologin dockercmd
-sudo usermod -aG docker dockercmd
-sudo install -d /etc/docker-commander && sudo cp deploy/commander.conf.example /etc/docker-commander/commander.conf   # edit
-sudo cp deploy/dockercmd.service /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now dockercmd
+sudo ./dockercmd --install-service     # Linux — systemd (needs root)
+./dockercmd --install-service          # macOS — launchd LaunchAgent (your user, not sudo)
 ```
+
+It creates a dedicated user, writes the (hardened) service definition and starts
+it. On Windows, or to read exactly what gets installed, use the equivalent
+scripts in [`deploy/`](deploy/):
+
+```bash
+sudo ./deploy/install-linux.sh ./dockercmd                  # Linux  — systemd
+./deploy/install-macos.sh ./dockercmd                       # macOS  — launchd
+.\deploy\install-windows.ps1 -BinPath .\dockercmd.exe       # Windows — Scheduled Task (elevated PowerShell)
+```
+
+See **[Deployment](docs/deployment.md)** for what each installer does, the manual
+systemd steps, HTTPS, logging and the config reference.
 
 It binds to loopback by default — put it behind a TLS reverse proxy (nginx,
 Caddy) to expose it, and keep the **localhost 2FA exemption off** on servers.
