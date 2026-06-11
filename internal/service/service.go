@@ -13,6 +13,7 @@ package service
 import (
 	_ "embed"
 	"encoding/xml"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -61,7 +62,8 @@ func copyFile(src, dst string, perm os.FileMode) error {
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
+		// Close too (and surface its error if any), but the copy error stays primary.
+		err = errors.Join(err, out.Close())
 		os.Remove(tmp)
 		return err
 	}
