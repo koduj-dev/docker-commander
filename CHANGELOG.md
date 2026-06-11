@@ -6,6 +6,20 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Self-install as a service** — `dockercmd --install-service` sets the binary
+  up as a **systemd** service (Linux) or a per-user **launchd** LaunchAgent
+  (macOS), with `--uninstall-service` and `--service-status`. Equivalent
+  idempotent installer scripts also ship in `deploy/` (`install-linux.sh`,
+  `install-macos.sh`, and `install-windows.ps1` via a Scheduled Task).
+
+### Fixed
+- **Compose / Projects under systemd** — the `docker compose` CLI was reported as
+  unavailable (Deploy/Down disabled, with a warning) when Docker Commander ran
+  under the hardened systemd unit. `ProtectHome=true` makes the service user's
+  `~/.docker` inaccessible, which breaks the docker CLI's plugin discovery; the
+  unit now sets `DOCKER_CONFIG` to a writable path so the compose plugin is found.
+
 ## [1.3.0] — 2026-06-08
 
 ### Added

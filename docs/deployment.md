@@ -47,8 +47,55 @@ missing default file is ignored; a missing **explicit** one is an error.
 built-in default. A starter file lives at
 [`deploy/commander.conf.example`](../deploy/commander.conf.example).
 
-## systemd (Linux)
-A hardened unit and a config example live in [`deploy/`](../deploy/).
+## Running as a service
+
+### The binary installs itself (Linux / macOS)
+The simplest path — the binary writes the service definition for the current OS,
+installs itself to a stable location, and starts it. No script, no manual steps:
+
+```bash
+sudo ./dockercmd --install-service     # Linux  — systemd (needs root)
+./dockercmd --install-service          # macOS  — launchd LaunchAgent (your user, NOT sudo)
+
+dockercmd --service-status             # show service status
+sudo dockercmd --uninstall-service     # stop + remove (keeps the data dir)
+```
+
+On **Linux** it creates the dedicated `dockercmd` user in the `docker` group,
+copies itself to `/usr/local/bin/dockercmd`, installs the hardened unit and
+`enable --now`s it. On **macOS** it installs a per-user LaunchAgent under
+`~/Library` (no sudo — a system daemon can't reach Docker Desktop's user-owned
+socket). Uninstall leaves the data dir and user in place so reinstalling keeps
+the database and keys. **Windows** isn't covered by the subcommand yet — use the
+script below.
+
+### Installer scripts (alternative; Windows)
+Equivalent idempotent installers also live in [`deploy/`](../deploy/) — handy for
+Windows, or to read exactly what gets installed:
+
+| OS | Command | Mechanism |
+|----|---------|-----------|
+| **Linux**   | `sudo ./deploy/install-linux.sh ./dockercmd` | systemd unit |
+| **macOS**   | `./deploy/install-macos.sh ./dockercmd` (your user, **not** sudo) | launchd LaunchAgent |
+| **Windows** | `.\deploy\install-windows.ps1 -BinPath .\dockercmd.exe` (elevated PowerShell) | Scheduled Task |
+
+Each script finds the binary automatically if you drop the release next to it
+(`dockercmd`, or `dockercmd-<os>-<arch>`), installs it, writes the service
+definition, and starts it. Then create the admin account in the UI — on the
+address from your config (`DC_HOST`/`DC_PORT`/`DC_TLS_*`; default
+<http://127.0.0.1:8470>).
+
+### Linux (systemd)
+`install-linux.sh` creates a dedicated `dockercmd` system user in the `docker`
+group, installs the binary to `/usr/local/bin`, seeds
+`/etc/docker-commander/commander.conf` (only if absent), creates the
+`/var/lib/dockercmd` data dir, installs the
+[hardened unit](../deploy/dockercmd.service), and `enable --now`s it. The unit
+runs with `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome=true` and a
+private `StateDirectory`.
+
+<details>
+<summary>Manual steps (what the installer does)</summary>
 
 ```bash
 sudo install -m755 dockercmd /usr/local/bin/dockercmd
@@ -58,9 +105,30 @@ sudo install -d /etc/docker-commander && sudo cp deploy/commander.conf.example /
 sudo cp deploy/dockercmd.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now dockercmd
 ```
+</details>
 
-The unit runs as a dedicated user in the `docker` group with
-`NoNewPrivileges`, `ProtectSystem=strict` and a private `StateDirectory`.
+### macOS (launchd)
+`install-macos.sh` installs a **per-user LaunchAgent**
+(`~/Library/LaunchAgents/dev.koduj.dockercmd.plist`), not a system LaunchDaemon —
+with Docker Desktop the daemon socket is owned by the logged-in user, so a root
+daemon usually can't reach it. The agent starts at login and is restarted
+automatically (`KeepAlive`); logs go to `~/Library/Logs/dockercmd.log`.
+
+### Windows (Scheduled Task)
+The binary is a plain console program, not a native Windows service (no Service
+Control Manager handshake), so `sc.exe create` / `New-Service` fail with error
+1053. `install-windows.ps1` instead registers a **Scheduled Task** that starts it
+at boot (or `-AtLogon`, if Docker Desktop only runs under your account) and
+restarts it on failure. For a "real" service, wrap the exe with
+[NSSM](https://nssm.cc) or WinSW — see the script header.
+
+> **Compose/Projects disabled under systemd?** If the **Projects** page warns
+> that "the `docker compose` CLI isn't available", it's the `ProtectHome=true`
+> hardening: it makes the service user's home inaccessible, which breaks the
+> docker CLI's plugin discovery. The shipped unit fixes this with
+> `Environment=DOCKER_CONFIG=/var/lib/dockercmd/.docker` (a writable config dir
+> outside the protected home). If you wrote your own unit, add that line and
+> `systemctl daemon-reload && systemctl restart dockercmd`.
 
 ## Health check
 `GET /healthz` (alias `/health`) is an unauthenticated probe for load
