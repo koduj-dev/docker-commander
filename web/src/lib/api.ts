@@ -25,6 +25,9 @@ import type {
   PortProbe,
   Registry,
   Project,
+  ProjectTemplateMeta,
+  ServiceBlockMeta,
+  TemplateRef,
   FileApi,
   ProjectFile,
   ResourceOverview,
@@ -300,7 +303,10 @@ export const api = {
 
   // Compose projects (managed folders; local host only — no hostParam)
   projects: () => req<{ projects: Project[]; composeAvailable: boolean }>("GET", "/api/projects"),
-  createProject: (name: string) => req<{ id: number; slug: string }>("POST", "/api/projects", { name }),
+  createProject: (
+    name: string,
+    opts?: { template?: TemplateRef; blocks?: TemplateRef[]; variables?: Record<string, string> },
+  ) => req<{ id: number; slug: string }>("POST", "/api/projects", { name, ...opts }),
   importProject: async (name: string, file: File) => {
     const res = await fetch(`/api/projects/import?name=${encodeURIComponent(name)}`, {
       method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/zip" }, body: file,
@@ -354,6 +360,16 @@ export const api = {
   restartProject: (id: number) =>
     req<{ ok: boolean; output?: string; error?: string }>("POST", `/api/projects/${id}/restart`),
   projectDownloadUrl: (id: number) => `/api/projects/${id}/download`,
+
+  // Project templates (presets) + builder service blocks — builtin + user merged.
+  projectTemplates: () => req<ProjectTemplateMeta[]>("GET", "/api/project-templates"),
+  serviceBlocks: () => req<ServiceBlockMeta[]>("GET", "/api/service-blocks"),
+  saveProjectAsTemplate: (fromProjectId: number, name: string, description: string) =>
+    req<{ id: number; slug: string }>("POST", "/api/project-templates", { fromProjectId, name, description }),
+  deleteProjectTemplate: (id: string) => req<{ ok: boolean }>("DELETE", `/api/project-templates/${id}`),
+  createServiceBlock: (b: { name: string; description: string; service: string; serviceYaml: string; volumes: string[] }) =>
+    req<{ id: number; slug: string }>("POST", "/api/service-blocks", b),
+  deleteServiceBlock: (id: string) => req<{ ok: boolean }>("DELETE", `/api/service-blocks/${id}`),
 
   // Generic raw inspect for any object kind. id/ref travels as a query param.
   inspect: (kind: "container" | "image" | "network" | "volume", id: string) => {

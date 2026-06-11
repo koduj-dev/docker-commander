@@ -1,0 +1,6 @@
+{
+  "name": "PHP-FPM",
+  "description": "PHP 8.3 FPM worker serving ./app (pair with Nginx).",
+  "service": "php",
+  "variables": []
+}

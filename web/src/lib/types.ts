@@ -344,6 +344,43 @@ export interface ProjectFile {
   binary?: boolean;
 }
 
+// Project templates (presets) + builder service blocks. "builtin" ones are
+// embedded server-side; "user" ones are saved by the user.
+export type TemplateSource = "builtin" | "user" | "remote";
+
+export interface TemplateVariable {
+  key: string;
+  label: string;
+  default?: string;
+  secret?: boolean;
+  generate?: string;
+}
+
+export interface ProjectTemplateMeta {
+  id: string;
+  name: string;
+  description: string;
+  source: TemplateSource;
+  variables?: TemplateVariable[];
+  deletable: boolean;
+}
+
+export interface ServiceBlockMeta {
+  id: string;
+  name: string;
+  description: string;
+  source: TemplateSource;
+  service: string;
+  variables?: TemplateVariable[];
+  deletable: boolean;
+}
+
+// A reference the create-project call uses to identify a preset or block.
+export interface TemplateRef {
+  id: string;
+  source: TemplateSource;
+}
+
 export interface PortProbe {
   privatePort: number;
   publicPort: number;

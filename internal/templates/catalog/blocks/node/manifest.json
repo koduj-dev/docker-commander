@@ -1,0 +1,8 @@
+{
+  "name": "Node.js",
+  "description": "Runs ./app/server.js on Node 22.",
+  "service": "app",
+  "variables": [
+    { "key": "NodePort", "label": "App port", "default": "3000" }
+  ]
+}

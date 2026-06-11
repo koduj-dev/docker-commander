@@ -22,14 +22,31 @@ containers — for free. A deployed project also appears on the
 > see the fix in [Deployment → Running as a service](deployment.md#running-as-a-service).
 
 ## Creating a project
-- **New project** — give it a name; an identifier (slug) is derived from it
-  (lowercased, diacritics transliterated). A starter `compose.yml` is created.
-- **Template** — optionally start from a ready-made scaffold: **Nginx static
-  site**, **Nginx + PHP-FPM**, **Postgres + Adminer**, or a **Node** app (with a
-  Dockerfile). The template's files are seeded into the new project.
-- **Import** — in the New-project dialog, choose a `.zip` to import an existing
-  project folder (files are written through the same path sandbox). Import takes
-  precedence over a template.
+Give the project a name (an identifier — *slug* — is derived from it, lowercased
+with diacritics transliterated), then pick how to scaffold it. The files are
+always rendered and written **server-side**:
+
+- **Template** — start from a ready-made preset (e.g. **Nginx — static site**,
+  **Nginx + Postgres + Adminer**, **LEMP** (Nginx + PHP + MySQL), **Node +
+  Postgres + Redis**), or **Empty** for a bare starter `compose.yml`. Presets can
+  declare **variables** (ports, database names, passwords) you fill in on a small
+  form; blank fields fall back to a default, and `secret` ones can be
+  auto-generated.
+- **Builder** (the *skládačka*) — tick the service blocks you want — **Nginx**,
+  **PHP-FPM**, **Node**, **Postgres**, **MySQL**, **Redis**, **Adminer** — and
+  they're merged into one `compose.yml` you can edit afterwards. Add your own with
+  **Custom service…** (name, service key, the service YAML, optional named
+  volumes); it's saved and reappears in the builder.
+- **Import** — choose a `.zip` to import an existing project folder (files are
+  written through the same path sandbox).
+
+**Save as template** — the editor's 🗎 button snapshots the open project's files
+into a reusable preset that then shows up under **Template** (and can be deleted
+there). Built-in presets and blocks are read-only; the ones you save are yours to
+remove.
+
+> Built-in presets/blocks ship with the binary; saved ones live in the data dir.
+> A future catalog source could pull presets from a remote API.
 
 ## The editor
 

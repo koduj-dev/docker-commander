@@ -1,0 +1,7 @@
+{
+  "name": "Redis",
+  "description": "Redis 7 in-memory store with a persistent volume.",
+  "service": "redis",
+  "volumes": ["redisdata"],
+  "variables": []
+}

@@ -1,0 +1,8 @@
+{
+  "name": "Adminer",
+  "description": "Web database client on the chosen port.",
+  "service": "adminer",
+  "variables": [
+    { "key": "AdminerPort", "label": "Adminer port", "default": "8081" }
+  ]
+}

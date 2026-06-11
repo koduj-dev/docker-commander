@@ -1,0 +1,9 @@
+  app:
+    image: node:22-alpine
+    restart: unless-stopped
+    working_dir: /app
+    command: ["node", "server.js"]
+    volumes:
+      - ./app:/app
+    ports:
+      - "{{.NodePort}}:3000"

@@ -1,0 +1,8 @@
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: "{{.MysqlDatabase}}"
+      MYSQL_ROOT_PASSWORD: "{{.MysqlRootPassword}}"
+    volumes:
+      - mysqldata:/var/lib/mysql

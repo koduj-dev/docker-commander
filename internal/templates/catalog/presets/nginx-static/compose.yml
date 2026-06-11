@@ -1,0 +1,10 @@
+name: {{.Slug}}
+
+services:
+  web:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "{{.HttpPort}}:80"
+    volumes:
+      - ./html:/usr/share/nginx/html:ro

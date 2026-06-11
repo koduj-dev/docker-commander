@@ -144,6 +144,15 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/projects/{id}/down", s.handleDownProject)
 			r.Post("/projects/{id}/restart", s.handleRestartProject)
 
+			// Project templates (presets) + builder service blocks. Built-in
+			// ones are embedded; user-saved ones live in the store.
+			r.Get("/project-templates", s.handleListProjectTemplates)
+			r.Post("/project-templates", s.handleCreateProjectTemplate)
+			r.Delete("/project-templates/{id}", s.handleDeleteProjectTemplate)
+			r.Get("/service-blocks", s.handleListServiceBlocks)
+			r.Post("/service-blocks", s.handleCreateServiceBlock)
+			r.Delete("/service-blocks/{id}", s.handleDeleteServiceBlock)
+
 			r.Get("/images", s.handleListImages)
 			r.Get("/images/history", s.handleImageHistory)
 			r.Get("/images/save", s.handleSaveImage)

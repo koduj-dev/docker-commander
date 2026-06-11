@@ -1,12 +1,14 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import clsx from "clsx";
 import {
   FolderGit2, Plus, Rocket, Square, Trash2, X, FilePlus, FolderPlus, Upload, Loader2,
   ExternalLink, Save, FileText, FileBox, Folder, Terminal, Pencil, ChevronRight, Download, Search, CheckCircle2, AlertCircle, AlertTriangle, Eye, Boxes,
+  LayoutTemplate, Puzzle, KeyRound,
 } from "lucide-react";
 import { bytes as fmtBytes } from "../lib/format";
 import { api, ApiError } from "../lib/api";
-import type { Project, ProjectFile, Stack, ComposeModel, ComposeService } from "../lib/types";
+import type { Project, ProjectFile, Stack, ComposeModel, ComposeService, ProjectTemplateMeta, ServiceBlockMeta, TemplateRef, TemplateVariable } from "../lib/types";
 import type { ServerCheck } from "../components/CodeEditor";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner, StateBadge } from "../components/ui";
@@ -14,7 +16,6 @@ import { useDialogs } from "../components/Dialog";
 // CodeMirror is ~440 KB — load it only when a project editor is actually opened.
 const CodeEditor = lazy(() => import("../components/CodeEditor").then((m) => ({ default: m.CodeEditor })));
 import { getPref, setPref } from "../lib/prefs";
-import { PROJECT_TEMPLATES } from "../lib/projectTemplates";
 import { useDockerEventTick } from "../lib/dockerEvents";
 
 type Output = { title: string; text: string; ok: boolean };
@@ -421,12 +422,171 @@ export function Projects() {
 }
 
 // NewProjectModal creates a project from a name, optionally importing a .zip.
-function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreated: (p: Project) => void }) {
+// SaveAsTemplateModal snapshots an existing project's files into a reusable
+// user template (shows up under New project → Template).
+function SaveAsTemplateModal({ projectId, onClose, onSaved }: { projectId: number; onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState("");
-  const [file, setFile] = useState<File | null>(null);
-  const [template, setTemplate] = useState("empty");
+  const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+    setBusy(true); setErr("");
+    try {
+      await api.saveProjectAsTemplate(projectId, name.trim(), description.trim());
+      onSaved();
+    } catch (e2) {
+      setErr(e2 instanceof ApiError ? e2.message : "could not save template");
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+      <form className="card w-full max-w-md flex flex-col" onClick={(e) => e.stopPropagation()} onSubmit={save}>
+        <div className="flex items-center gap-3 p-4 border-b border-border">
+          <LayoutTemplate className="h-4 w-4 text-accent" />
+          <div className="font-medium">Save as template</div>
+          <button type="button" className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-4 space-y-3">
+          <p className="text-xs text-muted">Snapshots this project’s files as a reusable template under <b>New project → Template</b>.</p>
+          <label className="block"><span className="label">Template name</span><input autoFocus className="input" value={name} placeholder="My stack" onChange={(e) => setName(e.target.value)} /></label>
+          <label className="block"><span className="label">Description</span><input className="input" value={description} placeholder="What it sets up" onChange={(e) => setDescription(e.target.value)} /></label>
+          {err && <p className="text-sm text-danger">{err}</p>}
+        </div>
+        <div className="flex justify-end gap-2 p-4 border-t border-border">
+          <button type="button" className="btn-ghost px-3 py-1.5 text-sm" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40" disabled={!name.trim() || busy}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+const refKey = (m: { id: string; source: string }) => `${m.source}:${m.id}`;
+
+function dedupeVars(vars: TemplateVariable[]): TemplateVariable[] {
+  const seen = new Set<string>();
+  const out: TemplateVariable[] = [];
+  for (const v of vars) if (!seen.has(v.key)) { seen.add(v.key); out.push(v); }
+  return out;
+}
+
+// VarFields renders the fill-in form for a preset's / block selection's variables.
+function VarFields({ vars, values, onChange }: { vars: TemplateVariable[]; values: Record<string, string>; onChange: (k: string, v: string) => void }) {
+  if (!vars.length) return null;
+  return (
+    <div className="space-y-2 rounded-lg border border-border bg-panel2/40 p-3">
+      <div className="flex items-center gap-2 text-xs text-muted"><KeyRound className="h-3.5 w-3.5" /> Variables</div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {vars.map((v) => (
+          <label key={v.key} className="block">
+            <span className="label">{v.label}{v.secret ? <span className="text-muted"> (secret)</span> : null}</span>
+            <input
+              className="input"
+              type={v.secret ? "password" : "text"}
+              autoComplete={v.secret ? "new-password" : "off"}
+              value={values[v.key] ?? ""}
+              placeholder={v.default || (v.generate === "password" ? "auto-generated" : "")}
+              onChange={(e) => onChange(v.key, e.target.value)}
+            />
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// CustomBlockForm lets the user add their own service block to the builder.
+function CustomBlockForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [name, setName] = useState("");
+  const [service, setService] = useState("");
+  const [yaml, setYaml] = useState("");
+  const [vols, setVols] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const save = async () => {
+    if (!name.trim() || !service.trim() || !yaml.trim()) { setErr("name, service key and YAML are required"); return; }
+    setBusy(true); setErr("");
+    try {
+      await api.createServiceBlock({
+        name: name.trim(), description: "", service: service.trim(), serviceYaml: yaml,
+        volumes: vols.split(",").map((s) => s.trim()).filter(Boolean),
+      });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "could not save block");
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="space-y-2 rounded-lg border border-border bg-panel2/40 p-3">
+      <div className="flex items-center gap-2 text-xs font-medium"><Plus className="h-3.5 w-3.5 text-accent" /> Custom service block</div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <label className="block"><span className="label">Name</span><input className="input" value={name} placeholder="My worker" onChange={(e) => setName(e.target.value)} /></label>
+        <label className="block"><span className="label">Service key</span><input className="input font-mono" value={service} placeholder="worker" onChange={(e) => setService(e.target.value)} /></label>
+      </div>
+      <label className="block">
+        <span className="label">Service YAML (indented under <code>services:</code>)</span>
+        <textarea className="input font-mono text-xs" rows={5} value={yaml} placeholder={"  worker:\n    image: alpine\n    command: [\"sleep\", \"infinity\"]"} onChange={(e) => setYaml(e.target.value)} />
+      </label>
+      <label className="block"><span className="label">Named volumes (comma-separated, optional)</span><input className="input font-mono" value={vols} placeholder="workerdata" onChange={(e) => setVols(e.target.value)} /></label>
+      {err && <p className="text-sm text-danger">{err}</p>}
+      <div className="flex justify-end gap-2">
+        <button type="button" className="btn-ghost px-3 py-1.5 text-sm" onClick={onClose}>Cancel</button>
+        <button type="button" className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40" disabled={busy} onClick={save}>
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save block
+        </button>
+      </div>
+    </div>
+  );
+}
+
+type NewMode = "template" | "builder" | "import";
+
+function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreated: (p: Project) => void }) {
+  const dialogs = useDialogs();
+  const [name, setName] = useState("");
+  const [mode, setMode] = useState<NewMode>("template");
+  const [templates, setTemplates] = useState<ProjectTemplateMeta[]>([]);
+  const [blocks, setBlocks] = useState<ServiceBlockMeta[]>([]);
+  const [tplKey, setTplKey] = useState("");                 // "" = empty starter
+  const [picked, setPicked] = useState<Record<string, boolean>>({});
+  const [vars, setVars] = useState<Record<string, string>>({});
+  const [file, setFile] = useState<File | null>(null);
+  const [customOpen, setCustomOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const loadCatalog = useCallback(() => {
+    api.projectTemplates().then(setTemplates).catch(() => {});
+    api.serviceBlocks().then(setBlocks).catch(() => {});
+  }, []);
+  useEffect(() => loadCatalog(), [loadCatalog]);
+
+  const selectedTpl = templates.find((t) => refKey(t) === tplKey) ?? null;
+  const selectedBlocks = blocks.filter((b) => picked[refKey(b)]);
+  const activeVars = mode === "template"
+    ? (selectedTpl?.variables ?? [])
+    : mode === "builder"
+      ? dedupeVars(selectedBlocks.flatMap((b) => b.variables ?? []))
+      : [];
+
+  const setVar = (k: string, v: string) => setVars((prev) => ({ ...prev, [k]: v }));
+
+  const deleteItem = async (kind: "template" | "block", id: string, label: string) => {
+    if (!(await dialogs.confirm({ title: `Delete ${kind}`, message: <>Delete <code className="font-mono text-text">{label}</code>?</>, danger: true, confirmLabel: "Delete" }))) return;
+    try {
+      if (kind === "template") await api.deleteProjectTemplate(id);
+      else await api.deleteServiceBlock(id);
+      loadCatalog();
+    } catch (e) {
+      await dialogs.alert({ title: "Could not delete", message: e instanceof ApiError ? e.message : "failed" });
+    }
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -434,12 +594,14 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
     if (!n) return;
     setBusy(true); setErr("");
     try {
-      const r = file ? await api.importProject(n, file) : await api.createProject(n);
-      // Seed the chosen template's files (import takes precedence over a template).
-      if (!file && template !== "empty") {
-        const tpl = PROJECT_TEMPLATES.find((t) => t.id === template);
-        if (tpl) for (const f of tpl.files) await api.writeProjectFile(r.id, f.path, f.content);
-      }
+      // Only send the variables that belong to the active selection, so values
+      // typed under another template/block don't leak into this create call.
+      const variables = Object.fromEntries(activeVars.map((v) => [v.key, vars[v.key] ?? ""]));
+      let r: { id: number; slug: string };
+      if (mode === "import" && file) r = await api.importProject(n, file);
+      else if (mode === "builder" && selectedBlocks.length) r = await api.createProject(n, { blocks: selectedBlocks.map((b): TemplateRef => ({ id: b.id, source: b.source })), variables });
+      else if (mode === "template" && selectedTpl) r = await api.createProject(n, { template: { id: selectedTpl.id, source: selectedTpl.source }, variables });
+      else r = await api.createProject(n);
       onCreated({ id: r.id, name: n, slug: r.slug, composeFile: "compose.yml", createdBy: "", createdAt: "", updatedAt: "" });
     } catch (e2) {
       setErr(e2 instanceof ApiError ? e2.message : "could not create project");
@@ -447,37 +609,100 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
     }
   };
 
+  const tab = (m: NewMode, icon: ReactNode, label: string) => (
+    <button type="button" onClick={() => { setMode(m); setVars({}); setErr(""); }}
+      className={clsx("flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border", mode === m ? "border-accent bg-accent/10 text-text" : "border-border text-muted hover:text-text")}>
+      {icon} {label}
+    </button>
+  );
+
+  const canSubmit = !!name.trim() && !busy && (mode === "import" ? !!file : mode === "builder" ? selectedBlocks.length > 0 : true);
+
   return (
     <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={onClose}>
-      <form className="card w-full max-w-md flex flex-col" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+      <form className="card w-full max-w-2xl flex flex-col max-h-[88vh]" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <FolderGit2 className="h-4 w-4 text-accent" />
           <div className="font-medium">New project</div>
           <button type="button" className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
         </div>
-        <div className="p-4 space-y-3">
+        <div className="p-4 space-y-3 overflow-y-auto">
           <label className="block">
             <span className="label">Project name</span>
             <input autoFocus className="input" value={name} placeholder="My app" onChange={(e) => setName(e.target.value)} />
           </label>
-          <label className="block">
-            <span className="label">Start from a template</span>
-            <select className="input" value={template} disabled={!!file} onChange={(e) => setTemplate(e.target.value)}>
-              <option value="empty">Empty (starter compose.yml)</option>
-              {PROJECT_TEMPLATES.map((t) => <option key={t.id} value={t.id}>{t.name} — {t.description}</option>)}
-            </select>
-          </label>
-          <label className="block">
-            <span className="label">…or import from .zip</span>
-            <input type="file" accept=".zip,application/zip" className="input py-1.5" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-            {file && <span className="text-xs text-muted">Will import {file.name} (template ignored)</span>}
-          </label>
+
+          <div className="flex flex-wrap gap-2">
+            {tab("template", <LayoutTemplate className="h-4 w-4" />, "Template")}
+            {tab("builder", <Puzzle className="h-4 w-4" />, "Builder")}
+            {tab("import", <Upload className="h-4 w-4" />, "Import .zip")}
+          </div>
+
+          {mode === "template" && (
+            <div className="space-y-1.5">
+              <button type="button" onClick={() => setTplKey("")}
+                className={clsx("w-full text-left px-3 py-2 rounded-lg border text-sm", tplKey === "" ? "border-accent bg-accent/10" : "border-border hover:bg-panel2/50")}>
+                <span className="font-medium">Empty</span> <span className="text-muted">— starter compose.yml</span>
+              </button>
+              {templates.map((t) => (
+                <div key={refKey(t)} className={clsx("flex items-start gap-2 px-3 py-2 rounded-lg border", refKey(t) === tplKey ? "border-accent bg-accent/10" : "border-border")}>
+                  <button type="button" className="flex-1 text-left" onClick={() => { setTplKey(refKey(t)); setVars({}); }}>
+                    <div className="text-sm font-medium flex items-center gap-2">
+                      {t.name}
+                      {t.source === "user" && <span className="text-[10px] uppercase tracking-wide text-muted border border-border rounded px-1">yours</span>}
+                    </div>
+                    <div className="text-xs text-muted">{t.description}</div>
+                  </button>
+                  {t.deletable && <button type="button" className="btn-ghost px-2 py-1 text-danger" title="Delete template" onClick={() => deleteItem("template", t.id, t.name)}><Trash2 className="h-3.5 w-3.5" /></button>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {mode === "builder" && (
+            <div className="space-y-2">
+              <div className="text-xs text-muted">Pick services — they’re merged into one <code>compose.yml</code> you can edit afterwards.</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {blocks.map((b) => {
+                  const on = !!picked[refKey(b)];
+                  return (
+                    <div key={refKey(b)} className={clsx("rounded-lg border px-3 py-2", on ? "border-accent bg-accent/10" : "border-border")}>
+                      <div className="flex items-start gap-2">
+                        <button type="button" className="flex-1 text-left" onClick={() => setPicked((p) => ({ ...p, [refKey(b)]: !on }))}>
+                          <div className="text-sm font-medium flex items-center gap-2">
+                            {b.name}
+                            {on && <CheckCircle2 className="h-3.5 w-3.5 text-accent" />}
+                            {b.source === "user" && <span className="text-[10px] uppercase tracking-wide text-muted border border-border rounded px-1">yours</span>}
+                          </div>
+                          <div className="text-xs text-muted">{b.description}</div>
+                        </button>
+                        {b.deletable && <button type="button" className="btn-ghost px-1.5 py-1 text-danger" title="Delete block" onClick={() => deleteItem("block", b.id, b.name)}><Trash2 className="h-3.5 w-3.5" /></button>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {customOpen
+                ? <CustomBlockForm onClose={() => setCustomOpen(false)} onSaved={() => { setCustomOpen(false); loadCatalog(); }} />
+                : <button type="button" className="btn-ghost px-3 py-1.5 text-sm" onClick={() => setCustomOpen(true)}><Plus className="h-4 w-4" /> Custom service…</button>}
+            </div>
+          )}
+
+          {mode === "import" && (
+            <label className="block">
+              <span className="label">Project archive (.zip)</span>
+              <input type="file" accept=".zip,application/zip" className="input py-1.5" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+              {file && <span className="text-xs text-muted">Will import {file.name}</span>}
+            </label>
+          )}
+
+          {mode !== "import" && <VarFields vars={activeVars} values={vars} onChange={setVar} />}
           {err && <p className="text-sm text-danger">{err}</p>}
         </div>
         <div className="flex justify-end gap-2 p-4 border-t border-border">
           <button type="button" className="btn-ghost px-3 py-1.5 text-sm" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40" disabled={!name.trim() || busy}>
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} {file ? "Import" : "Create"}
+          <button type="submit" className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40" disabled={!canSubmit}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} {mode === "import" ? "Import" : "Create"}
           </button>
         </div>
       </form>
@@ -500,6 +725,7 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
   const [liveVal, setLiveVal] = useState<"idle" | "checking" | "ok" | "warning" | "error">("idle");
   const [serverCheck, setServerCheck] = useState<ServerCheck>(null);
   const [summary, setSummary] = useState<ComposeModel | null>(null);
+  const [saveTpl, setSaveTpl] = useState(false);
   const valSeq = useRef(0);
   const dialogs = useDialogs();
   const uploadRef = useRef<HTMLInputElement>(null);
@@ -706,6 +932,7 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
             <div className="text-xs text-muted font-mono">{project.slug}</div>
           </div>
           <div className="flex items-center gap-1 ml-auto">
+            <button className="btn-ghost px-2 h-8" title="Save as template" onClick={() => setSaveTpl(true)}><LayoutTemplate className="h-4 w-4" /></button>
             <a className="btn-ghost px-2 h-8" title="Download project as .zip" href={api.projectDownloadUrl(project.id)}><Download className="h-4 w-4" /></a>
             <button className="btn-primary px-3 h-8 text-sm disabled:opacity-40" disabled={!composeAvailable || busy === "deploy"} onClick={() => runCompose("deploy")} title={composeAvailable ? "docker compose up -d" : "docker compose CLI not available"}>
               {busy === "deploy" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />} {deployed ? "Redeploy" : "Deploy"}
@@ -808,6 +1035,7 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
         </div>
       </div>
       {summary && <ComposeSummaryModal model={summary} onClose={() => setSummary(null)} />}
+      {saveTpl && <SaveAsTemplateModal projectId={project.id} onClose={() => setSaveTpl(false)} onSaved={() => setSaveTpl(false)} />}
     </div>
   );
 }

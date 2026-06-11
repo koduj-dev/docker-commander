@@ -1,0 +1,35 @@
+name: {{.Slug}}
+
+services:
+  app:
+    image: node:22-alpine
+    restart: unless-stopped
+    working_dir: /app
+    command: ["node", "server.js"]
+    environment:
+      DATABASE_URL: "postgres://postgres:{{.PgPassword}}@db:5432/{{.PgDatabase}}"
+      REDIS_URL: "redis://redis:6379"
+    volumes:
+      - ./app:/app
+    ports:
+      - "{{.NodePort}}:3000"
+    depends_on:
+      - db
+      - redis
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "{{.PgDatabase}}"
+      POSTGRES_PASSWORD: "{{.PgPassword}}"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redisdata:/data
+
+volumes:
+  pgdata:
+  redisdata:

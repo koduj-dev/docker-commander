@@ -1,0 +1,7 @@
+{
+  "name": "Nginx — static site",
+  "description": "A single Nginx serving static files from ./html.",
+  "variables": [
+    { "key": "HttpPort", "label": "HTTP port", "default": "8080" }
+  ]
+}

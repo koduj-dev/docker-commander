@@ -111,11 +111,15 @@ func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleCreateProject creates a project folder seeded with a starter compose
-// file. The slug is derived from the name (compose-legal); a collision is 409.
+// handleCreateProject creates a project folder seeded from a template, a builder
+// block selection, or (by default) a starter compose file. The slug is derived
+// from the name (compose-legal); a collision is 409.
 func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name string `json:"name"`
+		Name      string            `json:"name"`
+		Template  *templateRef      `json:"template"`
+		Blocks    []templateRef     `json:"blocks"`
+		Variables map[string]string `json:"variables"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
@@ -127,6 +131,18 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slug := slugify(name)
+
+	// Resolve the scaffold before creating anything, so a bad template/block
+	// reference fails cleanly without leaving a half-created project behind.
+	files, err := s.resolveSeedFiles(r.Context(), slug, name, body.Template, body.Blocks, body.Variables)
+	if errors.Is(err, store.ErrNotFound) {
+		writeErr(w, http.StatusNotFound, "template or block not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	id, err := s.store.CreateProject(r.Context(), &store.Project{
 		Name: name, Slug: slug, ComposeFile: "compose.yml",
@@ -147,13 +163,12 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "could not create project folder: "+err.Error())
 		return
 	}
-	// The starter compose.yml must land on disk — without it deploy/edit break.
-	// Roll back the row + folder if the write fails (don't return a 200 over a
-	// half-created project).
-	if err := os.WriteFile(filepath.Join(root, "compose.yml"), []byte(starterCompose(slug)), 0o600); err != nil {
+	// Seed the resolved files; roll back the row + folder on any write error so we
+	// never return 200 over a half-created project.
+	if err := seedProjectFiles(root, files); err != nil {
 		_ = os.RemoveAll(root)
 		_ = s.store.DeleteProject(r.Context(), id)
-		writeErr(w, http.StatusInternalServerError, "could not write compose.yml: "+err.Error())
+		writeErr(w, http.StatusInternalServerError, "could not seed project: "+err.Error())
 		return
 	}
 

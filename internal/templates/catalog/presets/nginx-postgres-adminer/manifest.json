@@ -1,0 +1,10 @@
+{
+  "name": "Nginx + Postgres + Adminer",
+  "description": "Static web, a Postgres database, and Adminer to browse it.",
+  "variables": [
+    { "key": "HttpPort", "label": "Web port", "default": "8080" },
+    { "key": "AdminerPort", "label": "Adminer port", "default": "8081" },
+    { "key": "PgDatabase", "label": "Database name", "default": "app" },
+    { "key": "PgPassword", "label": "Postgres password", "secret": true, "generate": "password" }
+  ]
+}

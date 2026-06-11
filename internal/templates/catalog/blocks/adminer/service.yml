@@ -1,0 +1,5 @@
+  adminer:
+    image: adminer:latest
+    restart: unless-stopped
+    ports:
+      - "{{.AdminerPort}}:8080"

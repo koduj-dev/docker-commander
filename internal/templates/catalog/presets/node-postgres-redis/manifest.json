@@ -1,0 +1,9 @@
+{
+  "name": "Node + Postgres + Redis",
+  "description": "A Node app with a Postgres database and a Redis cache.",
+  "variables": [
+    { "key": "NodePort", "label": "App port", "default": "3000" },
+    { "key": "PgDatabase", "label": "Database name", "default": "app" },
+    { "key": "PgPassword", "label": "Postgres password", "secret": true, "generate": "password" }
+  ]
+}

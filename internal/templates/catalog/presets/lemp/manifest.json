@@ -1,0 +1,9 @@
+{
+  "name": "LEMP — Nginx + PHP + MySQL",
+  "description": "Nginx fronting PHP-FPM, backed by MySQL. Edit code in ./app.",
+  "variables": [
+    { "key": "HttpPort", "label": "HTTP port", "default": "8080" },
+    { "key": "MysqlDatabase", "label": "Database name", "default": "app" },
+    { "key": "MysqlRootPassword", "label": "MySQL root password", "secret": true, "generate": "password" }
+  ]
+}

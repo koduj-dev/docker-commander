@@ -1,0 +1,10 @@
+{
+  "name": "MySQL",
+  "description": "MySQL 8.4 with a persistent volume.",
+  "service": "mysql",
+  "volumes": ["mysqldata"],
+  "variables": [
+    { "key": "MysqlDatabase", "label": "Database name", "default": "app" },
+    { "key": "MysqlRootPassword", "label": "MySQL root password", "secret": true, "generate": "password" }
+  ]
+}

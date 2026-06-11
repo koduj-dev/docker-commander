@@ -7,6 +7,15 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Project templates & builder** — creating a project now offers three ways to
+  scaffold it, all rendered server-side: **Template** (ready-made presets —
+  Nginx static, Nginx + Postgres + Adminer, LEMP, Node + Postgres + Redis — with
+  fill-in **variables** and auto-generated secrets), **Builder** (the *skládačka*:
+  tick service blocks — Nginx, PHP, Node, Postgres, MySQL, Redis, Adminer — and
+  they're merged into one compose), and **Import** (`.zip`). **Save as template**
+  snapshots a project into a reusable preset, and you can add your own service
+  blocks to the builder. Built-in presets/blocks are embedded; user-saved ones
+  live in the data dir (the catalog is structured for a future remote source).
 - **Self-install as a service** — `dockercmd --install-service` sets the binary
   up as a **systemd** service (Linux) or a per-user **launchd** LaunchAgent
   (macOS), with `--uninstall-service` and `--service-status`. Equivalent

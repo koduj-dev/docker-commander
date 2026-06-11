@@ -20,7 +20,7 @@ func sectionForPath(path string) string {
 	switch seg {
 	case "containers", "stacks":
 		return "containers"
-	case "projects":
+	case "projects", "project-templates", "service-blocks":
 		return "projects"
 	case "images":
 		return "images"

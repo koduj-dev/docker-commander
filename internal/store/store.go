@@ -172,6 +172,31 @@ CREATE TABLE IF NOT EXISTS projects (
 	created_at   TEXT NOT NULL,
 	updated_at   TEXT NOT NULL
 );
+
+-- User-saved project presets. Metadata lives here; the scaffold files live on
+-- disk under DataDir/project-templates/{id}/ (mirrors how projects are stored).
+CREATE TABLE IF NOT EXISTS project_templates (
+	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	name        TEXT NOT NULL,
+	slug        TEXT NOT NULL UNIQUE,
+	description TEXT NOT NULL DEFAULT '',
+	created_by  TEXT NOT NULL DEFAULT '',
+	created_at  TEXT NOT NULL
+);
+
+-- User-defined builder service blocks (the "skladacka"). Each is a single
+-- compose service fragment stored inline.
+CREATE TABLE IF NOT EXISTS service_blocks (
+	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	name         TEXT NOT NULL,
+	slug         TEXT NOT NULL UNIQUE,
+	description  TEXT NOT NULL DEFAULT '',
+	service      TEXT NOT NULL,
+	service_yaml TEXT NOT NULL,
+	volumes      TEXT NOT NULL DEFAULT '',  -- JSON array of top-level volume names
+	created_by   TEXT NOT NULL DEFAULT '',
+	created_at   TEXT NOT NULL
+);
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err

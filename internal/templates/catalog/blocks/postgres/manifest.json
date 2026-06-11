@@ -1,0 +1,10 @@
+{
+  "name": "PostgreSQL",
+  "description": "Postgres 16 with a persistent volume.",
+  "service": "db",
+  "volumes": ["pgdata"],
+  "variables": [
+    { "key": "PgDatabase", "label": "Database name", "default": "app" },
+    { "key": "PgPassword", "label": "Postgres password", "secret": true, "generate": "password" }
+  ]
+}
