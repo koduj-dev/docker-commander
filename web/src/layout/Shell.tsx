@@ -22,9 +22,9 @@ const navGroups: { title: string; items: NavItem[] }[] = [
       { to: "/containers", label: "Containers", icon: Boxes, section: "containers" },
       { to: "/stacks", label: "Stacks", icon: Blocks, section: "containers" },
       { to: "/projects", label: "Projects", icon: FolderGit2, section: "projects" },
-      { to: "/templates", label: "Templates", icon: LayoutTemplate, section: "projects" },
       { to: "/images", label: "Images", icon: Layers, section: "images" },
       { to: "/volumes", label: "Volumes", icon: Database, section: "volumes" },
+      { to: "/templates", label: "Templates", icon: LayoutTemplate, section: "projects" },
     ],
   },
   {

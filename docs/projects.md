@@ -49,10 +49,10 @@ As you pick a template or builder blocks, a **live read-only preview** of the
 resulting `compose.yml` renders alongside the form, so you see what you'll get
 before creating the project.
 
-**Save as template** — the editor's 🗎 button snapshots the open project's files
-into a reusable preset that then shows up under **Template** (and can be deleted
-there). Built-in presets and blocks are read-only; the ones you save are yours to
-remove.
+**Save as preset** — the editor's 🗎 button snapshots the open project's files
+into a reusable preset that then shows up under **Template** (and on the
+Templates page). Built-in presets and blocks are read-only; the ones you save are
+yours to edit or remove.
 
 > Built-in presets/blocks ship with the binary; saved ones live in the data dir.
 > A future catalog source could pull presets from a remote API.

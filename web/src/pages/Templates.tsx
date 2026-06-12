@@ -23,7 +23,7 @@ const sourceBadge = (source: string) =>
 
 // Templates is the management surface for project presets and builder service
 // blocks — both built-in (read-only) and user-saved (editable). Presets are
-// created by "Save as template" from a project; blocks are created here.
+// created by "Save as preset" from a project; blocks are created here.
 export function Templates() {
   const [templates, setTemplates] = useState<ProjectTemplateMeta[] | null>(null);
   const [blocks, setBlocks] = useState<ServiceBlockMeta[] | null>(null);
@@ -104,7 +104,7 @@ export function Templates() {
         {/* Presets ------------------------------------------------------------ */}
         {tab === "presets" && (
           templates.length === 0 ? (
-            <EmptyState title="No presets" hint="Save a project as a template (the 🗎 button in the project editor) to add one." />
+            <EmptyState title="No presets" hint="Use “Save as preset” (the 🗎 button in the project editor) to add one." />
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               {templates.map((t) => (

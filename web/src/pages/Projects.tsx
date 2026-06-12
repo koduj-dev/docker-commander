@@ -353,7 +353,7 @@ export function Projects() {
 
 // NewProjectModal creates a project from a name, optionally importing a .zip.
 // SaveAsTemplateModal snapshots an existing project's files into a reusable
-// user template (shows up under New project → Template).
+// user preset (shows up under New project → Template and on the Templates page).
 function SaveAsTemplateModal({ projectId, onClose, onSaved }: { projectId: number; onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -376,12 +376,12 @@ function SaveAsTemplateModal({ projectId, onClose, onSaved }: { projectId: numbe
       <form className="card w-full max-w-lg flex flex-col" onClick={(e) => e.stopPropagation()} onSubmit={save}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <LayoutTemplate className="h-4 w-4 text-accent" />
-          <div className="font-medium">Save as template</div>
+          <div className="font-medium">Save as preset</div>
           <button type="button" className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
         </div>
         <div className="p-4 space-y-3">
-          <p className="text-xs text-muted">Snapshots this project’s files as a reusable template under <b>New project → Template</b>.</p>
-          <label className="block"><span className="label">Template name</span><input autoFocus className="input" value={name} placeholder="My stack" onChange={(e) => setName(e.target.value)} /></label>
+          <p className="text-xs text-muted">Snapshots this project’s files as a reusable preset — listed under <b>New project → Template</b> and on the <b>Templates</b> page.</p>
+          <label className="block"><span className="label">Preset name</span><input autoFocus className="input" value={name} placeholder="My stack" onChange={(e) => setName(e.target.value)} /></label>
           <label className="block"><span className="label">Description</span><input className="input" value={description} placeholder="What it sets up" onChange={(e) => setDescription(e.target.value)} /></label>
           {err && <p className="text-sm text-danger">{err}</p>}
         </div>
@@ -1071,7 +1071,7 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
             <div className="text-xs text-muted font-mono">{project.slug}</div>
           </div>
           <div className="flex items-center gap-1 ml-auto">
-            <button className="btn-ghost px-2 h-8" title="Save as template" onClick={() => setSaveTpl(true)}><LayoutTemplate className="h-4 w-4" /></button>
+            <button className="btn-ghost px-2 h-8" title="Save as preset" onClick={() => setSaveTpl(true)}><LayoutTemplate className="h-4 w-4" /></button>
             <a className="btn-ghost px-2 h-8" title="Download project as .zip" href={api.projectDownloadUrl(project.id)}><Download className="h-4 w-4" /></a>
             <button className="btn-primary px-3 h-8 text-sm disabled:opacity-40" disabled={!composeAvailable || busy === "deploy"} onClick={() => runCompose("deploy")} title={composeAvailable ? "docker compose up -d" : "docker compose CLI not available"}>
               {busy === "deploy" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />} {deployed ? "Redeploy" : "Deploy"}
