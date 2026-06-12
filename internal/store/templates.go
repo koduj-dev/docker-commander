@@ -20,6 +20,18 @@ type ProjectTemplate struct {
 	CreatedAt   time.Time `json:"createdAt"`
 }
 
+// ComposeFragment is a user-saved "shared definition": a top-level compose
+// fragment (a YAML anchor) merged into builds above services:.
+type ComposeFragment struct {
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	Slug        string    `json:"slug"`
+	Description string    `json:"description"`
+	Content     string    `json:"content"`
+	CreatedBy   string    `json:"createdBy"`
+	CreatedAt   time.Time `json:"createdAt"`
+}
+
 // ServiceBlock is a user-defined builder block — a single compose service
 // fragment stored inline.
 type ServiceBlock struct {
@@ -108,6 +120,80 @@ func scanProjectTemplate(r scanner) (*ProjectTemplate, error) {
 	}
 	t.CreatedAt, _ = time.Parse(time.RFC3339, created)
 	return &t, nil
+}
+
+// --- compose fragments (shared definitions / anchors) ------------------------
+
+func (s *Store) ListComposeFragments(ctx context.Context) ([]ComposeFragment, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, name, slug, description, content, created_by, created_at
+		FROM compose_fragments ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ComposeFragment
+	for rows.Next() {
+		f, err := scanComposeFragment(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *f)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ComposeFragmentByID(ctx context.Context, id int64) (*ComposeFragment, error) {
+	return scanComposeFragment(s.db.QueryRowContext(ctx, `
+		SELECT id, name, slug, description, content, created_by, created_at
+		FROM compose_fragments WHERE id = ?`, id))
+}
+
+func (s *Store) ComposeFragmentBySlug(ctx context.Context, slug string) (*ComposeFragment, error) {
+	return scanComposeFragment(s.db.QueryRowContext(ctx, `
+		SELECT id, name, slug, description, content, created_by, created_at
+		FROM compose_fragments WHERE slug = ?`, slug))
+}
+
+func (s *Store) CreateComposeFragment(ctx context.Context, f *ComposeFragment) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `
+		INSERT INTO compose_fragments (name, slug, description, content, created_by, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		f.Name, f.Slug, f.Description, f.Content, f.CreatedBy, time.Now().UTC().Format(time.RFC3339))
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE") {
+			return 0, ErrDuplicate
+		}
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// UpdateComposeFragment edits a fragment's editable fields (the slug is immutable).
+func (s *Store) UpdateComposeFragment(ctx context.Context, f *ComposeFragment) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE compose_fragments SET name = ?, description = ?, content = ? WHERE id = ?`,
+		f.Name, f.Description, f.Content, f.ID)
+	return err
+}
+
+func (s *Store) DeleteComposeFragment(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM compose_fragments WHERE id = ?`, id)
+	return err
+}
+
+func scanComposeFragment(r scanner) (*ComposeFragment, error) {
+	var f ComposeFragment
+	var created string
+	err := r.Scan(&f.ID, &f.Name, &f.Slug, &f.Description, &f.Content, &f.CreatedBy, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	f.CreatedAt, _ = time.Parse(time.RFC3339, created)
+	return &f, nil
 }
 
 // --- service blocks ----------------------------------------------------------

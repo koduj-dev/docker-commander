@@ -30,6 +30,8 @@ import type {
   ProjectTemplateDetail,
   ServiceBlockMeta,
   ServiceBlockDetail,
+  ComposeFragmentMeta,
+  ComposeFragmentDetail,
   TemplateFile,
   TemplateRef,
   FileApi,
@@ -309,7 +311,7 @@ export const api = {
   projects: () => req<{ projects: Project[]; composeAvailable: boolean }>("GET", "/api/projects"),
   createProject: (
     name: string,
-    opts?: { template?: TemplateRef; blocks?: TemplateRef[]; variables?: Record<string, string> },
+    opts?: { template?: TemplateRef; blocks?: TemplateRef[]; fragments?: TemplateRef[]; variables?: Record<string, string> },
   ) => req<{ id: number; slug: string }>("POST", "/api/projects", { name, ...opts }),
   importProject: async (name: string, file: File) => {
     const res = await fetch(`/api/projects/import?name=${encodeURIComponent(name)}`, {
@@ -370,7 +372,7 @@ export const api = {
   serviceBlocks: () => req<ServiceBlockMeta[]>("GET", "/api/service-blocks"),
   // Live read-only preview: the compose.yml (+ sidecars) a selection would seed,
   // without creating a project. Powers the New project dialog preview.
-  previewTemplate: (opts: { name?: string; template?: TemplateRef; blocks?: TemplateRef[]; variables?: Record<string, string> }) =>
+  previewTemplate: (opts: { name?: string; template?: TemplateRef; blocks?: TemplateRef[]; fragments?: TemplateRef[]; variables?: Record<string, string> }) =>
     req<{ files: TemplateFile[] }>("POST", "/api/project-templates/preview", opts),
   saveProjectAsTemplate: (fromProjectId: number, name: string, description: string) =>
     req<{ id: number; slug: string }>("POST", "/api/project-templates", { fromProjectId, name, description }),
@@ -408,6 +410,14 @@ export const api = {
   updateServiceBlock: (id: string, b: { name: string; description: string; service: string; serviceYaml: string; volumes: string[] }) =>
     req<{ ok: boolean }>("PUT", `/api/service-blocks/${id}`, b),
   deleteServiceBlock: (id: string) => req<{ ok: boolean }>("DELETE", `/api/service-blocks/${id}`),
+  // Builder shared definitions (top-level YAML anchors) — builtin + user merged.
+  composeFragments: () => req<ComposeFragmentMeta[]>("GET", "/api/compose-fragments"),
+  composeFragment: (id: string) => req<ComposeFragmentDetail>("GET", `/api/compose-fragments/${id}`),
+  createComposeFragment: (b: { name: string; description: string; content: string }) =>
+    req<{ id: number; slug: string }>("POST", "/api/compose-fragments", b),
+  updateComposeFragment: (id: string, b: { name: string; description: string; content: string }) =>
+    req<{ ok: boolean }>("PUT", `/api/compose-fragments/${id}`, b),
+  deleteComposeFragment: (id: string) => req<{ ok: boolean }>("DELETE", `/api/compose-fragments/${id}`),
 
   // Generic raw inspect for any object kind. id/ref travels as a query param.
   inspect: (kind: "container" | "image" | "network" | "volume", id: string) => {

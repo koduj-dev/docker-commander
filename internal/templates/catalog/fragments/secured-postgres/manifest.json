@@ -1,0 +1,4 @@
+{
+  "name": "Secured Postgres",
+  "description": "Shared TLS + cert-mount profile for a Postgres cluster. Merge into each db with `<<: *pg-secure`."
+}

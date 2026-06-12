@@ -13,11 +13,18 @@ All notable changes to Docker Commander are documented here. The format follows
   offline) with a **Docker Hub** repository search (proxied through the host
   daemon, so no credentials leave the process) and, after a `:`, Docker Hub's
   **tag** list. Everything degrades to local-only when offline.
+- **Builder — shared definitions (YAML anchors)** — the builder can now include
+  reusable **top-level anchors** (e.g. `x-pg-common: &pg-common …`) emitted above
+  `services:`, so a cluster of services can share one definition (security, cert
+  mounts, …) and merge it with `<<: *pg-common`. Pick built-in ones (Service
+  defaults, Secured Postgres) or save your own; they're managed on the Templates
+  page like service blocks.
 - **Templates management page** — a new **Templates** section (under Projects'
-  permission) to manage presets and builder service blocks in one place: edit a
-  user preset's files in the multi-file editor, rename it, add/edit/delete your
-  own service blocks, inspect built-in ones read-only, and **duplicate** any
-  preset (including a built-in) into a new editable copy. The **New project**
+  permission) to manage presets, builder service blocks and shared definitions
+  in one place: edit a user preset's files in the multi-file editor, rename it,
+  add/edit/delete your own service blocks and shared definitions, inspect
+  built-in ones read-only, and **duplicate** any preset (including a built-in)
+  into a new editable copy. The **New project**
   dialog now shows a **live read-only preview** of the `compose.yml` a template
   or builder selection would produce, and the project editor opens wider.
 - **Project templates & builder** — creating a project now offers three ways to

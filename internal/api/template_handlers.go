@@ -60,6 +60,23 @@ type templateDetailJSON struct {
 	Deletable   bool                 `json:"deletable"`
 }
 
+type fragmentJSON struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Source      string `json:"source"`
+	Deletable   bool   `json:"deletable"`
+}
+
+type fragmentDetailJSON struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Source      string `json:"source"`
+	Content     string `json:"content"`
+	Deletable   bool   `json:"deletable"`
+}
+
 type blockDetailJSON struct {
 	ID          string               `json:"id"`
 	Name        string               `json:"name"`
@@ -105,6 +122,144 @@ func (s *Server) handleListProjectTemplates(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, out)
 }
 
+// --- compose fragments (shared definitions / anchors) ------------------------
+
+func (s *Server) handleListComposeFragments(w http.ResponseWriter, r *http.Request) {
+	out := []fragmentJSON{}
+	builtins, err := templates.BuiltinFragments()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not load built-in fragments")
+		return
+	}
+	for _, f := range builtins {
+		out = append(out, fragmentJSON{
+			ID: f.ID, Name: f.Name, Description: f.Description, Source: templates.SourceBuiltin, Deletable: false,
+		})
+	}
+	user, err := s.store.ListComposeFragments(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not list fragments")
+		return
+	}
+	for _, f := range user {
+		out = append(out, fragmentJSON{
+			ID: strconv.FormatInt(f.ID, 10), Name: f.Name, Description: f.Description, Source: templates.SourceUser, Deletable: true,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleGetComposeFragment(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if nid, err := strconv.ParseInt(id, 10, 64); err == nil {
+		f, err := s.store.ComposeFragmentByID(r.Context(), nid)
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "fragment not found")
+			return
+		}
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, fragmentDetailJSON{
+			ID: id, Name: f.Name, Description: f.Description, Source: templates.SourceUser, Content: f.Content, Deletable: true,
+		})
+		return
+	}
+	f, err := findBuiltinFragment(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "fragment not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, fragmentDetailJSON{
+		ID: f.ID, Name: f.Name, Description: f.Description, Source: templates.SourceBuiltin, Content: f.Content, Deletable: false,
+	})
+}
+
+func (s *Server) handleCreateComposeFragment(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Content     string `json:"content"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" || strings.TrimSpace(body.Content) == "" {
+		writeErr(w, http.StatusBadRequest, "name and content are required")
+		return
+	}
+	slug := slugify(name)
+	id, err := s.store.CreateComposeFragment(r.Context(), &store.ComposeFragment{
+		Name: name, Slug: slug, Description: strings.TrimSpace(body.Description), Content: body.Content, CreatedBy: currentUsername(r),
+	})
+	if errors.Is(err, store.ErrDuplicate) {
+		writeErr(w, http.StatusConflict, "a fragment named \""+slug+"\" already exists")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "compose_fragment.create", slug, "")
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "slug": slug})
+}
+
+func (s *Server) handleUpdateComposeFragment(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "fragment not found")
+		return
+	}
+	existing, err := s.store.ComposeFragmentByID(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeErr(w, http.StatusNotFound, "fragment not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var body struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Content     string `json:"content"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if strings.TrimSpace(body.Name) == "" || strings.TrimSpace(body.Content) == "" {
+		writeErr(w, http.StatusBadRequest, "name and content are required")
+		return
+	}
+	existing.Name = strings.TrimSpace(body.Name)
+	existing.Description = strings.TrimSpace(body.Description)
+	existing.Content = body.Content
+	if err := s.store.UpdateComposeFragment(r.Context(), existing); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "compose_fragment.update", existing.Slug, "")
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleDeleteComposeFragment(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid fragment id")
+		return
+	}
+	if err := s.store.DeleteComposeFragment(r.Context(), id); err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not delete fragment")
+		return
+	}
+	s.audit(r, "compose_fragment.delete", chi.URLParam(r, "id"), "")
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func (s *Server) handleListServiceBlocks(w http.ResponseWriter, r *http.Request) {
 	out := []blockJSON{}
 	builtins, err := templates.BuiltinBlocks()
@@ -141,8 +296,8 @@ var errBadTemplateRef = errors.New("unknown template")
 // with, from either a block selection (builder), a template, or — when neither
 // is given — the plain starter compose. Pure read: it never mutates state, so
 // the caller can resolve before creating the project row.
-func (s *Server) resolveSeedFiles(ctx context.Context, slug, name string, tpl *templateRef, blocks []templateRef, vars map[string]string) ([]templates.File, error) {
-	if len(blocks) > 0 {
+func (s *Server) resolveSeedFiles(ctx context.Context, slug, name string, tpl *templateRef, blocks, fragments []templateRef, vars map[string]string) ([]templates.File, error) {
+	if len(blocks) > 0 || len(fragments) > 0 {
 		var blks []templates.Block
 		var decl []templates.Variable
 		for _, ref := range blocks {
@@ -153,12 +308,20 @@ func (s *Server) resolveSeedFiles(ctx context.Context, slug, name string, tpl *t
 			blks = append(blks, b)
 			decl = append(decl, b.Variables...)
 		}
+		var frags []templates.Fragment
+		for _, ref := range fragments {
+			f, err := s.resolveFragment(ctx, ref)
+			if err != nil {
+				return nil, err
+			}
+			frags = append(frags, f)
+		}
 		rv, err := templates.ResolveVars(decl, vars)
 		if err != nil {
 			return nil, err
 		}
 		rv["Slug"], rv["Name"] = slug, name
-		return templates.AssembleCompose(slug, blks, rv)
+		return templates.AssembleCompose(slug, blks, frags, rv)
 	}
 
 	if tpl != nil {
@@ -191,6 +354,25 @@ func (s *Server) resolveSeedFiles(ctx context.Context, slug, name string, tpl *t
 	}
 
 	return []templates.File{{Path: "compose.yml", Content: starterCompose(slug)}}, nil
+}
+
+func (s *Server) resolveFragment(ctx context.Context, ref templateRef) (templates.Fragment, error) {
+	switch ref.Source {
+	case templates.SourceBuiltin:
+		return findBuiltinFragment(ref.ID)
+	case templates.SourceUser:
+		id, err := strconv.ParseInt(ref.ID, 10, 64)
+		if err != nil {
+			return templates.Fragment{}, errBadTemplateRef
+		}
+		f, err := s.store.ComposeFragmentByID(ctx, id)
+		if err != nil {
+			return templates.Fragment{}, err
+		}
+		return templates.Fragment{ID: ref.ID, Name: f.Name, Source: templates.SourceUser, Content: f.Content}, nil
+	default:
+		return templates.Fragment{}, errBadTemplateRef
+	}
 }
 
 func (s *Server) resolveBlock(ctx context.Context, ref templateRef) (templates.Block, error) {
@@ -226,6 +408,19 @@ func findBuiltinPreset(id string) (templates.Preset, error) {
 		}
 	}
 	return templates.Preset{}, errBadTemplateRef
+}
+
+func findBuiltinFragment(id string) (templates.Fragment, error) {
+	list, err := templates.BuiltinFragments()
+	if err != nil {
+		return templates.Fragment{}, err
+	}
+	for _, f := range list {
+		if f.ID == id {
+			return f, nil
+		}
+	}
+	return templates.Fragment{}, errBadTemplateRef
 }
 
 func findBuiltinBlock(id string) (templates.Block, error) {
@@ -378,7 +573,7 @@ func (s *Server) handleDuplicateProjectTemplate(w http.ResponseWriter, r *http.R
 	if _, err := strconv.ParseInt(srcID, 10, 64); err == nil {
 		src.Source = templates.SourceUser
 	}
-	files, err := s.resolveSeedFiles(r.Context(), slugify(name), name, src, nil, nil)
+	files, err := s.resolveSeedFiles(r.Context(), slugify(name), name, src, nil, nil, nil)
 	if errors.Is(err, store.ErrNotFound) || errors.Is(err, errBadTemplateRef) {
 		writeErr(w, http.StatusNotFound, "source template not found")
 		return
@@ -474,6 +669,7 @@ func (s *Server) handlePreviewTemplate(w http.ResponseWriter, r *http.Request) {
 		Name      string            `json:"name"`
 		Template  *templateRef      `json:"template"`
 		Blocks    []templateRef     `json:"blocks"`
+		Fragments []templateRef     `json:"fragments"`
 		Variables map[string]string `json:"variables"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
@@ -484,7 +680,7 @@ func (s *Server) handlePreviewTemplate(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = "preview"
 	}
-	files, err := s.resolveSeedFiles(r.Context(), slugify(name), name, body.Template, body.Blocks, body.Variables)
+	files, err := s.resolveSeedFiles(r.Context(), slugify(name), name, body.Template, body.Blocks, body.Fragments, body.Variables)
 	if errors.Is(err, store.ErrNotFound) {
 		writeErr(w, http.StatusNotFound, "template or block not found")
 		return

@@ -135,6 +135,29 @@ func TestCreateProjectFromBuilderBlocks(t *testing.T) {
 	}
 }
 
+func TestBuilderWithSharedFragment(t *testing.T) {
+	srv := newTemplatesServer(t)
+	id := createProject(t, srv, map[string]any{
+		"name":      "Cluster",
+		"blocks":    []map[string]string{{"id": "redis", "source": "builtin"}},
+		"fragments": []map[string]string{{"id": "service-defaults", "source": "builtin"}},
+	})
+	compose, err := os.ReadFile(filepath.Join(srv.projectRoot(id), "compose.yml"))
+	if err != nil {
+		t.Fatalf("read compose: %v", err)
+	}
+	got := string(compose)
+	anchor := strings.Index(got, "x-defaults: &defaults")
+	svcs := strings.Index(got, "services:")
+	if anchor < 0 {
+		t.Fatalf("shared fragment not emitted:\n%s", got)
+	}
+	// The anchor must come before services: so a service can merge it.
+	if anchor > svcs {
+		t.Errorf("fragment emitted after services::\n%s", got)
+	}
+}
+
 func TestSaveProjectAsTemplateAndList(t *testing.T) {
 	srv := newTemplatesServer(t)
 	id := createProject(t, srv, map[string]any{

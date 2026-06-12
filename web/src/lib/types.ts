@@ -383,10 +383,23 @@ export interface ServiceBlockMeta {
   deletable: boolean;
 }
 
-// A reference the create-project call uses to identify a preset or block.
+// A reference the create-project call uses to identify a preset, block or fragment.
 export interface TemplateRef {
   id: string;
   source: TemplateSource;
+}
+
+// A builder "shared definition" — a top-level compose fragment (YAML anchor).
+export interface ComposeFragmentMeta {
+  id: string;
+  name: string;
+  description: string;
+  source: TemplateSource;
+  deletable: boolean;
+}
+
+export interface ComposeFragmentDetail extends ComposeFragmentMeta {
+  content: string;
 }
 
 // One file in a rendered template/builder preview ({{.Var}} already substituted).

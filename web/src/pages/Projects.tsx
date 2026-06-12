@@ -4,11 +4,11 @@ import clsx from "clsx";
 import {
   FolderGit2, Plus, Rocket, Square, Trash2, X, FilePlus, FolderPlus, Upload, Loader2,
   ExternalLink, Save, FileText, FileBox, Folder, Terminal, Pencil, ChevronRight, Download, Search, CheckCircle2, AlertCircle, AlertTriangle, Eye, Boxes,
-  LayoutTemplate, Puzzle, KeyRound,
+  LayoutTemplate, Puzzle, KeyRound, Anchor,
 } from "lucide-react";
 import { bytes as fmtBytes } from "../lib/format";
 import { api, ApiError } from "../lib/api";
-import type { Project, ProjectFile, Stack, ComposeModel, ComposeService, ProjectTemplateMeta, ServiceBlockMeta, TemplateRef, TemplateVariable } from "../lib/types";
+import type { Project, ProjectFile, Stack, ComposeModel, ComposeService, ProjectTemplateMeta, ServiceBlockMeta, ComposeFragmentMeta, TemplateRef, TemplateVariable } from "../lib/types";
 import type { ServerCheck } from "../components/CodeEditor";
 import { buildTree, TreeItem } from "../components/FileTree";
 import { PageHeader } from "../layout/Shell";
@@ -475,7 +475,45 @@ function CustomBlockForm({ onClose, onSaved }: { onClose: () => void; onSaved: (
   );
 }
 
+// CustomFragmentForm saves a shared definition (a top-level YAML anchor) for the
+// builder. The content is copied literally, so anchors/merge keys are preserved.
+function CustomFragmentForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [name, setName] = useState("");
+  const [content, setContent] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const save = async () => {
+    if (!name.trim() || !content.trim()) { setErr("name and YAML are required"); return; }
+    setBusy(true); setErr("");
+    try {
+      await api.createComposeFragment({ name: name.trim(), description: "", content });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "could not save definition");
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="space-y-2 rounded-lg border border-border bg-panel2/40 p-3">
+      <div className="flex items-center gap-2 text-xs font-medium"><Anchor className="h-3.5 w-3.5 text-accent" /> Shared definition</div>
+      <label className="block"><span className="label">Name</span><input className="input" value={name} placeholder="Postgres security" onChange={(e) => setName(e.target.value)} /></label>
+      <label className="block">
+        <span className="label">Top-level YAML (define an anchor with <code>&amp;name</code>)</span>
+        <textarea className="input font-mono text-xs" rows={6} value={content} placeholder={"x-pg-common: &pg-common\n  restart: unless-stopped\n  volumes:\n    - ./certs:/certs:ro"} onChange={(e) => setContent(e.target.value)} />
+      </label>
+      {err && <p className="text-sm text-danger">{err}</p>}
+      <div className="flex justify-end gap-2">
+        <button type="button" className="btn-ghost px-3 py-1.5 text-sm" onClick={onClose}>Cancel</button>
+        <button type="button" className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40" disabled={busy} onClick={save}>
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save definition
+        </button>
+      </div>
+    </div>
+  );
+}
+
 type NewMode = "template" | "builder" | "import";
+type BuilderTab = "services" | "shared" | "variables";
 
 function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreated: (p: Project) => void }) {
   const dialogs = useDialogs();
@@ -483,11 +521,15 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
   const [mode, setMode] = useState<NewMode>("template");
   const [templates, setTemplates] = useState<ProjectTemplateMeta[]>([]);
   const [blocks, setBlocks] = useState<ServiceBlockMeta[]>([]);
+  const [fragments, setFragments] = useState<ComposeFragmentMeta[]>([]);
   const [tplKey, setTplKey] = useState("");                 // "" = empty starter
   const [picked, setPicked] = useState<Record<string, boolean>>({});
+  const [pickedFrags, setPickedFrags] = useState<Record<string, boolean>>({});
   const [vars, setVars] = useState<Record<string, string>>({});
   const [file, setFile] = useState<File | null>(null);
   const [customOpen, setCustomOpen] = useState(false);
+  const [customFragOpen, setCustomFragOpen] = useState(false);
+  const [builderTab, setBuilderTab] = useState<BuilderTab>("services");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [preview, setPreview] = useState("");
@@ -498,11 +540,13 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
   const loadCatalog = useCallback(() => {
     api.projectTemplates().then(setTemplates).catch(() => {});
     api.serviceBlocks().then(setBlocks).catch(() => {});
+    api.composeFragments().then(setFragments).catch(() => {});
   }, []);
   useEffect(() => loadCatalog(), [loadCatalog]);
 
   const selectedTpl = templates.find((t) => refKey(t) === tplKey) ?? null;
   const selectedBlocks = blocks.filter((b) => picked[refKey(b)]);
+  const selectedFragments = fragments.filter((f) => pickedFrags[refKey(f)]);
   const activeVars = mode === "template"
     ? (selectedTpl?.variables ?? [])
     : mode === "builder"
@@ -515,12 +559,17 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
   // Shown for a chosen preset or a non-empty builder selection; debounced so it
   // doesn't fire on every keystroke. Generated secrets vary per call — that's
   // fine for an illustrative preview.
-  const showPreview = (mode === "template" && !!selectedTpl) || (mode === "builder" && selectedBlocks.length > 0);
+  const showPreview = (mode === "template" && !!selectedTpl) || (mode === "builder" && (selectedBlocks.length > 0 || selectedFragments.length > 0));
   useEffect(() => {
     if (!showPreview) { setPreview(""); setPreviewErr(""); setPreviewBusy(false); return; }
     const variables = Object.fromEntries(activeVars.map((v) => [v.key, vars[v.key] ?? ""]));
     const opts = mode === "builder"
-      ? { name: name || "preview", blocks: selectedBlocks.map((b): TemplateRef => ({ id: b.id, source: b.source })), variables }
+      ? {
+          name: name || "preview",
+          blocks: selectedBlocks.map((b): TemplateRef => ({ id: b.id, source: b.source })),
+          fragments: selectedFragments.map((f): TemplateRef => ({ id: f.id, source: f.source })),
+          variables,
+        }
       : { name: name || "preview", template: { id: selectedTpl!.id, source: selectedTpl!.source }, variables };
     let cancelled = false;
     setPreviewBusy(true);
@@ -536,12 +585,13 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
     }, 350);
     return () => { cancelled = true; clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showPreview, mode, tplKey, picked, vars, name, blocks, templates]);
+  }, [showPreview, mode, tplKey, picked, pickedFrags, vars, name, blocks, fragments, templates]);
 
-  const deleteItem = async (kind: "template" | "block", id: string, label: string) => {
+  const deleteItem = async (kind: "template" | "block" | "fragment", id: string, label: string) => {
     if (!(await dialogs.confirm({ title: `Delete ${kind}`, message: <>Delete <code className="font-mono text-text">{label}</code>?</>, danger: true, confirmLabel: "Delete" }))) return;
     try {
       if (kind === "template") await api.deleteProjectTemplate(id);
+      else if (kind === "fragment") await api.deleteComposeFragment(id);
       else await api.deleteServiceBlock(id);
       loadCatalog();
     } catch (e) {
@@ -560,7 +610,7 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
       const variables = Object.fromEntries(activeVars.map((v) => [v.key, vars[v.key] ?? ""]));
       let r: { id: number; slug: string };
       if (mode === "import" && file) r = await api.importProject(n, file);
-      else if (mode === "builder" && selectedBlocks.length) r = await api.createProject(n, { blocks: selectedBlocks.map((b): TemplateRef => ({ id: b.id, source: b.source })), variables });
+      else if (mode === "builder" && (selectedBlocks.length || selectedFragments.length)) r = await api.createProject(n, { blocks: selectedBlocks.map((b): TemplateRef => ({ id: b.id, source: b.source })), fragments: selectedFragments.map((f): TemplateRef => ({ id: f.id, source: f.source })), variables });
       else if (mode === "template" && selectedTpl) r = await api.createProject(n, { template: { id: selectedTpl.id, source: selectedTpl.source }, variables });
       else r = await api.createProject(n);
       onCreated({ id: r.id, name: n, slug: r.slug, composeFile: "compose.yml", createdBy: "", createdAt: "", updatedAt: "" });
@@ -577,11 +627,19 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
     </button>
   );
 
-  const canSubmit = !!name.trim() && !busy && (mode === "import" ? !!file : mode === "builder" ? selectedBlocks.length > 0 : true);
+  const canSubmit = !!name.trim() && !busy && (mode === "import" ? !!file : mode === "builder" ? (selectedBlocks.length > 0 || selectedFragments.length > 0) : true);
+
+  // Inner segmented control for the builder (Services / Shared / Variables).
+  const subTab = (key: BuilderTab, icon: ReactNode, label: string, count: number) => (
+    <button type="button" onClick={() => setBuilderTab(key)}
+      className={clsx("flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-sm", builderTab === key ? "bg-panel text-text shadow-sm" : "text-muted hover:text-text")}>
+      {icon} {label}{count > 0 ? <span className="text-[10px] bg-accent/20 text-accent rounded-full px-1.5 leading-4">{count}</span> : null}
+    </button>
+  );
 
   return (
     <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={onClose}>
-      <form className={clsx("card w-full flex flex-col max-h-[88vh]", showPreview ? "max-w-4xl" : "max-w-2xl")} onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+      <form className={clsx("card w-full flex flex-col max-h-[88vh]", showPreview ? "max-w-6xl" : "max-w-2xl")} onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <FolderGit2 className="h-4 w-4 text-accent" />
           <div className="font-medium">New project</div>
@@ -622,31 +680,80 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
           )}
 
           {mode === "builder" && (
-            <div className="space-y-2">
-              <div className="text-xs text-muted">Pick services — they’re merged into one <code>compose.yml</code> you can edit afterwards.</div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {blocks.map((b) => {
-                  const on = !!picked[refKey(b)];
-                  return (
-                    <div key={refKey(b)} className={clsx("rounded-lg border px-3 py-2", on ? "border-accent bg-accent/10" : "border-border")}>
-                      <div className="flex items-start gap-2">
-                        <button type="button" className="flex-1 text-left" onClick={() => setPicked((p) => ({ ...p, [refKey(b)]: !on }))}>
-                          <div className="text-sm font-medium flex items-center gap-2">
-                            {b.name}
-                            {on && <CheckCircle2 className="h-3.5 w-3.5 text-accent" />}
-                            {b.source === "user" && <span className="text-[10px] uppercase tracking-wide text-muted border border-border rounded px-1">yours</span>}
-                          </div>
-                          <div className="text-xs text-muted">{b.description}</div>
-                        </button>
-                        {b.deletable && <button type="button" className="btn-ghost px-1.5 py-1 text-danger" title="Delete block" onClick={() => deleteItem("block", b.id, b.name)}><Trash2 className="h-3.5 w-3.5" /></button>}
-                      </div>
-                    </div>
-                  );
-                })}
+            <div className="space-y-3">
+              <div className="flex gap-1 rounded-lg bg-panel2/50 p-0.5">
+                {subTab("services", <Puzzle className="h-3.5 w-3.5" />, "Services", selectedBlocks.length)}
+                {subTab("shared", <Anchor className="h-3.5 w-3.5" />, "Shared defs", selectedFragments.length)}
+                {subTab("variables", <KeyRound className="h-3.5 w-3.5" />, "Variables", activeVars.length)}
               </div>
-              {customOpen
-                ? <CustomBlockForm onClose={() => setCustomOpen(false)} onSaved={() => { setCustomOpen(false); loadCatalog(); }} />
-                : <button type="button" className="btn-ghost px-3 py-1.5 text-sm" onClick={() => setCustomOpen(true)}><Plus className="h-4 w-4" /> Custom service…</button>}
+
+              {builderTab === "services" && (
+                <div className="space-y-2">
+                  <div className="text-xs text-muted">Pick services — merged into one <code>compose.yml</code> you can edit afterwards.</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {blocks.map((b) => {
+                      const on = !!picked[refKey(b)];
+                      return (
+                        <div key={refKey(b)} className={clsx("rounded-lg border px-3 py-2", on ? "border-accent bg-accent/10" : "border-border")}>
+                          <div className="flex items-start gap-2">
+                            <button type="button" className="flex-1 text-left" onClick={() => setPicked((p) => ({ ...p, [refKey(b)]: !on }))}>
+                              <div className="text-sm font-medium flex items-center gap-2">
+                                {b.name}
+                                {on && <CheckCircle2 className="h-3.5 w-3.5 text-accent" />}
+                                {b.source === "user" && <span className="text-[10px] uppercase tracking-wide text-muted border border-border rounded px-1">yours</span>}
+                              </div>
+                              <div className="text-xs text-muted">{b.description}</div>
+                            </button>
+                            {b.deletable && <button type="button" className="btn-ghost px-1.5 py-1 text-danger" title="Delete block" onClick={() => deleteItem("block", b.id, b.name)}><Trash2 className="h-3.5 w-3.5" /></button>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {customOpen
+                    ? <CustomBlockForm onClose={() => setCustomOpen(false)} onSaved={() => { setCustomOpen(false); loadCatalog(); }} />
+                    : <button type="button" className="btn-ghost px-3 py-1.5 text-sm" onClick={() => setCustomOpen(true)}><Plus className="h-4 w-4" /> Custom service…</button>}
+                </div>
+              )}
+
+              {builderTab === "shared" && (
+                <div className="space-y-2">
+                  <div className="flex items-start gap-2 text-xs text-muted">
+                    <Anchor className="h-3.5 w-3.5 mt-0.5 shrink-0" /> <span>Top-level YAML anchors merged above <code>services:</code> — reference with <code>{"<<: *name"}</code> in a service.</span>
+                  </div>
+                  {fragments.length > 0 && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {fragments.map((f) => {
+                        const on = !!pickedFrags[refKey(f)];
+                        return (
+                          <div key={refKey(f)} className={clsx("rounded-lg border px-3 py-2", on ? "border-accent bg-accent/10" : "border-border")}>
+                            <div className="flex items-start gap-2">
+                              <button type="button" className="flex-1 text-left" onClick={() => setPickedFrags((p) => ({ ...p, [refKey(f)]: !on }))}>
+                                <div className="text-sm font-medium flex items-center gap-2">
+                                  {f.name}
+                                  {on && <CheckCircle2 className="h-3.5 w-3.5 text-accent" />}
+                                  {f.source === "user" && <span className="text-[10px] uppercase tracking-wide text-muted border border-border rounded px-1">yours</span>}
+                                </div>
+                                <div className="text-xs text-muted">{f.description}</div>
+                              </button>
+                              {f.deletable && <button type="button" className="btn-ghost px-1.5 py-1 text-danger" title="Delete definition" onClick={() => deleteItem("fragment", f.id, f.name)}><Trash2 className="h-3.5 w-3.5" /></button>}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {customFragOpen
+                    ? <CustomFragmentForm onClose={() => setCustomFragOpen(false)} onSaved={() => { setCustomFragOpen(false); loadCatalog(); }} />
+                    : <button type="button" className="btn-ghost px-3 py-1.5 text-sm" onClick={() => setCustomFragOpen(true)}><Plus className="h-4 w-4" /> Custom definition…</button>}
+                </div>
+              )}
+
+              {builderTab === "variables" && (
+                activeVars.length > 0
+                  ? <VarFields vars={activeVars} values={vars} onChange={setVar} />
+                  : <p className="text-xs text-muted py-2">No variables — the selected services don’t declare any.</p>
+              )}
             </div>
           )}
 
@@ -658,7 +765,7 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
             </label>
           )}
 
-          {mode !== "import" && <VarFields vars={activeVars} values={vars} onChange={setVar} />}
+          {mode === "template" && <VarFields vars={activeVars} values={vars} onChange={setVar} />}
           {err && <p className="text-sm text-danger">{err}</p>}
         </div>
         {showPreview && (

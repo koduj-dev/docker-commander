@@ -1,0 +1,4 @@
+{
+  "name": "Service defaults",
+  "description": "Restart policy + log rotation. Merge into a service with `<<: *defaults`."
+}

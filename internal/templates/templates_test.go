@@ -51,7 +51,7 @@ func TestBuiltinBlocksAssemble(t *testing.T) {
 		}
 		decl = append(decl, b.Variables...)
 	}
-	files, err := AssembleCompose("test-project", blocks, builtinVars(t, decl))
+	files, err := AssembleCompose("test-project", blocks, nil, builtinVars(t, decl))
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
 	}

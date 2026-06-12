@@ -130,6 +130,7 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		Name      string            `json:"name"`
 		Template  *templateRef      `json:"template"`
 		Blocks    []templateRef     `json:"blocks"`
+		Fragments []templateRef     `json:"fragments"`
 		Variables map[string]string `json:"variables"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
@@ -145,7 +146,7 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve the scaffold before creating anything, so a bad template/block
 	// reference fails cleanly without leaving a half-created project behind.
-	files, err := s.resolveSeedFiles(r.Context(), slug, name, body.Template, body.Blocks, body.Variables)
+	files, err := s.resolveSeedFiles(r.Context(), slug, name, body.Template, body.Blocks, body.Fragments, body.Variables)
 	if errors.Is(err, store.ErrNotFound) {
 		writeErr(w, http.StatusNotFound, "template or block not found")
 		return

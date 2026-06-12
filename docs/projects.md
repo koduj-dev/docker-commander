@@ -36,7 +36,12 @@ always rendered and written **server-side**:
   **PHP-FPM**, **Node**, **Postgres**, **MySQL**, **Redis**, **Adminer** — and
   they're merged into one `compose.yml` you can edit afterwards. Add your own with
   **Custom service…** (name, service key, the service YAML, optional named
-  volumes); it's saved and reappears in the builder.
+  volumes); it's saved and reappears in the builder. Under **Shared definitions**
+  you can also include reusable **top-level YAML anchors** (e.g.
+  `x-pg-common: &pg-common …`) — emitted above `services:` so a cluster of
+  services can share one definition (security, cert mounts, …) and merge it with
+  `<<: *pg-common`. Built-ins (Service defaults, Secured Postgres) ship in, and
+  you can save your own with **Custom definition…**.
 - **Import** — choose a `.zip` to import an existing project folder (files are
   written through the same path sandbox).
 
@@ -64,6 +69,9 @@ presets and builder blocks live:
   the service YAML, named volumes), or delete it; built-in blocks are read-only.
   Blocks you add here (and via the builder's **Custom service…**) appear in the
   builder.
+- **Shared definitions** — create/edit/delete top-level YAML anchors (see the
+  Builder above); built-in ones are read-only. They appear in the builder's
+  **Shared definitions** list.
 
 Built-in presets/blocks can't be modified; only the ones you save are editable.
 

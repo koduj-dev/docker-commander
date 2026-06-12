@@ -1,10 +1,11 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import clsx from "clsx";
 import {
   LayoutTemplate, Puzzle, Plus, Trash2, Eye, Pencil, FileText, Download, X, Save, Loader2,
-  FilePlus, FolderPlus, Upload, FileBox, Folder, Copy,
+  FilePlus, FolderPlus, Upload, FileBox, Folder, Copy, Anchor,
 } from "lucide-react";
 import { api, ApiError } from "../lib/api";
-import type { ProjectTemplateMeta, ServiceBlockMeta, ProjectFile } from "../lib/types";
+import type { ProjectTemplateMeta, ServiceBlockMeta, ComposeFragmentMeta, ProjectFile } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
 import { useDialogs } from "../components/Dialog";
@@ -12,6 +13,8 @@ import { buildTree, TreeItem } from "../components/FileTree";
 import { bytes as fmtBytes } from "../lib/format";
 // CodeMirror is heavy — load it only when an editor/viewer actually opens.
 const CodeEditor = lazy(() => import("../components/CodeEditor").then((m) => ({ default: m.CodeEditor })));
+
+type TplTab = "presets" | "blocks" | "definitions";
 
 const sourceBadge = (source: string) =>
   source === "user"
@@ -24,14 +27,18 @@ const sourceBadge = (source: string) =>
 export function Templates() {
   const [templates, setTemplates] = useState<ProjectTemplateMeta[] | null>(null);
   const [blocks, setBlocks] = useState<ServiceBlockMeta[] | null>(null);
+  const [fragments, setFragments] = useState<ComposeFragmentMeta[] | null>(null);
   const [openTpl, setOpenTpl] = useState<ProjectTemplateMeta | null>(null); // file editor / viewer
   const [renameTpl, setRenameTpl] = useState<ProjectTemplateMeta | null>(null);
   const [openBlock, setOpenBlock] = useState<ServiceBlockMeta | "new" | null>(null);
+  const [openFrag, setOpenFrag] = useState<ComposeFragmentMeta | "new" | null>(null);
+  const [tab, setTab] = useState<TplTab>("presets");
   const dialogs = useDialogs();
 
   const load = useCallback(() => {
     api.projectTemplates().then(setTemplates).catch(() => setTemplates([]));
     api.serviceBlocks().then(setBlocks).catch(() => setBlocks([]));
+    api.composeFragments().then(setFragments).catch(() => setFragments([]));
   }, []);
   useEffect(() => load(), [load]);
 
@@ -51,26 +58,41 @@ export function Templates() {
     try { await api.deleteServiceBlock(b.id); load(); }
     catch (e) { dialogs.alert({ title: "Could not delete", message: e instanceof ApiError ? e.message : "failed" }); }
   };
+  const deleteFrag = async (f: ComposeFragmentMeta) => {
+    if (!(await dialogs.confirm({ title: "Delete shared definition", message: <>Delete <code className="font-mono text-text">{f.name}</code>?</>, danger: true, confirmLabel: "Delete" }))) return;
+    try { await api.deleteComposeFragment(f.id); load(); }
+    catch (e) { dialogs.alert({ title: "Could not delete", message: e instanceof ApiError ? e.message : "failed" }); }
+  };
 
-  if (!templates || !blocks)
+  if (!templates || !blocks || !fragments)
     return (<><PageHeader title="Templates" /><div className="p-6 flex items-center gap-2 text-muted"><Spinner /> Loading…</div></>);
+
+  const tabBtn = (key: TplTab, icon: ReactNode, label: string, count: number) => (
+    <button onClick={() => setTab(key)}
+      className={clsx("flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border", tab === key ? "border-accent bg-accent/10 text-text" : "border-border text-muted hover:text-text")}>
+      {icon} {label} <span className="text-[10px] text-muted">{count}</span>
+    </button>
+  );
+
+  const headerAction =
+    tab === "blocks" ? <button className="btn-primary px-3 py-1.5 text-sm" onClick={() => setOpenBlock("new")}><Plus className="h-4 w-4" /> New service block</button>
+    : tab === "definitions" ? <button className="btn-primary px-3 py-1.5 text-sm" onClick={() => setOpenFrag("new")}><Plus className="h-4 w-4" /> New definition</button>
+    : undefined;
 
   return (
     <>
-      <PageHeader title="Templates" actions={
-        <button className="btn-primary px-3 py-1.5 text-sm" onClick={() => setOpenBlock("new")}><Plus className="h-4 w-4" /> New service block</button>
-      } />
-      <div className="p-6 space-y-6">
-        <p className="text-xs text-muted">
-          Presets and builder blocks back the <strong>New project</strong> dialog. Built-in ones ship with Docker Commander; your own are editable here.
-          Create a preset with <strong>Save as template</strong> from a project.
-        </p>
+      <PageHeader title="Templates" actions={headerAction} />
+      <div className="p-6 space-y-4">
+        <div className="flex flex-wrap gap-2">
+          {tabBtn("presets", <LayoutTemplate className="h-4 w-4" />, "Presets", templates.length)}
+          {tabBtn("blocks", <Puzzle className="h-4 w-4" />, "Service blocks", blocks.length)}
+          {tabBtn("definitions", <Anchor className="h-4 w-4" />, "Shared definitions", fragments.length)}
+        </div>
 
         {/* Presets ------------------------------------------------------------ */}
-        <section className="space-y-2">
-          <div className="flex items-center gap-2"><LayoutTemplate className="h-4 w-4 text-accent" /><h2 className="font-medium">Presets</h2><span className="text-xs text-muted">{templates.length}</span></div>
-          {templates.length === 0 ? (
-            <EmptyState title="No presets" hint="Save a project as a template to add one." />
+        {tab === "presets" && (
+          templates.length === 0 ? (
+            <EmptyState title="No presets" hint="Save a project as a template (the 🗎 button in the project editor) to add one." />
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               {templates.map((t) => (
@@ -92,12 +114,11 @@ export function Templates() {
                 </div>
               ))}
             </div>
-          )}
-        </section>
+          )
+        )}
 
         {/* Service blocks ----------------------------------------------------- */}
-        <section className="space-y-2">
-          <div className="flex items-center gap-2"><Puzzle className="h-4 w-4 text-accent" /><h2 className="font-medium">Service blocks</h2><span className="text-xs text-muted">{blocks.length}</span></div>
+        {tab === "blocks" && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
             {blocks.map((b) => (
               <div key={`${b.source}:${b.id}`} className="card p-3 flex items-start gap-3">
@@ -115,13 +136,106 @@ export function Templates() {
               </div>
             ))}
           </div>
-        </section>
+        )}
+
+        {/* Shared definitions (anchors) -------------------------------------- */}
+        {tab === "definitions" && (
+          <div className="space-y-2">
+          <p className="text-xs text-muted">Top-level YAML anchors for the builder — define <code>x-name: &amp;name …</code> and merge it into services with <code>{"<<: *name"}</code>.</p>
+          {fragments.length === 0 ? (
+            <EmptyState title="No shared definitions" hint="Create one to reuse a common block (security, cert mounts, …) across services." />
+          ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {fragments.map((f) => (
+              <div key={`${f.source}:${f.id}`} className="card p-3 flex items-start gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium flex items-center gap-2">{f.name} {sourceBadge(f.source)}</div>
+                  <div className="text-xs text-muted truncate">{f.description || "—"}</div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button className="btn-ghost px-2 py-1" title={f.deletable ? "Edit" : "View"} onClick={() => setOpenFrag(f)}>
+                    {f.deletable ? <Pencil className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                  {f.deletable && <button className="btn-ghost px-2 py-1 text-danger" title="Delete" onClick={() => deleteFrag(f)}><Trash2 className="h-4 w-4" /></button>}
+                </div>
+              </div>
+            ))}
+          </div>
+          )}
+          </div>
+        )}
       </div>
 
       {openTpl && <TemplateFilesModal template={openTpl} onClose={() => setOpenTpl(null)} />}
       {renameTpl && <RenameTemplateModal template={renameTpl} onClose={() => setRenameTpl(null)} onSaved={() => { setRenameTpl(null); load(); }} />}
       {openBlock && <BlockModal block={openBlock} onClose={() => setOpenBlock(null)} onSaved={() => { setOpenBlock(null); load(); }} />}
+      {openFrag && <FragmentModal fragment={openFrag} onClose={() => setOpenFrag(null)} onSaved={() => { setOpenFrag(null); load(); }} />}
     </>
+  );
+}
+
+// FragmentModal creates, edits or views a shared definition. Built-in fragments
+// open read-only; user fragments are editable; "new" starts blank.
+function FragmentModal({ fragment, onClose, onSaved }: { fragment: ComposeFragmentMeta | "new"; onClose: () => void; onSaved: () => void }) {
+  const isNew = fragment === "new";
+  const readOnly = !isNew && fragment.source !== "user";
+  const [name, setName] = useState(isNew ? "" : fragment.name);
+  const [description, setDescription] = useState(isNew ? "" : fragment.description);
+  const [content, setContent] = useState("");
+  const [loading, setLoading] = useState(!isNew);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    if (isNew) return;
+    api.composeFragment(fragment.id).then((d) => { setContent(d.content); setLoading(false); })
+      .catch(() => { setErr("could not load definition"); setLoading(false); });
+  }, [isNew, fragment]);
+
+  const save = async () => {
+    if (!name.trim() || !content.trim()) { setErr("name and YAML are required"); return; }
+    setBusy(true); setErr("");
+    const body = { name: name.trim(), description: description.trim(), content };
+    try {
+      if (isNew) await api.createComposeFragment(body);
+      else await api.updateComposeFragment(fragment.id, body);
+      onSaved();
+    } catch (e) { setErr(e instanceof ApiError ? e.message : "could not save"); setBusy(false); }
+  };
+
+  const title = isNew ? "New shared definition" : readOnly ? "Shared definition" : "Edit shared definition";
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+      <div className="card w-full max-w-xl flex flex-col max-h-[88vh]" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-3 p-4 border-b border-border">
+          <Anchor className="h-4 w-4 text-accent" /><div className="font-medium">{title}</div>
+          <button type="button" className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
+        </div>
+        {loading ? (
+          <div className="p-6 flex items-center gap-2 text-muted"><Spinner /> Loading…</div>
+        ) : (
+          <>
+            <div className="p-4 space-y-3 overflow-y-auto">
+              <label className="block"><span className="label">Name</span><input className="input" value={name} readOnly={readOnly} placeholder="Postgres security" onChange={(e) => setName(e.target.value)} /></label>
+              <label className="block"><span className="label">Description</span><input className="input" value={description} readOnly={readOnly} placeholder="What it shares" onChange={(e) => setDescription(e.target.value)} /></label>
+              <label className="block">
+                <span className="label">Top-level YAML (define an anchor with <code>&amp;name</code>)</span>
+                <textarea className="input font-mono text-xs" rows={9} value={content} readOnly={readOnly} placeholder={"x-pg-common: &pg-common\n  restart: unless-stopped\n  volumes:\n    - ./certs:/certs:ro"} onChange={(e) => setContent(e.target.value)} />
+              </label>
+              {err && <p className="text-sm text-danger">{err}</p>}
+            </div>
+            <div className="flex justify-end gap-2 p-4 border-t border-border">
+              <button type="button" className="btn-ghost px-3 py-1.5 text-sm" onClick={onClose}>{readOnly ? "Close" : "Cancel"}</button>
+              {!readOnly && (
+                <button type="button" className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40" disabled={busy} onClick={save}>
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save
+                </button>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 

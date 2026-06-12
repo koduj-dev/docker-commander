@@ -1,0 +1,15 @@
+# Shared Postgres security profile — TLS with a read-only cert mount.
+# Put your certs in ./certs and merge into each db service: `<<: *pg-secure`.
+x-pg-secure: &pg-secure
+  image: postgres:16-alpine
+  restart: unless-stopped
+  volumes:
+    - ./certs:/certs:ro
+  command:
+    - postgres
+    - -c
+    - ssl=on
+    - -c
+    - ssl_cert_file=/certs/server.crt
+    - -c
+    - ssl_key_file=/certs/server.key

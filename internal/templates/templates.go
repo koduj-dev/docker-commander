@@ -71,6 +71,23 @@ type Block struct {
 	Files       []File     `json:"files,omitempty"` // sidecar files copied into the project
 }
 
+// Fragment is a top-level "shared definition" for the builder — a YAML anchor
+// (e.g. `x-common: &common ...`) emitted above services: so any service can
+// merge it with `<<: *common`. Content is copied literally (never rendered), so
+// anchors and merge keys survive intact.
+type Fragment struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Source      string `json:"source"`
+	Content     string `json:"content,omitempty"`
+}
+
+type fragmentManifest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
 type presetManifest struct {
 	Name        string     `json:"name"`
 	Description string     `json:"description"`
@@ -125,6 +142,43 @@ func BuiltinBlocks() ([]Block, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+// BuiltinFragments returns the embedded shared definitions, sorted by name.
+func BuiltinFragments() ([]Fragment, error) {
+	dirs, err := fs.ReadDir(catalogFS, "catalog/fragments")
+	if err != nil {
+		// No fragments dir embedded yet → no built-ins, not an error.
+		return nil, nil
+	}
+	var out []Fragment
+	for _, d := range dirs {
+		if !d.IsDir() {
+			continue
+		}
+		f, err := loadFragment(path.Join("catalog/fragments", d.Name()), d.Name())
+		if err != nil {
+			return nil, fmt.Errorf("fragment %q: %w", d.Name(), err)
+		}
+		out = append(out, f)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+func loadFragment(dir, id string) (Fragment, error) {
+	var m fragmentManifest
+	if err := readManifest(dir, &m); err != nil {
+		return Fragment{}, err
+	}
+	content, err := fs.ReadFile(catalogFS, path.Join(dir, "fragment.yml"))
+	if err != nil {
+		return Fragment{}, fmt.Errorf("read fragment.yml: %w", err)
+	}
+	return Fragment{
+		ID: id, Name: m.Name, Description: m.Description, Source: SourceBuiltin,
+		Content: strings.TrimRight(string(content), "\n"),
+	}, nil
 }
 
 func loadPreset(dir, id string) (Preset, error) {
@@ -258,11 +312,24 @@ func renderString(name, body string, vars map[string]string) (string, error) {
 }
 
 // AssembleCompose builds the project files for a builder selection: a single
-// compose.yml merging each block's service (plus any top-level named volumes)
-// and the sidecar files the blocks contribute. Everything is rendered with vars.
-func AssembleCompose(slug string, blocks []Block, vars map[string]string) ([]File, error) {
+// compose.yml with any shared definitions (top-level YAML anchors) above
+// services:, each block's service (plus top-level named volumes), and the
+// sidecar files the blocks contribute. Block YAML/sidecars are rendered with
+// vars; fragments are copied literally so anchors/merge keys survive.
+func AssembleCompose(slug string, blocks []Block, fragments []Fragment, vars map[string]string) ([]File, error) {
 	var b strings.Builder
-	fmt.Fprintf(&b, "name: %s\n\nservices:\n", slug)
+	fmt.Fprintf(&b, "name: %s\n\n", slug)
+	// Shared definitions first: a service can only merge `<<: *anchor` if the
+	// anchor is defined earlier in the document.
+	for _, fr := range fragments {
+		content := strings.TrimRight(fr.Content, "\n")
+		if content == "" {
+			continue
+		}
+		b.WriteString(content)
+		b.WriteString("\n\n")
+	}
+	b.WriteString("services:\n")
 	var volumes []string
 	var sidecars []File
 	for _, blk := range blocks {
