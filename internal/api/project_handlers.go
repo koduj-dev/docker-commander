@@ -33,6 +33,17 @@ const (
 	maxProjectFiles     = 100
 	maxProjectFileBytes = 1 << 20  // 1 MiB per file
 	maxImportBytes      = 32 << 20 // 32 MiB for an imported .zip
+
+	// Seeded/edited project files get bind-mounted into containers that commonly
+	// run as a non-root uid that doesn't match the writer (nginx → uid 101,
+	// php-fpm → www-data), so the files must be world-readable and their dirs
+	// world-traversable or the container gets EACCES. Confinement comes from the
+	// data dir itself (0700, owned by the service user — see config.DataDir), not
+	// from these per-file bits; the project root dir stays 0700. (These assume a
+	// standard umask — the shipped systemd unit doesn't set a restrictive UMask;
+	// a hardened UMask=0077 would strip the world bits and re-break bind mounts.)
+	projectFileMode = 0o644
+	projectDirMode  = 0o755
 )
 
 // starterCompose seeds a new project so the editor isn't empty. The top-level
@@ -228,10 +239,10 @@ func (s *Server) handleImportProject(w http.ResponseWriter, r *http.Request) {
 		}
 		content, _ := io.ReadAll(io.LimitReader(rc, maxProjectFileBytes))
 		rc.Close()
-		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+		if err := os.MkdirAll(filepath.Dir(full), projectDirMode); err != nil {
 			continue
 		}
-		if os.WriteFile(full, content, 0o600) == nil {
+		if os.WriteFile(full, content, projectFileMode) == nil {
 			count++
 		}
 	}
@@ -374,11 +385,11 @@ func (s *Server) handleWriteProjectFile(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), projectDirMode); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := os.WriteFile(full, []byte(body.Content), 0o600); err != nil {
+	if err := os.WriteFile(full, []byte(body.Content), projectFileMode); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -418,11 +429,11 @@ func (s *Server) handleUploadProjectFileRaw(w http.ResponseWriter, r *http.Reque
 		writeErr(w, http.StatusRequestEntityTooLarge, "file too large")
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), projectDirMode); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := os.WriteFile(full, data, 0o600); err != nil {
+	if err := os.WriteFile(full, data, projectFileMode); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -511,7 +522,7 @@ func (s *Server) handleMakeProjectDir(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := os.MkdirAll(full, 0o700); err != nil {
+	if err := os.MkdirAll(full, projectDirMode); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}

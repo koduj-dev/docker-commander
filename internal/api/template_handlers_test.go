@@ -88,6 +88,32 @@ func TestCreateProjectFromBuiltinPreset(t *testing.T) {
 	}
 }
 
+func TestSeededFilesAreContainerReadable(t *testing.T) {
+	srv := newTemplatesServer(t)
+	id := createProject(t, srv, map[string]any{
+		"name":     "Perms",
+		"template": map[string]string{"id": "nginx-static", "source": "builtin"},
+	})
+	root := srv.projectRoot(id)
+	// A bind-mounted dir must be world-traversable (x) and its files world-readable
+	// (r), or a container running as a non-root uid (nginx → 101) gets EACCES —
+	// the exact "Permission denied" on /usr/share/nginx/html this guards against.
+	di, err := os.Stat(filepath.Join(root, "html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if di.Mode().Perm()&0o005 != 0o005 {
+		t.Errorf("html dir mode %o lacks world rx", di.Mode().Perm())
+	}
+	fi, err := os.Stat(filepath.Join(root, "html", "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm()&0o004 != 0o004 {
+		t.Errorf("index.html mode %o lacks world read", fi.Mode().Perm())
+	}
+}
+
 func TestCreateProjectFromBuilderBlocks(t *testing.T) {
 	srv := newTemplatesServer(t)
 	id := createProject(t, srv, map[string]any{

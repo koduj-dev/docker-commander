@@ -29,6 +29,13 @@ All notable changes to Docker Commander are documented here. The format follows
   `install-macos.sh`, and `install-windows.ps1` via a Scheduled Task).
 
 ### Fixed
+- **Bind-mounted project files were unreadable in containers** — seeded and edited
+  project files were written `0600` / dirs `0700` owned by the service user, so a
+  container running as a non-root uid (e.g. Nginx's worker, PHP-FPM's www-data)
+  got `Permission denied` on bind-mounted files — the `nginx-static`/LEMP presets
+  failed to serve `./html` / `./app`. Project files are now `0644` and their dirs
+  `0755` (confinement stays at the data dir, which is `0700`). Existing projects
+  created before this fix need to be re-created to pick up the new permissions.
 - **Compose / Projects under systemd** — the `docker compose` CLI was reported as
   unavailable (Deploy/Down disabled, with a warning) when Docker Commander ran
   under the hardened systemd unit. `ProtectHome=true` makes the service user's

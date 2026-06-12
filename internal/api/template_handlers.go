@@ -255,10 +255,10 @@ func seedProjectFiles(root string, files []templates.File) error {
 		if err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+		if err := os.MkdirAll(filepath.Dir(dst), projectDirMode); err != nil {
 			return err
 		}
-		if err := os.WriteFile(dst, []byte(f.Content), 0o600); err != nil {
+		if err := os.WriteFile(dst, []byte(f.Content), projectFileMode); err != nil {
 			return err
 		}
 	}
@@ -654,11 +654,11 @@ func (s *Server) handleWriteTemplateFile(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), projectDirMode); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := os.WriteFile(full, []byte(body.Content), 0o600); err != nil {
+	if err := os.WriteFile(full, []byte(body.Content), projectFileMode); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -693,11 +693,11 @@ func (s *Server) handleUploadTemplateFileRaw(w http.ResponseWriter, r *http.Requ
 		writeErr(w, http.StatusRequestEntityTooLarge, "file too large")
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), projectDirMode); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := os.WriteFile(full, data, 0o600); err != nil {
+	if err := os.WriteFile(full, data, projectFileMode); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -768,7 +768,7 @@ func (s *Server) handleMakeTemplateDir(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := os.MkdirAll(full, 0o700); err != nil {
+	if err := os.MkdirAll(full, projectDirMode); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
