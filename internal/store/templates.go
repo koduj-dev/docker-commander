@@ -81,6 +81,16 @@ func (s *Store) CreateProjectTemplate(ctx context.Context, t *ProjectTemplate) (
 	return res.LastInsertId()
 }
 
+// UpdateProjectTemplate changes a template's display name and description. The
+// slug (its stable identifier on disk and in create references) is immutable, so
+// renames never move files — mirrors how project renames work.
+func (s *Store) UpdateProjectTemplate(ctx context.Context, id int64, name, description string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE project_templates SET name = ?, description = ? WHERE id = ?`,
+		name, description, id)
+	return err
+}
+
 func (s *Store) DeleteProjectTemplate(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM project_templates WHERE id = ?`, id)
 	return err
@@ -147,6 +157,17 @@ func (s *Store) CreateServiceBlock(ctx context.Context, b *ServiceBlock) (int64,
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// UpdateServiceBlock changes a block's editable fields. The slug stays immutable
+// (it backs the builder reference), like project/template renames.
+func (s *Store) UpdateServiceBlock(ctx context.Context, b *ServiceBlock) error {
+	vols, _ := json.Marshal(b.Volumes)
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE service_blocks SET name = ?, description = ?, service = ?, service_yaml = ?, volumes = ?
+		WHERE id = ?`,
+		b.Name, b.Description, b.Service, b.ServiceYAML, string(vols), b.ID)
+	return err
 }
 
 func (s *Store) DeleteServiceBlock(ctx context.Context, id int64) error {

@@ -381,6 +381,24 @@ export interface TemplateRef {
   source: TemplateSource;
 }
 
+// One file in a rendered template/builder preview ({{.Var}} already substituted).
+export interface TemplateFile {
+  path: string;
+  content: string;
+}
+
+// Full block payload (YAML + volumes) for the management page's view/edit.
+export interface ServiceBlockDetail extends ServiceBlockMeta {
+  serviceYaml: string;
+  volumes: string[];
+}
+
+// Full preset payload (its files) for the management page's view; user presets
+// are edited file-by-file via the template file endpoints.
+export interface ProjectTemplateDetail extends ProjectTemplateMeta {
+  files: TemplateFile[];
+}
+
 export interface PortProbe {
   privatePort: number;
   publicPort: number;

@@ -4,6 +4,7 @@
 export const SECTION_LABELS: Record<string, string> = {
   dashboard: "Dashboard",
   containers: "Containers",
+  projects: "Projects",
   images: "Images",
   volumes: "Volumes",
   networks: "Networks",

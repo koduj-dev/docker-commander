@@ -40,6 +40,10 @@ always rendered and written **server-side**:
 - **Import** — choose a `.zip` to import an existing project folder (files are
   written through the same path sandbox).
 
+As you pick a template or builder blocks, a **live read-only preview** of the
+resulting `compose.yml` renders alongside the form, so you see what you'll get
+before creating the project.
+
 **Save as template** — the editor's 🗎 button snapshots the open project's files
 into a reusable preset that then shows up under **Template** (and can be deleted
 there). Built-in presets and blocks are read-only; the ones you save are yours to
@@ -47,6 +51,21 @@ remove.
 
 > Built-in presets/blocks ship with the binary; saved ones live in the data dir.
 > A future catalog source could pull presets from a remote API.
+
+## Managing templates
+
+The **Templates** page (sidebar, under the Projects permission) is where your
+presets and builder blocks live:
+
+- **Presets** — edit a saved preset's files in the same multi-file editor,
+  rename it / change its description, download it as a `.zip`, or delete it.
+  Built-in presets open read-only so you can inspect what they scaffold.
+- **Service blocks** — create a block, edit an existing one (name, service key,
+  the service YAML, named volumes), or delete it; built-in blocks are read-only.
+  Blocks you add here (and via the builder's **Custom service…**) appear in the
+  builder.
+
+Built-in presets/blocks can't be modified; only the ones you save are editable.
 
 ## The editor
 

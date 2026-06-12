@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -43,6 +44,30 @@ type blockJSON struct {
 	Description string               `json:"description"`
 	Source      string               `json:"source"`
 	Service     string               `json:"service"`
+	Variables   []templates.Variable `json:"variables,omitempty"`
+	Deletable   bool                 `json:"deletable"`
+}
+
+// templateDetailJSON / blockDetailJSON carry the full payload (files / YAML) the
+// management page needs to view or edit one item — the list responses omit these.
+type templateDetailJSON struct {
+	ID          string               `json:"id"`
+	Name        string               `json:"name"`
+	Description string               `json:"description"`
+	Source      string               `json:"source"`
+	Variables   []templates.Variable `json:"variables,omitempty"`
+	Files       []templates.File     `json:"files"`
+	Deletable   bool                 `json:"deletable"`
+}
+
+type blockDetailJSON struct {
+	ID          string               `json:"id"`
+	Name        string               `json:"name"`
+	Description string               `json:"description"`
+	Source      string               `json:"source"`
+	Service     string               `json:"service"`
+	ServiceYAML string               `json:"serviceYaml"`
+	Volumes     []string             `json:"volumes"`
 	Variables   []templates.Variable `json:"variables,omitempty"`
 	Deletable   bool                 `json:"deletable"`
 }
@@ -382,4 +407,386 @@ func (s *Server) handleDeleteServiceBlock(w http.ResponseWriter, r *http.Request
 	}
 	s.audit(r, "service_block.delete", chi.URLParam(r, "id"), "")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// --- preview -----------------------------------------------------------------
+
+// handlePreviewTemplate assembles the compose.yml (and any sidecar files) a given
+// template or block selection would produce, WITHOUT creating a project — it
+// powers the live read-only preview in the New project dialog. Pure read.
+func (s *Server) handlePreviewTemplate(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name      string            `json:"name"`
+		Template  *templateRef      `json:"template"`
+		Blocks    []templateRef     `json:"blocks"`
+		Variables map[string]string `json:"variables"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		name = "preview"
+	}
+	files, err := s.resolveSeedFiles(r.Context(), slugify(name), name, body.Template, body.Blocks, body.Variables)
+	if errors.Is(err, store.ErrNotFound) {
+		writeErr(w, http.StatusNotFound, "template or block not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"files": files})
+}
+
+// --- detail / update ---------------------------------------------------------
+
+// loadUserTemplate resolves {id} to a user-saved template (builtins have a
+// non-numeric id and are read-only, so they 404 here), writing the error itself.
+func (s *Server) loadUserTemplate(w http.ResponseWriter, r *http.Request) (*store.ProjectTemplate, bool) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "template not found")
+		return nil, false
+	}
+	t, err := s.store.ProjectTemplateByID(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeErr(w, http.StatusNotFound, "template not found")
+		return nil, false
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return nil, false
+	}
+	return t, true
+}
+
+// handleGetProjectTemplate returns one preset with its files. Built-in presets
+// (non-numeric id) return their embedded, *unrendered* source; user presets
+// return the on-disk snapshot.
+func (s *Server) handleGetProjectTemplate(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if nid, err := strconv.ParseInt(id, 10, 64); err == nil {
+		t, err := s.store.ProjectTemplateByID(r.Context(), nid)
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "template not found")
+			return
+		}
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		files, err := readProjectFilesFromDisk(s.templateRoot(t.ID))
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "could not read template files: "+err.Error())
+			return
+		}
+		if files == nil {
+			files = []templates.File{}
+		}
+		writeJSON(w, http.StatusOK, templateDetailJSON{
+			ID: id, Name: t.Name, Description: t.Description, Source: templates.SourceUser,
+			Files: files, Deletable: true,
+		})
+		return
+	}
+	p, err := findBuiltinPreset(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "template not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, templateDetailJSON{
+		ID: p.ID, Name: p.Name, Description: p.Description, Source: templates.SourceBuiltin,
+		Variables: p.Variables, Files: p.Files, Deletable: false,
+	})
+}
+
+// handleUpdateProjectTemplate renames a user preset / edits its description (the
+// slug stays put). Files are edited through the file endpoints below.
+func (s *Server) handleUpdateProjectTemplate(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.loadUserTemplate(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		writeErr(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if err := s.store.UpdateProjectTemplate(r.Context(), t.ID, name, strings.TrimSpace(body.Description)); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "project_template.update", t.Slug, "")
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleGetServiceBlock returns one block's full body (YAML + volumes) so the
+// management page can view a built-in or edit a user block.
+func (s *Server) handleGetServiceBlock(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if nid, err := strconv.ParseInt(id, 10, 64); err == nil {
+		b, err := s.store.ServiceBlockByID(r.Context(), nid)
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "service block not found")
+			return
+		}
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, blockDetailJSON{
+			ID: id, Name: b.Name, Description: b.Description, Source: templates.SourceUser,
+			Service: b.Service, ServiceYAML: b.ServiceYAML, Volumes: b.Volumes, Deletable: true,
+		})
+		return
+	}
+	b, err := findBuiltinBlock(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "service block not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, blockDetailJSON{
+		ID: b.ID, Name: b.Name, Description: b.Description, Source: templates.SourceBuiltin,
+		Service: b.Service, ServiceYAML: b.ServiceYAML, Volumes: b.Volumes, Variables: b.Variables, Deletable: false,
+	})
+}
+
+// handleUpdateServiceBlock edits a user block (built-ins have a non-numeric id
+// and 400 here, so they can't be modified).
+func (s *Server) handleUpdateServiceBlock(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "service block not found")
+		return
+	}
+	existing, err := s.store.ServiceBlockByID(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeErr(w, http.StatusNotFound, "service block not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var body struct {
+		Name        string   `json:"name"`
+		Description string   `json:"description"`
+		Service     string   `json:"service"`
+		ServiceYAML string   `json:"serviceYaml"`
+		Volumes     []string `json:"volumes"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if strings.TrimSpace(body.Name) == "" || strings.TrimSpace(body.Service) == "" || strings.TrimSpace(body.ServiceYAML) == "" {
+		writeErr(w, http.StatusBadRequest, "name, service and serviceYaml are required")
+		return
+	}
+	existing.Name = strings.TrimSpace(body.Name)
+	existing.Description = strings.TrimSpace(body.Description)
+	existing.Service = strings.TrimSpace(body.Service)
+	existing.ServiceYAML = body.ServiceYAML
+	existing.Volumes = body.Volumes
+	if err := s.store.UpdateServiceBlock(r.Context(), existing); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "service_block.update", existing.Slug, "")
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// --- template files (user presets only) --------------------------------------
+// These mirror the project file endpoints but operate on the template root and
+// reject built-ins (loadUserTemplate 404s on a non-numeric id). Templates have no
+// updated_at to touch and aren't deployable, so there's no compose tooling here.
+
+func (s *Server) handleListTemplateFiles(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.loadUserTemplate(w, r)
+	if !ok {
+		return
+	}
+	out, err := listFilesInRoot(s.templateRoot(t.ID))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleWriteTemplateFile(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.loadUserTemplate(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Name    string `json:"name"`
+		Content string `json:"content"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if len(body.Content) > maxProjectFileBytes {
+		writeErr(w, http.StatusRequestEntityTooLarge, "file too large")
+		return
+	}
+	root := s.templateRoot(t.ID)
+	full, err := safeJoin(root, body.Name)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if _, statErr := os.Stat(full); errors.Is(statErr, os.ErrNotExist) {
+		if n, _ := countFiles(root); n >= maxProjectFiles {
+			writeErr(w, http.StatusBadRequest, "too many files in this template")
+			return
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := os.WriteFile(full, []byte(body.Content), 0o600); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "project_template.file.write", t.Slug, body.Name)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleUploadTemplateFileRaw(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.loadUserTemplate(w, r)
+	if !ok {
+		return
+	}
+	root := s.templateRoot(t.ID)
+	name := r.URL.Query().Get("path")
+	full, err := safeJoin(root, name)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if _, statErr := os.Stat(full); errors.Is(statErr, os.ErrNotExist) {
+		if n, _ := countFiles(root); n >= maxProjectFiles {
+			writeErr(w, http.StatusBadRequest, "too many files in this template")
+			return
+		}
+	}
+	data, err := io.ReadAll(io.LimitReader(r.Body, maxProjectFileBytes+1))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if len(data) > maxProjectFileBytes {
+		writeErr(w, http.StatusRequestEntityTooLarge, "file too large")
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := os.WriteFile(full, data, 0o600); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "project_template.file.upload", t.Slug, name)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "bytes": len(data)})
+}
+
+func (s *Server) handleDownloadTemplateFile(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.loadUserTemplate(w, r)
+	if !ok {
+		return
+	}
+	name := r.URL.Query().Get("path")
+	full, err := safeJoin(s.templateRoot(t.ID), name)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	f, err := os.Open(full)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "file not found")
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || info.IsDir() {
+		writeErr(w, http.StatusBadRequest, "not a file")
+		return
+	}
+	s.audit(r, "project_template.file.download", t.Slug, name)
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+headerFilename(filepath.Base(full))+"\"")
+	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
+}
+
+func (s *Server) handleDeleteTemplateFile(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.loadUserTemplate(w, r)
+	if !ok {
+		return
+	}
+	full, err := safeJoin(s.templateRoot(t.ID), r.URL.Query().Get("path"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := os.Remove(full); err != nil && !errors.Is(err, os.ErrNotExist) {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "project_template.file.delete", t.Slug, r.URL.Query().Get("path"))
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleMakeTemplateDir(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.loadUserTemplate(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	full, err := safeJoin(s.templateRoot(t.ID), body.Name)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := os.MkdirAll(full, 0o700); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "project_template.dir.create", t.Slug, body.Name)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleDownloadTemplate(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.loadUserTemplate(w, r)
+	if !ok {
+		return
+	}
+	data, err := zipDir(s.templateRoot(t.ID))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not build template archive: "+err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+t.Slug+`.zip"`)
+	_, _ = w.Write(data)
 }

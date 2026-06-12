@@ -10,6 +10,7 @@ import { bytes as fmtBytes } from "../lib/format";
 import { api, ApiError } from "../lib/api";
 import type { Project, ProjectFile, Stack, ComposeModel, ComposeService, ProjectTemplateMeta, ServiceBlockMeta, TemplateRef, TemplateVariable } from "../lib/types";
 import type { ServerCheck } from "../components/CodeEditor";
+import { buildTree, TreeItem } from "../components/FileTree";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner, StateBadge } from "../components/ui";
 import { useDialogs } from "../components/Dialog";
@@ -27,77 +28,6 @@ function projectState(stack: Stack | undefined): { cls: string; label: string; d
   if (stack.running === 0) return { cls: "bg-danger text-danger", label: "Stopped", deployed: true };
   if (stack.running === total) return { cls: "bg-ok text-ok", label: "Running", deployed: true };
   return { cls: "bg-warn text-warn", label: "Partial", deployed: true };
-}
-
-type TreeNode = { name: string; path: string; isDir: boolean; binary?: boolean; children: TreeNode[] };
-
-// buildTree turns the flat file list (paths like "config/app.conf") into a
-// nested tree, materialising intermediate folders.
-function buildTree(files: ProjectFile[]): TreeNode[] {
-  const root: TreeNode = { name: "", path: "", isDir: true, children: [] };
-  const dirs = new Map<string, TreeNode>([["", root]]);
-  const ensureDir = (path: string): TreeNode => {
-    const hit = dirs.get(path);
-    if (hit) return hit;
-    const slash = path.lastIndexOf("/");
-    const parent = ensureDir(slash >= 0 ? path.slice(0, slash) : "");
-    const node: TreeNode = { name: path.slice(slash + 1), path, isDir: true, children: [] };
-    parent.children.push(node);
-    dirs.set(path, node);
-    return node;
-  };
-  for (const f of files) {
-    const slash = f.name.lastIndexOf("/");
-    if (f.isDir) { ensureDir(f.name); continue; }
-    const parent = ensureDir(slash >= 0 ? f.name.slice(0, slash) : "");
-    parent.children.push({ name: f.name.slice(slash + 1), path: f.name, isDir: false, binary: f.binary, children: [] });
-  }
-  const sort = (n: TreeNode) => {
-    n.children.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
-    n.children.forEach(sort);
-  };
-  sort(root);
-  return root.children;
-}
-
-// TreeItem renders one tree node (folder or file) recursively.
-function TreeItem({ node, depth, active, dirty, collapsed, currentDir, onToggle, onSelect, onEnterDir, onDelete }: {
-  node: TreeNode; depth: number; active: string; dirty: boolean; currentDir: string;
-  collapsed: Set<string>; onToggle: (path: string) => void;
-  onSelect: (path: string) => void; onEnterDir: (path: string) => void; onDelete: (n: { name: string; isDir?: boolean }) => void;
-}) {
-  const pad = { paddingLeft: `${depth * 12 + 6}px` };
-  if (node.isDir) {
-    const open = !collapsed.has(node.path);
-    const isCurrent = node.path === currentDir;
-    return (
-      <>
-        {/* Clicking the row "enters" the folder (selects + expands); the chevron toggles collapse. */}
-        <div className={`group flex items-center gap-1 rounded px-2 py-1 text-sm cursor-pointer ${isCurrent ? "bg-accent/10 text-accent" : "hover:bg-panel2"}`} style={pad} onClick={() => onEnterDir(node.path)}>
-          <button className="shrink-0" title={open ? "Collapse" : "Expand"} onClick={(e) => { e.stopPropagation(); onToggle(node.path); }}>
-            <ChevronRight className={`h-3.5 w-3.5 transition-transform ${open ? "rotate-90" : ""} ${isCurrent ? "text-accent" : "text-muted"}`} />
-          </button>
-          <Folder className={`h-3.5 w-3.5 shrink-0 ${isCurrent ? "text-accent" : "text-muted"}`} />
-          <span className={`truncate font-mono text-xs ${isCurrent ? "" : "text-muted"}`}>{node.name}</span>
-          <button className="ml-auto opacity-0 group-hover:opacity-100 text-danger" title="Delete folder" onClick={(e) => { e.stopPropagation(); onDelete({ name: node.path, isDir: true }); }}><Trash2 className="h-3.5 w-3.5" /></button>
-        </div>
-        {open && node.children.map((c) => (
-          <TreeItem key={c.path} node={c} depth={depth + 1} active={active} dirty={dirty} collapsed={collapsed} currentDir={currentDir} onToggle={onToggle} onSelect={onSelect} onEnterDir={onEnterDir} onDelete={onDelete} />
-        ))}
-      </>
-    );
-  }
-  const isActive = node.path === active;
-  return (
-    <div className={`group flex items-center gap-1 rounded px-2 py-1 text-sm cursor-pointer ${isActive ? "bg-accent/15 text-accent" : "hover:bg-panel2"}`} style={pad} onClick={() => onSelect(node.path)}>
-      {node.binary
-        ? <FileBox className="h-3.5 w-3.5 shrink-0 opacity-70" />
-        : <FileText className="h-3.5 w-3.5 shrink-0 opacity-70" />}
-      <span className="truncate font-mono text-xs">{node.name}</span>
-      {dirty && isActive && <span className="text-warn text-xs">●</span>}
-      <button className="ml-auto opacity-0 group-hover:opacity-100 text-danger" title="Delete file" onClick={(e) => { e.stopPropagation(); onDelete({ name: node.path, isDir: false }); }}><Trash2 className="h-3.5 w-3.5" /></button>
-    </div>
-  );
 }
 
 // isComposeFile reports whether a project file is a compose entry file that
@@ -560,6 +490,10 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
   const [customOpen, setCustomOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [preview, setPreview] = useState("");
+  const [previewName, setPreviewName] = useState("compose.yml");
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewErr, setPreviewErr] = useState("");
 
   const loadCatalog = useCallback(() => {
     api.projectTemplates().then(setTemplates).catch(() => {});
@@ -576,6 +510,33 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
       : [];
 
   const setVar = (k: string, v: string) => setVars((prev) => ({ ...prev, [k]: v }));
+
+  // Live read-only preview of the compose.yml the current selection would seed.
+  // Shown for a chosen preset or a non-empty builder selection; debounced so it
+  // doesn't fire on every keystroke. Generated secrets vary per call — that's
+  // fine for an illustrative preview.
+  const showPreview = (mode === "template" && !!selectedTpl) || (mode === "builder" && selectedBlocks.length > 0);
+  useEffect(() => {
+    if (!showPreview) { setPreview(""); setPreviewErr(""); setPreviewBusy(false); return; }
+    const variables = Object.fromEntries(activeVars.map((v) => [v.key, vars[v.key] ?? ""]));
+    const opts = mode === "builder"
+      ? { name: name || "preview", blocks: selectedBlocks.map((b): TemplateRef => ({ id: b.id, source: b.source })), variables }
+      : { name: name || "preview", template: { id: selectedTpl!.id, source: selectedTpl!.source }, variables };
+    let cancelled = false;
+    setPreviewBusy(true);
+    const t = setTimeout(() => {
+      api.previewTemplate(opts).then((r) => {
+        if (cancelled) return;
+        // Prefer the compose entry file; user-saved snapshots may name it
+        // compose.yaml / docker-compose.yml, so match those too before falling back.
+        const compose = r.files.find((f) => /^(docker-)?compose\.ya?ml$/i.test(f.path)) ?? r.files[0];
+        setPreview(compose?.content ?? ""); setPreviewName(compose?.path ?? "compose.yml"); setPreviewErr("");
+      }).catch((e) => { if (!cancelled) { setPreview(""); setPreviewErr(e instanceof ApiError ? e.message : "preview failed"); } })
+        .finally(() => { if (!cancelled) setPreviewBusy(false); });
+    }, 350);
+    return () => { cancelled = true; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showPreview, mode, tplKey, picked, vars, name, blocks, templates]);
 
   const deleteItem = async (kind: "template" | "block", id: string, label: string) => {
     if (!(await dialogs.confirm({ title: `Delete ${kind}`, message: <>Delete <code className="font-mono text-text">{label}</code>?</>, danger: true, confirmLabel: "Delete" }))) return;
@@ -620,13 +581,14 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
 
   return (
     <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={onClose}>
-      <form className="card w-full max-w-2xl flex flex-col max-h-[88vh]" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+      <form className={clsx("card w-full flex flex-col max-h-[88vh]", showPreview ? "max-w-4xl" : "max-w-2xl")} onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <FolderGit2 className="h-4 w-4 text-accent" />
           <div className="font-medium">New project</div>
           <button type="button" className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
         </div>
-        <div className="p-4 space-y-3 overflow-y-auto">
+        <div className="flex-1 flex min-h-0">
+        <div className="flex-1 min-w-0 p-4 space-y-3 overflow-y-auto">
           <label className="block">
             <span className="label">Project name</span>
             <input autoFocus className="input" value={name} placeholder="My app" onChange={(e) => setName(e.target.value)} />
@@ -698,6 +660,20 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
 
           {mode !== "import" && <VarFields vars={activeVars} values={vars} onChange={setVar} />}
           {err && <p className="text-sm text-danger">{err}</p>}
+        </div>
+        {showPreview && (
+          <div className="hidden md:flex w-[42%] shrink-0 border-l border-border flex-col min-h-0">
+            <div className="flex items-center gap-2 px-3 py-2 border-b border-border text-xs text-muted">
+              <Eye className="h-3.5 w-3.5" /> Preview — <span className="font-mono">{previewName}</span>
+              {previewBusy && <Loader2 className="h-3 w-3 animate-spin ml-auto" />}
+            </div>
+            <div className="flex-1 overflow-auto p-3 bg-panel2/40">
+              {previewErr
+                ? <p className="text-xs text-danger">{previewErr}</p>
+                : <pre className="text-xs font-mono whitespace-pre text-text/90">{preview || "…"}</pre>}
+            </div>
+          </div>
+        )}
         </div>
         <div className="flex justify-end gap-2 p-4 border-t border-border">
           <button type="button" className="btn-ghost px-3 py-1.5 text-sm" onClick={onClose}>Cancel</button>
@@ -919,7 +895,7 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
-      <div className="card relative w-[85vw] h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+      <div className="card relative w-[92vw] h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         {busy === "delproj" && (
           <div className="absolute inset-0 z-10 bg-bg/70 grid place-items-center rounded-xl">
             <div className="flex items-center gap-2 text-sm text-muted"><Loader2 className="h-4 w-4 animate-spin" /> Deleting project…</div>
@@ -957,7 +933,7 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
 
         <div className="flex-1 flex min-h-0">
           {/* File tree */}
-          <div className="w-56 shrink-0 border-r border-border flex flex-col">
+          <div className="w-64 shrink-0 border-r border-border flex flex-col">
             <div className="flex items-center gap-1 p-2 border-b border-border">
               <span className="text-xs uppercase tracking-wide text-muted px-1">Files</span>
               <button className="btn-ghost px-1.5 py-1 ml-auto" title={`New file${currentDir ? ` in ${currentDir}/` : ""}`} onClick={addFile}><FilePlus className="h-4 w-4" /></button>

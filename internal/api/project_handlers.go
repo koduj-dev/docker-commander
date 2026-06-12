@@ -289,7 +289,18 @@ func (s *Server) handleListProjectFiles(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	root := s.projectRoot(p.ID)
+	out, err := listFilesInRoot(s.projectRoot(p.ID))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// listFilesInRoot walks a project/template folder and returns every file with
+// its content (binary/oversized files are flagged, not inlined). Shared by the
+// project and template file listings — both fold to the same caps and sandboxing.
+func listFilesInRoot(root string) ([]projectFileJSON, error) {
 	var out []projectFileJSON
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || path == root || d.Type()&fs.ModeSymlink != 0 {
@@ -324,13 +335,12 @@ func (s *Server) handleListProjectFiles(w http.ResponseWriter, r *http.Request) 
 		return nil
 	})
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
+		return nil, err
 	}
 	if out == nil {
 		out = []projectFileJSON{}
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
 // handleWriteProjectFile creates or overwrites one file in the project folder.
@@ -803,10 +813,20 @@ func (s *Server) handleDownloadProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	root := s.projectRoot(p.ID)
-	// Build the archive in memory (projects are bounded by maxProjectFiles ×
-	// maxProjectFileBytes) so a mid-walk read error becomes a clean 500 instead
-	// of a silently truncated zip streamed under a 200.
+	data, err := zipDir(s.projectRoot(p.ID))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not build project archive: "+err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+p.Slug+`.zip"`)
+	_, _ = w.Write(data)
+}
+
+// zipDir builds an in-memory zip of every file under root (folders are small and
+// bounded), so a mid-walk read error becomes a clean error instead of a silently
+// truncated archive. Symlinks are skipped. Shared by project/template downloads.
+func zipDir(root string) ([]byte, error) {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -831,12 +851,9 @@ func (s *Server) handleDownloadProject(w http.ResponseWriter, r *http.Request) {
 		_ = zw.Close()
 	}
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "could not build project archive: "+err.Error())
-		return
+		return nil, err
 	}
-	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", `attachment; filename="`+p.Slug+`.zip"`)
-	_, _ = w.Write(buf.Bytes())
+	return buf.Bytes(), nil
 }
 
 func (s *Server) runProjectCompose(w http.ResponseWriter, r *http.Request, fn func(ctx context.Context, dir, slug string) (string, error), action string) {

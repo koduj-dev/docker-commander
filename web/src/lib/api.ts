@@ -26,7 +26,10 @@ import type {
   Registry,
   Project,
   ProjectTemplateMeta,
+  ProjectTemplateDetail,
   ServiceBlockMeta,
+  ServiceBlockDetail,
+  TemplateFile,
   TemplateRef,
   FileApi,
   ProjectFile,
@@ -364,11 +367,41 @@ export const api = {
   // Project templates (presets) + builder service blocks — builtin + user merged.
   projectTemplates: () => req<ProjectTemplateMeta[]>("GET", "/api/project-templates"),
   serviceBlocks: () => req<ServiceBlockMeta[]>("GET", "/api/service-blocks"),
+  // Live read-only preview: the compose.yml (+ sidecars) a selection would seed,
+  // without creating a project. Powers the New project dialog preview.
+  previewTemplate: (opts: { name?: string; template?: TemplateRef; blocks?: TemplateRef[]; variables?: Record<string, string> }) =>
+    req<{ files: TemplateFile[] }>("POST", "/api/project-templates/preview", opts),
   saveProjectAsTemplate: (fromProjectId: number, name: string, description: string) =>
     req<{ id: number; slug: string }>("POST", "/api/project-templates", { fromProjectId, name, description }),
+  // Single-preset detail (its files) for the management page's view/edit.
+  projectTemplate: (id: string) => req<ProjectTemplateDetail>("GET", `/api/project-templates/${id}`),
+  updateProjectTemplate: (id: string, name: string, description: string) =>
+    req<{ ok: boolean }>("PUT", `/api/project-templates/${id}`, { name, description }),
   deleteProjectTemplate: (id: string) => req<{ ok: boolean }>("DELETE", `/api/project-templates/${id}`),
+  // Template file editing (user presets only — local, no host param).
+  templateFiles: (id: string) => req<ProjectFile[]>("GET", `/api/project-templates/${id}/files`),
+  makeTemplateDir: (id: string, name: string) => req<{ ok: boolean }>("POST", `/api/project-templates/${id}/files/dir`, { name }),
+  writeTemplateFile: (id: string, name: string, content: string) =>
+    req<{ ok: boolean }>("PUT", `/api/project-templates/${id}/files`, { name, content }),
+  deleteTemplateFile: (id: string, path: string) =>
+    req<{ ok: boolean }>("DELETE", `/api/project-templates/${id}/files?path=${encodeURIComponent(path)}`),
+  templateFileDownloadUrl: (id: string, name: string) =>
+    `/api/project-templates/${id}/files/raw?path=${encodeURIComponent(name)}`,
+  uploadTemplateFile: async (id: string, name: string, file: File) => {
+    const res = await fetch(`/api/project-templates/${id}/files/raw?path=${encodeURIComponent(name)}`, {
+      method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/octet-stream" }, body: file,
+    });
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : null;
+    if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText);
+    return data as { ok: boolean; error?: string; bytes?: number };
+  },
+  templateDownloadUrl: (id: string) => `/api/project-templates/${id}/download`,
   createServiceBlock: (b: { name: string; description: string; service: string; serviceYaml: string; volumes: string[] }) =>
     req<{ id: number; slug: string }>("POST", "/api/service-blocks", b),
+  serviceBlock: (id: string) => req<ServiceBlockDetail>("GET", `/api/service-blocks/${id}`),
+  updateServiceBlock: (id: string, b: { name: string; description: string; service: string; serviceYaml: string; volumes: string[] }) =>
+    req<{ ok: boolean }>("PUT", `/api/service-blocks/${id}`, b),
   deleteServiceBlock: (id: string) => req<{ ok: boolean }>("DELETE", `/api/service-blocks/${id}`),
 
   // Generic raw inspect for any object kind. id/ref travels as a query param.
