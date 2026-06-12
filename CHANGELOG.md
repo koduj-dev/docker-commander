@@ -16,7 +16,8 @@ All notable changes to Docker Commander are documented here. The format follows
 - **Templates management page** — a new **Templates** section (under Projects'
   permission) to manage presets and builder service blocks in one place: edit a
   user preset's files in the multi-file editor, rename it, add/edit/delete your
-  own service blocks, and inspect built-in ones read-only. The **New project**
+  own service blocks, inspect built-in ones read-only, and **duplicate** any
+  preset (including a built-in) into a new editable copy. The **New project**
   dialog now shows a **live read-only preview** of the `compose.yml` a template
   or builder selection would produce, and the project editor opens wider.
 - **Project templates & builder** — creating a project now offers three ways to

@@ -149,6 +149,7 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/project-templates", s.handleListProjectTemplates)
 			r.Post("/project-templates", s.handleCreateProjectTemplate)
 			r.Post("/project-templates/preview", s.handlePreviewTemplate)
+			r.Post("/project-templates/{id}/duplicate", s.handleDuplicateProjectTemplate)
 			r.Get("/project-templates/{id}", s.handleGetProjectTemplate)
 			r.Put("/project-templates/{id}", s.handleUpdateProjectTemplate)
 			r.Delete("/project-templates/{id}", s.handleDeleteProjectTemplate)

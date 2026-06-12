@@ -378,6 +378,10 @@ export const api = {
   projectTemplate: (id: string) => req<ProjectTemplateDetail>("GET", `/api/project-templates/${id}`),
   updateProjectTemplate: (id: string, name: string, description: string) =>
     req<{ ok: boolean }>("PUT", `/api/project-templates/${id}`, { name, description }),
+  // Copy any preset (built-in or user) into a new editable user preset. Built-in
+  // sources are rendered with their default variables first.
+  duplicateProjectTemplate: (id: string, name: string) =>
+    req<{ id: number; slug: string }>("POST", `/api/project-templates/${id}/duplicate`, { name }),
   deleteProjectTemplate: (id: string) => req<{ ok: boolean }>("DELETE", `/api/project-templates/${id}`),
   // Template file editing (user presets only — local, no host param).
   templateFiles: (id: string) => req<ProjectFile[]>("GET", `/api/project-templates/${id}/files`),

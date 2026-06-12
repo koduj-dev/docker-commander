@@ -179,6 +179,38 @@ func TestSaveProjectAsTemplateAndList(t *testing.T) {
 	}
 }
 
+func TestDuplicateBuiltinTemplateRendersDefaults(t *testing.T) {
+	srv := newTemplatesServer(t)
+	// Duplicate a built-in preset into a new user preset.
+	dw := postJSON(t, func(w http.ResponseWriter, r *http.Request) {
+		srv.handleDuplicateProjectTemplate(w, withURLParam(r, "id", "nginx-static"))
+	}, "/api/project-templates/nginx-static/duplicate", map[string]string{"name": "My Nginx"})
+	if dw.Code != http.StatusOK {
+		t.Fatalf("duplicate: status %d — %s", dw.Code, dw.Body.String())
+	}
+	tpl, err := srv.store.ProjectTemplateBySlug(context.Background(), "my-nginx")
+	if err != nil {
+		t.Fatalf("duplicate not stored: %v", err)
+	}
+	// The built-in's {{.Var}} markers must be rendered to concrete values in the
+	// literal user copy (default HttpPort 8080), not left as template syntax.
+	compose, err := os.ReadFile(filepath.Join(srv.templateRoot(tpl.ID), "compose.yml"))
+	if err != nil {
+		t.Fatalf("read duplicated compose: %v", err)
+	}
+	got := string(compose)
+	if strings.Contains(got, "{{") {
+		t.Errorf("duplicated compose still has template markers:\n%s", got)
+	}
+	if !strings.Contains(got, "8080:80") || !strings.Contains(got, "name: my-nginx") {
+		t.Errorf("duplicated compose missing rendered defaults:\n%s", got)
+	}
+	// The sidecar file came along too.
+	if _, err := os.Stat(filepath.Join(srv.templateRoot(tpl.ID), "html", "index.html")); err != nil {
+		t.Errorf("sidecar not copied: %v", err)
+	}
+}
+
 func TestPreviewTemplateDoesNotCreateProject(t *testing.T) {
 	srv := newTemplatesServer(t)
 	w := postJSON(t, srv.handlePreviewTemplate, "/api/project-templates/preview", map[string]any{

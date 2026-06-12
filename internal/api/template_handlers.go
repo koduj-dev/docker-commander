@@ -292,7 +292,31 @@ func readProjectFilesFromDisk(root string) ([]templates.File, error) {
 	return out, err
 }
 
-// --- save as template / block ------------------------------------------------
+// --- save as template / duplicate --------------------------------------------
+
+// storeUserTemplate creates a user preset row and seeds its files on disk,
+// rolling back the row + folder on any write error. Shared by save-as-template
+// and duplicate. Returns store.ErrDuplicate on a slug collision (caller maps it
+// to 409).
+func (s *Server) storeUserTemplate(ctx context.Context, name, description, createdBy string, files []templates.File) (int64, string, error) {
+	slug := slugify(name)
+	id, err := s.store.CreateProjectTemplate(ctx, &store.ProjectTemplate{
+		Name: name, Slug: slug, Description: description, CreatedBy: createdBy,
+	})
+	if err != nil {
+		return 0, slug, err
+	}
+	root := s.templateRoot(id)
+	if err := os.MkdirAll(root, 0o700); err == nil {
+		err = seedProjectFiles(root, files)
+	}
+	if err != nil {
+		_ = os.RemoveAll(root)
+		_ = s.store.DeleteProjectTemplate(ctx, id)
+		return 0, slug, err
+	}
+	return id, slug, nil
+}
 
 func (s *Server) handleCreateProjectTemplate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -318,30 +342,61 @@ func (s *Server) handleCreateProjectTemplate(w http.ResponseWriter, r *http.Requ
 		writeErr(w, http.StatusInternalServerError, "could not read project files: "+err.Error())
 		return
 	}
-
-	slug := slugify(name)
-	id, err := s.store.CreateProjectTemplate(r.Context(), &store.ProjectTemplate{
-		Name: name, Slug: slug, Description: strings.TrimSpace(body.Description), CreatedBy: currentUsername(r),
-	})
+	id, slug, err := s.storeUserTemplate(r.Context(), name, strings.TrimSpace(body.Description), currentUsername(r), files)
 	if errors.Is(err, store.ErrDuplicate) {
 		writeErr(w, http.StatusConflict, "a template named \""+slug+"\" already exists")
 		return
 	}
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	root := s.templateRoot(id)
-	if err := os.MkdirAll(root, 0o700); err == nil {
-		err = seedProjectFiles(root, files)
-	}
-	if err != nil {
-		_ = os.RemoveAll(root)
-		_ = s.store.DeleteProjectTemplate(r.Context(), id)
 		writeErr(w, http.StatusInternalServerError, "could not store template files: "+err.Error())
 		return
 	}
 	s.audit(r, "project_template.create", slug, "")
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "slug": slug})
+}
+
+// handleDuplicateProjectTemplate copies any preset — built-in or user — into a
+// new, editable user preset. A built-in source is rendered with its default
+// variable values first (user presets are literal snapshots with no variables),
+// so the copy has concrete files instead of unresolved {{.Var}} markers; a user
+// source is copied as-is.
+func (s *Server) handleDuplicateProjectTemplate(w http.ResponseWriter, r *http.Request) {
+	srcID := chi.URLParam(r, "id")
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		writeErr(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	src := &templateRef{ID: srcID, Source: templates.SourceBuiltin}
+	if _, err := strconv.ParseInt(srcID, 10, 64); err == nil {
+		src.Source = templates.SourceUser
+	}
+	files, err := s.resolveSeedFiles(r.Context(), slugify(name), name, src, nil, nil)
+	if errors.Is(err, store.ErrNotFound) || errors.Is(err, errBadTemplateRef) {
+		writeErr(w, http.StatusNotFound, "source template not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	id, slug, err := s.storeUserTemplate(r.Context(), name, "", currentUsername(r), files)
+	if errors.Is(err, store.ErrDuplicate) {
+		writeErr(w, http.StatusConflict, "a template named \""+slug+"\" already exists")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not store template files: "+err.Error())
+		return
+	}
+	s.audit(r, "project_template.duplicate", slug, srcID)
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "slug": slug})
 }
 

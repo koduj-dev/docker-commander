@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
   LayoutTemplate, Puzzle, Plus, Trash2, Eye, Pencil, FileText, Download, X, Save, Loader2,
-  FilePlus, FolderPlus, Upload, FileBox, Folder,
+  FilePlus, FolderPlus, Upload, FileBox, Folder, Copy,
 } from "lucide-react";
 import { api, ApiError } from "../lib/api";
 import type { ProjectTemplateMeta, ServiceBlockMeta, ProjectFile } from "../lib/types";
@@ -39,6 +39,12 @@ export function Templates() {
     if (!(await dialogs.confirm({ title: "Delete template", message: <>Delete <code className="font-mono text-text">{t.name}</code> and its files?</>, danger: true, confirmLabel: "Delete" }))) return;
     try { await api.deleteProjectTemplate(t.id); load(); }
     catch (e) { dialogs.alert({ title: "Could not delete", message: e instanceof ApiError ? e.message : "failed" }); }
+  };
+  const duplicateTpl = async (t: ProjectTemplateMeta) => {
+    const name = await dialogs.prompt({ title: "Duplicate template", label: "Name for the copy", defaultValue: `${t.name} copy` });
+    if (!name || !name.trim()) return;
+    try { await api.duplicateProjectTemplate(t.id, name.trim()); load(); }
+    catch (e) { dialogs.alert({ title: "Could not duplicate", message: e instanceof ApiError ? e.message : "failed" }); }
   };
   const deleteBlock = async (b: ServiceBlockMeta) => {
     if (!(await dialogs.confirm({ title: "Delete service block", message: <>Delete <code className="font-mono text-text">{b.name}</code>?</>, danger: true, confirmLabel: "Delete" }))) return;
@@ -78,6 +84,7 @@ export function Templates() {
                     <button className="btn-ghost px-2 py-1" title={t.deletable ? "Edit files" : "View files"} onClick={() => setOpenTpl(t)}>
                       {t.deletable ? <FileText className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </button>
+                    <button className="btn-ghost px-2 py-1" title="Duplicate into an editable copy" onClick={() => duplicateTpl(t)}><Copy className="h-4 w-4" /></button>
                     {t.deletable && <button className="btn-ghost px-2 py-1" title="Rename" onClick={() => setRenameTpl(t)}><Pencil className="h-4 w-4" /></button>}
                     {t.deletable && <a className="btn-ghost px-2 py-1" title="Download as .zip" href={api.templateDownloadUrl(t.id)}><Download className="h-4 w-4" /></a>}
                     {t.deletable && <button className="btn-ghost px-2 py-1 text-danger" title="Delete" onClick={() => deleteTpl(t)}><Trash2 className="h-4 w-4" /></button>}
