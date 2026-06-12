@@ -25,13 +25,19 @@ one tier wider.
 | Tiny text form (name + maybe 1–2 fields) | `w-full max-w-lg` |
 | Standard form (several fields, no code) | `w-full max-w-2xl` |
 | **Anything with a code/YAML textarea or editor** (service block, shared definition, snippet) | `w-full max-w-3xl` |
-| Two-pane form **with a live preview** (e.g. New project) | `w-full max-w-6xl` while the preview shows, else `max-w-2xl` (toggle via `clsx`) |
+| Two-pane form **with a live preview** (e.g. New project) | `w-[92vw] max-w-[1500px]` while the preview shows, else `w-full max-w-2xl` (toggle via `clsx`) |
 | Full multi-file editor (project / template files) | `w-[92vw] h-[90vh]` |
 | Read-only output / log / resolved-compose panel | `w-[70vw] max-h-[80vh]` |
 
 Never ship a code/YAML modal at `max-w-md`/`max-w-xl` — that's the mistake that
 keeps getting flagged. Always pair a width with `flex flex-col` and a height cap
-(`max-h-[88vh]`) so the body scrolls.
+(`max-h-[88vh]`/`max-h-[90vh]`) so the body scrolls.
+
+**Big modals use viewport-relative width.** A pure `max-w-*` cap (even `max-w-6xl`)
+looks small and lost on a 2K/ultrawide monitor — large/two-pane modals were flagged
+as "malej" on a wide screen (2026-06-12). So for the big tiers use
+`w-[92vw] max-w-[1500px]` (fills wide screens, still sane on small ones), not a bare
+`max-w-6xl`. Small text forms can stay `w-full max-w-lg/2xl`.
 
 ## Modal anatomy & z-index layering
 

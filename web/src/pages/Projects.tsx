@@ -639,7 +639,7 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
 
   return (
     <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={onClose}>
-      <form className={clsx("card w-full flex flex-col max-h-[88vh]", showPreview ? "max-w-6xl" : "max-w-2xl")} onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+      <form className={clsx("card flex flex-col max-h-[90vh]", showPreview ? "w-[92vw] max-w-[1500px]" : "w-full max-w-2xl")} onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <FolderGit2 className="h-4 w-4 text-accent" />
           <div className="font-medium">New project</div>
