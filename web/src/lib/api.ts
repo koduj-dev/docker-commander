@@ -409,6 +409,8 @@ export const api = {
   serviceBlock: (id: string) => req<ServiceBlockDetail>("GET", `/api/service-blocks/${id}`),
   updateServiceBlock: (id: string, b: { name: string; description: string; service: string; serviceYaml: string; volumes: string[] }) =>
     req<{ ok: boolean }>("PUT", `/api/service-blocks/${id}`, b),
+  duplicateServiceBlock: (id: string, name: string) =>
+    req<{ id: number; slug: string }>("POST", `/api/service-blocks/${id}/duplicate`, { name }),
   deleteServiceBlock: (id: string) => req<{ ok: boolean }>("DELETE", `/api/service-blocks/${id}`),
   // Builder shared definitions (top-level YAML anchors) — builtin + user merged.
   composeFragments: () => req<ComposeFragmentMeta[]>("GET", "/api/compose-fragments"),
@@ -417,6 +419,8 @@ export const api = {
     req<{ id: number; slug: string }>("POST", "/api/compose-fragments", b),
   updateComposeFragment: (id: string, b: { name: string; description: string; content: string }) =>
     req<{ ok: boolean }>("PUT", `/api/compose-fragments/${id}`, b),
+  duplicateComposeFragment: (id: string, name: string) =>
+    req<{ id: number; slug: string }>("POST", `/api/compose-fragments/${id}/duplicate`, { name }),
   deleteComposeFragment: (id: string) => req<{ ok: boolean }>("DELETE", `/api/compose-fragments/${id}`),
 
   // Generic raw inspect for any object kind. id/ref travels as a query param.

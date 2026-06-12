@@ -234,6 +234,43 @@ func TestDuplicateBuiltinTemplateRendersDefaults(t *testing.T) {
 	}
 }
 
+func TestDuplicateBuiltinBlockAndFragment(t *testing.T) {
+	srv := newTemplatesServer(t)
+
+	// Duplicate a built-in block — its {{.HttpPort}} must render to the default.
+	bw := postJSON(t, func(w http.ResponseWriter, r *http.Request) {
+		srv.handleDuplicateServiceBlock(w, withURLParam(r, "id", "nginx"))
+	}, "/api/service-blocks/nginx/duplicate", map[string]string{"name": "My Nginx Block"})
+	if bw.Code != http.StatusOK {
+		t.Fatalf("duplicate block: status %d — %s", bw.Code, bw.Body.String())
+	}
+	b, err := srv.store.ServiceBlockBySlug(context.Background(), "my-nginx-block")
+	if err != nil {
+		t.Fatalf("block not stored: %v", err)
+	}
+	if strings.Contains(b.ServiceYAML, "{{") {
+		t.Errorf("duplicated block still has template markers:\n%s", b.ServiceYAML)
+	}
+	if !strings.Contains(b.ServiceYAML, "8080:80") {
+		t.Errorf("duplicated block missing rendered default port:\n%s", b.ServiceYAML)
+	}
+
+	// Duplicate a built-in fragment — copied literally.
+	fw := postJSON(t, func(w http.ResponseWriter, r *http.Request) {
+		srv.handleDuplicateComposeFragment(w, withURLParam(r, "id", "service-defaults"))
+	}, "/api/compose-fragments/service-defaults/duplicate", map[string]string{"name": "My Defaults"})
+	if fw.Code != http.StatusOK {
+		t.Fatalf("duplicate fragment: status %d — %s", fw.Code, fw.Body.String())
+	}
+	f, err := srv.store.ComposeFragmentBySlug(context.Background(), "my-defaults")
+	if err != nil {
+		t.Fatalf("fragment not stored: %v", err)
+	}
+	if !strings.Contains(f.Content, "x-defaults: &defaults") {
+		t.Errorf("duplicated fragment missing anchor:\n%s", f.Content)
+	}
+}
+
 func TestPreviewTemplateDoesNotCreateProject(t *testing.T) {
 	srv := newTemplatesServer(t)
 	w := postJSON(t, srv.handlePreviewTemplate, "/api/project-templates/preview", map[string]any{

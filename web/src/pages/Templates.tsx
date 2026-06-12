@@ -63,6 +63,18 @@ export function Templates() {
     try { await api.deleteComposeFragment(f.id); load(); }
     catch (e) { dialogs.alert({ title: "Could not delete", message: e instanceof ApiError ? e.message : "failed" }); }
   };
+  const duplicateBlock = async (b: ServiceBlockMeta) => {
+    const name = await dialogs.prompt({ title: "Duplicate service block", label: "Name for the copy", defaultValue: `${b.name} copy` });
+    if (!name || !name.trim()) return;
+    try { await api.duplicateServiceBlock(b.id, name.trim()); load(); }
+    catch (e) { dialogs.alert({ title: "Could not duplicate", message: e instanceof ApiError ? e.message : "failed" }); }
+  };
+  const duplicateFrag = async (f: ComposeFragmentMeta) => {
+    const name = await dialogs.prompt({ title: "Duplicate shared definition", label: "Name for the copy", defaultValue: `${f.name} copy` });
+    if (!name || !name.trim()) return;
+    try { await api.duplicateComposeFragment(f.id, name.trim()); load(); }
+    catch (e) { dialogs.alert({ title: "Could not duplicate", message: e instanceof ApiError ? e.message : "failed" }); }
+  };
 
   if (!templates || !blocks || !fragments)
     return (<><PageHeader title="Templates" /><div className="p-6 flex items-center gap-2 text-muted"><Spinner /> Loading…</div></>);
@@ -131,6 +143,7 @@ export function Templates() {
                   <button className="btn-ghost px-2 py-1" title={b.deletable ? "Edit" : "View"} onClick={() => setOpenBlock(b)}>
                     {b.deletable ? <Pencil className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
+                  <button className="btn-ghost px-2 py-1" title="Duplicate into an editable copy" onClick={() => duplicateBlock(b)}><Copy className="h-4 w-4" /></button>
                   {b.deletable && <button className="btn-ghost px-2 py-1 text-danger" title="Delete" onClick={() => deleteBlock(b)}><Trash2 className="h-4 w-4" /></button>}
                 </div>
               </div>
@@ -156,6 +169,7 @@ export function Templates() {
                   <button className="btn-ghost px-2 py-1" title={f.deletable ? "Edit" : "View"} onClick={() => setOpenFrag(f)}>
                     {f.deletable ? <Pencil className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
+                  <button className="btn-ghost px-2 py-1" title="Duplicate into an editable copy" onClick={() => duplicateFrag(f)}><Copy className="h-4 w-4" /></button>
                   {f.deletable && <button className="btn-ghost px-2 py-1 text-danger" title="Delete" onClick={() => deleteFrag(f)}><Trash2 className="h-4 w-4" /></button>}
                 </div>
               </div>
@@ -206,7 +220,7 @@ function FragmentModal({ fragment, onClose, onSaved }: { fragment: ComposeFragme
   const title = isNew ? "New shared definition" : readOnly ? "Shared definition" : "Edit shared definition";
   return (
     <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={onClose}>
-      <div className="card w-full max-w-xl flex flex-col max-h-[88vh]" onClick={(e) => e.stopPropagation()}>
+      <div className="card w-full max-w-3xl flex flex-col max-h-[88vh]" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <Anchor className="h-4 w-4 text-accent" /><div className="font-medium">{title}</div>
           <button type="button" className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
@@ -254,7 +268,7 @@ function RenameTemplateModal({ template, onClose, onSaved }: { template: Project
   };
   return (
     <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={onClose}>
-      <form className="card w-full max-w-md flex flex-col" onClick={(e) => e.stopPropagation()} onSubmit={save}>
+      <form className="card w-full max-w-lg flex flex-col" onClick={(e) => e.stopPropagation()} onSubmit={save}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <Pencil className="h-4 w-4 text-accent" /><div className="font-medium">Rename template</div>
           <button type="button" className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
@@ -311,7 +325,7 @@ function BlockModal({ block, onClose, onSaved }: { block: ServiceBlockMeta | "ne
   const title = isNew ? "New service block" : readOnly ? "Service block" : "Edit service block";
   return (
     <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={onClose}>
-      <div className="card w-full max-w-xl flex flex-col max-h-[88vh]" onClick={(e) => e.stopPropagation()}>
+      <div className="card w-full max-w-3xl flex flex-col max-h-[88vh]" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <Puzzle className="h-4 w-4 text-accent" /><div className="font-medium">{title}</div>
           <button type="button" className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>

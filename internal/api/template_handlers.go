@@ -260,6 +260,56 @@ func (s *Server) handleDeleteComposeFragment(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// handleDuplicateComposeFragment copies any fragment (built-in or user) into a
+// new editable user fragment. Fragments are literal, so the content is copied
+// as-is.
+func (s *Server) handleDuplicateComposeFragment(w http.ResponseWriter, r *http.Request) {
+	src, err := s.resolveFragment(r.Context(), fragmentRefFrom(chi.URLParam(r, "id")))
+	if errors.Is(err, store.ErrNotFound) || errors.Is(err, errBadTemplateRef) {
+		writeErr(w, http.StatusNotFound, "source fragment not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		writeErr(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	slug := slugify(name)
+	id, err := s.store.CreateComposeFragment(r.Context(), &store.ComposeFragment{
+		Name: name, Slug: slug, Content: src.Content, CreatedBy: currentUsername(r),
+	})
+	if errors.Is(err, store.ErrDuplicate) {
+		writeErr(w, http.StatusConflict, "a fragment named \""+slug+"\" already exists")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "compose_fragment.duplicate", slug, chi.URLParam(r, "id"))
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "slug": slug})
+}
+
+// fragmentRefFrom builds a templateRef for an id that is either a numeric user id
+// or a built-in catalog name.
+func fragmentRefFrom(id string) templateRef {
+	if _, err := strconv.ParseInt(id, 10, 64); err == nil {
+		return templateRef{ID: id, Source: templates.SourceUser}
+	}
+	return templateRef{ID: id, Source: templates.SourceBuiltin}
+}
+
 func (s *Server) handleListServiceBlocks(w http.ResponseWriter, r *http.Request) {
 	out := []blockJSON{}
 	builtins, err := templates.BuiltinBlocks()
@@ -856,6 +906,65 @@ func (s *Server) handleUpdateServiceBlock(w http.ResponseWriter, r *http.Request
 	}
 	s.audit(r, "service_block.update", existing.Slug, "")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleDuplicateServiceBlock copies any block (built-in or user) into a new
+// editable user block. A built-in source's YAML is rendered with its default
+// variable values first (user blocks are literal, not rendered at assembly), so
+// the copy has concrete values instead of unresolved {{.Var}} markers.
+func (s *Server) handleDuplicateServiceBlock(w http.ResponseWriter, r *http.Request) {
+	srcID := chi.URLParam(r, "id")
+	ref := fragmentRefFrom(srcID)
+	b, err := s.resolveBlock(r.Context(), ref)
+	if errors.Is(err, store.ErrNotFound) || errors.Is(err, errBadTemplateRef) {
+		writeErr(w, http.StatusNotFound, "source block not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		writeErr(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	slug := slugify(name)
+	yaml := b.ServiceYAML
+	if ref.Source == templates.SourceBuiltin && len(b.Variables) > 0 {
+		rv, err := templates.ResolveVars(b.Variables, nil)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		rv["Slug"], rv["Name"] = slug, name
+		rendered, err := templates.Render([]templates.File{{Path: srcID, Content: yaml}}, rv)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "could not render block: "+err.Error())
+			return
+		}
+		yaml = rendered[0].Content
+	}
+	id, err := s.store.CreateServiceBlock(r.Context(), &store.ServiceBlock{
+		Name: name, Slug: slug, Service: b.Service, ServiceYAML: yaml, Volumes: b.Volumes, CreatedBy: currentUsername(r),
+	})
+	if errors.Is(err, store.ErrDuplicate) {
+		writeErr(w, http.StatusConflict, "a block named \""+slug+"\" already exists")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "service_block.duplicate", slug, srcID)
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "slug": slug})
 }
 
 // --- template files (user presets only) --------------------------------------

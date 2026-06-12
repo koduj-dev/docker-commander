@@ -164,11 +164,13 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/service-blocks", s.handleCreateServiceBlock)
 			r.Get("/service-blocks/{id}", s.handleGetServiceBlock)
 			r.Put("/service-blocks/{id}", s.handleUpdateServiceBlock)
+			r.Post("/service-blocks/{id}/duplicate", s.handleDuplicateServiceBlock)
 			r.Delete("/service-blocks/{id}", s.handleDeleteServiceBlock)
 			r.Get("/compose-fragments", s.handleListComposeFragments)
 			r.Post("/compose-fragments", s.handleCreateComposeFragment)
 			r.Get("/compose-fragments/{id}", s.handleGetComposeFragment)
 			r.Put("/compose-fragments/{id}", s.handleUpdateComposeFragment)
+			r.Post("/compose-fragments/{id}/duplicate", s.handleDuplicateComposeFragment)
 			r.Delete("/compose-fragments/{id}", s.handleDeleteComposeFragment)
 
 			r.Get("/images", s.handleListImages)

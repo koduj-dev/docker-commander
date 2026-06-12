@@ -373,7 +373,7 @@ function SaveAsTemplateModal({ projectId, onClose, onSaved }: { projectId: numbe
   };
   return (
     <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={onClose}>
-      <form className="card w-full max-w-md flex flex-col" onClick={(e) => e.stopPropagation()} onSubmit={save}>
+      <form className="card w-full max-w-lg flex flex-col" onClick={(e) => e.stopPropagation()} onSubmit={save}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <LayoutTemplate className="h-4 w-4 text-accent" />
           <div className="font-medium">Save as template</div>
