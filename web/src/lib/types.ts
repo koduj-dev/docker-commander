@@ -145,6 +145,14 @@ export interface ImageSummary {
   inUse: boolean;
 }
 
+// One Docker Hub search hit, used for image-name autocomplete.
+export interface ImageSearchResult {
+  name: string;
+  description: string;
+  stars: number;
+  official: boolean;
+}
+
 export interface PullProgress {
   status?: string;
   id?: string;

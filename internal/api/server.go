@@ -166,6 +166,8 @@ func (s *Server) Handler() http.Handler {
 			r.Delete("/service-blocks/{id}", s.handleDeleteServiceBlock)
 
 			r.Get("/images", s.handleListImages)
+			r.Get("/images/search", s.handleSearchImages)
+			r.Get("/images/tags", s.handleImageTags)
 			r.Get("/images/history", s.handleImageHistory)
 			r.Get("/images/save", s.handleSaveImage)
 			r.Post("/images/load", s.handleLoadImage)

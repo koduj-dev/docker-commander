@@ -80,6 +80,12 @@ right, with syntax highlighting for YAML, JSON, shell, Dockerfiles and
   where new items land, with an × to go back to the project root. Upload accepts
   binary/data files too (shown download-only in the tree).
 - **Save** writes the open file; an unsaved-changes dot marks edits.
+- **Image autocomplete** — on a compose `image:` line, suggestions appear for
+  repository names (your locally-pulled images first, then a Docker Hub search)
+  and, once you type a `:`, for that repo's tags (local tags + Docker Hub). The
+  Create-container form's image field offers the same. It's best-effort —
+  offline you still get your local images. (The same powers private images you've
+  already pulled; tag listing for private registries is a future addition.)
 - **Download** a single file (next to *Save*) or the **whole project as a
   `.zip`** (editor header).
 - **Profiles** — if the compose file defines `profiles`, a toggle bar lets you

@@ -7,6 +7,12 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Docker image autocomplete** — typing an image reference now suggests names
+  and tags: in the **compose editor** (on `image:` lines) and in the **Create
+  container** form. Suggestions blend the host's locally-pulled images (instant,
+  offline) with a **Docker Hub** repository search (proxied through the host
+  daemon, so no credentials leave the process) and, after a `:`, Docker Hub's
+  **tag** list. Everything degrades to local-only when offline.
 - **Templates management page** — a new **Templates** section (under Projects'
   permission) to manage presets and builder service blocks in one place: edit a
   user preset's files in the multi-file editor, rename it, add/edit/delete your

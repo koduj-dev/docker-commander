@@ -19,6 +19,7 @@ import type {
   HistoryEntry,
   Host,
   ImageSummary,
+  ImageSearchResult,
   NetworkSummary,
   HostPortProbe,
   ParseRule,
@@ -415,6 +416,15 @@ export const api = {
   diskUsage: () => req<DiskUsage>("GET", `/api/system/df${hostParam()}`),
 
   images: () => req<ImageSummary[]>("GET", `/api/images${hostParam()}`),
+  // Image-name autocomplete: Docker Hub repo search (via the host daemon) and Hub
+  // tag listing. Both are best-effort — the server returns [] on any error.
+  searchImages: (q: string) => {
+    const params = new URLSearchParams({ q });
+    const h = getHostId();
+    if (h != null) params.set("host", String(h));
+    return req<ImageSearchResult[]>("GET", `/api/images/search?${params.toString()}`);
+  },
+  imageTags: (repo: string) => req<string[]>("GET", `/api/images/tags?repo=${encodeURIComponent(repo)}`),
   removeImage: (ref: string, force = false) => {
     const params = new URLSearchParams({ ref });
     const h = getHostId();

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Boxes, X, Loader2 } from "lucide-react";
 import { api } from "../lib/api";
 import type { CreateSpec, PortSpec } from "../lib/types";
+import { ImageAutocomplete } from "./ImageAutocomplete";
 
 const RESTART = ["", "no", "on-failure", "always", "unless-stopped"];
 
@@ -72,7 +73,7 @@ export function CreateContainerModal({ onClose, onDone }: { onClose: () => void;
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
               <label className="label">Image *</label>
-              <input className="input font-mono" value={image} onChange={(e) => setImage(e.target.value)} placeholder="nginx:latest" required />
+              <ImageAutocomplete className="input font-mono" value={image} onChange={setImage} placeholder="nginx:latest" required />
             </div>
             <div>
               <label className="label">Name</label>

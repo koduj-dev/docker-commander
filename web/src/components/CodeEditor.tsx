@@ -12,6 +12,8 @@ import { oneDark } from "@codemirror/theme-one-dark";
 import { lintGutter, setDiagnostics, type Diagnostic } from "@codemirror/lint";
 import { parseDocument } from "yaml";
 import type { Extension } from "@codemirror/state";
+import type { CompletionContext, CompletionResult, Completion } from "@codemirror/autocomplete";
+import { imageNameSuggestions, imageTagSuggestions } from "../lib/imageSuggest";
 
 // ServerCheck is the latest authoritative validation result for the open file —
 // from `docker compose config` (compose) or `docker build --check` (dockerfile).
@@ -170,6 +172,38 @@ function resolveServerDiags(check: ServerCheck, view: EditorView): Diagnostic[] 
   return out;
 }
 
+// ---- image-name autocomplete (compose YAML) ---------------------------------
+
+// imageCompletionSource completes the value of a compose `image:` line. Before a
+// `:` it suggests repository names (local images + a Docker Hub search); after a
+// `:` it suggests tags for that repo (local tags + Hub's tag list). It returns
+// null off an image line so other completion sources (word completion) still run.
+async function imageCompletionSource(context: CompletionContext): Promise<CompletionResult | null> {
+  const line = context.state.doc.lineAt(context.pos);
+  const before = line.text.slice(0, context.pos - line.from);
+  const m = /^(\s*image:\s*)(["']?)([^\s"']*)$/.exec(before);
+  if (!m) return null;
+  const valueStart = line.from + m[1].length + m[2].length;
+  const typed = m[3];
+  const colon = typed.lastIndexOf(":");
+  if (colon >= 0) {
+    const repo = typed.slice(0, colon);
+    const prefix = typed.slice(colon + 1).toLowerCase();
+    if (!repo) return null;
+    const tags = await imageTagSuggestions(repo);
+    const options: Completion[] = tags
+      .filter((t) => t.value.toLowerCase().startsWith(prefix))
+      .map((t) => ({ label: t.value, detail: t.detail, type: "constant" }));
+    if (!options.length) return null;
+    return { from: valueStart + colon + 1, options, validFor: /^[\w][\w.-]*$/ };
+  }
+  if (!context.explicit && typed.length < 1) return null;
+  const sugg = await imageNameSuggestions(typed);
+  const options: Completion[] = sugg.map((s) => ({ label: s.value, detail: s.detail, type: s.local ? "constant" : "class" }));
+  if (!options.length) return null;
+  return { from: valueStart, options, validFor: /^[\w][\w./-]*$/ };
+}
+
 // ---- theme + component ------------------------------------------------------
 
 function languageFor(name: string): Extension | null {
@@ -231,7 +265,14 @@ export function CodeEditor({ value, onChange, filename, readOnly, serverCheck }:
   const extensions = useMemo<Extension[]>(() => {
     const lang = languageFor(filename);
     const exts: Extension[] = [dcTheme, lintGutter()];
-    if (lang) exts.push(lang as LanguageSupport | Extension);
+    if (lang) {
+      exts.push(lang as LanguageSupport | Extension);
+      // Register image-name completion as a YAML language-data source so it
+      // merges with (rather than replaces) the default word completion.
+      if (/\.ya?ml$/.test(filename.toLowerCase())) {
+        exts.push((lang as LanguageSupport).language.data.of({ autocomplete: imageCompletionSource }));
+      }
+    }
     return exts;
   }, [filename]);
 
