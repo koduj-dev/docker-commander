@@ -327,19 +327,24 @@ var svcKeyLine = regexp.MustCompile(`^(\s*)([A-Za-z0-9._-]+):\s*(#.*)?$`)
 
 var anchorRe = regexp.MustCompile(`&([A-Za-z0-9_-]+)`)
 
-// AnchorName returns the first YAML anchor (`&name`) declared in a fragment's
-// content, or "" if it declares none — used to wire `<<: *name` merges. Comment
-// lines are skipped so a `# … &x …` note can't be mistaken for the anchor.
-func AnchorName(content string) string {
+// AnchorNames returns every YAML anchor (`&name`) declared in a fragment's
+// content (in order, de-duplicated) — used to wire `<<: *name` merges. Comment
+// lines are skipped so a `# … &x …` note can't be mistaken for an anchor.
+func AnchorNames(content string) []string {
+	var out []string
+	seen := map[string]bool{}
 	for _, ln := range strings.Split(content, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(ln), "#") {
 			continue
 		}
-		if m := anchorRe.FindStringSubmatch(ln); m != nil {
-			return m[1]
+		for _, m := range anchorRe.FindAllStringSubmatch(ln, -1) {
+			if !seen[m[1]] {
+				seen[m[1]] = true
+				out = append(out, m[1])
+			}
 		}
 	}
-	return ""
+	return out
 }
 
 // AssembleCompose builds the project files for a builder selection: a single

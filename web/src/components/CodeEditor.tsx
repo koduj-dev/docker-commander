@@ -186,7 +186,8 @@ async function imageCompletionSource(context: CompletionContext): Promise<Comple
   const valueStart = line.from + m[1].length + m[2].length;
   const typed = m[3];
   const colon = typed.lastIndexOf(":");
-  if (colon >= 0) {
+  // A ":" with a "/" after it is a registry port (host:port/repo), not a tag.
+  if (colon >= 0 && !typed.slice(colon + 1).includes("/")) {
     const repo = typed.slice(0, colon);
     const prefix = typed.slice(colon + 1).toLowerCase();
     if (!repo) return null;

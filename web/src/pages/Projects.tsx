@@ -578,6 +578,12 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
     key: i.key.trim(),
     merge: selectedFragments.filter((f) => i.merge[refKey(f)]).map((f): TemplateRef => ({ id: f.id, source: f.source })),
   }));
+  // Service keys must be non-empty and unique, or two instances collide into one
+  // compose service (a blank key falls back to the block's default key server-side).
+  const trimmedKeys = instances.map((i) => i.key.trim());
+  const dupKeys = new Set(trimmedKeys.filter((k, idx) => k !== "" && trimmedKeys.indexOf(k) !== idx));
+  const keyInvalid = (key: string) => { const k = key.trim(); return !k || dupKeys.has(k); };
+  const keysOk = instances.every((i) => !keyInvalid(i.key));
 
   // Live read-only preview of the compose.yml the current selection would seed.
   // Shown for a chosen preset or a non-empty builder selection; debounced so it
@@ -597,6 +603,7 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
       : { name: name || "preview", template: { id: selectedTpl!.id, source: selectedTpl!.source }, variables };
     let cancelled = false;
     setPreviewBusy(true);
+    setPreviewValid(null); setPreviewIssue(""); // clear the stale chip/banner while the new preview loads
     const t = setTimeout(() => {
       api.previewTemplate(opts).then((r) => {
         if (cancelled) return;
@@ -653,7 +660,7 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
     </button>
   );
 
-  const canSubmit = !!name.trim() && !busy && (mode === "import" ? !!file : mode === "builder" ? (instances.length > 0 || selectedFragments.length > 0) : true);
+  const canSubmit = !!name.trim() && !busy && (mode === "import" ? !!file : mode === "builder" ? ((instances.length > 0 || selectedFragments.length > 0) && keysOk) : true);
 
   // Inner segmented control for the builder (Services / Shared / Variables).
   const subTab = (key: BuilderTab, icon: ReactNode, label: string, count: number) => (
@@ -722,7 +729,7 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
                         <div key={i.uid} className="rounded-lg border border-accent/40 bg-accent/5 px-3 py-2 space-y-1.5">
                           <div className="flex items-center gap-2">
                             <span className="text-xs text-muted shrink-0 truncate max-w-[8rem]" title={i.block.name}>{i.block.name}</span>
-                            <input className="input font-mono py-1 text-xs" value={i.key} placeholder="service key" onChange={(e) => setInstanceKey(i.uid, e.target.value)} />
+                            <input className={clsx("input font-mono py-1 text-xs", keyInvalid(i.key) && "border-danger")} value={i.key} placeholder="service key" onChange={(e) => setInstanceKey(i.uid, e.target.value)} />
                             <button type="button" className="btn-ghost px-1.5 py-1 text-danger ml-auto" title="Remove" onClick={() => removeInstance(i.uid)}><Trash2 className="h-3.5 w-3.5" /></button>
                           </div>
                           {selectedFragments.length > 0 && (
@@ -741,6 +748,7 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
                           )}
                         </div>
                       ))}
+                      {!keysOk && <p className="text-[11px] text-danger">Service keys must be unique and non-empty.</p>}
                     </div>
                   )}
 

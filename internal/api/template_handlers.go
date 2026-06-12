@@ -394,9 +394,7 @@ func (s *Server) resolveSeedFiles(ctx context.Context, slug, name string, tpl *t
 				if err := addFrag(mref); err != nil {
 					return nil, err
 				}
-				if a := templates.AnchorName(fragByKey[mref.Source+":"+mref.ID].Content); a != "" {
-					anchors = append(anchors, a)
-				}
+				anchors = append(anchors, templates.AnchorNames(fragByKey[mref.Source+":"+mref.ID].Content)...)
 			}
 			insts = append(insts, templates.Instance{Block: blk, Key: ib.Key, MergeAnchors: anchors})
 		}
