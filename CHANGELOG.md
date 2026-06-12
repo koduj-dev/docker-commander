@@ -13,12 +13,19 @@ All notable changes to Docker Commander are documented here. The format follows
   offline) with a **Docker Hub** repository search (proxied through the host
   daemon, so no credentials leave the process) and, after a `:`, Docker Hub's
   **tag** list. Everything degrades to local-only when offline.
+- **Builder — service instances & clusters** — a block can now be added **more
+  than once**, each as a service **instance** with its own editable key (`db`,
+  `db-2`, …) and its own named volumes (auto-de-duplicated), so you can build a
+  cluster of the same service. The live preview now also **validates** the
+  assembled compose (`docker compose config`) and shows valid / warnings /
+  invalid.
 - **Builder — shared definitions (YAML anchors)** — the builder can now include
   reusable **top-level anchors** (e.g. `x-pg-common: &pg-common …`) emitted above
   `services:`, so a cluster of services can share one definition (security, cert
-  mounts, …) and merge it with `<<: *pg-common`. Pick built-in ones (Service
-  defaults, Secured Postgres) or save your own; they're managed on the Templates
-  page like service blocks.
+  mounts, …). Pick which services **merge** each anchor (a `<<: *pg-common` is
+  injected per instance) — including into otherwise read-only built-in services.
+  Pick built-in anchors (Service defaults, Secured Postgres) or save your own;
+  they're managed on the Templates page like service blocks.
 - **Templates management page** — a new **Templates** section (under Projects'
   permission) to manage presets, builder service blocks and shared definitions
   in one place: edit a user preset's files in the multi-file editor, rename it,

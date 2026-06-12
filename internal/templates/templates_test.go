@@ -36,6 +36,45 @@ func TestBuiltinPresetsRender(t *testing.T) {
 	}
 }
 
+func TestAssembleClusterWithMergeAndVolumeDedup(t *testing.T) {
+	blocks, err := BuiltinBlocks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pg Block
+	for _, b := range blocks {
+		if b.ID == "postgres" {
+			pg = b
+		}
+	}
+	if pg.ID == "" {
+		t.Fatal("no postgres block in catalog")
+	}
+	frag := Fragment{ID: "f", Name: "sec", Source: SourceUser, Content: "x-sec: &sec\n  restart: always"}
+	vars, _ := ResolveVars(pg.Variables, nil)
+	insts := []Instance{
+		{Block: pg, Key: "db", MergeAnchors: []string{"sec"}},
+		{Block: pg, Key: "db-2", MergeAnchors: []string{"sec"}},
+	}
+	files, err := AssembleCompose("cluster", insts, []Fragment{frag}, vars)
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	c := files[0].Content
+	for _, want := range []string{"x-sec: &sec", "  db:", "  db-2:", "db-pgdata:", "db-2-pgdata:"} {
+		if !strings.Contains(c, want) {
+			t.Errorf("cluster compose missing %q:\n%s", want, c)
+		}
+	}
+	// Each instance merges the anchor, and the shared volume was de-duplicated.
+	if n := strings.Count(c, "<<: *sec"); n != 2 {
+		t.Errorf("expected 2 anchor merges, got %d:\n%s", n, c)
+	}
+	if strings.Contains(c, "- pgdata:") {
+		t.Errorf("undeduplicated volume mount survived:\n%s", c)
+	}
+}
+
 func TestBuiltinBlocksAssemble(t *testing.T) {
 	blocks, err := BuiltinBlocks()
 	if err != nil {
@@ -45,13 +84,15 @@ func TestBuiltinBlocksAssemble(t *testing.T) {
 		t.Fatalf("expected at least 7 blocks, got %d", len(blocks))
 	}
 	var decl []Variable
+	var instances []Instance
 	for _, b := range blocks {
 		if b.Service == "" || b.ServiceYAML == "" {
 			t.Errorf("block %q missing service/serviceYaml", b.ID)
 		}
 		decl = append(decl, b.Variables...)
+		instances = append(instances, Instance{Block: b})
 	}
-	files, err := AssembleCompose("test-project", blocks, nil, builtinVars(t, decl))
+	files, err := AssembleCompose("test-project", instances, nil, builtinVars(t, decl))
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
 	}

@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 	"text/template"
@@ -311,12 +312,44 @@ func renderString(name, body string, vars map[string]string) (string, error) {
 	return buf.String(), nil
 }
 
+// Instance is one service placed by the builder: a block under a chosen service
+// key, optionally merging shared-definition anchors. Adding the same block twice
+// (two instances, distinct keys) builds a cluster.
+type Instance struct {
+	Block        Block
+	Key          string   // service key in the output; defaults to Block.Service
+	MergeAnchors []string // anchor names to inject as `<<: *name` at the top of the service
+}
+
+// svcKeyLine matches a top-level service key line (`  name:`), tolerating a
+// trailing inline comment.
+var svcKeyLine = regexp.MustCompile(`^(\s*)([A-Za-z0-9._-]+):\s*(#.*)?$`)
+
+var anchorRe = regexp.MustCompile(`&([A-Za-z0-9_-]+)`)
+
+// AnchorName returns the first YAML anchor (`&name`) declared in a fragment's
+// content, or "" if it declares none — used to wire `<<: *name` merges. Comment
+// lines are skipped so a `# … &x …` note can't be mistaken for the anchor.
+func AnchorName(content string) string {
+	for _, ln := range strings.Split(content, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(ln), "#") {
+			continue
+		}
+		if m := anchorRe.FindStringSubmatch(ln); m != nil {
+			return m[1]
+		}
+	}
+	return ""
+}
+
 // AssembleCompose builds the project files for a builder selection: a single
 // compose.yml with any shared definitions (top-level YAML anchors) above
-// services:, each block's service (plus top-level named volumes), and the
-// sidecar files the blocks contribute. Block YAML/sidecars are rendered with
-// vars; fragments are copied literally so anchors/merge keys survive.
-func AssembleCompose(slug string, blocks []Block, fragments []Fragment, vars map[string]string) ([]File, error) {
+// services:, each instance's service (renamed to its key, with `<<: *anchor`
+// merges injected and named volumes de-duplicated per instance), the top-level
+// named volumes, and the sidecar files the blocks contribute. Built-in block
+// YAML/sidecars are rendered with vars; fragments are copied literally so
+// anchors/merge keys survive.
+func AssembleCompose(slug string, instances []Instance, fragments []Fragment, vars map[string]string) ([]File, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "name: %s\n\n", slug)
 	// Shared definitions first: a service can only merge `<<: *anchor` if the
@@ -329,29 +362,61 @@ func AssembleCompose(slug string, blocks []Block, fragments []Fragment, vars map
 		b.WriteString(content)
 		b.WriteString("\n\n")
 	}
+
+	// A named volume used by more than one instance must be made unique per
+	// instance (else clustered services would share — and corrupt — one volume).
+	volCount := map[string]int{}
+	for _, in := range instances {
+		for _, v := range in.Block.Volumes {
+			volCount[v]++
+		}
+	}
+
 	b.WriteString("services:\n")
-	var volumes []string
+	var topVols []string
+	seenVol := map[string]bool{}
 	var sidecars []File
-	for _, blk := range blocks {
+	seenSidecar := map[string]bool{}
+	for _, in := range instances {
 		// Built-in blocks carry declared variables and are rendered; user blocks
 		// declare none and are copied literally, so a stray "{{" in user YAML can't
-		// break assembly (and user blocks simply don't support variables yet).
-		svc := blk.ServiceYAML
-		if blk.Source == SourceBuiltin {
-			rendered, err := renderString("block:"+blk.ID, svc, vars)
+		// break assembly.
+		svc := in.Block.ServiceYAML
+		if in.Block.Source == SourceBuiltin {
+			rendered, err := renderString("block:"+in.Block.ID, svc, vars)
 			if err != nil {
 				return nil, err
 			}
 			svc = rendered
 		}
-		b.WriteString(svc)
+		key := strings.TrimSpace(in.Key)
+		if key == "" {
+			key = in.Block.Service
+		}
+		volMap := map[string]string{}
+		for _, v := range in.Block.Volumes {
+			nv := v
+			if volCount[v] > 1 {
+				nv = key + "-" + v
+			}
+			volMap[v] = nv
+			if !seenVol[nv] {
+				seenVol[nv] = true
+				topVols = append(topVols, nv)
+			}
+		}
+		b.WriteString(placeInstance(svc, key, in.MergeAnchors, volMap))
 		b.WriteString("\n")
-		volumes = append(volumes, blk.Volumes...)
-		sidecars = append(sidecars, blk.Files...)
+		for _, f := range in.Block.Files {
+			if !seenSidecar[f.Path] {
+				seenSidecar[f.Path] = true
+				sidecars = append(sidecars, f)
+			}
+		}
 	}
-	if len(volumes) > 0 {
+	if len(topVols) > 0 {
 		b.WriteString("\nvolumes:\n")
-		for _, v := range dedupe(volumes) {
+		for _, v := range topVols {
 			fmt.Fprintf(&b, "  %s:\n", v)
 		}
 	}
@@ -364,16 +429,59 @@ func AssembleCompose(slug string, blocks []Block, fragments []Fragment, vars map
 	return append([]File{{Path: "compose.yml", Content: b.String()}}, sidecars...), nil
 }
 
-func dedupe(in []string) []string {
+// placeInstance rewrites a rendered service body for one instance: it renames the
+// (single, top-level) service key to key, injects a `<<: *anchor` merge line
+// right after it, and rewrites named-volume mounts via volRename. The service
+// key is the first 2-indent `name:` line; everything else is preserved verbatim.
+func placeInstance(svcYAML, key string, anchors []string, volRename map[string]string) string {
+	lines := strings.Split(svcYAML, "\n")
+	out := make([]string, 0, len(lines)+1)
+	keyDone := false
+	for _, ln := range lines {
+		if !keyDone {
+			if m := svcKeyLine.FindStringSubmatch(ln); m != nil {
+				out = append(out, m[1]+key+":")
+				keyDone = true
+				if len(anchors) > 0 {
+					out = append(out, m[1]+"  "+mergeLine(anchors))
+				}
+				continue
+			}
+		}
+		// Rename a named-volume mount, but only when the line *is* that mount list
+		// item (`      - vol:/path`) — never when "- vol:" merely appears inside a
+		// command/env string value.
+		trimmed := strings.TrimSpace(ln)
+		for v, nv := range volRename {
+			if v != nv && strings.HasPrefix(trimmed, "- "+v+":") {
+				ln = strings.Replace(ln, "- "+v+":", "- "+nv+":", 1)
+				break
+			}
+		}
+		out = append(out, ln)
+	}
+	return strings.Join(out, "\n")
+}
+
+func mergeLine(anchors []string) string {
+	// De-duplicate so two fragments sharing an anchor name can't yield the
+	// compose-invalid `<<: [*a, *a]`.
 	seen := map[string]bool{}
-	var out []string
-	for _, s := range in {
-		if !seen[s] {
-			seen[s] = true
-			out = append(out, s)
+	var uniq []string
+	for _, a := range anchors {
+		if !seen[a] {
+			seen[a] = true
+			uniq = append(uniq, a)
 		}
 	}
-	return out
+	if len(uniq) == 1 {
+		return "<<: *" + uniq[0]
+	}
+	parts := make([]string, len(uniq))
+	for i, a := range uniq {
+		parts[i] = "*" + a
+	}
+	return "<<: [" + strings.Join(parts, ", ") + "]"
 }
 
 // randomPassword returns a 24-char random string for generated secrets. It uses

@@ -311,7 +311,12 @@ export const api = {
   projects: () => req<{ projects: Project[]; composeAvailable: boolean }>("GET", "/api/projects"),
   createProject: (
     name: string,
-    opts?: { template?: TemplateRef; blocks?: TemplateRef[]; fragments?: TemplateRef[]; variables?: Record<string, string> },
+    opts?: {
+      template?: TemplateRef;
+      instances?: { block: TemplateRef; key: string; merge: TemplateRef[] }[];
+      fragments?: TemplateRef[];
+      variables?: Record<string, string>;
+    },
   ) => req<{ id: number; slug: string }>("POST", "/api/projects", { name, ...opts }),
   importProject: async (name: string, file: File) => {
     const res = await fetch(`/api/projects/import?name=${encodeURIComponent(name)}`, {
@@ -372,8 +377,14 @@ export const api = {
   serviceBlocks: () => req<ServiceBlockMeta[]>("GET", "/api/service-blocks"),
   // Live read-only preview: the compose.yml (+ sidecars) a selection would seed,
   // without creating a project. Powers the New project dialog preview.
-  previewTemplate: (opts: { name?: string; template?: TemplateRef; blocks?: TemplateRef[]; fragments?: TemplateRef[]; variables?: Record<string, string> }) =>
-    req<{ files: TemplateFile[] }>("POST", "/api/project-templates/preview", opts),
+  previewTemplate: (opts: {
+    name?: string;
+    template?: TemplateRef;
+    instances?: { block: TemplateRef; key: string; merge: TemplateRef[] }[];
+    fragments?: TemplateRef[];
+    variables?: Record<string, string>;
+  }) =>
+    req<{ files: TemplateFile[]; valid?: boolean; error?: string; warnings?: string[] }>("POST", "/api/project-templates/preview", opts),
   saveProjectAsTemplate: (fromProjectId: number, name: string, description: string) =>
     req<{ id: number; slug: string }>("POST", "/api/project-templates", { fromProjectId, name, description }),
   // Single-preset detail (its files) for the management page's view/edit.

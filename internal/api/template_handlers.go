@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/koduj-dev/docker-commander/internal/docker"
 	"github.com/koduj-dev/docker-commander/internal/store"
 	"github.com/koduj-dev/docker-commander/internal/templates"
 )
@@ -342,36 +343,74 @@ func (s *Server) handleListServiceBlocks(w http.ResponseWriter, r *http.Request)
 // errBadTemplateRef is returned for a malformed or unknown builtin reference.
 var errBadTemplateRef = errors.New("unknown template")
 
+// blockInstance is one builder service: a block placed under a chosen key,
+// optionally merging shared-definition anchors (by fragment ref).
+type blockInstance struct {
+	Block templateRef   `json:"block"`
+	Key   string        `json:"key"`
+	Merge []templateRef `json:"merge"`
+}
+
 // resolveSeedFiles produces the (rendered) files a new project should be created
-// with, from either a block selection (builder), a template, or — when neither
-// is given — the plain starter compose. Pure read: it never mutates state, so
-// the caller can resolve before creating the project row.
-func (s *Server) resolveSeedFiles(ctx context.Context, slug, name string, tpl *templateRef, blocks, fragments []templateRef, vars map[string]string) ([]templates.File, error) {
-	if len(blocks) > 0 || len(fragments) > 0 {
-		var blks []templates.Block
-		var decl []templates.Variable
-		for _, ref := range blocks {
-			b, err := s.resolveBlock(ctx, ref)
-			if err != nil {
-				return nil, err
+// with, from either a builder selection (instances + shared-definition
+// fragments), a template, or — when neither is given — the plain starter compose.
+// Pure read: it never mutates state, so the caller can resolve before creating
+// the project row. Any fragment referenced by an instance merge is emitted too,
+// so a `<<: *anchor` alias always resolves.
+func (s *Server) resolveSeedFiles(ctx context.Context, slug, name string, tpl *templateRef, instances []blockInstance, fragments []templateRef, vars map[string]string) ([]templates.File, error) {
+	if len(instances) > 0 || len(fragments) > 0 {
+		// Collect fragments (included + merge-referenced) once, preserving order.
+		fragByKey := map[string]templates.Fragment{}
+		var fragOrder []string
+		addFrag := func(ref templateRef) error {
+			k := ref.Source + ":" + ref.ID
+			if _, ok := fragByKey[k]; ok {
+				return nil
 			}
-			blks = append(blks, b)
-			decl = append(decl, b.Variables...)
-		}
-		var frags []templates.Fragment
-		for _, ref := range fragments {
 			f, err := s.resolveFragment(ctx, ref)
 			if err != nil {
+				return err
+			}
+			fragByKey[k] = f
+			fragOrder = append(fragOrder, k)
+			return nil
+		}
+		for _, ref := range fragments {
+			if err := addFrag(ref); err != nil {
 				return nil, err
 			}
-			frags = append(frags, f)
+		}
+
+		var insts []templates.Instance
+		var decl []templates.Variable
+		for _, ib := range instances {
+			blk, err := s.resolveBlock(ctx, ib.Block)
+			if err != nil {
+				return nil, err
+			}
+			decl = append(decl, blk.Variables...)
+			var anchors []string
+			for _, mref := range ib.Merge {
+				if err := addFrag(mref); err != nil {
+					return nil, err
+				}
+				if a := templates.AnchorName(fragByKey[mref.Source+":"+mref.ID].Content); a != "" {
+					anchors = append(anchors, a)
+				}
+			}
+			insts = append(insts, templates.Instance{Block: blk, Key: ib.Key, MergeAnchors: anchors})
+		}
+
+		var frags []templates.Fragment
+		for _, k := range fragOrder {
+			frags = append(frags, fragByKey[k])
 		}
 		rv, err := templates.ResolveVars(decl, vars)
 		if err != nil {
 			return nil, err
 		}
 		rv["Slug"], rv["Name"] = slug, name
-		return templates.AssembleCompose(slug, blks, frags, rv)
+		return templates.AssembleCompose(slug, insts, frags, rv)
 	}
 
 	if tpl != nil {
@@ -718,7 +757,8 @@ func (s *Server) handlePreviewTemplate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name      string            `json:"name"`
 		Template  *templateRef      `json:"template"`
-		Blocks    []templateRef     `json:"blocks"`
+		Instances []blockInstance   `json:"instances"`
+		Blocks    []templateRef     `json:"blocks"` // legacy
 		Fragments []templateRef     `json:"fragments"`
 		Variables map[string]string `json:"variables"`
 	}
@@ -730,7 +770,11 @@ func (s *Server) handlePreviewTemplate(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = "preview"
 	}
-	files, err := s.resolveSeedFiles(r.Context(), slugify(name), name, body.Template, body.Blocks, body.Fragments, body.Variables)
+	instances := body.Instances
+	for _, b := range body.Blocks {
+		instances = append(instances, blockInstance{Block: b})
+	}
+	files, err := s.resolveSeedFiles(r.Context(), slugify(name), name, body.Template, instances, body.Fragments, body.Variables)
 	if errors.Is(err, store.ErrNotFound) {
 		writeErr(w, http.StatusNotFound, "template or block not found")
 		return
@@ -739,7 +783,43 @@ func (s *Server) handlePreviewTemplate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"files": files})
+	resp := map[string]any{"files": files}
+	// Validate the assembled compose with the real `docker compose config` so the
+	// preview can flag a broken anchor/merge or YAML before the project is created.
+	if docker.ComposeAvailable(r.Context()) {
+		valid, vErr, warnings := s.previewValidate(r.Context(), slugify(name), files)
+		resp["valid"] = valid
+		if vErr != "" {
+			resp["error"] = vErr
+		}
+		if len(warnings) > 0 {
+			resp["warnings"] = warnings
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// previewValidate writes the assembled files to a throwaway dir and runs
+// `docker compose config` over them, returning validity + any error/warnings.
+// Best-effort: a setup failure just yields valid=false with no message.
+func (s *Server) previewValidate(ctx context.Context, slug string, files []templates.File) (bool, string, []string) {
+	tmp, err := os.MkdirTemp("", "dc-preview-*")
+	if err != nil {
+		return false, "", nil
+	}
+	defer os.RemoveAll(tmp)
+	if err := seedProjectFiles(tmp, files); err != nil {
+		return false, "", nil
+	}
+	out, err := docker.ComposeConfig(ctx, tmp, slug)
+	if err != nil {
+		msg := strings.TrimSpace(out)
+		if msg == "" {
+			msg = err.Error()
+		}
+		return false, msg, nil
+	}
+	return true, "", docker.ComposeWarnings(out)
 }
 
 // --- detail / update ---------------------------------------------------------

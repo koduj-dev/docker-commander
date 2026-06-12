@@ -129,7 +129,8 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name      string            `json:"name"`
 		Template  *templateRef      `json:"template"`
-		Blocks    []templateRef     `json:"blocks"`
+		Instances []blockInstance   `json:"instances"`
+		Blocks    []templateRef     `json:"blocks"` // legacy: each becomes a keyless instance
 		Fragments []templateRef     `json:"fragments"`
 		Variables map[string]string `json:"variables"`
 	}
@@ -144,9 +145,13 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	slug := slugify(name)
 
+	instances := body.Instances
+	for _, b := range body.Blocks {
+		instances = append(instances, blockInstance{Block: b})
+	}
 	// Resolve the scaffold before creating anything, so a bad template/block
 	// reference fails cleanly without leaving a half-created project behind.
-	files, err := s.resolveSeedFiles(r.Context(), slug, name, body.Template, body.Blocks, body.Fragments, body.Variables)
+	files, err := s.resolveSeedFiles(r.Context(), slug, name, body.Template, instances, body.Fragments, body.Variables)
 	if errors.Is(err, store.ErrNotFound) {
 		writeErr(w, http.StatusNotFound, "template or block not found")
 		return
