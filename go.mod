@@ -10,10 +10,10 @@ require (
 	github.com/go-ldap/ldap/v3 v3.4.13
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/pquerna/otp v1.5.0
-	github.com/redis/go-redis/v9 v9.20.0
-	golang.org/x/crypto v0.52.0
-	golang.org/x/text v0.37.0
-	modernc.org/sqlite v1.51.0
+	github.com/redis/go-redis/v9 v9.20.1
+	golang.org/x/crypto v0.53.0
+	golang.org/x/text v0.38.0
+	modernc.org/sqlite v1.52.0
 )
 
 require (
@@ -50,7 +50,7 @@ require (
 	go.opentelemetry.io/otel/metric v1.44.0 // indirect
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
-	golang.org/x/sys v0.45.0 // indirect
+	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	gotest.tools/v3 v3.5.2 // indirect
 	modernc.org/libc v1.72.3 // indirect
