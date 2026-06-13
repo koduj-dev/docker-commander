@@ -57,6 +57,10 @@ level filters, regex search and structured parsing.
 - Rules on **state**, **resource thresholds**, **log patterns** and **restart/crash-loops** — editable, with severity & cooldown.
 - Notify via **webhooks**, **email (SMTP, per-host routing)**, an in-app feed, and a **Prometheus `/metrics`** exporter.
 
+**Remote control from AI tools (MCP)**
+- An optional, **off-by-default** **Model Context Protocol** server lets AI tools (**Claude Code**, **Claude Desktop**, **Cursor**) **monitor and *safely* operate** Docker **as you**: read tools (containers, logs, images, projects, stats, events, audit…) plus *safe* control (**start/stop/restart**, **deploy/down**), with MCP **resources** & **prompts**.
+- Authenticate with a **bearer API token** (self-service page) or **OAuth 2.1** (PKCE, dynamic client registration). Every call reuses the app's **RBAC**, and a token can only **narrow** your rights (a section subset + **read-only**). Deliberately **no exec / image export / file read / prune / remove**. See [MCP](docs/mcp.md).
+
 **Security & administration**
 - **Argon2id** passwords + **TOTP 2FA** (optionally exempt for localhost), rate limiting, strict headers, signed `HttpOnly` cookies.
 - **Multi-user** with **roles**, **per-section permissions**, **read-only** mode, global **feature flags**, and an **audit log**. Per-user UI preferences (filters) follow the account across browsers.
@@ -126,6 +130,8 @@ list. The Docker connection also honours the standard `DOCKER_HOST` /
 | `-addr`              | `DC_ADDR`              | (unset)            | Legacy full `host:port`; overrides `-host`/`-port`. |
 | `-tls-cert`          | `DC_TLS_CERT`          | (off)              | PEM certificate path; with `-tls-key`, serves **HTTPS** directly. |
 | `-tls-key`           | `DC_TLS_KEY`           | (off)              | PEM private-key path. |
+| `-mcp-enabled`       | `DC_MCP_ENABLED=1`     | off                | Enable the remote **MCP** server for AI tools. Off by default; serve behind HTTPS. See [MCP](docs/mcp.md). |
+| `-mcp-public-url`    | `DC_MCP_PUBLIC_URL`    | (unset)            | Externally reachable base URL (`https://host`) — required for the MCP **OAuth** flow (bearer tokens work without it). |
 | `-data-dir`          | `DC_DATA_DIR`          | OS config dir      | SQLite DB + signing/encryption keys. |
 | `-session-ttl`       | —                      | `12h`              | Session token lifetime. |
 | `-dev`               | `DC_DEV=1`             | off                | Dev mode: API only + permissive CORS for Vite. |
@@ -221,6 +227,7 @@ notify webhooks (Go-template bodies) and/or email. **Prometheus:** scrape
 - **2FA is enforced everywhere** unless an admin enables the *localhost exemption* (Settings), which trusts `RemoteAddr` only — keep it **off** behind a proxy.
 - **SSH hosts** verify the daemon host key (known_hosts / trust-on-first-use); a changed key is refused as a possible MITM.
 - Signing key and at-rest encryption key are generated on first run and stored in the data dir; stored secrets are never returned by the API.
+- The **MCP server is off by default** (`DC_MCP_ENABLED`); when on, it's bearer/OAuth-authenticated, reuses the app's RBAC (with per-token **read-only** / section scope), and exposes only reads + *safe* control — no exec, image export, file reads or prune/remove. See [MCP](docs/mcp.md).
 
 ## 📚 Documentation
 

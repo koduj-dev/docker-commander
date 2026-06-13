@@ -7,6 +7,23 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Remote control from AI tools (MCP)** — an optional, **off-by-default**
+  **Model Context Protocol** server (`DC_MCP_ENABLED`) so AI tools (**Claude
+  Code**, **Claude Desktop**, **Cursor**) can monitor and *safely* operate Docker
+  **as the authenticated user**. ~20 tools — read (containers, logs, images,
+  projects, volumes, networks, stats, metrics history, events, audit) and *safe*
+  control (start/stop/restart a container, deploy/down a managed project) — plus
+  MCP **resources** (container inventory, compose files) and **prompts** (curated
+  ops workflows). Two auth paths: a **bearer API token** from a self-service
+  **MCP Access** page (Claude Code / scripts), or a self-contained **OAuth 2.1**
+  server — PKCE, dynamic client registration, audience-bound access tokens with
+  rotating refresh tokens — for Claude Desktop / Cursor (needs
+  `DC_MCP_PUBLIC_URL`). Every call reuses the app's **RBAC**, and a token can only
+  **narrow** its owner's rights (a section subset + read-only). Container env
+  vars, audit detail and event attributes are kept out of tool output; there is
+  deliberately **no exec, image export, volume-content read, prune or remove**.
+  Backed by unit, end-to-end runtime-smoke, and adversarial pen tests. Serve
+  behind HTTPS. See [docs/mcp.md](docs/mcp.md).
 - **Docker image autocomplete** — typing an image reference now suggests names
   and tags: in the **compose editor** (on `image:` lines) and in the **Create
   container** form. Suggestions blend the host's locally-pulled images (instant,
