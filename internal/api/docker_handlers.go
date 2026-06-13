@@ -34,10 +34,10 @@ func (s *Server) handleListHosts(w http.ResponseWriter, r *http.Request) {
 		if hh, ok := health[h.ID]; ok {
 			row["reachable"] = hh.Reachable
 			if !hh.Reachable {
+				// Only the fact + since-time are surfaced; the raw ping error can
+				// carry internal network/auth detail, so it stays server-side
+				// (it's already in the monitor's logs).
 				row["unreachableSince"] = hh.Since.Format(time.RFC3339)
-				if hh.Err != "" {
-					row["unreachableError"] = hh.Err
-				}
 			}
 		}
 		out = append(out, row)

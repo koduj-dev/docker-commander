@@ -34,9 +34,14 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	// Stream frames are gated per channel against the user's live RBAC.
+	// Stream frames are gated per channel against the user's live RBAC. An
+	// unrecognised channel is denied outright (fail closed).
 	allow := func(channel string) bool {
-		return s.checkAccess(r.Context(), u, wsChannelSection(channel), false) == nil
+		section, ok := wsChannelSection(channel)
+		if !ok {
+			return false
+		}
+		return s.checkAccess(r.Context(), u, section, false) == nil
 	}
 	// Serve blocks until the client disconnects.
 	s.hub.Serve(r.Context(), conn, allow)

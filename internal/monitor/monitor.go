@@ -600,11 +600,11 @@ func (m *Monitor) recordHealth(hostID int64, hostName string, pingErr error, now
 	}
 	m.health[hostID] = HostHealth{Reachable: reachable, Since: since, LastCheck: now, Err: errStr}
 	transition := existed && prev.Reachable != reachable
-	downtime := now.Sub(prev.Since)
+	prevSince := prev.Since // captured under lock; only meaningful on a transition
 	m.healthMu.Unlock()
 
 	if transition {
-		m.fireHostAlert(hostID, hostName, reachable, downtime)
+		m.fireHostAlert(hostID, hostName, reachable, now.Sub(prevSince))
 	}
 }
 

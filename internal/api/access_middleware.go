@@ -53,15 +53,22 @@ func sectionForPath(path string) string {
 	}
 }
 
-// wsChannelSection maps a WebSocket stream channel to the RBAC section that
-// gates it. The hub only streams container-scoped telemetry — a named
-// container's stats or logs — and every consumer (the container detail view and
-// the Logs page alike) must already hold the "containers" section to obtain a
-// container id in the first place. So both channels gate on "containers", and an
-// unknown channel does too (fail closed). Previously the hub was ungated, so any
+// wsChannelSection maps a known WebSocket stream channel to the RBAC section
+// that gates it, and reports whether the channel is recognised. The hub only
+// streams container-scoped telemetry — a named container's stats or logs — and
+// every consumer (the container detail view and the Logs page alike) must
+// already hold the "containers" section to obtain a container id in the first
+// place, so both known channels gate on "containers". An UNKNOWN channel
+// returns ok=false so the caller fails closed (denies) rather than authorising a
+// future channel by accident. Previously the hub was ungated, so any
 // authenticated user could stream any container's data; this ties it to RBAC.
-func wsChannelSection(channel string) string {
-	return "containers"
+func wsChannelSection(channel string) (section string, ok bool) {
+	switch channel {
+	case "stats", "logs":
+		return "containers", true
+	default:
+		return "", false
+	}
 }
 
 // isWriteRequest reports whether a request performs a mutating action. Most are

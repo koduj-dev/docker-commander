@@ -105,12 +105,14 @@ func (c *connState) subscribe(parent context.Context, msg clientMsg) {
 		c.write(parent, serverMsg{Type: "error", SubID: msg.SubID, Message: "subId and containerId required"})
 		return
 	}
+	// Replace any existing sub with the same id FIRST, so a re-subscribe that is
+	// then denied doesn't leave the previous stream running under that id.
+	c.unsubscribe(msg.SubID)
 	// RBAC gate: a user may only stream channels whose section they can access.
 	if c.allow != nil && !c.allow(msg.Channel) {
 		c.write(parent, serverMsg{Type: "error", SubID: msg.SubID, Message: "access to this section is not permitted"})
 		return
 	}
-	c.unsubscribe(msg.SubID) // replace any existing sub with the same id
 
 	ctx, cancel := context.WithCancel(parent)
 	c.mu.Lock()
