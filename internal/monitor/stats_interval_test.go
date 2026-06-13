@@ -19,8 +19,13 @@ func TestSetStatsInterval(t *testing.T) {
 	}
 	t.Cleanup(func() { st.Close() })
 	key := make([]byte, 32)
-	_, _ = rand.Read(key)
-	c, _ := crypto.New(key)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatal(err)
+	}
+	c, err := crypto.New(key)
+	if err != nil {
+		t.Fatal(err)
+	}
 	st.SetCipher(c)
 
 	m := New(st, docker.NewManager(st), nil)

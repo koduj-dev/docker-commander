@@ -134,6 +134,11 @@ func Load() (Config, error) {
 	c.RedisDB = envInt("DC_REDIS_DB", 0)
 	c.MetricsRetention = *retention
 	c.MetricsInterval = *interval
+	// A non-positive interval is meaningless (the monitor would ignore it); clamp
+	// to the default here so the resolved Config value is never misleading.
+	if c.MetricsInterval <= 0 {
+		c.MetricsInterval = 15 * time.Second
+	}
 	c.SessionTTL = *ttl
 
 	// HTTPS needs both halves of the keypair.

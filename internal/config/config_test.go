@@ -63,6 +63,25 @@ func TestLoadMetricsIntervalDefault(t *testing.T) {
 	}
 }
 
+// TestLoadMetricsIntervalClamp checks a non-positive interval is clamped to the
+// default rather than passed through as a misleading value.
+func TestLoadMetricsIntervalClamp(t *testing.T) {
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	defer func() { os.Args, flag.CommandLine = oldArgs, oldFS }()
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = []string{"dockercmd"}
+	t.Setenv("DC_DATA_DIR", t.TempDir())
+	t.Setenv("DC_METRICS_INTERVAL", "0s")
+
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.MetricsInterval != 15*time.Second {
+		t.Errorf("a 0 interval should clamp to the 15s default, got %v", c.MetricsInterval)
+	}
+}
+
 func TestLoadConfigFileParsing(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "commander.conf")
