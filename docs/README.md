@@ -27,6 +27,7 @@ two cover installation and configuration.
 - [Users & roles](users.md) — accounts, permissions, read-only
 - [Settings](settings.md) — feature flags, localhost 2FA, LDAP
 - [Audit log](audit.md) — record of privileged actions
+- [MCP (AI tools)](mcp.md) — remote control from AI tools (Claude Code/Desktop, Cursor): tokens, OAuth, the safe tool surface
 
 ## Operations
 - [Getting started](getting-started.md) — first run, 2FA, the basics

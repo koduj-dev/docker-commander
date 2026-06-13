@@ -23,6 +23,13 @@ DC_PORT=8470
 # DC_TLS_CERT=/etc/docker-commander/tls/cert.pem
 # DC_TLS_KEY=/etc/docker-commander/tls/key.pem
 
+# Optional: remote MCP server for AI tools (Claude Code/Desktop, Cursor).
+# Off by default; serve it behind HTTPS. DC_MCP_PUBLIC_URL is the externally
+# reachable base URL and is required only for the OAuth flow (bearer API tokens,
+# created on the in-app "MCP Access" page, work without it). See docs/mcp.md.
+# DC_MCP_ENABLED=1
+# DC_MCP_PUBLIC_URL=https://docker.example.com
+
 # Where the SQLite DB + signing/encryption keys live.
 DC_DATA_DIR=/var/lib/dockercmd
 

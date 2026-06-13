@@ -25,6 +25,8 @@ import type {
   ParseRule,
   PortProbe,
   Registry,
+  MCPToken,
+  MCPStatus,
   Project,
   ProjectTemplateMeta,
   ProjectTemplateDetail,
@@ -497,6 +499,13 @@ export const api = {
     req<{ id: number }>("POST", "/api/registries", b),
   deleteRegistry: (id: number) => req<{ ok: boolean }>("DELETE", `/api/registries/${id}`),
   testRegistry: (id: number) => req<{ ok: boolean; error?: string }>("POST", `/api/registries/${id}/test${hostParam()}`),
+
+  // MCP access tokens (self-service — each user manages their own).
+  mcpStatus: () => req<MCPStatus>("GET", "/api/mcp/status"),
+  mcpTokens: () => req<MCPToken[]>("GET", "/api/mcp/tokens"),
+  createMcpToken: (b: { name: string; readOnly: boolean; sections: string[]; expiresInDays: number }) =>
+    req<{ id: number; token: string }>("POST", "/api/mcp/tokens", b),
+  deleteMcpToken: (id: number) => req<{ ok: boolean }>("DELETE", `/api/mcp/tokens/${id}`),
 
   networks: () => req<NetworkSummary[]>("GET", `/api/networks${hostParam()}`),
   createNetwork: (b: { name: string; driver?: string; subnet?: string; gateway?: string; internal?: boolean; attachable?: boolean }) =>

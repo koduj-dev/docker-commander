@@ -1,10 +1,13 @@
 package api
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/koduj-dev/docker-commander/internal/auth"
+	"github.com/koduj-dev/docker-commander/internal/store"
 )
 
 // sectionForPath maps an API path to its access-control section. It returns:
@@ -65,6 +68,35 @@ func isWriteRequest(r *http.Request) bool {
 	return false
 }
 
+// checkAccess is the shared RBAC gate: it decides whether user u may act on
+// section with the given write intent. A nil result means allowed; a non-nil
+// error describes the denial (always a 403 at the HTTP layer). Both the REST
+// permissions middleware and the MCP tool dispatcher route through here, so
+// there is exactly one source of truth for section grants and the read-only
+// flag — disable a section in the admin UI and the matching MCP tool dies too.
+func (s *Server) checkAccess(ctx context.Context, u *store.User, section string, write bool) error {
+	if section == "" {
+		return nil // ungated
+	}
+	if section == "__admin" {
+		if !u.IsAdmin() {
+			return errors.New("admin only")
+		}
+		return nil
+	}
+	if u.IsAdmin() {
+		return nil // admins bypass section + read-only checks
+	}
+	disabled, _ := s.store.DisabledSections(ctx)
+	if contains(disabled, section) || !contains(u.Sections, section) {
+		return errors.New("access to this section is not permitted")
+	}
+	if u.ReadOnly && write {
+		return errors.New("your account is read-only")
+	}
+	return nil
+}
+
 // permissions enforces role, per-user section grants, the read-only flag and
 // global feature flags. It runs after RequireSession (claims are present).
 func (s *Server) permissions(next http.Handler) http.Handler {
@@ -84,27 +116,9 @@ func (s *Server) permissions(next http.Handler) http.Handler {
 			writeErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-
-		if section == "__admin" {
-			if !u.IsAdmin() {
-				writeErr(w, http.StatusForbidden, "admin only")
-				return
-			}
-			next.ServeHTTP(w, r)
+		if err := s.checkAccess(r.Context(), u, section, isWriteRequest(r)); err != nil {
+			writeErr(w, http.StatusForbidden, err.Error())
 			return
-		}
-
-		// Admins bypass section + read-only checks.
-		if !u.IsAdmin() {
-			disabled, _ := s.store.DisabledSections(r.Context())
-			if contains(disabled, section) || !contains(u.Sections, section) {
-				writeErr(w, http.StatusForbidden, "access to this section is not permitted")
-				return
-			}
-			if u.ReadOnly && isWriteRequest(r) {
-				writeErr(w, http.StatusForbidden, "your account is read-only")
-				return
-			}
 		}
 		next.ServeHTTP(w, r)
 	})

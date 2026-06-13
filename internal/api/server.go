@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -16,6 +17,7 @@ import (
 	"github.com/koduj-dev/docker-commander/internal/config"
 	"github.com/koduj-dev/docker-commander/internal/docker"
 	"github.com/koduj-dev/docker-commander/internal/history"
+	"github.com/koduj-dev/docker-commander/internal/mcp"
 	"github.com/koduj-dev/docker-commander/internal/monitor"
 	"github.com/koduj-dev/docker-commander/internal/store"
 	"github.com/koduj-dev/docker-commander/internal/ws"
@@ -34,6 +36,11 @@ type Server struct {
 	metricsToken string
 	webFS        fs.FS // built SPA assets, or nil in dev mode
 	update       *updateChecker
+
+	// mcpSigningKey signs MCP OAuth access tokens; lazily loaded by mountMCP.
+	mcpSigningKey []byte
+	// mcpRateLimiter throttles the unauthenticated OAuth endpoints (DCR + token).
+	mcpRateLimiter *auth.LoginLimiter
 }
 
 // NewServer constructs the API server.
@@ -74,6 +81,13 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/auth/logout", s.handleLogout)
 			r.Post("/auth/totp/setup", s.handleTOTPSetup)
 			r.Post("/auth/totp/enable", s.handleTOTPEnable)
+
+			// MCP access tokens — self-service (each user manages their own).
+			// Ungated: a token can only narrow its owner's rights.
+			r.Get("/mcp/status", s.handleMCPStatus)
+			r.Get("/mcp/tokens", s.handleListMCPTokens)
+			r.Post("/mcp/tokens", s.handleCreateMCPToken)
+			r.Delete("/mcp/tokens/{id}", s.handleRevokeMCPToken)
 
 			// User management + app settings (admin only, enforced by section "__admin").
 			r.Get("/users", s.handleListUsers)
@@ -266,11 +280,91 @@ func (s *Server) Handler() http.Handler {
 	// Prometheus exporter (own optional-token auth; Prometheus can't do cookies).
 	r.Get("/metrics", s.handleMetrics)
 
+	// Remote MCP server. Mounted ONLY when explicitly enabled — when off, these
+	// paths fall through to the SPA/404 with no hint the feature exists. The
+	// transport is bearer-gated and tools share the REST RBAC gate (checkAccess).
+	if s.cfg.MCPEnabled {
+		s.mountMCP(r)
+	}
+
 	// Everything else serves the embedded single-page app (if present).
 	if s.webFS != nil {
 		r.Handle("/*", s.spaHandler())
 	}
 	return r
+}
+
+// mountMCP wires the bearer-gated MCP transport and its OAuth protected-resource
+// metadata. The public base URL (DC_MCP_PUBLIC_URL) is only needed for the OAuth
+// discovery flow; bearer (API-token) clients work without it.
+func (s *Server) mountMCP(r chi.Router) {
+	base := strings.TrimRight(s.cfg.MCPPublicURL, "/")
+	deps := mcp.Deps{
+		Store:         s.store,
+		Docker:        s.docker,
+		History:       s.history,
+		CheckAccess:   s.checkAccess,
+		Version:       s.cfg.Version,
+		ListProjects:  s.mcpListProjects,
+		DeployProject: s.mcpDeployProject,
+		DownProject:   s.mcpDownProject,
+	}
+	// OAuth (for interactive clients like Claude Desktop) needs a public URL for
+	// audience binding + discovery. Without one, only bearer/API-token auth works.
+	if base != "" {
+		s.mcpSigningKey = s.mcpSecret(context.Background())
+		deps.ResourceURL = base + "/mcp"
+		deps.MetadataURL = base + "/.well-known/oauth-protected-resource"
+		deps.IssuerURL = base
+		deps.SigningKey = s.mcpSigningKey
+	}
+	mcpHandler, metadataHandler := deps.Handlers()
+	r.Handle("/mcp", mcpHandler)
+	if base != "" {
+		// Throttle the unauthenticated programmatic endpoints (open DCR + token).
+		s.mcpRateLimiter = auth.NewLoginLimiter(30, time.Minute)
+		// Serve discovery at both the root and the resource-path-suffixed form;
+		// strict clients probe the path-aware variant for a resource at /mcp.
+		r.Handle("/.well-known/oauth-protected-resource", metadataHandler)
+		r.Handle("/.well-known/oauth-protected-resource/mcp", metadataHandler)
+		r.Get("/.well-known/oauth-authorization-server", s.handleOAuthASMetadata)
+		r.Get("/.well-known/oauth-authorization-server/mcp", s.handleOAuthASMetadata)
+		r.Post("/oauth/register", s.oauthThrottle(s.handleOAuthRegister))
+		r.Get("/oauth/authorize", s.handleOAuthAuthorize)
+		r.Post("/oauth/authorize", s.handleOAuthAuthorizeDecision)
+		r.Post("/oauth/token", s.oauthThrottle(s.handleOAuthToken))
+		s.startOAuthSweeper()
+	}
+}
+
+// oauthThrottle rate-limits an unauthenticated OAuth endpoint per client IP
+// (RealIP-normalized), failing closed with 429 once the per-minute budget is hit.
+func (s *Server) oauthThrottle(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.mcpRateLimiter != nil {
+			if !s.mcpRateLimiter.Allow(r.RemoteAddr) {
+				w.Header().Set("Retry-After", "60")
+				writeErr(w, http.StatusTooManyRequests, "rate limited")
+				return
+			}
+			s.mcpRateLimiter.Fail(r.RemoteAddr) // count this request toward the window
+		}
+		next(w, r)
+	}
+}
+
+// startOAuthSweeper periodically purges expired OAuth codes/refresh tokens so
+// the tables don't grow unbounded from issued-but-unredeemed grants.
+func (s *Server) startOAuthSweeper() {
+	go func() {
+		t := time.NewTicker(time.Hour)
+		defer t.Stop()
+		for range t.C {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			_ = s.store.DeleteExpiredOAuth(ctx)
+			cancel()
+		}
+	}()
 }
 
 // resolveHostID returns the host id from the "host" query param, or 0 to mean

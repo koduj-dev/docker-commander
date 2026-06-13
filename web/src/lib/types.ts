@@ -540,3 +540,20 @@ export interface AuditEntry {
   ip: string;
   createdAt: string;
 }
+
+// MCP access token (self-service personal token for the remote MCP server).
+// The secret is returned only once at creation and never again.
+export interface MCPToken {
+  id: number;
+  name: string;
+  sections: string[] | null; // null/empty = inherit all of the owner's sections
+  readOnly: boolean;
+  createdAt: string;
+  lastUsedAt?: string;
+  expiresAt?: string;
+}
+
+export interface MCPStatus {
+  enabled: boolean; // the MCP server is turned on (DC_MCP_ENABLED)
+  oauth: boolean; // OAuth flow available (public URL configured)
+}

@@ -18,6 +18,8 @@ list. Key ones:
 | `DC_PORT` | `8470` | listen port (also `-p 9000` shorthand) |
 | `DC_ADDR` | (unset) | legacy full `host:port`; overrides `DC_HOST`/`DC_PORT` if set |
 | `DC_TLS_CERT` / `DC_TLS_KEY` | (off) | PEM cert + key paths; set both to serve **HTTPS** directly |
+| `DC_MCP_ENABLED` | (off) | enable the remote **MCP** server for AI tools (off by default; serve behind HTTPS) — see [MCP](mcp.md) |
+| `DC_MCP_PUBLIC_URL` | (unset) | externally reachable base URL (`https://host`) — required for the MCP **OAuth** flow (bearer tokens work without it) |
 | `DC_DATA_DIR` | OS config dir | SQLite DB + signing/encryption keys |
 | `DC_METRICS_TOKEN` | (open) | bearer token guarding `/metrics` |
 | `DC_REDIS_ADDR` | (memory) | Redis for metric history |
