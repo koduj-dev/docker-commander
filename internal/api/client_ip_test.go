@@ -95,6 +95,20 @@ func TestClientIP_RightmostUntrusted(t *testing.T) {
 	}
 }
 
+// TestClientIP_MalformedXFFIgnored: a trusted proxy forwarding a garbage
+// X-Forwarded-For must not let arbitrary header content become RemoteAddr — the
+// peer (the proxy) is kept instead, and the address stays a valid IP.
+func TestClientIP_MalformedXFFIgnored(t *testing.T) {
+	trusted := cidrs(t, "127.0.0.0/8")
+	addr, loop := runClientIP(trusted, "127.0.0.1:9", []string{"not-an-ip, still-garbage"})
+	if addr != "127.0.0.1" {
+		t.Errorf("garbage X-Forwarded-For should fall back to the proxy peer, got %q", addr)
+	}
+	if !loop {
+		t.Error("falling back to the 127.0.0.1 proxy peer should read as loopback (a valid IP, not garbage)")
+	}
+}
+
 // TestClientIP_DirectLoopbackStillExempt: a direct loopback connection (no proxy,
 // no headers) is still loopback — the legitimate single-box case keeps working.
 func TestClientIP_DirectLoopbackStillExempt(t *testing.T) {

@@ -49,11 +49,15 @@ func (s *Server) clientIP(next http.Handler) http.Handler {
 // real one, so spoofing only changes values we already discard. Returns "" when
 // the header is absent (caller keeps the peer).
 func realClientFromXFF(r *http.Request, trusted []*net.IPNet) string {
-	var ips []string
+	// Collect only well-formed IPs. Unparseable entries are dropped, never
+	// passed through to r.RemoteAddr — a malformed X-Forwarded-For must not let
+	// arbitrary header content become the "client IP" used for rate-limit keys,
+	// audit or loopback checks.
+	var ips []net.IP
 	for _, h := range r.Header.Values("X-Forwarded-For") {
 		for _, part := range strings.Split(h, ",") {
-			if p := strings.TrimSpace(part); p != "" {
-				ips = append(ips, p)
+			if ip := net.ParseIP(strings.TrimSpace(part)); ip != nil {
+				ips = append(ips, ip)
 			}
 		}
 	}
@@ -61,16 +65,12 @@ func realClientFromXFF(r *http.Request, trusted []*net.IPNet) string {
 		return ""
 	}
 	for i := len(ips) - 1; i >= 0; i-- {
-		ip := net.ParseIP(ips[i])
-		if ip == nil {
-			continue
-		}
-		if !ipInAny(ip, trusted) {
-			return ips[i] // first untrusted hop from the right = the real client
+		if !ipInAny(ips[i], trusted) {
+			return ips[i].String() // first untrusted hop from the right = the real client
 		}
 	}
 	// Every hop is itself a trusted proxy → the original client is the leftmost.
-	return ips[0]
+	return ips[0].String()
 }
 
 func ipInAny(ip net.IP, nets []*net.IPNet) bool {
