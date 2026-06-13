@@ -81,7 +81,7 @@ to the risk of the change:
 - **Before a PR** — do a full code + security review of the whole branch, and for
   any **new attack surface** (auth, parsers, endpoints, anything taking external
   input) **add adversarial tests** asserting the attack is rejected — see the
-  `*pentest*` tests for the style. Keep `go test -short ./...` green.
+  `TestPen_*` cases in `*_pentest_test.go` (e.g. `internal/mcp/pentest_test.go`, `internal/api/oauth_pentest_test.go`). Keep `go test -short ./...` green.
 
 This is guidance, not tooling, but it's how the security-sensitive parts of the
 codebase have been built.
