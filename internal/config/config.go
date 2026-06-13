@@ -40,9 +40,10 @@ type Config struct {
 
 	// MCPEnabled turns on the remote MCP server (and its OAuth endpoints). Off by
 	// default: when false the /mcp, /oauth and MCP /.well-known routes are not
-	// mounted at all, so they 404 with no hint the feature exists. It exposes
-	// Docker read/control to AI tooling over the network — enable consciously,
-	// behind HTTPS.
+	// mounted, so a request is an unknown path (it falls through to the SPA, or a
+	// 404 without an embedded UI) — no hint the feature exists. It exposes Docker
+	// read/control to AI tooling over the network — enable consciously, behind
+	// HTTPS. Startup logs the resolved on/off state.
 	MCPEnabled bool
 	// MCPPublicURL is the externally reachable base URL of this server
 	// (e.g. https://docker.example.com), used as the canonical resource

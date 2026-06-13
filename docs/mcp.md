@@ -24,8 +24,10 @@ DC_MCP_ENABLED=1
 DC_MCP_PUBLIC_URL=https://docker.example.com
 ```
 
-When disabled, the MCP and OAuth routes are **not mounted at all** — they return a
-plain `404`, with no hint the feature exists.
+When disabled, the MCP and OAuth routes are **not mounted** — a request to `/mcp`
+is just an unknown path (it falls through to the SPA, or a plain `404` when no UI
+is embedded), with no hint the feature exists. The startup log says `MCP server:
+disabled` so you can confirm the state at a glance.
 
 ## Two ways to authenticate
 
