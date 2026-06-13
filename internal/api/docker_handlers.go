@@ -19,13 +19,28 @@ func (s *Server) handleListHosts(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "could not list hosts")
 		return
 	}
+	// Annotate each host with the monitor's live reachability. A host the
+	// monitor hasn't probed yet (or a disabled one it skips) is reported
+	// reachable so the UI doesn't flash a false "offline".
+	health := s.monitor.HostHealth()
 	// Shape a safe view; never leak TLS key material to the client.
 	out := make([]map[string]any, 0, len(hosts))
 	for _, h := range hosts {
-		out = append(out, map[string]any{
+		row := map[string]any{
 			"id": h.ID, "name": h.Name, "kind": h.Kind, "address": h.Address,
 			"alertEmail": h.AlertEmail, "disabled": h.Disabled,
-		})
+			"reachable": true,
+		}
+		if hh, ok := health[h.ID]; ok {
+			row["reachable"] = hh.Reachable
+			if !hh.Reachable {
+				row["unreachableSince"] = hh.Since.Format(time.RFC3339)
+				if hh.Err != "" {
+					row["unreachableError"] = hh.Err
+				}
+			}
+		}
+		out = append(out, row)
 	}
 	writeJSON(w, http.StatusOK, out)
 }

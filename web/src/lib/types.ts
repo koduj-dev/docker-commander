@@ -54,6 +54,8 @@ export interface Host {
   address: string;
   alertEmail?: string;
   disabled?: boolean;
+  reachable?: boolean; // monitor's live view; false = daemon unreachable
+  unreachableSince?: string; // RFC3339, present only while unreachable
 }
 
 export interface PortSpec {

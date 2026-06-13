@@ -7,6 +7,7 @@ package monitor
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"regexp"
 	"strings"
@@ -26,7 +27,23 @@ const (
 	// this cached snapshot rather than re-sampling).
 	statsInterval   = 15 * time.Second
 	logReconcileInt = 10 * time.Second
+
+	// healthInterval is how often every monitored host is pinged for
+	// reachability; healthTimeout bounds a single ping so a dead host can't
+	// stall the sweep.
+	healthInterval = 30 * time.Second
+	healthTimeout  = 8 * time.Second
 )
+
+// HostHealth is the engine's cached view of one host's reachability. Since is
+// when the current reachable/unreachable state began, so the UI can show how
+// long a host has been down (or up).
+type HostHealth struct {
+	Reachable bool
+	Since     time.Time
+	LastCheck time.Time
+	Err       string // last ping error when unreachable
+}
 
 // ContainerStat is the cached per-container snapshot used by the exporter.
 type ContainerStat struct {
@@ -76,6 +93,9 @@ type Monitor struct {
 	logMu      sync.Mutex
 	logCancels map[string]context.CancelFunc // "ruleID:cid" -> cancel
 
+	healthMu sync.RWMutex
+	health   map[int64]HostHealth // host id -> reachability
+
 	dispatcher *dispatcher
 }
 
@@ -88,6 +108,7 @@ func New(st *store.Store, dm *docker.Manager, hist history.Store) *Monitor {
 		snapshot:   make(map[string]ContainerStat),
 		restarts:   make(map[string][]time.Time),
 		logCancels: make(map[string]context.CancelFunc),
+		health:     make(map[int64]HostHealth),
 		dispatcher: newDispatcher(st),
 	}
 }
@@ -95,10 +116,11 @@ func New(st *store.Store, dm *docker.Manager, hist history.Store) *Monitor {
 // Run starts all background loops and blocks until ctx is cancelled.
 func (m *Monitor) Run(ctx context.Context) {
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(4)
 	go func() { defer wg.Done(); m.statsLoop(ctx) }()
 	go func() { defer wg.Done(); m.watchManagerLoop(ctx) }()
 	go func() { defer wg.Done(); m.logReconcileLoop(ctx) }()
+	go func() { defer wg.Done(); m.healthLoop(ctx) }()
 	wg.Wait()
 }
 
@@ -529,6 +551,98 @@ func (m *Monitor) fire(ctx context.Context, r store.AlertRule, hostID int64, hos
 	if r.Email {
 		m.emailNotify(ev)
 	}
+}
+
+// ---- host reachability ------------------------------------------------------
+
+// healthLoop pings every monitored host on a fixed interval and tracks
+// reachability, firing an alert whenever a host transitions offline or recovers.
+func (m *Monitor) healthLoop(ctx context.Context) {
+	t := time.NewTicker(healthInterval)
+	defer t.Stop()
+	m.checkAllHosts(ctx) // probe once at startup so the state isn't empty
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			m.checkAllHosts(ctx)
+		}
+	}
+}
+
+// checkAllHosts pings each non-disabled host and records the result.
+func (m *Monitor) checkAllHosts(ctx context.Context) {
+	for _, h := range m.monitoredHosts(ctx) {
+		pctx, cancel := context.WithTimeout(ctx, healthTimeout)
+		err := m.docker.Ping(pctx, h.ID)
+		cancel()
+		m.recordHealth(h.ID, h.Name, err, time.Now())
+	}
+}
+
+// recordHealth updates a host's cached reachability and fires an offline/recover
+// alert on a state change. The first observation of a host never alerts — we
+// report transitions, not the initial state — so a host that is already down at
+// startup doesn't generate a spurious "went offline" alert.
+func (m *Monitor) recordHealth(hostID int64, hostName string, pingErr error, now time.Time) {
+	reachable := pingErr == nil
+	errStr := ""
+	if pingErr != nil {
+		errStr = pingErr.Error()
+	}
+
+	m.healthMu.Lock()
+	prev, existed := m.health[hostID]
+	since := now
+	if existed && prev.Reachable == reachable {
+		since = prev.Since // unchanged → keep the original start time
+	}
+	m.health[hostID] = HostHealth{Reachable: reachable, Since: since, LastCheck: now, Err: errStr}
+	transition := existed && prev.Reachable != reachable
+	downtime := now.Sub(prev.Since)
+	m.healthMu.Unlock()
+
+	if transition {
+		m.fireHostAlert(hostID, hostName, reachable, downtime)
+	}
+}
+
+// fireHostAlert records a host offline/recover event in the alert feed and, when
+// SMTP is configured, emails it (honouring the host's per-host recipient). It is
+// independent of user alert rules — host reachability is always watched.
+func (m *Monitor) fireHostAlert(hostID int64, hostName string, online bool, downtime time.Duration) {
+	severity := "critical"
+	message := fmt.Sprintf("Host %q is unreachable", hostName)
+	if online {
+		severity = "info"
+		message = fmt.Sprintf("Host %q recovered (was unreachable for %s)", hostName, downtime.Round(time.Second))
+	}
+	log.Printf("alert severity=%s rule=%q host=%q message=%q", severity, "Host reachability", hostName, message)
+
+	ev := &store.AlertEvent{
+		RuleName: "Host reachability", Type: "host", Severity: severity,
+		HostID: hostID, HostName: hostName, Message: message,
+	}
+	wctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := m.store.InsertAlertEvent(wctx, ev); err != nil {
+		log.Printf("monitor: insert host alert event: %v", err)
+	}
+	m.emailNotify(ev)
+}
+
+// HostHealth returns a snapshot of every tracked host's reachability, keyed by
+// host id, for the API to surface in the hosts list. Hosts that have not been
+// probed yet are absent (callers treat them as reachable/unknown).
+func (m *Monitor) HostHealth() map[int64]HostHealth {
+	m.healthMu.RLock()
+	defer m.healthMu.RUnlock()
+	out := make(map[int64]HostHealth, len(m.health))
+	for k, v := range m.health {
+		out[k] = v
+	}
+	return out
 }
 
 // ---- helpers ----------------------------------------------------------------
