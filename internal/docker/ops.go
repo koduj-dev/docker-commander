@@ -212,6 +212,18 @@ func (m *Manager) RemoveNetwork(ctx context.Context, hostID int64, id string) er
 }
 
 // SystemInfo returns a summary of the Docker host.
+// Ping reports whether a host's Docker daemon is reachable: nil if the daemon
+// answers, or the dial/ping error otherwise. It is cheaper than SystemInfo (no
+// full Info call) and is used by the monitor's health loop.
+func (m *Manager) Ping(ctx context.Context, hostID int64) error {
+	cli, err := m.Client(ctx, hostID)
+	if err != nil {
+		return err
+	}
+	_, err = cli.Ping(ctx)
+	return err
+}
+
 func (m *Manager) SystemInfo(ctx context.Context, hostID int64) (*SystemInfo, error) {
 	cli, err := m.Client(ctx, hostID)
 	if err != nil {
