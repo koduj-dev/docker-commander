@@ -287,13 +287,6 @@ func (s *Server) Handler() http.Handler {
 		s.mountMCP(r)
 	}
 
-	// Profiling endpoints (DC_PPROF=1). Off by default; when on, restricted to
-	// loopback so goroutine/heap detail never leaks over the network even if the
-	// server binds a public interface — reach it via an SSH tunnel.
-	if s.cfg.PProf {
-		s.mountPProf(r)
-	}
-
 	// Everything else serves the embedded single-page app (if present).
 	if s.webFS != nil {
 		r.Handle("/*", s.spaHandler())

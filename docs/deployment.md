@@ -26,13 +26,16 @@ list. Key ones:
 | `DC_METRICS_RETENTION` | `6h` | history retention |
 | `DC_METRICS_INTERVAL` | `15s` | how often the monitor samples every running container's stats — **raise it** (e.g. `30s`/`60s`) on a host with many containers if the sampling sweep is costly |
 | `DC_UPDATE_CHECK` | `1` | check GitHub Releases for a newer version (admin banner); set `0` to disable the outbound call |
-| `DC_PPROF` | (off) | expose Go's `net/http/pprof` under `/debug/pprof` for profiling — **loopback only** (tunnel in via SSH); leave off in normal operation |
+| `DC_PPROF` | (off) | serve Go's `net/http/pprof` on a **dedicated `127.0.0.1:6060`** listener for profiling; off in normal operation |
 
-> **Diagnosing high CPU.** If the app uses more CPU than expected, enable
-> `DC_PPROF=1`, then from the server (or through an SSH tunnel) capture a profile:
+> **Diagnosing high CPU.** Enable `DC_PPROF=1` and the app starts a profiling
+> server bound **only to loopback** (`127.0.0.1:6060`) — separate from the main
+> port, so it is never reachable off-box no matter what interface the app binds
+> or what `X-Forwarded-For` a client sends. From the server (or through an SSH
+> tunnel) capture a profile:
 >
 > ```bash
-> go tool pprof -top -seconds=30 http://127.0.0.1:8470/debug/pprof/profile
+> go tool pprof -top -seconds=30 http://127.0.0.1:6060/debug/pprof/profile
 > ```
 >
 > The biggest steady cost is usually the per-interval **stats sweep** over all

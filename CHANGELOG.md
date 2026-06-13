@@ -12,10 +12,11 @@ All notable changes to Docker Commander are documented here. The format follows
   the charts/history and resource alert rules. On a host with **many containers**
   the sweep can dominate CPU (on the app and the Docker daemon); raising the
   interval is the first lever. Previously hard-coded.
-- **Optional profiling endpoints** (`DC_PPROF=1`) — exposes Go's
-  `net/http/pprof` under `/debug/pprof`, **restricted to loopback** (tunnel in via
-  SSH), for diagnosing CPU/allocation/goroutine issues with `go tool pprof`. Off
-  by default. See [deployment → diagnosing high CPU](docs/deployment.md).
+- **Optional profiling endpoints** (`DC_PPROF=1`) — serves Go's `net/http/pprof`
+  on a **dedicated `127.0.0.1:6060` listener** (separate from the main port, so
+  it's physically unreachable off-box and immune to `X-Forwarded-For` spoofing),
+  for diagnosing CPU/allocation/goroutine issues with `go tool pprof`. Off by
+  default. See [deployment → diagnosing high CPU](docs/deployment.md).
 - **Remote control from AI tools (MCP)** — an optional, **off-by-default**
   **Model Context Protocol** server (`DC_MCP_ENABLED`) so AI tools (**Claude
   Code**, **Claude Desktop**, **Cursor**) can monitor and *safely* operate Docker
