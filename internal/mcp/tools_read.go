@@ -79,6 +79,11 @@ func (h *handler) registerReadTools(s *mcpsdk.Server) {
 		Name:        "recent_audit",
 		Description: "Recent entries from the application audit log (who did what, when). Behind the 'audit' section — most tokens will not have access.",
 	}, h.recentAudit)
+
+	mcpsdk.AddTool(s, &mcpsdk.Tool{
+		Name:        "recent_events",
+		Description: "Recent Docker daemon events (container/image/network/volume lifecycle: start, die, pull, create…) from the last N minutes on a host.",
+	}, h.recentEvents)
 }
 
 // ---- shared input ----

@@ -3,7 +3,11 @@ package docker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"strconv"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -207,6 +211,49 @@ func (m *Manager) StreamEvents(ctx context.Context, hostID int64, onEvent func(E
 			onEvent(flattenEvent(e))
 		case err := <-errs:
 			return err
+		}
+	}
+}
+
+// RecentEvents returns daemon events from the last `since` window, newest-last,
+// capped at `limit`. Unlike StreamEvents it is bounded: setting Until makes the
+// daemon replay the historical window and then close the stream (io.EOF), so
+// this returns rather than tailing live. Used by the read-only MCP events tool.
+func (m *Manager) RecentEvents(ctx context.Context, hostID int64, since time.Duration, limit int) ([]EventMsg, error) {
+	cli, err := m.Client(ctx, hostID)
+	if err != nil {
+		return nil, err
+	}
+	// Cancel on return so an early exit (limit reached) tears down the daemon
+	// events stream instead of leaving the connection open until the caller's
+	// context ends.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	now := time.Now()
+	msgs, errs := cli.Events(ctx, events.ListOptions{
+		Since: strconv.FormatInt(now.Add(-since).Unix(), 10),
+		Until: strconv.FormatInt(now.Unix(), 10),
+	})
+	out := []EventMsg{}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case e, ok := <-msgs:
+			// The SDK closes errs (not msgs) at end-of-window, so termination
+			// normally arrives via the errs/EOF case; the !ok guard is defensive.
+			if !ok {
+				return out, nil
+			}
+			out = append(out, flattenEvent(e))
+			if limit > 0 && len(out) >= limit {
+				return out, nil
+			}
+		case err := <-errs:
+			if err == nil || errors.Is(err, io.EOF) {
+				return out, nil // end of the historical window
+			}
+			return nil, err
 		}
 	}
 }

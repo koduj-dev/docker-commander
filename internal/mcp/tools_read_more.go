@@ -249,3 +249,75 @@ func (h *handler) recentAudit(ctx context.Context, req *mcpsdk.CallToolRequest, 
 	}
 	return nil, out, nil
 }
+
+// ---- recent_events ----
+
+const (
+	eventsDefaultMinutes = 30
+	eventsMaxMinutes     = 360
+	eventsDefaultLimit   = 100
+	eventsMaxLimit       = 500
+)
+
+type recentEventsInput struct {
+	HostID  int64 `json:"host_id,omitempty" jsonschema:"Docker host ID from list_hosts; 0 or omitted = the default local host"`
+	Minutes int   `json:"minutes,omitempty" jsonschema:"how far back to look, in minutes (default 30, max 360)"`
+	Limit   int   `json:"limit,omitempty" jsonschema:"max events to return (default 100, max 500)"`
+}
+
+type eventBrief struct {
+	Time   string `json:"time"`
+	Type   string `json:"type"`   // container | image | network | volume | …
+	Action string `json:"action"` // start | die | pull | create | …
+	Name   string `json:"name,omitempty"`
+	ID     string `json:"id,omitempty"`
+}
+
+type recentEventsOut struct {
+	Events []eventBrief `json:"events"`
+}
+
+func (h *handler) recentEvents(ctx context.Context, req *mcpsdk.CallToolRequest, in recentEventsInput) (*mcpsdk.CallToolResult, recentEventsOut, error) {
+	if _, err := h.authorize(ctx, req, "events", false); err != nil {
+		return nil, recentEventsOut{}, err
+	}
+	minutes := in.Minutes
+	if minutes <= 0 {
+		minutes = eventsDefaultMinutes
+	}
+	if minutes > eventsMaxMinutes {
+		minutes = eventsMaxMinutes
+	}
+	limit := in.Limit
+	if limit <= 0 {
+		limit = eventsDefaultLimit
+	}
+	if limit > eventsMaxLimit {
+		limit = eventsMaxLimit
+	}
+	evs, err := h.deps.Docker.RecentEvents(ctx, in.HostID, time.Duration(minutes)*time.Minute, limit)
+	if err != nil {
+		return nil, recentEventsOut{}, err
+	}
+	// Attr is deliberately omitted — event actor attributes can carry arbitrary
+	// container labels (and thus secrets). Type/action/name/id are enough.
+	out := recentEventsOut{Events: []eventBrief{}}
+	for _, e := range evs {
+		out.Events = append(out.Events, eventBrief{
+			Time:   time.Unix(e.Time, 0).UTC().Format(time.RFC3339),
+			Type:   e.Type,
+			Action: e.Action,
+			Name:   e.Name,
+			ID:     shortID(e.ID),
+		})
+	}
+	return nil, out, nil
+}
+
+// shortID truncates a long Docker ID to its 12-char prefix for compact output.
+func shortID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
+}
