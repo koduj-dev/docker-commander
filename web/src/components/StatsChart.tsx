@@ -71,7 +71,7 @@ function Metric({
             <Tooltip
               contentStyle={{ background: "#1a2233", border: "1px solid #243047", borderRadius: 8, fontSize: 12 }}
               labelFormatter={() => ""}
-              formatter={(v) => [`${Number(v).toFixed(1)} %`, title]}
+              formatter={(v) => { const x = Number(v); return [Number.isFinite(x) ? `${x.toFixed(1)} %` : "—", title]; }}
             />
             <Area
               type="monotone"

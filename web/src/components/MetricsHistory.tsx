@@ -78,7 +78,7 @@ export function MetricsHistory({ containerId }: { containerId: string }) {
               <Tooltip
                 contentStyle={{ background: "#1a2233", border: "1px solid #243047", borderRadius: 8, fontSize: 12 }}
                 labelFormatter={(t) => new Date(t as number).toLocaleTimeString()}
-                formatter={(v, n) => [`${Number(v).toFixed(1)} %`, n === "cpu" ? "CPU" : "Memory"]}
+                formatter={(v, n) => { const x = Number(v); return [Number.isFinite(x) ? `${x.toFixed(1)} %` : "—", n === "cpu" ? "CPU" : "Memory"]; }}
               />
               <Line type="monotone" dataKey="cpu" stroke="#2496ed" strokeWidth={2} dot={false} isAnimationActive={false} />
               <Line type="monotone" dataKey="mem" stroke="#2dd4a7" strokeWidth={2} dot={false} isAnimationActive={false} />
