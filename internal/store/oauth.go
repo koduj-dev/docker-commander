@@ -43,6 +43,62 @@ func (s *Store) OAuthClientByID(ctx context.Context, id string) (*OAuthClient, e
 	return &c, nil
 }
 
+// ListOAuthClients returns every registered MCP OAuth client (newest first) for
+// the admin overview. Clients are public (no secret stored), so the full row is
+// safe to surface.
+func (s *Store) ListOAuthClients(ctx context.Context) ([]OAuthClient, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT client_id, client_name, redirect_uris, created_at
+		FROM oauth_clients ORDER BY created_at DESC, client_id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []OAuthClient
+	for rows.Next() {
+		var c OAuthClient
+		var uris, created string
+		if err := rows.Scan(&c.ID, &c.Name, &uris, &created); err != nil {
+			return nil, err
+		}
+		c.RedirectURIs = unmarshalSections(uris)
+		c.CreatedAt, _ = time.Parse(time.RFC3339, created)
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// DeleteOAuthClient removes a registered client and, in the same transaction,
+// any authorization codes and refresh tokens issued to it — so de-registering a
+// client immediately severs every credential derived from it. The bool reports
+// whether a client row actually existed (false → unknown id → 404).
+func (s *Store) DeleteOAuthClient(ctx context.Context, id string) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback() //nolint:errcheck // rolled back unless committed
+
+	res, err := tx.ExecContext(ctx, `DELETE FROM oauth_clients WHERE client_id = ?`, id)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return false, nil // unknown client; nothing else to purge
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM oauth_codes WHERE client_id = ?`, id); err != nil {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM oauth_refresh_tokens WHERE client_id = ?`, id); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // OAuthCode is the state bound to a single-use authorization code.
 type OAuthCode struct {
 	ClientID      string

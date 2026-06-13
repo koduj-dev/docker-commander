@@ -7,6 +7,13 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **MCP Admin overview** — a new admin-only page (**System → MCP Admin**) giving
+  a fleet-wide view of MCP credentials: **every user's** active API tokens
+  (annotated with the owner) and all registered **OAuth clients**, with the
+  ability to **revoke** any token or **remove** any client (the latter purges its
+  codes and refresh tokens too). Secrets are never exposed — only metadata. Gated
+  by the `__admin` section; backed by store/handler unit tests and adversarial
+  pen tests (admin-gating, IDOR, secret-leak). Makes MCP team-ready.
 - **Remote control from AI tools (MCP)** — an optional, **off-by-default**
   **Model Context Protocol** server (`DC_MCP_ENABLED`) so AI tools (**Claude
   Code**, **Claude Desktop**, **Cursor**) can monitor and *safely* operate Docker

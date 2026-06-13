@@ -89,6 +89,13 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/mcp/tokens", s.handleCreateMCPToken)
 			r.Delete("/mcp/tokens/{id}", s.handleRevokeMCPToken)
 
+			// MCP admin overview — every user's tokens + registered OAuth clients,
+			// with revoke/delete. Admin only (section "__admin").
+			r.Get("/mcp-admin/tokens", s.handleAdminListMCPTokens)
+			r.Delete("/mcp-admin/tokens/{id}", s.handleAdminRevokeMCPToken)
+			r.Get("/mcp-admin/oauth-clients", s.handleAdminListOAuthClients)
+			r.Delete("/mcp-admin/oauth-clients/{id}", s.handleAdminDeleteOAuthClient)
+
 			// User management + app settings (admin only, enforced by section "__admin").
 			r.Get("/users", s.handleListUsers)
 			r.Post("/users", s.handleCreateUser)

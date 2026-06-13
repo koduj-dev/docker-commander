@@ -82,6 +82,63 @@ func (s *Store) ListAPITokens(ctx context.Context, userID int64) ([]APIToken, er
 	return out, rows.Err()
 }
 
+// APITokenWithUser is an APIToken plus its owner's username, for the admin
+// overview where tokens from every account are listed together.
+type APITokenWithUser struct {
+	APIToken
+	Username string
+}
+
+// ListAllAPITokens returns every user's tokens (newest first), each annotated
+// with the owner's username, for the admin overview. Revoked tokens are
+// included so an admin can see recently-revoked credentials; the handler/UI
+// distinguishes them via the Revoked flag.
+func (s *Store) ListAllAPITokens(ctx context.Context) ([]APITokenWithUser, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT t.id, t.user_id, t.token_hash, t.name, t.sections, t.read_only,
+		       t.created_at, t.last_used_at, t.expires_at, t.revoked, u.username
+		FROM api_tokens t JOIN users u ON u.id = t.user_id
+		ORDER BY t.id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []APITokenWithUser
+	for rows.Next() {
+		var t APIToken
+		var readOnly, revoked int
+		var sections, createdAt, lastUsed, expiresAt, username string
+		if err := rows.Scan(&t.ID, &t.UserID, &t.TokenHash, &t.Name, &sections, &readOnly,
+			&createdAt, &lastUsed, &expiresAt, &revoked, &username); err != nil {
+			return nil, err
+		}
+		t.ReadOnly = readOnly != 0
+		t.Revoked = revoked != 0
+		t.Sections = unmarshalSections(sections)
+		t.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		t.LastUsedAt, _ = time.Parse(time.RFC3339, lastUsed)
+		if expiresAt != "" {
+			t.ExpiresAt, _ = time.Parse(time.RFC3339, expiresAt)
+		}
+		out = append(out, APITokenWithUser{APIToken: t, Username: username})
+	}
+	return out, rows.Err()
+}
+
+// AdminRevokeAPIToken marks any token revoked regardless of owner — for admins
+// managing the fleet. Unlike RevokeAPIToken it is not scoped to a user. The bool
+// reports whether a matching, still-active token was revoked (false → unknown id
+// or already revoked), so the handler can return 404 instead of a false success.
+func (s *Store) AdminRevokeAPIToken(ctx context.Context, id int64) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE api_tokens SET revoked = 1 WHERE id = ? AND revoked = 0`, id)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // RevokeAPIToken marks a token revoked. It is scoped to userID so a caller can
 // only revoke their own tokens. The bool reports whether a matching, owned token
 // was actually revoked (false → unknown id or not the caller's), so the handler
