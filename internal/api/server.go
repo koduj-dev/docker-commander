@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -16,6 +17,7 @@ import (
 	"github.com/koduj-dev/docker-commander/internal/config"
 	"github.com/koduj-dev/docker-commander/internal/docker"
 	"github.com/koduj-dev/docker-commander/internal/history"
+	"github.com/koduj-dev/docker-commander/internal/mcp"
 	"github.com/koduj-dev/docker-commander/internal/monitor"
 	"github.com/koduj-dev/docker-commander/internal/store"
 	"github.com/koduj-dev/docker-commander/internal/ws"
@@ -266,11 +268,48 @@ func (s *Server) Handler() http.Handler {
 	// Prometheus exporter (own optional-token auth; Prometheus can't do cookies).
 	r.Get("/metrics", s.handleMetrics)
 
+	// Remote MCP server. Mounted ONLY when explicitly enabled — when off, these
+	// paths fall through to the SPA/404 with no hint the feature exists. The
+	// transport is bearer-gated and tools share the REST RBAC gate (checkAccess).
+	if s.cfg.MCPEnabled {
+		s.mountMCP(r)
+	}
+
 	// Everything else serves the embedded single-page app (if present).
 	if s.webFS != nil {
 		r.Handle("/*", s.spaHandler())
 	}
 	return r
+}
+
+// mountMCP wires the bearer-gated MCP transport and its OAuth protected-resource
+// metadata. The public base URL (DC_MCP_PUBLIC_URL) is only needed for the OAuth
+// discovery flow; bearer (API-token) clients work without it.
+func (s *Server) mountMCP(r chi.Router) {
+	base := strings.TrimRight(s.cfg.MCPPublicURL, "/")
+	deps := mcp.Deps{
+		Store:         s.store,
+		Docker:        s.docker,
+		History:       s.history,
+		CheckAccess:   s.checkAccess,
+		Version:       s.cfg.Version,
+		ListProjects:  s.mcpListProjects,
+		DeployProject: s.mcpDeployProject,
+		DownProject:   s.mcpDownProject,
+	}
+	if base != "" {
+		deps.ResourceURL = base + "/mcp"
+		deps.MetadataURL = base + "/.well-known/oauth-protected-resource"
+		deps.IssuerURL = base
+	}
+	mcpHandler, metadataHandler := deps.Handlers()
+	r.Handle("/mcp", mcpHandler)
+	// Only advertise OAuth protected-resource metadata when a public URL is
+	// configured. Without it the document would be empty/malformed; bearer
+	// (API-token) clients don't need it, so leave the route unmounted (404).
+	if base != "" {
+		r.Handle("/.well-known/oauth-protected-resource", metadataHandler)
+	}
 }
 
 // resolveHostID returns the host id from the "host" query param, or 0 to mean

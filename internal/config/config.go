@@ -38,6 +38,19 @@ type Config struct {
 	TLSCert string
 	TLSKey  string
 
+	// MCPEnabled turns on the remote MCP server (and its OAuth endpoints). Off by
+	// default: when false the /mcp, /oauth and MCP /.well-known routes are not
+	// mounted at all, so they 404 with no hint the feature exists. It exposes
+	// Docker read/control to AI tooling over the network — enable consciously,
+	// behind HTTPS.
+	MCPEnabled bool
+	// MCPPublicURL is the externally reachable base URL of this server
+	// (e.g. https://docker.example.com), used as the canonical resource
+	// identifier for OAuth audience binding and the protected-resource metadata.
+	// Empty is fine for Bearer-only (Claude Code header) use; the OAuth flow
+	// needs it set.
+	MCPPublicURL string
+
 	// Version is the build version string, set by main (not from flags/env).
 	Version string
 	// ConfigFile is the config file that was loaded, or "" if none.
@@ -91,6 +104,8 @@ func Load() (Config, error) {
 	flag.StringVar(&c.MetricsToken, "metrics-token", lookup("DC_METRICS_TOKEN"), "require this bearer token to scrape /metrics (empty = open)")
 	flag.StringVar(&c.TLSCert, "tls-cert", lookup("DC_TLS_CERT"), "PEM TLS certificate path (enables HTTPS together with -tls-key)")
 	flag.StringVar(&c.TLSKey, "tls-key", lookup("DC_TLS_KEY"), "PEM TLS private-key path")
+	flag.BoolVar(&c.MCPEnabled, "mcp-enabled", lookup("DC_MCP_ENABLED") == "1", "enable the remote MCP server + OAuth endpoints (off by default; requires HTTPS)")
+	flag.StringVar(&c.MCPPublicURL, "mcp-public-url", lookup("DC_MCP_PUBLIC_URL"), "externally reachable base URL (https://host[:port]) for MCP OAuth audience/metadata")
 	flag.StringVar(&c.RedisAddr, "redis-addr", lookup("DC_REDIS_ADDR"), "Redis address (host:port) for metrics history; empty = in-memory")
 	flag.StringVar(&c.RedisPassword, "redis-password", lookup("DC_REDIS_PASSWORD"), "Redis password")
 	retention := flag.Duration("metrics-retention", envDuration("DC_METRICS_RETENTION", 6*time.Hour), "how long to keep metric history")

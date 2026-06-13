@@ -210,6 +210,25 @@ CREATE TABLE IF NOT EXISTS compose_fragments (
 	created_by  TEXT NOT NULL DEFAULT '',
 	created_at  TEXT NOT NULL
 );
+
+-- Long-lived bearer tokens for programmatic (MCP) access. The token itself is a
+-- high-entropy random secret shown once; only its SHA-256 is stored. A token is
+-- scoped to its owning user and can only ever NARROW that user's rights:
+-- sections (JSON array, empty = inherit all of the user's sections) and
+-- read_only (ORs with the user's own read-only flag). It never widens access.
+CREATE TABLE IF NOT EXISTS api_tokens (
+	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	user_id      INTEGER NOT NULL,
+	token_hash   TEXT NOT NULL UNIQUE,
+	name         TEXT NOT NULL DEFAULT '',
+	sections     TEXT NOT NULL DEFAULT '',  -- JSON array; empty = inherit user's sections
+	read_only    INTEGER NOT NULL DEFAULT 0,
+	created_at   TEXT NOT NULL,
+	last_used_at TEXT NOT NULL DEFAULT '',
+	expires_at   TEXT NOT NULL DEFAULT '',  -- empty = never expires
+	revoked      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id);
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
