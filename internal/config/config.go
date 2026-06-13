@@ -61,6 +61,16 @@ type Config struct {
 	RedisPassword    string
 	RedisDB          int
 	MetricsRetention time.Duration
+	// MetricsInterval is how often the monitor samples every running container's
+	// stats (feeding the charts/history and resource alert rules). Lower means
+	// fresher data but more CPU on the app and the Docker daemon; raise it on a
+	// host with many containers where the sweep is costly.
+	MetricsInterval time.Duration
+
+	// PProf exposes Go's net/http/pprof profiling endpoints under /debug/pprof.
+	// Off by default; when on, the endpoints are restricted to loopback clients
+	// (use an SSH tunnel) since they leak goroutine stacks and heap detail.
+	PProf bool
 }
 
 // DBPath is the path to the SQLite database file.
@@ -109,6 +119,8 @@ func Load() (Config, error) {
 	flag.StringVar(&c.RedisAddr, "redis-addr", lookup("DC_REDIS_ADDR"), "Redis address (host:port) for metrics history; empty = in-memory")
 	flag.StringVar(&c.RedisPassword, "redis-password", lookup("DC_REDIS_PASSWORD"), "Redis password")
 	retention := flag.Duration("metrics-retention", envDuration("DC_METRICS_RETENTION", 6*time.Hour), "how long to keep metric history")
+	interval := flag.Duration("metrics-interval", envDuration("DC_METRICS_INTERVAL", 15*time.Second), "how often to sample container stats (raise on hosts with many containers)")
+	flag.BoolVar(&c.PProf, "pprof", lookup("DC_PPROF") == "1", "expose net/http/pprof under /debug/pprof (loopback only; for debugging)")
 	flag.Parse()
 
 	// Listen address is host + port. A full -addr/DC_ADDR (legacy) still wins if
@@ -121,6 +133,7 @@ func Load() (Config, error) {
 
 	c.RedisDB = envInt("DC_REDIS_DB", 0)
 	c.MetricsRetention = *retention
+	c.MetricsInterval = *interval
 	c.SessionTTL = *ttl
 
 	// HTTPS needs both halves of the keypair.

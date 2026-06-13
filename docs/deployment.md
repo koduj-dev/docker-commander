@@ -24,7 +24,20 @@ list. Key ones:
 | `DC_METRICS_TOKEN` | (open) | bearer token guarding `/metrics` |
 | `DC_REDIS_ADDR` | (memory) | Redis for metric history |
 | `DC_METRICS_RETENTION` | `6h` | history retention |
+| `DC_METRICS_INTERVAL` | `15s` | how often the monitor samples every running container's stats — **raise it** (e.g. `30s`/`60s`) on a host with many containers if the sampling sweep is costly |
 | `DC_UPDATE_CHECK` | `1` | check GitHub Releases for a newer version (admin banner); set `0` to disable the outbound call |
+| `DC_PPROF` | (off) | expose Go's `net/http/pprof` under `/debug/pprof` for profiling — **loopback only** (tunnel in via SSH); leave off in normal operation |
+
+> **Diagnosing high CPU.** If the app uses more CPU than expected, enable
+> `DC_PPROF=1`, then from the server (or through an SSH tunnel) capture a profile:
+>
+> ```bash
+> go tool pprof -top -seconds=30 http://127.0.0.1:8470/debug/pprof/profile
+> ```
+>
+> The biggest steady cost is usually the per-interval **stats sweep** over all
+> running containers (also driven by the Docker daemon itself); raising
+> `DC_METRICS_INTERVAL` is the first lever on a container-dense host.
 
 Docker connection honours `DOCKER_HOST` / `DOCKER_CERT_PATH`.
 

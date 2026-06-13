@@ -7,6 +7,15 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Configurable stats sampling interval** (`DC_METRICS_INTERVAL`, default `15s`)
+  — the monitor samples every running container's stats on this interval to feed
+  the charts/history and resource alert rules. On a host with **many containers**
+  the sweep can dominate CPU (on the app and the Docker daemon); raising the
+  interval is the first lever. Previously hard-coded.
+- **Optional profiling endpoints** (`DC_PPROF=1`) — exposes Go's
+  `net/http/pprof` under `/debug/pprof`, **restricted to loopback** (tunnel in via
+  SSH), for diagnosing CPU/allocation/goroutine issues with `go tool pprof`. Off
+  by default. See [deployment → diagnosing high CPU](docs/deployment.md).
 - **Remote control from AI tools (MCP)** — an optional, **off-by-default**
   **Model Context Protocol** server (`DC_MCP_ENABLED`) so AI tools (**Claude
   Code**, **Claude Desktop**, **Cursor**) can monitor and *safely* operate Docker

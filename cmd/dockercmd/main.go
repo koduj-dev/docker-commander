@@ -148,6 +148,7 @@ func run() error {
 
 	// Start the alerting engine in the background.
 	mon := monitor.New(st, dm, hist)
+	mon.SetStatsInterval(cfg.MetricsInterval)
 	go mon.Run(shutdownCtx)
 
 	// Clear any volume-browser helper containers left over from a previous run.

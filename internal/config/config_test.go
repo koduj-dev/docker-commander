@@ -21,6 +21,8 @@ func TestLoad(t *testing.T) {
 	t.Setenv("DC_DATA_DIR", dir)
 	t.Setenv("DC_REDIS_DB", "2")
 	t.Setenv("DC_METRICS_RETENTION", "45m")
+	t.Setenv("DC_METRICS_INTERVAL", "20s")
+	t.Setenv("DC_PPROF", "1")
 
 	c, err := Load()
 	if err != nil {
@@ -29,8 +31,35 @@ func TestLoad(t *testing.T) {
 	if c.Addr != "0.0.0.0:9999" || c.DataDir != dir || c.RedisDB != 2 || c.MetricsRetention != 45*time.Minute {
 		t.Errorf("Load mapped env wrong: %+v", c)
 	}
+	if c.MetricsInterval != 20*time.Second {
+		t.Errorf("DC_METRICS_INTERVAL not mapped: %v", c.MetricsInterval)
+	}
+	if !c.PProf {
+		t.Errorf("DC_PPROF=1 should enable pprof, got %v", c.PProf)
+	}
 	if c.SessionTTL != 12*time.Hour {
 		t.Errorf("default session TTL: %v", c.SessionTTL)
+	}
+}
+
+// TestLoadMetricsIntervalDefault checks the stats interval defaults to 15s when
+// nothing overrides it, and that pprof is off by default.
+func TestLoadMetricsIntervalDefault(t *testing.T) {
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	defer func() { os.Args, flag.CommandLine = oldArgs, oldFS }()
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = []string{"dockercmd"}
+	t.Setenv("DC_DATA_DIR", t.TempDir())
+
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.MetricsInterval != 15*time.Second {
+		t.Errorf("default metrics interval = %v, want 15s", c.MetricsInterval)
+	}
+	if c.PProf {
+		t.Error("pprof must be off by default")
 	}
 }
 
