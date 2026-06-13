@@ -6,6 +6,8 @@
 
 # Frontend
 web/node_modules/
+# tsc -b incremental cache: regenerated on every build, no value in tracking it.
+web/tsconfig.tsbuildinfo
 # NOTE: web/dist (the built SPA) is committed on purpose so that `go build`
 # produces a fully working binary even without Node installed. Rebuild it with
 # `npm run build` (or `make ui`) whenever the frontend changes, then commit.
