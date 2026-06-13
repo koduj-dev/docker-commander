@@ -1,6 +1,6 @@
 import { Link, NavLink, useNavigate, useLocation, useNavigationType } from "react-router-dom";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Activity, Bell, Blocks, Boxes, Container, Database, FolderGit2, KeyRound, Layers, LayoutDashboard, Network, ScrollText, Server, Settings, Share2, Terminal, Users, LogOut, ArrowUpCircle, ExternalLink, X } from "lucide-react";
+import { Activity, Bell, Blocks, Boxes, Container, Database, FolderGit2, KeyRound, Layers, LayoutDashboard, LayoutTemplate, Network, ScrollText, Server, Settings, Share2, Terminal, Users, LogOut, ArrowUpCircle, ExternalLink, X } from "lucide-react";
 import clsx from "clsx";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../lib/api";
@@ -24,6 +24,7 @@ const navGroups: { title: string; items: NavItem[] }[] = [
       { to: "/projects", label: "Projects", icon: FolderGit2, section: "projects" },
       { to: "/images", label: "Images", icon: Layers, section: "images" },
       { to: "/volumes", label: "Volumes", icon: Database, section: "volumes" },
+      { to: "/templates", label: "Templates", icon: LayoutTemplate, section: "projects" },
     ],
   },
   {

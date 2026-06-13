@@ -19,6 +19,7 @@ import type {
   HistoryEntry,
   Host,
   ImageSummary,
+  ImageSearchResult,
   NetworkSummary,
   HostPortProbe,
   ParseRule,
@@ -26,7 +27,12 @@ import type {
   Registry,
   Project,
   ProjectTemplateMeta,
+  ProjectTemplateDetail,
   ServiceBlockMeta,
+  ServiceBlockDetail,
+  ComposeFragmentMeta,
+  ComposeFragmentDetail,
+  TemplateFile,
   TemplateRef,
   FileApi,
   ProjectFile,
@@ -305,7 +311,12 @@ export const api = {
   projects: () => req<{ projects: Project[]; composeAvailable: boolean }>("GET", "/api/projects"),
   createProject: (
     name: string,
-    opts?: { template?: TemplateRef; blocks?: TemplateRef[]; variables?: Record<string, string> },
+    opts?: {
+      template?: TemplateRef;
+      instances?: { block: TemplateRef; key: string; merge: TemplateRef[] }[];
+      fragments?: TemplateRef[];
+      variables?: Record<string, string>;
+    },
   ) => req<{ id: number; slug: string }>("POST", "/api/projects", { name, ...opts }),
   importProject: async (name: string, file: File) => {
     const res = await fetch(`/api/projects/import?name=${encodeURIComponent(name)}`, {
@@ -364,12 +375,64 @@ export const api = {
   // Project templates (presets) + builder service blocks — builtin + user merged.
   projectTemplates: () => req<ProjectTemplateMeta[]>("GET", "/api/project-templates"),
   serviceBlocks: () => req<ServiceBlockMeta[]>("GET", "/api/service-blocks"),
+  // Live read-only preview: the compose.yml (+ sidecars) a selection would seed,
+  // without creating a project. Powers the New project dialog preview.
+  previewTemplate: (opts: {
+    name?: string;
+    template?: TemplateRef;
+    instances?: { block: TemplateRef; key: string; merge: TemplateRef[] }[];
+    fragments?: TemplateRef[];
+    variables?: Record<string, string>;
+  }) =>
+    req<{ files: TemplateFile[]; valid?: boolean; error?: string; warnings?: string[] }>("POST", "/api/project-templates/preview", opts),
   saveProjectAsTemplate: (fromProjectId: number, name: string, description: string) =>
     req<{ id: number; slug: string }>("POST", "/api/project-templates", { fromProjectId, name, description }),
+  // Single-preset detail (its files) for the management page's view/edit.
+  projectTemplate: (id: string) => req<ProjectTemplateDetail>("GET", `/api/project-templates/${id}`),
+  updateProjectTemplate: (id: string, name: string, description: string) =>
+    req<{ ok: boolean }>("PUT", `/api/project-templates/${id}`, { name, description }),
+  // Copy any preset (built-in or user) into a new editable user preset. Built-in
+  // sources are rendered with their default variables first.
+  duplicateProjectTemplate: (id: string, name: string) =>
+    req<{ id: number; slug: string }>("POST", `/api/project-templates/${id}/duplicate`, { name }),
   deleteProjectTemplate: (id: string) => req<{ ok: boolean }>("DELETE", `/api/project-templates/${id}`),
+  // Template file editing (user presets only — local, no host param).
+  templateFiles: (id: string) => req<ProjectFile[]>("GET", `/api/project-templates/${id}/files`),
+  makeTemplateDir: (id: string, name: string) => req<{ ok: boolean }>("POST", `/api/project-templates/${id}/files/dir`, { name }),
+  writeTemplateFile: (id: string, name: string, content: string) =>
+    req<{ ok: boolean }>("PUT", `/api/project-templates/${id}/files`, { name, content }),
+  deleteTemplateFile: (id: string, path: string) =>
+    req<{ ok: boolean }>("DELETE", `/api/project-templates/${id}/files?path=${encodeURIComponent(path)}`),
+  templateFileDownloadUrl: (id: string, name: string) =>
+    `/api/project-templates/${id}/files/raw?path=${encodeURIComponent(name)}`,
+  uploadTemplateFile: async (id: string, name: string, file: File) => {
+    const res = await fetch(`/api/project-templates/${id}/files/raw?path=${encodeURIComponent(name)}`, {
+      method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/octet-stream" }, body: file,
+    });
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : null;
+    if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText);
+    return data as { ok: boolean; error?: string; bytes?: number };
+  },
+  templateDownloadUrl: (id: string) => `/api/project-templates/${id}/download`,
   createServiceBlock: (b: { name: string; description: string; service: string; serviceYaml: string; volumes: string[] }) =>
     req<{ id: number; slug: string }>("POST", "/api/service-blocks", b),
+  serviceBlock: (id: string) => req<ServiceBlockDetail>("GET", `/api/service-blocks/${id}`),
+  updateServiceBlock: (id: string, b: { name: string; description: string; service: string; serviceYaml: string; volumes: string[] }) =>
+    req<{ ok: boolean }>("PUT", `/api/service-blocks/${id}`, b),
+  duplicateServiceBlock: (id: string, name: string) =>
+    req<{ id: number; slug: string }>("POST", `/api/service-blocks/${id}/duplicate`, { name }),
   deleteServiceBlock: (id: string) => req<{ ok: boolean }>("DELETE", `/api/service-blocks/${id}`),
+  // Builder shared definitions (top-level YAML anchors) — builtin + user merged.
+  composeFragments: () => req<ComposeFragmentMeta[]>("GET", "/api/compose-fragments"),
+  composeFragment: (id: string) => req<ComposeFragmentDetail>("GET", `/api/compose-fragments/${id}`),
+  createComposeFragment: (b: { name: string; description: string; content: string }) =>
+    req<{ id: number; slug: string }>("POST", "/api/compose-fragments", b),
+  updateComposeFragment: (id: string, b: { name: string; description: string; content: string }) =>
+    req<{ ok: boolean }>("PUT", `/api/compose-fragments/${id}`, b),
+  duplicateComposeFragment: (id: string, name: string) =>
+    req<{ id: number; slug: string }>("POST", `/api/compose-fragments/${id}/duplicate`, { name }),
+  deleteComposeFragment: (id: string) => req<{ ok: boolean }>("DELETE", `/api/compose-fragments/${id}`),
 
   // Generic raw inspect for any object kind. id/ref travels as a query param.
   inspect: (kind: "container" | "image" | "network" | "volume", id: string) => {
@@ -382,6 +445,15 @@ export const api = {
   diskUsage: () => req<DiskUsage>("GET", `/api/system/df${hostParam()}`),
 
   images: () => req<ImageSummary[]>("GET", `/api/images${hostParam()}`),
+  // Image-name autocomplete: Docker Hub repo search (via the host daemon) and Hub
+  // tag listing. Both are best-effort — the server returns [] on any error.
+  searchImages: (q: string) => {
+    const params = new URLSearchParams({ q });
+    const h = getHostId();
+    if (h != null) params.set("host", String(h));
+    return req<ImageSearchResult[]>("GET", `/api/images/search?${params.toString()}`);
+  },
+  imageTags: (repo: string) => req<string[]>("GET", `/api/images/tags?repo=${encodeURIComponent(repo)}`),
   removeImage: (ref: string, force = false) => {
     const params = new URLSearchParams({ ref });
     const h = getHostId();

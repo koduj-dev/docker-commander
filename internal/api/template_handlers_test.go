@@ -8,12 +8,25 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/koduj-dev/docker-commander/internal/config"
 	"github.com/koduj-dev/docker-commander/internal/store"
 )
+
+// withURLParam attaches a chi route param so handlers that read chi.URLParam can
+// be exercised without standing up the full router.
+func withURLParam(r *http.Request, key, val string) *http.Request {
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add(key, val)
+	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+}
+
+func strconvI(n int64) string { return strconv.FormatInt(n, 10) }
 
 func newTemplatesServer(t *testing.T) *Server {
 	t.Helper()
@@ -75,6 +88,32 @@ func TestCreateProjectFromBuiltinPreset(t *testing.T) {
 	}
 }
 
+func TestSeededFilesAreContainerReadable(t *testing.T) {
+	srv := newTemplatesServer(t)
+	id := createProject(t, srv, map[string]any{
+		"name":     "Perms",
+		"template": map[string]string{"id": "nginx-static", "source": "builtin"},
+	})
+	root := srv.projectRoot(id)
+	// A bind-mounted dir must be world-traversable (x) and its files world-readable
+	// (r), or a container running as a non-root uid (nginx → 101) gets EACCES —
+	// the exact "Permission denied" on /usr/share/nginx/html this guards against.
+	di, err := os.Stat(filepath.Join(root, "html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if di.Mode().Perm()&0o005 != 0o005 {
+		t.Errorf("html dir mode %o lacks world rx", di.Mode().Perm())
+	}
+	fi, err := os.Stat(filepath.Join(root, "html", "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm()&0o004 != 0o004 {
+		t.Errorf("index.html mode %o lacks world read", fi.Mode().Perm())
+	}
+}
+
 func TestCreateProjectFromBuilderBlocks(t *testing.T) {
 	srv := newTemplatesServer(t)
 	id := createProject(t, srv, map[string]any{
@@ -93,6 +132,29 @@ func TestCreateProjectFromBuilderBlocks(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("builder compose missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestBuilderWithSharedFragment(t *testing.T) {
+	srv := newTemplatesServer(t)
+	id := createProject(t, srv, map[string]any{
+		"name":      "Cluster",
+		"blocks":    []map[string]string{{"id": "redis", "source": "builtin"}},
+		"fragments": []map[string]string{{"id": "service-defaults", "source": "builtin"}},
+	})
+	compose, err := os.ReadFile(filepath.Join(srv.projectRoot(id), "compose.yml"))
+	if err != nil {
+		t.Fatalf("read compose: %v", err)
+	}
+	got := string(compose)
+	anchor := strings.Index(got, "x-defaults: &defaults")
+	svcs := strings.Index(got, "services:")
+	if anchor < 0 {
+		t.Fatalf("shared fragment not emitted:\n%s", got)
+	}
+	// The anchor must come before services: so a service can merge it.
+	if anchor > svcs {
+		t.Errorf("fragment emitted after services::\n%s", got)
 	}
 }
 
@@ -137,5 +199,203 @@ func TestSaveProjectAsTemplateAndList(t *testing.T) {
 	}
 	if !hasBuiltin || !hasUser {
 		t.Errorf("list missing entries: builtin=%v user=%v", hasBuiltin, hasUser)
+	}
+}
+
+func TestDuplicateBuiltinTemplateRendersDefaults(t *testing.T) {
+	srv := newTemplatesServer(t)
+	// Duplicate a built-in preset into a new user preset.
+	dw := postJSON(t, func(w http.ResponseWriter, r *http.Request) {
+		srv.handleDuplicateProjectTemplate(w, withURLParam(r, "id", "nginx-static"))
+	}, "/api/project-templates/nginx-static/duplicate", map[string]string{"name": "My Nginx"})
+	if dw.Code != http.StatusOK {
+		t.Fatalf("duplicate: status %d — %s", dw.Code, dw.Body.String())
+	}
+	tpl, err := srv.store.ProjectTemplateBySlug(context.Background(), "my-nginx")
+	if err != nil {
+		t.Fatalf("duplicate not stored: %v", err)
+	}
+	// The built-in's {{.Var}} markers must be rendered to concrete values in the
+	// literal user copy (default HttpPort 8080), not left as template syntax.
+	compose, err := os.ReadFile(filepath.Join(srv.templateRoot(tpl.ID), "compose.yml"))
+	if err != nil {
+		t.Fatalf("read duplicated compose: %v", err)
+	}
+	got := string(compose)
+	if strings.Contains(got, "{{") {
+		t.Errorf("duplicated compose still has template markers:\n%s", got)
+	}
+	if !strings.Contains(got, "8080:80") || !strings.Contains(got, "name: my-nginx") {
+		t.Errorf("duplicated compose missing rendered defaults:\n%s", got)
+	}
+	// The sidecar file came along too.
+	if _, err := os.Stat(filepath.Join(srv.templateRoot(tpl.ID), "html", "index.html")); err != nil {
+		t.Errorf("sidecar not copied: %v", err)
+	}
+}
+
+func TestDuplicateBuiltinBlockAndFragment(t *testing.T) {
+	srv := newTemplatesServer(t)
+
+	// Duplicate a built-in block — its {{.HttpPort}} must render to the default.
+	bw := postJSON(t, func(w http.ResponseWriter, r *http.Request) {
+		srv.handleDuplicateServiceBlock(w, withURLParam(r, "id", "nginx"))
+	}, "/api/service-blocks/nginx/duplicate", map[string]string{"name": "My Nginx Block"})
+	if bw.Code != http.StatusOK {
+		t.Fatalf("duplicate block: status %d — %s", bw.Code, bw.Body.String())
+	}
+	b, err := srv.store.ServiceBlockBySlug(context.Background(), "my-nginx-block")
+	if err != nil {
+		t.Fatalf("block not stored: %v", err)
+	}
+	if strings.Contains(b.ServiceYAML, "{{") {
+		t.Errorf("duplicated block still has template markers:\n%s", b.ServiceYAML)
+	}
+	if !strings.Contains(b.ServiceYAML, "8080:80") {
+		t.Errorf("duplicated block missing rendered default port:\n%s", b.ServiceYAML)
+	}
+
+	// Duplicate a built-in fragment — copied literally.
+	fw := postJSON(t, func(w http.ResponseWriter, r *http.Request) {
+		srv.handleDuplicateComposeFragment(w, withURLParam(r, "id", "service-defaults"))
+	}, "/api/compose-fragments/service-defaults/duplicate", map[string]string{"name": "My Defaults"})
+	if fw.Code != http.StatusOK {
+		t.Fatalf("duplicate fragment: status %d — %s", fw.Code, fw.Body.String())
+	}
+	f, err := srv.store.ComposeFragmentBySlug(context.Background(), "my-defaults")
+	if err != nil {
+		t.Fatalf("fragment not stored: %v", err)
+	}
+	if !strings.Contains(f.Content, "x-defaults: &defaults") {
+		t.Errorf("duplicated fragment missing anchor:\n%s", f.Content)
+	}
+}
+
+func TestPreviewTemplateDoesNotCreateProject(t *testing.T) {
+	srv := newTemplatesServer(t)
+	w := postJSON(t, srv.handlePreviewTemplate, "/api/project-templates/preview", map[string]any{
+		"name":   "Scratch",
+		"blocks": []map[string]string{{"id": "redis", "source": "builtin"}},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("preview: status %d — %s", w.Code, w.Body.String())
+	}
+	var res struct {
+		Files []struct {
+			Path, Content string
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	var compose string
+	for _, f := range res.Files {
+		if f.Path == "compose.yml" {
+			compose = f.Content
+		}
+	}
+	if !strings.Contains(compose, "name: scratch") || !strings.Contains(compose, "redis:") {
+		t.Errorf("preview compose unexpected:\n%s", compose)
+	}
+	// Preview is pure — no project rows were created.
+	if ps, _ := srv.store.ListProjects(context.Background()); len(ps) != 0 {
+		t.Errorf("preview created %d project(s); want 0", len(ps))
+	}
+}
+
+func TestServiceBlockCreateGetUpdate(t *testing.T) {
+	srv := newTemplatesServer(t)
+	cw := postJSON(t, srv.handleCreateServiceBlock, "/api/service-blocks", map[string]any{
+		"name": "Worker", "service": "worker", "serviceYaml": "  worker:\n    image: alpine\n", "volumes": []string{"wdata"},
+	})
+	if cw.Code != http.StatusOK {
+		t.Fatalf("create block: status %d — %s", cw.Code, cw.Body.String())
+	}
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	_ = json.Unmarshal(cw.Body.Bytes(), &created)
+	id := strconvI(created.ID)
+
+	// GET returns the full body (YAML + volumes).
+	gw := httptest.NewRecorder()
+	srv.handleGetServiceBlock(gw, withURLParam(httptest.NewRequest("GET", "/api/service-blocks/"+id, nil), "id", id))
+	if gw.Code != http.StatusOK {
+		t.Fatalf("get block: status %d — %s", gw.Code, gw.Body.String())
+	}
+	var detail blockDetailJSON
+	if err := json.Unmarshal(gw.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(detail.ServiceYAML, "image: alpine") || detail.Source != "user" || !detail.Deletable {
+		t.Errorf("unexpected block detail: %+v", detail)
+	}
+
+	// PUT updates the editable fields.
+	uw := postJSON(t, func(w http.ResponseWriter, r *http.Request) {
+		srv.handleUpdateServiceBlock(w, withURLParam(r, "id", id))
+	}, "/api/service-blocks/"+id, map[string]any{
+		"name": "Worker", "service": "worker", "serviceYaml": "  worker:\n    image: busybox\n", "volumes": []string{"wdata"},
+	})
+	if uw.Code != http.StatusOK {
+		t.Fatalf("update block: status %d — %s", uw.Code, uw.Body.String())
+	}
+	b, _ := srv.store.ServiceBlockByID(context.Background(), created.ID)
+	if !strings.Contains(b.ServiceYAML, "busybox") {
+		t.Errorf("update not persisted: %q", b.ServiceYAML)
+	}
+}
+
+func TestTemplateFileEditAndMetaUpdate(t *testing.T) {
+	srv := newTemplatesServer(t)
+	id := createProject(t, srv, map[string]any{
+		"name":     "Seed2",
+		"template": map[string]string{"id": "nginx-static", "source": "builtin"},
+	})
+	sw := postJSON(t, srv.handleCreateProjectTemplate, "/api/project-templates", map[string]any{
+		"name": "Editable", "fromProjectId": id,
+	})
+	if sw.Code != http.StatusOK {
+		t.Fatalf("save template: status %d — %s", sw.Code, sw.Body.String())
+	}
+	tpl, _ := srv.store.ProjectTemplateBySlug(context.Background(), "editable")
+	tid := strconvI(tpl.ID)
+
+	// Write a new file into the template.
+	ww := postJSON(t, func(w http.ResponseWriter, r *http.Request) {
+		srv.handleWriteTemplateFile(w, withURLParam(r, "id", tid))
+	}, "/api/project-templates/"+tid+"/files", map[string]string{"name": "notes.txt", "content": "hello"})
+	if ww.Code != http.StatusOK {
+		t.Fatalf("write template file: status %d — %s", ww.Code, ww.Body.String())
+	}
+	if data, err := os.ReadFile(filepath.Join(srv.templateRoot(tpl.ID), "notes.txt")); err != nil || string(data) != "hello" {
+		t.Errorf("template file not written: %v %q", err, data)
+	}
+
+	// List reflects it.
+	lw := httptest.NewRecorder()
+	srv.handleListTemplateFiles(lw, withURLParam(httptest.NewRequest("GET", "/api/project-templates/"+tid+"/files", nil), "id", tid))
+	if !strings.Contains(lw.Body.String(), "notes.txt") {
+		t.Errorf("list missing notes.txt: %s", lw.Body.String())
+	}
+
+	// Metadata update renames the display name (slug stays).
+	mw := postJSON(t, func(w http.ResponseWriter, r *http.Request) {
+		srv.handleUpdateProjectTemplate(w, withURLParam(r, "id", tid))
+	}, "/api/project-templates/"+tid, map[string]string{"name": "Renamed", "description": "now with notes"})
+	if mw.Code != http.StatusOK {
+		t.Fatalf("update template meta: status %d — %s", mw.Code, mw.Body.String())
+	}
+	got, _ := srv.store.ProjectTemplateByID(context.Background(), tpl.ID)
+	if got.Name != "Renamed" || got.Slug != "editable" {
+		t.Errorf("meta update wrong: name=%q slug=%q", got.Name, got.Slug)
+	}
+
+	// Built-in presets are read-only: writing a file 404s.
+	bw := postJSON(t, func(w http.ResponseWriter, r *http.Request) {
+		srv.handleWriteTemplateFile(w, withURLParam(r, "id", "nginx-static"))
+	}, "/api/project-templates/nginx-static/files", map[string]string{"name": "x", "content": "y"})
+	if bw.Code != http.StatusNotFound {
+		t.Errorf("builtin write should 404, got %d", bw.Code)
 	}
 }

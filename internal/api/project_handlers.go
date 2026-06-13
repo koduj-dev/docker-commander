@@ -33,6 +33,17 @@ const (
 	maxProjectFiles     = 100
 	maxProjectFileBytes = 1 << 20  // 1 MiB per file
 	maxImportBytes      = 32 << 20 // 32 MiB for an imported .zip
+
+	// Seeded/edited project files get bind-mounted into containers that commonly
+	// run as a non-root uid that doesn't match the writer (nginx → uid 101,
+	// php-fpm → www-data), so the files must be world-readable and their dirs
+	// world-traversable or the container gets EACCES. Confinement comes from the
+	// data dir itself (0700, owned by the service user — see config.DataDir), not
+	// from these per-file bits; the project root dir stays 0700. (These assume a
+	// standard umask — the shipped systemd unit doesn't set a restrictive UMask;
+	// a hardened UMask=0077 would strip the world bits and re-break bind mounts.)
+	projectFileMode = 0o644
+	projectDirMode  = 0o755
 )
 
 // starterCompose seeds a new project so the editor isn't empty. The top-level
@@ -118,7 +129,9 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name      string            `json:"name"`
 		Template  *templateRef      `json:"template"`
-		Blocks    []templateRef     `json:"blocks"`
+		Instances []blockInstance   `json:"instances"`
+		Blocks    []templateRef     `json:"blocks"` // legacy: each becomes a keyless instance
+		Fragments []templateRef     `json:"fragments"`
 		Variables map[string]string `json:"variables"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
@@ -132,9 +145,13 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	slug := slugify(name)
 
+	instances := body.Instances
+	for _, b := range body.Blocks {
+		instances = append(instances, blockInstance{Block: b})
+	}
 	// Resolve the scaffold before creating anything, so a bad template/block
 	// reference fails cleanly without leaving a half-created project behind.
-	files, err := s.resolveSeedFiles(r.Context(), slug, name, body.Template, body.Blocks, body.Variables)
+	files, err := s.resolveSeedFiles(r.Context(), slug, name, body.Template, instances, body.Fragments, body.Variables)
 	if errors.Is(err, store.ErrNotFound) {
 		writeErr(w, http.StatusNotFound, "template or block not found")
 		return
@@ -228,10 +245,10 @@ func (s *Server) handleImportProject(w http.ResponseWriter, r *http.Request) {
 		}
 		content, _ := io.ReadAll(io.LimitReader(rc, maxProjectFileBytes))
 		rc.Close()
-		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+		if err := os.MkdirAll(filepath.Dir(full), projectDirMode); err != nil {
 			continue
 		}
-		if os.WriteFile(full, content, 0o600) == nil {
+		if os.WriteFile(full, content, projectFileMode) == nil {
 			count++
 		}
 	}
@@ -289,7 +306,18 @@ func (s *Server) handleListProjectFiles(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	root := s.projectRoot(p.ID)
+	out, err := listFilesInRoot(s.projectRoot(p.ID))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// listFilesInRoot walks a project/template folder and returns every file with
+// its content (binary/oversized files are flagged, not inlined). Shared by the
+// project and template file listings — both fold to the same caps and sandboxing.
+func listFilesInRoot(root string) ([]projectFileJSON, error) {
 	var out []projectFileJSON
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || path == root || d.Type()&fs.ModeSymlink != 0 {
@@ -324,13 +352,12 @@ func (s *Server) handleListProjectFiles(w http.ResponseWriter, r *http.Request) 
 		return nil
 	})
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
+		return nil, err
 	}
 	if out == nil {
 		out = []projectFileJSON{}
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
 // handleWriteProjectFile creates or overwrites one file in the project folder.
@@ -364,11 +391,11 @@ func (s *Server) handleWriteProjectFile(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), projectDirMode); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := os.WriteFile(full, []byte(body.Content), 0o600); err != nil {
+	if err := os.WriteFile(full, []byte(body.Content), projectFileMode); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -408,11 +435,11 @@ func (s *Server) handleUploadProjectFileRaw(w http.ResponseWriter, r *http.Reque
 		writeErr(w, http.StatusRequestEntityTooLarge, "file too large")
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), projectDirMode); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := os.WriteFile(full, data, 0o600); err != nil {
+	if err := os.WriteFile(full, data, projectFileMode); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -501,7 +528,7 @@ func (s *Server) handleMakeProjectDir(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := os.MkdirAll(full, 0o700); err != nil {
+	if err := os.MkdirAll(full, projectDirMode); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -803,10 +830,20 @@ func (s *Server) handleDownloadProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	root := s.projectRoot(p.ID)
-	// Build the archive in memory (projects are bounded by maxProjectFiles ×
-	// maxProjectFileBytes) so a mid-walk read error becomes a clean 500 instead
-	// of a silently truncated zip streamed under a 200.
+	data, err := zipDir(s.projectRoot(p.ID))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not build project archive: "+err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+p.Slug+`.zip"`)
+	_, _ = w.Write(data)
+}
+
+// zipDir builds an in-memory zip of every file under root (folders are small and
+// bounded), so a mid-walk read error becomes a clean error instead of a silently
+// truncated archive. Symlinks are skipped. Shared by project/template downloads.
+func zipDir(root string) ([]byte, error) {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -831,12 +868,9 @@ func (s *Server) handleDownloadProject(w http.ResponseWriter, r *http.Request) {
 		_ = zw.Close()
 	}
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "could not build project archive: "+err.Error())
-		return
+		return nil, err
 	}
-	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", `attachment; filename="`+p.Slug+`.zip"`)
-	_, _ = w.Write(buf.Bytes())
+	return buf.Bytes(), nil
 }
 
 func (s *Server) runProjectCompose(w http.ResponseWriter, r *http.Request, fn func(ctx context.Context, dir, slug string) (string, error), action string) {

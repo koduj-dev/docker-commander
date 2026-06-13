@@ -7,12 +7,39 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Docker image autocomplete** — typing an image reference now suggests names
+  and tags: in the **compose editor** (on `image:` lines) and in the **Create
+  container** form. Suggestions blend the host's locally-pulled images (instant,
+  offline) with a **Docker Hub** repository search (proxied through the host
+  daemon, so no credentials leave the process) and, after a `:`, Docker Hub's
+  **tag** list. Everything degrades to local-only when offline.
+- **Builder — service instances & clusters** — a block can now be added **more
+  than once**, each as a service **instance** with its own editable key (`db`,
+  `db-2`, …) and its own named volumes (auto-de-duplicated), so you can build a
+  cluster of the same service. The live preview now also **validates** the
+  assembled compose (`docker compose config`) and shows valid / warnings /
+  invalid.
+- **Builder — shared definitions (YAML anchors)** — the builder can now include
+  reusable **top-level anchors** (e.g. `x-pg-common: &pg-common …`) emitted above
+  `services:`, so a cluster of services can share one definition (security, cert
+  mounts, …). Pick which services **merge** each anchor (a `<<: *pg-common` is
+  injected per instance) — including into otherwise read-only built-in services.
+  Pick built-in anchors (Service defaults, Secured Postgres) or save your own;
+  they're managed on the Templates page like service blocks.
+- **Templates management page** — a new **Templates** section (under Projects'
+  permission) to manage presets, builder service blocks and shared definitions
+  in one place: edit a user preset's files in the multi-file editor, rename it,
+  add/edit/delete your own service blocks and shared definitions, inspect
+  built-in ones read-only, and **duplicate** any preset, service block or shared
+  definition (including built-ins) into a new editable copy. The **New project**
+  dialog now shows a **live read-only preview** of the `compose.yml` a template
+  or builder selection would produce, and the project editor opens wider.
 - **Project templates & builder** — creating a project now offers three ways to
   scaffold it, all rendered server-side: **Template** (ready-made presets —
   Nginx static, Nginx + Postgres + Adminer, LEMP, Node + Postgres + Redis — with
   fill-in **variables** and auto-generated secrets), **Builder** (the *skládačka*:
   tick service blocks — Nginx, PHP, Node, Postgres, MySQL, Redis, Adminer — and
-  they're merged into one compose), and **Import** (`.zip`). **Save as template**
+  they're merged into one compose), and **Import** (`.zip`). **Save as preset**
   snapshots a project into a reusable preset, and you can add your own service
   blocks to the builder. Built-in presets/blocks are embedded; user-saved ones
   live in the data dir (the catalog is structured for a future remote source).
@@ -23,6 +50,13 @@ All notable changes to Docker Commander are documented here. The format follows
   `install-macos.sh`, and `install-windows.ps1` via a Scheduled Task).
 
 ### Fixed
+- **Bind-mounted project files were unreadable in containers** — seeded and edited
+  project files were written `0600` / dirs `0700` owned by the service user, so a
+  container running as a non-root uid (e.g. Nginx's worker, PHP-FPM's www-data)
+  got `Permission denied` on bind-mounted files — the `nginx-static`/LEMP presets
+  failed to serve `./html` / `./app`. Project files are now `0644` and their dirs
+  `0755` (confinement stays at the data dir, which is `0700`). Existing projects
+  created before this fix need to be re-created to pick up the new permissions.
 - **Compose / Projects under systemd** — the `docker compose` CLI was reported as
   unavailable (Deploy/Down disabled, with a warning) when Docker Commander ran
   under the hardened systemd unit. `ProtectHome=true` makes the service user's

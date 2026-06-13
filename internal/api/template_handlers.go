@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/koduj-dev/docker-commander/internal/docker"
 	"github.com/koduj-dev/docker-commander/internal/store"
 	"github.com/koduj-dev/docker-commander/internal/templates"
 )
@@ -43,6 +45,47 @@ type blockJSON struct {
 	Description string               `json:"description"`
 	Source      string               `json:"source"`
 	Service     string               `json:"service"`
+	Variables   []templates.Variable `json:"variables,omitempty"`
+	Deletable   bool                 `json:"deletable"`
+}
+
+// templateDetailJSON / blockDetailJSON carry the full payload (files / YAML) the
+// management page needs to view or edit one item — the list responses omit these.
+type templateDetailJSON struct {
+	ID          string               `json:"id"`
+	Name        string               `json:"name"`
+	Description string               `json:"description"`
+	Source      string               `json:"source"`
+	Variables   []templates.Variable `json:"variables,omitempty"`
+	Files       []templates.File     `json:"files"`
+	Deletable   bool                 `json:"deletable"`
+}
+
+type fragmentJSON struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Source      string `json:"source"`
+	Deletable   bool   `json:"deletable"`
+}
+
+type fragmentDetailJSON struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Source      string `json:"source"`
+	Content     string `json:"content"`
+	Deletable   bool   `json:"deletable"`
+}
+
+type blockDetailJSON struct {
+	ID          string               `json:"id"`
+	Name        string               `json:"name"`
+	Description string               `json:"description"`
+	Source      string               `json:"source"`
+	Service     string               `json:"service"`
+	ServiceYAML string               `json:"serviceYaml"`
+	Volumes     []string             `json:"volumes"`
 	Variables   []templates.Variable `json:"variables,omitempty"`
 	Deletable   bool                 `json:"deletable"`
 }
@@ -80,6 +123,194 @@ func (s *Server) handleListProjectTemplates(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, out)
 }
 
+// --- compose fragments (shared definitions / anchors) ------------------------
+
+func (s *Server) handleListComposeFragments(w http.ResponseWriter, r *http.Request) {
+	out := []fragmentJSON{}
+	builtins, err := templates.BuiltinFragments()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not load built-in fragments")
+		return
+	}
+	for _, f := range builtins {
+		out = append(out, fragmentJSON{
+			ID: f.ID, Name: f.Name, Description: f.Description, Source: templates.SourceBuiltin, Deletable: false,
+		})
+	}
+	user, err := s.store.ListComposeFragments(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not list fragments")
+		return
+	}
+	for _, f := range user {
+		out = append(out, fragmentJSON{
+			ID: strconv.FormatInt(f.ID, 10), Name: f.Name, Description: f.Description, Source: templates.SourceUser, Deletable: true,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleGetComposeFragment(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if nid, err := strconv.ParseInt(id, 10, 64); err == nil {
+		f, err := s.store.ComposeFragmentByID(r.Context(), nid)
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "fragment not found")
+			return
+		}
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, fragmentDetailJSON{
+			ID: id, Name: f.Name, Description: f.Description, Source: templates.SourceUser, Content: f.Content, Deletable: true,
+		})
+		return
+	}
+	f, err := findBuiltinFragment(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "fragment not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, fragmentDetailJSON{
+		ID: f.ID, Name: f.Name, Description: f.Description, Source: templates.SourceBuiltin, Content: f.Content, Deletable: false,
+	})
+}
+
+func (s *Server) handleCreateComposeFragment(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Content     string `json:"content"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" || strings.TrimSpace(body.Content) == "" {
+		writeErr(w, http.StatusBadRequest, "name and content are required")
+		return
+	}
+	slug := slugify(name)
+	id, err := s.store.CreateComposeFragment(r.Context(), &store.ComposeFragment{
+		Name: name, Slug: slug, Description: strings.TrimSpace(body.Description), Content: body.Content, CreatedBy: currentUsername(r),
+	})
+	if errors.Is(err, store.ErrDuplicate) {
+		writeErr(w, http.StatusConflict, "a fragment named \""+slug+"\" already exists")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "compose_fragment.create", slug, "")
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "slug": slug})
+}
+
+func (s *Server) handleUpdateComposeFragment(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "fragment not found")
+		return
+	}
+	existing, err := s.store.ComposeFragmentByID(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeErr(w, http.StatusNotFound, "fragment not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var body struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Content     string `json:"content"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if strings.TrimSpace(body.Name) == "" || strings.TrimSpace(body.Content) == "" {
+		writeErr(w, http.StatusBadRequest, "name and content are required")
+		return
+	}
+	existing.Name = strings.TrimSpace(body.Name)
+	existing.Description = strings.TrimSpace(body.Description)
+	existing.Content = body.Content
+	if err := s.store.UpdateComposeFragment(r.Context(), existing); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "compose_fragment.update", existing.Slug, "")
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleDeleteComposeFragment(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid fragment id")
+		return
+	}
+	if err := s.store.DeleteComposeFragment(r.Context(), id); err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not delete fragment")
+		return
+	}
+	s.audit(r, "compose_fragment.delete", chi.URLParam(r, "id"), "")
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleDuplicateComposeFragment copies any fragment (built-in or user) into a
+// new editable user fragment. Fragments are literal, so the content is copied
+// as-is.
+func (s *Server) handleDuplicateComposeFragment(w http.ResponseWriter, r *http.Request) {
+	src, err := s.resolveFragment(r.Context(), fragmentRefFrom(chi.URLParam(r, "id")))
+	if errors.Is(err, store.ErrNotFound) || errors.Is(err, errBadTemplateRef) {
+		writeErr(w, http.StatusNotFound, "source fragment not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		writeErr(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	slug := slugify(name)
+	id, err := s.store.CreateComposeFragment(r.Context(), &store.ComposeFragment{
+		Name: name, Slug: slug, Content: src.Content, CreatedBy: currentUsername(r),
+	})
+	if errors.Is(err, store.ErrDuplicate) {
+		writeErr(w, http.StatusConflict, "a fragment named \""+slug+"\" already exists")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "compose_fragment.duplicate", slug, chi.URLParam(r, "id"))
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "slug": slug})
+}
+
+// fragmentRefFrom builds a templateRef for an id that is either a numeric user id
+// or a built-in catalog name.
+func fragmentRefFrom(id string) templateRef {
+	if _, err := strconv.ParseInt(id, 10, 64); err == nil {
+		return templateRef{ID: id, Source: templates.SourceUser}
+	}
+	return templateRef{ID: id, Source: templates.SourceBuiltin}
+}
+
 func (s *Server) handleListServiceBlocks(w http.ResponseWriter, r *http.Request) {
 	out := []blockJSON{}
 	builtins, err := templates.BuiltinBlocks()
@@ -112,28 +343,72 @@ func (s *Server) handleListServiceBlocks(w http.ResponseWriter, r *http.Request)
 // errBadTemplateRef is returned for a malformed or unknown builtin reference.
 var errBadTemplateRef = errors.New("unknown template")
 
+// blockInstance is one builder service: a block placed under a chosen key,
+// optionally merging shared-definition anchors (by fragment ref).
+type blockInstance struct {
+	Block templateRef   `json:"block"`
+	Key   string        `json:"key"`
+	Merge []templateRef `json:"merge"`
+}
+
 // resolveSeedFiles produces the (rendered) files a new project should be created
-// with, from either a block selection (builder), a template, or — when neither
-// is given — the plain starter compose. Pure read: it never mutates state, so
-// the caller can resolve before creating the project row.
-func (s *Server) resolveSeedFiles(ctx context.Context, slug, name string, tpl *templateRef, blocks []templateRef, vars map[string]string) ([]templates.File, error) {
-	if len(blocks) > 0 {
-		var blks []templates.Block
+// with, from either a builder selection (instances + shared-definition
+// fragments), a template, or — when neither is given — the plain starter compose.
+// Pure read: it never mutates state, so the caller can resolve before creating
+// the project row. Any fragment referenced by an instance merge is emitted too,
+// so a `<<: *anchor` alias always resolves.
+func (s *Server) resolveSeedFiles(ctx context.Context, slug, name string, tpl *templateRef, instances []blockInstance, fragments []templateRef, vars map[string]string) ([]templates.File, error) {
+	if len(instances) > 0 || len(fragments) > 0 {
+		// Collect fragments (included + merge-referenced) once, preserving order.
+		fragByKey := map[string]templates.Fragment{}
+		var fragOrder []string
+		addFrag := func(ref templateRef) error {
+			k := ref.Source + ":" + ref.ID
+			if _, ok := fragByKey[k]; ok {
+				return nil
+			}
+			f, err := s.resolveFragment(ctx, ref)
+			if err != nil {
+				return err
+			}
+			fragByKey[k] = f
+			fragOrder = append(fragOrder, k)
+			return nil
+		}
+		for _, ref := range fragments {
+			if err := addFrag(ref); err != nil {
+				return nil, err
+			}
+		}
+
+		var insts []templates.Instance
 		var decl []templates.Variable
-		for _, ref := range blocks {
-			b, err := s.resolveBlock(ctx, ref)
+		for _, ib := range instances {
+			blk, err := s.resolveBlock(ctx, ib.Block)
 			if err != nil {
 				return nil, err
 			}
-			blks = append(blks, b)
-			decl = append(decl, b.Variables...)
+			decl = append(decl, blk.Variables...)
+			var anchors []string
+			for _, mref := range ib.Merge {
+				if err := addFrag(mref); err != nil {
+					return nil, err
+				}
+				anchors = append(anchors, templates.AnchorNames(fragByKey[mref.Source+":"+mref.ID].Content)...)
+			}
+			insts = append(insts, templates.Instance{Block: blk, Key: ib.Key, MergeAnchors: anchors})
+		}
+
+		var frags []templates.Fragment
+		for _, k := range fragOrder {
+			frags = append(frags, fragByKey[k])
 		}
 		rv, err := templates.ResolveVars(decl, vars)
 		if err != nil {
 			return nil, err
 		}
 		rv["Slug"], rv["Name"] = slug, name
-		return templates.AssembleCompose(slug, blks, rv)
+		return templates.AssembleCompose(slug, insts, frags, rv)
 	}
 
 	if tpl != nil {
@@ -166,6 +441,25 @@ func (s *Server) resolveSeedFiles(ctx context.Context, slug, name string, tpl *t
 	}
 
 	return []templates.File{{Path: "compose.yml", Content: starterCompose(slug)}}, nil
+}
+
+func (s *Server) resolveFragment(ctx context.Context, ref templateRef) (templates.Fragment, error) {
+	switch ref.Source {
+	case templates.SourceBuiltin:
+		return findBuiltinFragment(ref.ID)
+	case templates.SourceUser:
+		id, err := strconv.ParseInt(ref.ID, 10, 64)
+		if err != nil {
+			return templates.Fragment{}, errBadTemplateRef
+		}
+		f, err := s.store.ComposeFragmentByID(ctx, id)
+		if err != nil {
+			return templates.Fragment{}, err
+		}
+		return templates.Fragment{ID: ref.ID, Name: f.Name, Source: templates.SourceUser, Content: f.Content}, nil
+	default:
+		return templates.Fragment{}, errBadTemplateRef
+	}
 }
 
 func (s *Server) resolveBlock(ctx context.Context, ref templateRef) (templates.Block, error) {
@@ -203,6 +497,19 @@ func findBuiltinPreset(id string) (templates.Preset, error) {
 	return templates.Preset{}, errBadTemplateRef
 }
 
+func findBuiltinFragment(id string) (templates.Fragment, error) {
+	list, err := templates.BuiltinFragments()
+	if err != nil {
+		return templates.Fragment{}, err
+	}
+	for _, f := range list {
+		if f.ID == id {
+			return f, nil
+		}
+	}
+	return templates.Fragment{}, errBadTemplateRef
+}
+
 func findBuiltinBlock(id string) (templates.Block, error) {
 	list, err := templates.BuiltinBlocks()
 	if err != nil {
@@ -230,10 +537,10 @@ func seedProjectFiles(root string, files []templates.File) error {
 		if err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+		if err := os.MkdirAll(filepath.Dir(dst), projectDirMode); err != nil {
 			return err
 		}
-		if err := os.WriteFile(dst, []byte(f.Content), 0o600); err != nil {
+		if err := os.WriteFile(dst, []byte(f.Content), projectFileMode); err != nil {
 			return err
 		}
 	}
@@ -267,7 +574,34 @@ func readProjectFilesFromDisk(root string) ([]templates.File, error) {
 	return out, err
 }
 
-// --- save as template / block ------------------------------------------------
+// --- save as template / duplicate --------------------------------------------
+
+// storeUserTemplate creates a user preset row and seeds its files on disk,
+// rolling back the row + folder on any write error. Shared by save-as-template
+// and duplicate. Returns store.ErrDuplicate on a slug collision (caller maps it
+// to 409).
+func (s *Server) storeUserTemplate(ctx context.Context, name, description, createdBy string, files []templates.File) (int64, string, error) {
+	slug := slugify(name)
+	id, err := s.store.CreateProjectTemplate(ctx, &store.ProjectTemplate{
+		Name: name, Slug: slug, Description: description, CreatedBy: createdBy,
+	})
+	if err != nil {
+		return 0, slug, err
+	}
+	root := s.templateRoot(id)
+	// NB: assign to the function-scoped err (don't shadow it in the if-initializer),
+	// or a seedProjectFiles failure is lost and the rollback below never fires.
+	err = os.MkdirAll(root, 0o700)
+	if err == nil {
+		err = seedProjectFiles(root, files)
+	}
+	if err != nil {
+		_ = os.RemoveAll(root)
+		_ = s.store.DeleteProjectTemplate(ctx, id)
+		return 0, slug, err
+	}
+	return id, slug, nil
+}
 
 func (s *Server) handleCreateProjectTemplate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -293,30 +627,61 @@ func (s *Server) handleCreateProjectTemplate(w http.ResponseWriter, r *http.Requ
 		writeErr(w, http.StatusInternalServerError, "could not read project files: "+err.Error())
 		return
 	}
-
-	slug := slugify(name)
-	id, err := s.store.CreateProjectTemplate(r.Context(), &store.ProjectTemplate{
-		Name: name, Slug: slug, Description: strings.TrimSpace(body.Description), CreatedBy: currentUsername(r),
-	})
+	id, slug, err := s.storeUserTemplate(r.Context(), name, strings.TrimSpace(body.Description), currentUsername(r), files)
 	if errors.Is(err, store.ErrDuplicate) {
 		writeErr(w, http.StatusConflict, "a template named \""+slug+"\" already exists")
 		return
 	}
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	root := s.templateRoot(id)
-	if err := os.MkdirAll(root, 0o700); err == nil {
-		err = seedProjectFiles(root, files)
-	}
-	if err != nil {
-		_ = os.RemoveAll(root)
-		_ = s.store.DeleteProjectTemplate(r.Context(), id)
 		writeErr(w, http.StatusInternalServerError, "could not store template files: "+err.Error())
 		return
 	}
 	s.audit(r, "project_template.create", slug, "")
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "slug": slug})
+}
+
+// handleDuplicateProjectTemplate copies any preset — built-in or user — into a
+// new, editable user preset. A built-in source is rendered with its default
+// variable values first (user presets are literal snapshots with no variables),
+// so the copy has concrete files instead of unresolved {{.Var}} markers; a user
+// source is copied as-is.
+func (s *Server) handleDuplicateProjectTemplate(w http.ResponseWriter, r *http.Request) {
+	srcID := chi.URLParam(r, "id")
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		writeErr(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	src := &templateRef{ID: srcID, Source: templates.SourceBuiltin}
+	if _, err := strconv.ParseInt(srcID, 10, 64); err == nil {
+		src.Source = templates.SourceUser
+	}
+	files, err := s.resolveSeedFiles(r.Context(), slugify(name), name, src, nil, nil, nil)
+	if errors.Is(err, store.ErrNotFound) || errors.Is(err, errBadTemplateRef) {
+		writeErr(w, http.StatusNotFound, "source template not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	id, slug, err := s.storeUserTemplate(r.Context(), name, "", currentUsername(r), files)
+	if errors.Is(err, store.ErrDuplicate) {
+		writeErr(w, http.StatusConflict, "a template named \""+slug+"\" already exists")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not store template files: "+err.Error())
+		return
+	}
+	s.audit(r, "project_template.duplicate", slug, srcID)
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "slug": slug})
 }
 
@@ -382,4 +747,487 @@ func (s *Server) handleDeleteServiceBlock(w http.ResponseWriter, r *http.Request
 	}
 	s.audit(r, "service_block.delete", chi.URLParam(r, "id"), "")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// --- preview -----------------------------------------------------------------
+
+// handlePreviewTemplate assembles the compose.yml (and any sidecar files) a given
+// template or block selection would produce, WITHOUT creating a project — it
+// powers the live read-only preview in the New project dialog. Pure read.
+func (s *Server) handlePreviewTemplate(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name      string            `json:"name"`
+		Template  *templateRef      `json:"template"`
+		Instances []blockInstance   `json:"instances"`
+		Blocks    []templateRef     `json:"blocks"` // legacy
+		Fragments []templateRef     `json:"fragments"`
+		Variables map[string]string `json:"variables"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		name = "preview"
+	}
+	instances := body.Instances
+	for _, b := range body.Blocks {
+		instances = append(instances, blockInstance{Block: b})
+	}
+	files, err := s.resolveSeedFiles(r.Context(), slugify(name), name, body.Template, instances, body.Fragments, body.Variables)
+	if errors.Is(err, store.ErrNotFound) {
+		writeErr(w, http.StatusNotFound, "template or block not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	resp := map[string]any{"files": files}
+	// Validate the assembled compose with the real `docker compose config` so the
+	// preview can flag a broken anchor/merge or YAML before the project is created.
+	if docker.ComposeAvailable(r.Context()) {
+		valid, vErr, warnings := s.previewValidate(r.Context(), slugify(name), files)
+		resp["valid"] = valid
+		if vErr != "" {
+			resp["error"] = vErr
+		}
+		if len(warnings) > 0 {
+			resp["warnings"] = warnings
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// previewValidate writes the assembled files to a throwaway dir and runs
+// `docker compose config` over them, returning validity + any error/warnings.
+// Best-effort: a setup failure just yields valid=false with no message.
+func (s *Server) previewValidate(ctx context.Context, slug string, files []templates.File) (bool, string, []string) {
+	tmp, err := os.MkdirTemp("", "dc-preview-*")
+	if err != nil {
+		return false, "", nil
+	}
+	defer os.RemoveAll(tmp)
+	if err := seedProjectFiles(tmp, files); err != nil {
+		return false, "", nil
+	}
+	out, err := docker.ComposeConfig(ctx, tmp, slug)
+	if err != nil {
+		msg := strings.TrimSpace(out)
+		if msg == "" {
+			msg = err.Error()
+		}
+		return false, msg, nil
+	}
+	return true, "", docker.ComposeWarnings(out)
+}
+
+// --- detail / update ---------------------------------------------------------
+
+// loadUserTemplate resolves {id} to a user-saved template (builtins have a
+// non-numeric id and are read-only, so they 404 here), writing the error itself.
+func (s *Server) loadUserTemplate(w http.ResponseWriter, r *http.Request) (*store.ProjectTemplate, bool) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "template not found")
+		return nil, false
+	}
+	t, err := s.store.ProjectTemplateByID(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeErr(w, http.StatusNotFound, "template not found")
+		return nil, false
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return nil, false
+	}
+	return t, true
+}
+
+// handleGetProjectTemplate returns one preset with its files. Built-in presets
+// (non-numeric id) return their embedded, *unrendered* source; user presets
+// return the on-disk snapshot.
+func (s *Server) handleGetProjectTemplate(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if nid, err := strconv.ParseInt(id, 10, 64); err == nil {
+		t, err := s.store.ProjectTemplateByID(r.Context(), nid)
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "template not found")
+			return
+		}
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		files, err := readProjectFilesFromDisk(s.templateRoot(t.ID))
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "could not read template files: "+err.Error())
+			return
+		}
+		if files == nil {
+			files = []templates.File{}
+		}
+		writeJSON(w, http.StatusOK, templateDetailJSON{
+			ID: id, Name: t.Name, Description: t.Description, Source: templates.SourceUser,
+			Files: files, Deletable: true,
+		})
+		return
+	}
+	p, err := findBuiltinPreset(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "template not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, templateDetailJSON{
+		ID: p.ID, Name: p.Name, Description: p.Description, Source: templates.SourceBuiltin,
+		Variables: p.Variables, Files: p.Files, Deletable: false,
+	})
+}
+
+// handleUpdateProjectTemplate renames a user preset / edits its description (the
+// slug stays put). Files are edited through the file endpoints below.
+func (s *Server) handleUpdateProjectTemplate(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.loadUserTemplate(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		writeErr(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if err := s.store.UpdateProjectTemplate(r.Context(), t.ID, name, strings.TrimSpace(body.Description)); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "project_template.update", t.Slug, "")
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleGetServiceBlock returns one block's full body (YAML + volumes) so the
+// management page can view a built-in or edit a user block.
+func (s *Server) handleGetServiceBlock(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if nid, err := strconv.ParseInt(id, 10, 64); err == nil {
+		b, err := s.store.ServiceBlockByID(r.Context(), nid)
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "service block not found")
+			return
+		}
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, blockDetailJSON{
+			ID: id, Name: b.Name, Description: b.Description, Source: templates.SourceUser,
+			Service: b.Service, ServiceYAML: b.ServiceYAML, Volumes: b.Volumes, Deletable: true,
+		})
+		return
+	}
+	b, err := findBuiltinBlock(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "service block not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, blockDetailJSON{
+		ID: b.ID, Name: b.Name, Description: b.Description, Source: templates.SourceBuiltin,
+		Service: b.Service, ServiceYAML: b.ServiceYAML, Volumes: b.Volumes, Variables: b.Variables, Deletable: false,
+	})
+}
+
+// handleUpdateServiceBlock edits a user block (built-ins have a non-numeric id
+// and 400 here, so they can't be modified).
+func (s *Server) handleUpdateServiceBlock(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "service block not found")
+		return
+	}
+	existing, err := s.store.ServiceBlockByID(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeErr(w, http.StatusNotFound, "service block not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var body struct {
+		Name        string   `json:"name"`
+		Description string   `json:"description"`
+		Service     string   `json:"service"`
+		ServiceYAML string   `json:"serviceYaml"`
+		Volumes     []string `json:"volumes"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if strings.TrimSpace(body.Name) == "" || strings.TrimSpace(body.Service) == "" || strings.TrimSpace(body.ServiceYAML) == "" {
+		writeErr(w, http.StatusBadRequest, "name, service and serviceYaml are required")
+		return
+	}
+	existing.Name = strings.TrimSpace(body.Name)
+	existing.Description = strings.TrimSpace(body.Description)
+	existing.Service = strings.TrimSpace(body.Service)
+	existing.ServiceYAML = body.ServiceYAML
+	existing.Volumes = body.Volumes
+	if err := s.store.UpdateServiceBlock(r.Context(), existing); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "service_block.update", existing.Slug, "")
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleDuplicateServiceBlock copies any block (built-in or user) into a new
+// editable user block. A built-in source's YAML is rendered with its default
+// variable values first (user blocks are literal, not rendered at assembly), so
+// the copy has concrete values instead of unresolved {{.Var}} markers.
+func (s *Server) handleDuplicateServiceBlock(w http.ResponseWriter, r *http.Request) {
+	srcID := chi.URLParam(r, "id")
+	ref := fragmentRefFrom(srcID)
+	b, err := s.resolveBlock(r.Context(), ref)
+	if errors.Is(err, store.ErrNotFound) || errors.Is(err, errBadTemplateRef) {
+		writeErr(w, http.StatusNotFound, "source block not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		writeErr(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	slug := slugify(name)
+	yaml := b.ServiceYAML
+	if ref.Source == templates.SourceBuiltin && len(b.Variables) > 0 {
+		rv, err := templates.ResolveVars(b.Variables, nil)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		rv["Slug"], rv["Name"] = slug, name
+		rendered, err := templates.Render([]templates.File{{Path: srcID, Content: yaml}}, rv)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "could not render block: "+err.Error())
+			return
+		}
+		yaml = rendered[0].Content
+	}
+	id, err := s.store.CreateServiceBlock(r.Context(), &store.ServiceBlock{
+		Name: name, Slug: slug, Service: b.Service, ServiceYAML: yaml, Volumes: b.Volumes, CreatedBy: currentUsername(r),
+	})
+	if errors.Is(err, store.ErrDuplicate) {
+		writeErr(w, http.StatusConflict, "a block named \""+slug+"\" already exists")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "service_block.duplicate", slug, srcID)
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "slug": slug})
+}
+
+// --- template files (user presets only) --------------------------------------
+// These mirror the project file endpoints but operate on the template root and
+// reject built-ins (loadUserTemplate 404s on a non-numeric id). Templates have no
+// updated_at to touch and aren't deployable, so there's no compose tooling here.
+
+func (s *Server) handleListTemplateFiles(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.loadUserTemplate(w, r)
+	if !ok {
+		return
+	}
+	out, err := listFilesInRoot(s.templateRoot(t.ID))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleWriteTemplateFile(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.loadUserTemplate(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Name    string `json:"name"`
+		Content string `json:"content"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if len(body.Content) > maxProjectFileBytes {
+		writeErr(w, http.StatusRequestEntityTooLarge, "file too large")
+		return
+	}
+	root := s.templateRoot(t.ID)
+	full, err := safeJoin(root, body.Name)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if _, statErr := os.Stat(full); errors.Is(statErr, os.ErrNotExist) {
+		if n, _ := countFiles(root); n >= maxProjectFiles {
+			writeErr(w, http.StatusBadRequest, "too many files in this template")
+			return
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(full), projectDirMode); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := os.WriteFile(full, []byte(body.Content), projectFileMode); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "project_template.file.write", t.Slug, body.Name)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleUploadTemplateFileRaw(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.loadUserTemplate(w, r)
+	if !ok {
+		return
+	}
+	root := s.templateRoot(t.ID)
+	name := r.URL.Query().Get("path")
+	full, err := safeJoin(root, name)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if _, statErr := os.Stat(full); errors.Is(statErr, os.ErrNotExist) {
+		if n, _ := countFiles(root); n >= maxProjectFiles {
+			writeErr(w, http.StatusBadRequest, "too many files in this template")
+			return
+		}
+	}
+	data, err := io.ReadAll(io.LimitReader(r.Body, maxProjectFileBytes+1))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if len(data) > maxProjectFileBytes {
+		writeErr(w, http.StatusRequestEntityTooLarge, "file too large")
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(full), projectDirMode); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := os.WriteFile(full, data, projectFileMode); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "project_template.file.upload", t.Slug, name)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "bytes": len(data)})
+}
+
+func (s *Server) handleDownloadTemplateFile(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.loadUserTemplate(w, r)
+	if !ok {
+		return
+	}
+	name := r.URL.Query().Get("path")
+	full, err := safeJoin(s.templateRoot(t.ID), name)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	f, err := os.Open(full)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "file not found")
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || info.IsDir() {
+		writeErr(w, http.StatusBadRequest, "not a file")
+		return
+	}
+	s.audit(r, "project_template.file.download", t.Slug, name)
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+headerFilename(filepath.Base(full))+"\"")
+	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
+}
+
+func (s *Server) handleDeleteTemplateFile(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.loadUserTemplate(w, r)
+	if !ok {
+		return
+	}
+	full, err := safeJoin(s.templateRoot(t.ID), r.URL.Query().Get("path"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := os.Remove(full); err != nil && !errors.Is(err, os.ErrNotExist) {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "project_template.file.delete", t.Slug, r.URL.Query().Get("path"))
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleMakeTemplateDir(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.loadUserTemplate(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	full, err := safeJoin(s.templateRoot(t.ID), body.Name)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := os.MkdirAll(full, projectDirMode); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "project_template.dir.create", t.Slug, body.Name)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleDownloadTemplate(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.loadUserTemplate(w, r)
+	if !ok {
+		return
+	}
+	data, err := zipDir(s.templateRoot(t.ID))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not build template archive: "+err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+t.Slug+`.zip"`)
+	_, _ = w.Write(data)
 }

@@ -197,6 +197,19 @@ CREATE TABLE IF NOT EXISTS service_blocks (
 	created_by   TEXT NOT NULL DEFAULT '',
 	created_at   TEXT NOT NULL
 );
+
+-- User-saved builder "shared definitions": a top-level compose fragment (a YAML
+-- anchor, e.g. "x-common: &common ...") emitted above services: so any service
+-- can merge it with "<<: *common".
+CREATE TABLE IF NOT EXISTS compose_fragments (
+	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	name        TEXT NOT NULL,
+	slug        TEXT NOT NULL UNIQUE,
+	description TEXT NOT NULL DEFAULT '',
+	content     TEXT NOT NULL,
+	created_by  TEXT NOT NULL DEFAULT '',
+	created_at  TEXT NOT NULL
+);
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err

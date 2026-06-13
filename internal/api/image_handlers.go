@@ -26,6 +26,36 @@ func (s *Server) handleListImages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, imgs)
 }
 
+// handleSearchImages backs image-name autocomplete: a Docker Hub repository
+// search proxied through the selected host's daemon. Best-effort — any daemon/
+// network error yields an empty list so the editor still offers local images.
+func (s *Server) handleSearchImages(w http.ResponseWriter, r *http.Request) {
+	// Best-effort throughout: a bad host param or a daemon/network error just
+	// yields an empty list so the editor falls back to local-image suggestions.
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeJSON(w, http.StatusOK, []docker.ImageSearchResult{})
+		return
+	}
+	res, err := s.docker.SearchImages(r.Context(), hostID, r.URL.Query().Get("q"), 25)
+	if err != nil {
+		writeJSON(w, http.StatusOK, []docker.ImageSearchResult{})
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// handleImageTags lists Docker Hub tags for a repository (?repo=), for tag
+// autocomplete. Best-effort: errors and non-Hub repos return an empty list.
+func (s *Server) handleImageTags(w http.ResponseWriter, r *http.Request) {
+	tags, err := s.docker.ImageTags(r.Context(), r.URL.Query().Get("repo"))
+	if err != nil {
+		writeJSON(w, http.StatusOK, []string{})
+		return
+	}
+	writeJSON(w, http.StatusOK, tags)
+}
+
 func (s *Server) handleRemoveImage(w http.ResponseWriter, r *http.Request) {
 	hostID, err := s.resolveHostID(r)
 	if err != nil {

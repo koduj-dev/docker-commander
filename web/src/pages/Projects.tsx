@@ -4,12 +4,13 @@ import clsx from "clsx";
 import {
   FolderGit2, Plus, Rocket, Square, Trash2, X, FilePlus, FolderPlus, Upload, Loader2,
   ExternalLink, Save, FileText, FileBox, Folder, Terminal, Pencil, ChevronRight, Download, Search, CheckCircle2, AlertCircle, AlertTriangle, Eye, Boxes,
-  LayoutTemplate, Puzzle, KeyRound,
+  LayoutTemplate, Puzzle, KeyRound, Anchor,
 } from "lucide-react";
 import { bytes as fmtBytes } from "../lib/format";
 import { api, ApiError } from "../lib/api";
-import type { Project, ProjectFile, Stack, ComposeModel, ComposeService, ProjectTemplateMeta, ServiceBlockMeta, TemplateRef, TemplateVariable } from "../lib/types";
+import type { Project, ProjectFile, Stack, ComposeModel, ComposeService, ProjectTemplateMeta, ServiceBlockMeta, ComposeFragmentMeta, TemplateRef, TemplateVariable } from "../lib/types";
 import type { ServerCheck } from "../components/CodeEditor";
+import { buildTree, TreeItem } from "../components/FileTree";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner, StateBadge } from "../components/ui";
 import { useDialogs } from "../components/Dialog";
@@ -27,77 +28,6 @@ function projectState(stack: Stack | undefined): { cls: string; label: string; d
   if (stack.running === 0) return { cls: "bg-danger text-danger", label: "Stopped", deployed: true };
   if (stack.running === total) return { cls: "bg-ok text-ok", label: "Running", deployed: true };
   return { cls: "bg-warn text-warn", label: "Partial", deployed: true };
-}
-
-type TreeNode = { name: string; path: string; isDir: boolean; binary?: boolean; children: TreeNode[] };
-
-// buildTree turns the flat file list (paths like "config/app.conf") into a
-// nested tree, materialising intermediate folders.
-function buildTree(files: ProjectFile[]): TreeNode[] {
-  const root: TreeNode = { name: "", path: "", isDir: true, children: [] };
-  const dirs = new Map<string, TreeNode>([["", root]]);
-  const ensureDir = (path: string): TreeNode => {
-    const hit = dirs.get(path);
-    if (hit) return hit;
-    const slash = path.lastIndexOf("/");
-    const parent = ensureDir(slash >= 0 ? path.slice(0, slash) : "");
-    const node: TreeNode = { name: path.slice(slash + 1), path, isDir: true, children: [] };
-    parent.children.push(node);
-    dirs.set(path, node);
-    return node;
-  };
-  for (const f of files) {
-    const slash = f.name.lastIndexOf("/");
-    if (f.isDir) { ensureDir(f.name); continue; }
-    const parent = ensureDir(slash >= 0 ? f.name.slice(0, slash) : "");
-    parent.children.push({ name: f.name.slice(slash + 1), path: f.name, isDir: false, binary: f.binary, children: [] });
-  }
-  const sort = (n: TreeNode) => {
-    n.children.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
-    n.children.forEach(sort);
-  };
-  sort(root);
-  return root.children;
-}
-
-// TreeItem renders one tree node (folder or file) recursively.
-function TreeItem({ node, depth, active, dirty, collapsed, currentDir, onToggle, onSelect, onEnterDir, onDelete }: {
-  node: TreeNode; depth: number; active: string; dirty: boolean; currentDir: string;
-  collapsed: Set<string>; onToggle: (path: string) => void;
-  onSelect: (path: string) => void; onEnterDir: (path: string) => void; onDelete: (n: { name: string; isDir?: boolean }) => void;
-}) {
-  const pad = { paddingLeft: `${depth * 12 + 6}px` };
-  if (node.isDir) {
-    const open = !collapsed.has(node.path);
-    const isCurrent = node.path === currentDir;
-    return (
-      <>
-        {/* Clicking the row "enters" the folder (selects + expands); the chevron toggles collapse. */}
-        <div className={`group flex items-center gap-1 rounded px-2 py-1 text-sm cursor-pointer ${isCurrent ? "bg-accent/10 text-accent" : "hover:bg-panel2"}`} style={pad} onClick={() => onEnterDir(node.path)}>
-          <button className="shrink-0" title={open ? "Collapse" : "Expand"} onClick={(e) => { e.stopPropagation(); onToggle(node.path); }}>
-            <ChevronRight className={`h-3.5 w-3.5 transition-transform ${open ? "rotate-90" : ""} ${isCurrent ? "text-accent" : "text-muted"}`} />
-          </button>
-          <Folder className={`h-3.5 w-3.5 shrink-0 ${isCurrent ? "text-accent" : "text-muted"}`} />
-          <span className={`truncate font-mono text-xs ${isCurrent ? "" : "text-muted"}`}>{node.name}</span>
-          <button className="ml-auto opacity-0 group-hover:opacity-100 text-danger" title="Delete folder" onClick={(e) => { e.stopPropagation(); onDelete({ name: node.path, isDir: true }); }}><Trash2 className="h-3.5 w-3.5" /></button>
-        </div>
-        {open && node.children.map((c) => (
-          <TreeItem key={c.path} node={c} depth={depth + 1} active={active} dirty={dirty} collapsed={collapsed} currentDir={currentDir} onToggle={onToggle} onSelect={onSelect} onEnterDir={onEnterDir} onDelete={onDelete} />
-        ))}
-      </>
-    );
-  }
-  const isActive = node.path === active;
-  return (
-    <div className={`group flex items-center gap-1 rounded px-2 py-1 text-sm cursor-pointer ${isActive ? "bg-accent/15 text-accent" : "hover:bg-panel2"}`} style={pad} onClick={() => onSelect(node.path)}>
-      {node.binary
-        ? <FileBox className="h-3.5 w-3.5 shrink-0 opacity-70" />
-        : <FileText className="h-3.5 w-3.5 shrink-0 opacity-70" />}
-      <span className="truncate font-mono text-xs">{node.name}</span>
-      {dirty && isActive && <span className="text-warn text-xs">●</span>}
-      <button className="ml-auto opacity-0 group-hover:opacity-100 text-danger" title="Delete file" onClick={(e) => { e.stopPropagation(); onDelete({ name: node.path, isDir: false }); }}><Trash2 className="h-3.5 w-3.5" /></button>
-    </div>
-  );
 }
 
 // isComposeFile reports whether a project file is a compose entry file that
@@ -423,7 +353,7 @@ export function Projects() {
 
 // NewProjectModal creates a project from a name, optionally importing a .zip.
 // SaveAsTemplateModal snapshots an existing project's files into a reusable
-// user template (shows up under New project → Template).
+// user preset (shows up under New project → Template and on the Templates page).
 function SaveAsTemplateModal({ projectId, onClose, onSaved }: { projectId: number; onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -443,15 +373,15 @@ function SaveAsTemplateModal({ projectId, onClose, onSaved }: { projectId: numbe
   };
   return (
     <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={onClose}>
-      <form className="card w-full max-w-md flex flex-col" onClick={(e) => e.stopPropagation()} onSubmit={save}>
+      <form className="card w-full max-w-lg flex flex-col" onClick={(e) => e.stopPropagation()} onSubmit={save}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <LayoutTemplate className="h-4 w-4 text-accent" />
-          <div className="font-medium">Save as template</div>
+          <div className="font-medium">Save as preset</div>
           <button type="button" className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
         </div>
         <div className="p-4 space-y-3">
-          <p className="text-xs text-muted">Snapshots this project’s files as a reusable template under <b>New project → Template</b>.</p>
-          <label className="block"><span className="label">Template name</span><input autoFocus className="input" value={name} placeholder="My stack" onChange={(e) => setName(e.target.value)} /></label>
+          <p className="text-xs text-muted">Snapshots this project’s files as a reusable preset — listed under <b>New project → Template</b> and on the <b>Templates</b> page.</p>
+          <label className="block"><span className="label">Preset name</span><input autoFocus className="input" value={name} placeholder="My stack" onChange={(e) => setName(e.target.value)} /></label>
           <label className="block"><span className="label">Description</span><input className="input" value={description} placeholder="What it sets up" onChange={(e) => setDescription(e.target.value)} /></label>
           {err && <p className="text-sm text-danger">{err}</p>}
         </div>
@@ -545,7 +475,55 @@ function CustomBlockForm({ onClose, onSaved }: { onClose: () => void; onSaved: (
   );
 }
 
+// CustomFragmentForm saves a shared definition (a top-level YAML anchor) for the
+// builder. The content is copied literally, so anchors/merge keys are preserved.
+function CustomFragmentForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [name, setName] = useState("");
+  const [content, setContent] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const save = async () => {
+    if (!name.trim() || !content.trim()) { setErr("name and YAML are required"); return; }
+    setBusy(true); setErr("");
+    try {
+      await api.createComposeFragment({ name: name.trim(), description: "", content });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "could not save definition");
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="space-y-2 rounded-lg border border-border bg-panel2/40 p-3">
+      <div className="flex items-center gap-2 text-xs font-medium"><Anchor className="h-3.5 w-3.5 text-accent" /> Shared definition</div>
+      <label className="block"><span className="label">Name</span><input className="input" value={name} placeholder="Postgres security" onChange={(e) => setName(e.target.value)} /></label>
+      <label className="block">
+        <span className="label">Top-level YAML (define an anchor with <code>&amp;name</code>)</span>
+        <textarea className="input font-mono text-xs" rows={6} value={content} placeholder={"x-pg-common: &pg-common\n  restart: unless-stopped\n  volumes:\n    - ./certs:/certs:ro"} onChange={(e) => setContent(e.target.value)} />
+      </label>
+      {err && <p className="text-sm text-danger">{err}</p>}
+      <div className="flex justify-end gap-2">
+        <button type="button" className="btn-ghost px-3 py-1.5 text-sm" onClick={onClose}>Cancel</button>
+        <button type="button" className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40" disabled={busy} onClick={save}>
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save definition
+        </button>
+      </div>
+    </div>
+  );
+}
+
 type NewMode = "template" | "builder" | "import";
+type BuilderTab = "services" | "shared" | "variables";
+// One service placed in the builder: a block under a chosen key, plus which
+// shared definitions (by refKey) to merge into it via `<<: *anchor`.
+interface BuilderInstance { uid: number; block: ServiceBlockMeta; key: string; merge: Record<string, boolean>; }
+
+// dedupeKey makes a service key unique among the ones already used (db, db-2, …).
+function dedupeKey(base: string, taken: string[]): string {
+  const b = (base || "service").trim() || "service";
+  if (!taken.includes(b)) return b;
+  for (let i = 2; ; i++) if (!taken.includes(`${b}-${i}`)) return `${b}-${i}`;
+}
 
 function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreated: (p: Project) => void }) {
   const dialogs = useDialogs();
@@ -553,34 +531,100 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
   const [mode, setMode] = useState<NewMode>("template");
   const [templates, setTemplates] = useState<ProjectTemplateMeta[]>([]);
   const [blocks, setBlocks] = useState<ServiceBlockMeta[]>([]);
+  const [fragments, setFragments] = useState<ComposeFragmentMeta[]>([]);
   const [tplKey, setTplKey] = useState("");                 // "" = empty starter
-  const [picked, setPicked] = useState<Record<string, boolean>>({});
+  const [instances, setInstances] = useState<BuilderInstance[]>([]);
+  const [pickedFrags, setPickedFrags] = useState<Record<string, boolean>>({});
+  const uidRef = useRef(0);
   const [vars, setVars] = useState<Record<string, string>>({});
   const [file, setFile] = useState<File | null>(null);
   const [customOpen, setCustomOpen] = useState(false);
+  const [customFragOpen, setCustomFragOpen] = useState(false);
+  const [builderTab, setBuilderTab] = useState<BuilderTab>("services");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [preview, setPreview] = useState("");
+  const [previewName, setPreviewName] = useState("compose.yml");
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewErr, setPreviewErr] = useState("");
+  const [previewValid, setPreviewValid] = useState<boolean | null>(null);
+  const [previewIssue, setPreviewIssue] = useState("");
 
   const loadCatalog = useCallback(() => {
     api.projectTemplates().then(setTemplates).catch(() => {});
     api.serviceBlocks().then(setBlocks).catch(() => {});
+    api.composeFragments().then(setFragments).catch(() => {});
   }, []);
   useEffect(() => loadCatalog(), [loadCatalog]);
 
   const selectedTpl = templates.find((t) => refKey(t) === tplKey) ?? null;
-  const selectedBlocks = blocks.filter((b) => picked[refKey(b)]);
+  const selectedFragments = fragments.filter((f) => pickedFrags[refKey(f)]);
   const activeVars = mode === "template"
     ? (selectedTpl?.variables ?? [])
     : mode === "builder"
-      ? dedupeVars(selectedBlocks.flatMap((b) => b.variables ?? []))
+      ? dedupeVars(instances.flatMap((i) => i.block.variables ?? []))
       : [];
 
   const setVar = (k: string, v: string) => setVars((prev) => ({ ...prev, [k]: v }));
 
-  const deleteItem = async (kind: "template" | "block", id: string, label: string) => {
+  const addInstance = (b: ServiceBlockMeta) =>
+    setInstances((cur) => [...cur, { uid: ++uidRef.current, block: b, key: dedupeKey(b.service, cur.map((i) => i.key)), merge: {} }]);
+  const removeInstance = (uid: number) => setInstances((cur) => cur.filter((i) => i.uid !== uid));
+  const setInstanceKey = (uid: number, key: string) => setInstances((cur) => cur.map((i) => (i.uid === uid ? { ...i, key } : i)));
+  const toggleMerge = (uid: number, rk: string) => setInstances((cur) => cur.map((i) => (i.uid === uid ? { ...i, merge: { ...i.merge, [rk]: !i.merge[rk] } } : i)));
+  // Map each instance's merged fragment refKeys back to refs for the API payload.
+  const instancePayload = () => instances.map((i) => ({
+    block: { id: i.block.id, source: i.block.source } as TemplateRef,
+    key: i.key.trim(),
+    merge: selectedFragments.filter((f) => i.merge[refKey(f)]).map((f): TemplateRef => ({ id: f.id, source: f.source })),
+  }));
+  // Service keys must be non-empty and unique, or two instances collide into one
+  // compose service (a blank key falls back to the block's default key server-side).
+  const trimmedKeys = instances.map((i) => i.key.trim());
+  const dupKeys = new Set(trimmedKeys.filter((k, idx) => k !== "" && trimmedKeys.indexOf(k) !== idx));
+  const keyInvalid = (key: string) => { const k = key.trim(); return !k || dupKeys.has(k); };
+  const keysOk = instances.every((i) => !keyInvalid(i.key));
+
+  // Live read-only preview of the compose.yml the current selection would seed.
+  // Shown for a chosen preset or a non-empty builder selection; debounced so it
+  // doesn't fire on every keystroke. Generated secrets vary per call — that's
+  // fine for an illustrative preview.
+  const showPreview = (mode === "template" && !!selectedTpl) || (mode === "builder" && (instances.length > 0 || selectedFragments.length > 0));
+  useEffect(() => {
+    if (!showPreview) { setPreview(""); setPreviewErr(""); setPreviewBusy(false); setPreviewValid(null); setPreviewIssue(""); return; }
+    const variables = Object.fromEntries(activeVars.map((v) => [v.key, vars[v.key] ?? ""]));
+    const opts = mode === "builder"
+      ? {
+          name: name || "preview",
+          instances: instancePayload(),
+          fragments: selectedFragments.map((f): TemplateRef => ({ id: f.id, source: f.source })),
+          variables,
+        }
+      : { name: name || "preview", template: { id: selectedTpl!.id, source: selectedTpl!.source }, variables };
+    let cancelled = false;
+    setPreviewBusy(true);
+    setPreviewValid(null); setPreviewIssue(""); // clear the stale chip/banner while the new preview loads
+    const t = setTimeout(() => {
+      api.previewTemplate(opts).then((r) => {
+        if (cancelled) return;
+        // Prefer the compose entry file; user-saved snapshots may name it
+        // compose.yaml / docker-compose.yml, so match those too before falling back.
+        const compose = r.files.find((f) => /^(docker-)?compose\.ya?ml$/i.test(f.path)) ?? r.files[0];
+        setPreview(compose?.content ?? ""); setPreviewName(compose?.path ?? "compose.yml"); setPreviewErr("");
+        setPreviewValid(r.valid ?? null);
+        setPreviewIssue(r.valid === false ? (r.error ?? "invalid compose") : (r.warnings?.length ? r.warnings.join(" · ") : ""));
+      }).catch((e) => { if (!cancelled) { setPreview(""); setPreviewErr(e instanceof ApiError ? e.message : "preview failed"); setPreviewValid(null); setPreviewIssue(""); } })
+        .finally(() => { if (!cancelled) setPreviewBusy(false); });
+    }, 350);
+    return () => { cancelled = true; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showPreview, mode, tplKey, instances, pickedFrags, vars, name, fragments, templates]);
+
+  const deleteItem = async (kind: "template" | "block" | "fragment", id: string, label: string) => {
     if (!(await dialogs.confirm({ title: `Delete ${kind}`, message: <>Delete <code className="font-mono text-text">{label}</code>?</>, danger: true, confirmLabel: "Delete" }))) return;
     try {
       if (kind === "template") await api.deleteProjectTemplate(id);
+      else if (kind === "fragment") await api.deleteComposeFragment(id);
       else await api.deleteServiceBlock(id);
       loadCatalog();
     } catch (e) {
@@ -599,7 +643,7 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
       const variables = Object.fromEntries(activeVars.map((v) => [v.key, vars[v.key] ?? ""]));
       let r: { id: number; slug: string };
       if (mode === "import" && file) r = await api.importProject(n, file);
-      else if (mode === "builder" && selectedBlocks.length) r = await api.createProject(n, { blocks: selectedBlocks.map((b): TemplateRef => ({ id: b.id, source: b.source })), variables });
+      else if (mode === "builder" && (instances.length || selectedFragments.length)) r = await api.createProject(n, { instances: instancePayload(), fragments: selectedFragments.map((f): TemplateRef => ({ id: f.id, source: f.source })), variables });
       else if (mode === "template" && selectedTpl) r = await api.createProject(n, { template: { id: selectedTpl.id, source: selectedTpl.source }, variables });
       else r = await api.createProject(n);
       onCreated({ id: r.id, name: n, slug: r.slug, composeFile: "compose.yml", createdBy: "", createdAt: "", updatedAt: "" });
@@ -616,17 +660,26 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
     </button>
   );
 
-  const canSubmit = !!name.trim() && !busy && (mode === "import" ? !!file : mode === "builder" ? selectedBlocks.length > 0 : true);
+  const canSubmit = !!name.trim() && !busy && (mode === "import" ? !!file : mode === "builder" ? ((instances.length > 0 || selectedFragments.length > 0) && keysOk) : true);
+
+  // Inner segmented control for the builder (Services / Shared / Variables).
+  const subTab = (key: BuilderTab, icon: ReactNode, label: string, count: number) => (
+    <button type="button" onClick={() => setBuilderTab(key)}
+      className={clsx("flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-sm", builderTab === key ? "bg-panel text-text shadow-sm" : "text-muted hover:text-text")}>
+      {icon} {label}{count > 0 ? <span className="text-[10px] bg-accent/20 text-accent rounded-full px-1.5 leading-4">{count}</span> : null}
+    </button>
+  );
 
   return (
     <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={onClose}>
-      <form className="card w-full max-w-2xl flex flex-col max-h-[88vh]" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+      <form className={clsx("card flex flex-col max-h-[90vh]", showPreview ? "w-[92vw] max-w-[1500px]" : "w-full max-w-2xl")} onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <FolderGit2 className="h-4 w-4 text-accent" />
           <div className="font-medium">New project</div>
           <button type="button" className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
         </div>
-        <div className="p-4 space-y-3 overflow-y-auto">
+        <div className="flex-1 flex min-h-0">
+        <div className="flex-1 min-w-0 p-4 space-y-3 overflow-y-auto">
           <label className="block">
             <span className="label">Project name</span>
             <input autoFocus className="input" value={name} placeholder="My app" onChange={(e) => setName(e.target.value)} />
@@ -660,31 +713,102 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
           )}
 
           {mode === "builder" && (
-            <div className="space-y-2">
-              <div className="text-xs text-muted">Pick services — they’re merged into one <code>compose.yml</code> you can edit afterwards.</div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {blocks.map((b) => {
-                  const on = !!picked[refKey(b)];
-                  return (
-                    <div key={refKey(b)} className={clsx("rounded-lg border px-3 py-2", on ? "border-accent bg-accent/10" : "border-border")}>
-                      <div className="flex items-start gap-2">
-                        <button type="button" className="flex-1 text-left" onClick={() => setPicked((p) => ({ ...p, [refKey(b)]: !on }))}>
-                          <div className="text-sm font-medium flex items-center gap-2">
-                            {b.name}
-                            {on && <CheckCircle2 className="h-3.5 w-3.5 text-accent" />}
-                            {b.source === "user" && <span className="text-[10px] uppercase tracking-wide text-muted border border-border rounded px-1">yours</span>}
-                          </div>
-                          <div className="text-xs text-muted">{b.description}</div>
-                        </button>
-                        {b.deletable && <button type="button" className="btn-ghost px-1.5 py-1 text-danger" title="Delete block" onClick={() => deleteItem("block", b.id, b.name)}><Trash2 className="h-3.5 w-3.5" /></button>}
-                      </div>
-                    </div>
-                  );
-                })}
+            <div className="space-y-3">
+              <div className="flex gap-1 rounded-lg bg-panel2/50 p-0.5">
+                {subTab("services", <Puzzle className="h-3.5 w-3.5" />, "Services", instances.length)}
+                {subTab("shared", <Anchor className="h-3.5 w-3.5" />, "Shared defs", selectedFragments.length)}
+                {subTab("variables", <KeyRound className="h-3.5 w-3.5" />, "Variables", activeVars.length)}
               </div>
-              {customOpen
-                ? <CustomBlockForm onClose={() => setCustomOpen(false)} onSaved={() => { setCustomOpen(false); loadCatalog(); }} />
-                : <button type="button" className="btn-ghost px-3 py-1.5 text-sm" onClick={() => setCustomOpen(true)}><Plus className="h-4 w-4" /> Custom service…</button>}
+
+              {builderTab === "services" && (
+                <div className="space-y-3">
+                  {/* Added service instances — add a block twice for a cluster. */}
+                  {instances.length > 0 && (
+                    <div className="space-y-1.5">
+                      {instances.map((i) => (
+                        <div key={i.uid} className="rounded-lg border border-accent/40 bg-accent/5 px-3 py-2 space-y-1.5">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-muted shrink-0 truncate max-w-[8rem]" title={i.block.name}>{i.block.name}</span>
+                            <input className={clsx("input font-mono py-1 text-xs", keyInvalid(i.key) && "border-danger")} value={i.key} placeholder="service key" onChange={(e) => setInstanceKey(i.uid, e.target.value)} />
+                            <button type="button" className="btn-ghost px-1.5 py-1 text-danger ml-auto" title="Remove" onClick={() => removeInstance(i.uid)}><Trash2 className="h-3.5 w-3.5" /></button>
+                          </div>
+                          {selectedFragments.length > 0 && (
+                            <div className="flex items-center gap-1.5 flex-wrap text-xs">
+                              <span className="text-muted">Merge:</span>
+                              {selectedFragments.map((f) => {
+                                const on = !!i.merge[refKey(f)];
+                                return (
+                                  <button type="button" key={refKey(f)} onClick={() => toggleMerge(i.uid, refKey(f))}
+                                    className={clsx("rounded px-1.5 py-0.5 border font-mono", on ? "border-accent bg-accent/15 text-accent" : "border-border text-muted hover:text-text")}>
+                                    {on ? "<<: *" : ""}{f.name}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {!keysOk && <p className="text-[11px] text-danger">Service keys must be unique and non-empty.</p>}
+                    </div>
+                  )}
+
+                  {/* Palette: click to add an instance (again for a cluster). */}
+                  <div className="text-xs text-muted">Add a service{instances.length > 0 ? " (again for a cluster)" : ""} — they merge into one <code>compose.yml</code> you can edit afterwards.</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {blocks.map((b) => (
+                      <button type="button" key={refKey(b)} className="rounded-lg border border-border px-3 py-2 text-left hover:bg-panel2/50" onClick={() => addInstance(b)}>
+                        <div className="text-sm font-medium flex items-center gap-2">
+                          <Plus className="h-3.5 w-3.5 text-accent shrink-0" />{b.name}
+                          {b.source === "user" && <span className="text-[10px] uppercase tracking-wide text-muted border border-border rounded px-1">yours</span>}
+                        </div>
+                        <div className="text-xs text-muted">{b.description}</div>
+                      </button>
+                    ))}
+                  </div>
+                  {customOpen
+                    ? <CustomBlockForm onClose={() => setCustomOpen(false)} onSaved={() => { setCustomOpen(false); loadCatalog(); }} />
+                    : <button type="button" className="btn-ghost px-3 py-1.5 text-sm" onClick={() => setCustomOpen(true)}><Plus className="h-4 w-4" /> Custom service…</button>}
+                </div>
+              )}
+
+              {builderTab === "shared" && (
+                <div className="space-y-2">
+                  <div className="flex items-start gap-2 text-xs text-muted">
+                    <Anchor className="h-3.5 w-3.5 mt-0.5 shrink-0" /> <span>Include top-level YAML anchors here, then tick <strong>Merge</strong> on each service (in the <strong>Services</strong> tab) to inject <code>{"<<: *name"}</code>.</span>
+                  </div>
+                  {fragments.length > 0 && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {fragments.map((f) => {
+                        const on = !!pickedFrags[refKey(f)];
+                        return (
+                          <div key={refKey(f)} className={clsx("rounded-lg border px-3 py-2", on ? "border-accent bg-accent/10" : "border-border")}>
+                            <div className="flex items-start gap-2">
+                              <button type="button" className="flex-1 text-left" onClick={() => setPickedFrags((p) => ({ ...p, [refKey(f)]: !on }))}>
+                                <div className="text-sm font-medium flex items-center gap-2">
+                                  {f.name}
+                                  {on && <CheckCircle2 className="h-3.5 w-3.5 text-accent" />}
+                                  {f.source === "user" && <span className="text-[10px] uppercase tracking-wide text-muted border border-border rounded px-1">yours</span>}
+                                </div>
+                                <div className="text-xs text-muted">{f.description}</div>
+                              </button>
+                              {f.deletable && <button type="button" className="btn-ghost px-1.5 py-1 text-danger" title="Delete definition" onClick={() => deleteItem("fragment", f.id, f.name)}><Trash2 className="h-3.5 w-3.5" /></button>}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {customFragOpen
+                    ? <CustomFragmentForm onClose={() => setCustomFragOpen(false)} onSaved={() => { setCustomFragOpen(false); loadCatalog(); }} />
+                    : <button type="button" className="btn-ghost px-3 py-1.5 text-sm" onClick={() => setCustomFragOpen(true)}><Plus className="h-4 w-4" /> Custom definition…</button>}
+                </div>
+              )}
+
+              {builderTab === "variables" && (
+                activeVars.length > 0
+                  ? <VarFields vars={activeVars} values={vars} onChange={setVar} />
+                  : <p className="text-xs text-muted py-2">No variables — the selected services don’t declare any.</p>
+              )}
             </div>
           )}
 
@@ -696,8 +820,31 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
             </label>
           )}
 
-          {mode !== "import" && <VarFields vars={activeVars} values={vars} onChange={setVar} />}
+          {mode === "template" && <VarFields vars={activeVars} values={vars} onChange={setVar} />}
           {err && <p className="text-sm text-danger">{err}</p>}
+        </div>
+        {showPreview && (
+          <div className="hidden md:flex w-[42%] shrink-0 border-l border-border flex-col min-h-0">
+            <div className="flex items-center gap-2 px-3 py-2 border-b border-border text-xs text-muted">
+              <Eye className="h-3.5 w-3.5" /> Preview — <span className="font-mono">{previewName}</span>
+              <span className="ml-auto flex items-center gap-1">
+                {previewBusy ? <Loader2 className="h-3 w-3 animate-spin" />
+                  : previewValid === true && !previewIssue ? <><CheckCircle2 className="h-3 w-3 text-ok" /><span className="text-ok">valid</span></>
+                  : previewValid === true ? <><AlertTriangle className="h-3 w-3 text-warn" /><span className="text-warn">warnings</span></>
+                  : previewValid === false ? <><AlertCircle className="h-3 w-3 text-danger" /><span className="text-danger">invalid</span></>
+                  : null}
+              </span>
+            </div>
+            {previewIssue && (
+              <div className={clsx("px-3 py-1.5 text-[11px] border-b border-border", previewValid === false ? "text-danger bg-danger/10" : "text-warn bg-warn/10")}>{previewIssue}</div>
+            )}
+            <div className="flex-1 overflow-auto p-3 bg-panel2/40">
+              {previewErr
+                ? <p className="text-xs text-danger">{previewErr}</p>
+                : <pre className="text-xs font-mono whitespace-pre text-text/90">{preview || "…"}</pre>}
+            </div>
+          </div>
+        )}
         </div>
         <div className="flex justify-end gap-2 p-4 border-t border-border">
           <button type="button" className="btn-ghost px-3 py-1.5 text-sm" onClick={onClose}>Cancel</button>
@@ -919,7 +1066,7 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
-      <div className="card relative w-[85vw] h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+      <div className="card relative w-[92vw] h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         {busy === "delproj" && (
           <div className="absolute inset-0 z-10 bg-bg/70 grid place-items-center rounded-xl">
             <div className="flex items-center gap-2 text-sm text-muted"><Loader2 className="h-4 w-4 animate-spin" /> Deleting project…</div>
@@ -932,7 +1079,7 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
             <div className="text-xs text-muted font-mono">{project.slug}</div>
           </div>
           <div className="flex items-center gap-1 ml-auto">
-            <button className="btn-ghost px-2 h-8" title="Save as template" onClick={() => setSaveTpl(true)}><LayoutTemplate className="h-4 w-4" /></button>
+            <button className="btn-ghost px-2 h-8" title="Save as preset" onClick={() => setSaveTpl(true)}><LayoutTemplate className="h-4 w-4" /></button>
             <a className="btn-ghost px-2 h-8" title="Download project as .zip" href={api.projectDownloadUrl(project.id)}><Download className="h-4 w-4" /></a>
             <button className="btn-primary px-3 h-8 text-sm disabled:opacity-40" disabled={!composeAvailable || busy === "deploy"} onClick={() => runCompose("deploy")} title={composeAvailable ? "docker compose up -d" : "docker compose CLI not available"}>
               {busy === "deploy" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />} {deployed ? "Redeploy" : "Deploy"}
@@ -957,7 +1104,7 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
 
         <div className="flex-1 flex min-h-0">
           {/* File tree */}
-          <div className="w-56 shrink-0 border-r border-border flex flex-col">
+          <div className="w-64 shrink-0 border-r border-border flex flex-col">
             <div className="flex items-center gap-1 p-2 border-b border-border">
               <span className="text-xs uppercase tracking-wide text-muted px-1">Files</span>
               <button className="btn-ghost px-1.5 py-1 ml-auto" title={`New file${currentDir ? ` in ${currentDir}/` : ""}`} onClick={addFile}><FilePlus className="h-4 w-4" /></button>

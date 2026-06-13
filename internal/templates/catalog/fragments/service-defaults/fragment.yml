@@ -1,0 +1,8 @@
+# Common service defaults — merge into any service with `<<: *defaults`.
+x-defaults: &defaults
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"

@@ -36,17 +36,44 @@ always rendered and written **server-side**:
   **PHP-FPM**, **Node**, **Postgres**, **MySQL**, **Redis**, **Adminer** — and
   they're merged into one `compose.yml` you can edit afterwards. Add your own with
   **Custom service…** (name, service key, the service YAML, optional named
-  volumes); it's saved and reappears in the builder.
+  volumes); it's saved and reappears in the builder. Under **Shared definitions**
+  you can also include reusable **top-level YAML anchors** (e.g.
+  `x-pg-common: &pg-common …`) — emitted above `services:` so a cluster of
+  services can share one definition (security, cert mounts, …) and merge it with
+  `<<: *pg-common`. Built-ins (Service defaults, Secured Postgres) ship in, and
+  you can save your own with **Custom definition…**.
 - **Import** — choose a `.zip` to import an existing project folder (files are
   written through the same path sandbox).
 
-**Save as template** — the editor's 🗎 button snapshots the open project's files
-into a reusable preset that then shows up under **Template** (and can be deleted
-there). Built-in presets and blocks are read-only; the ones you save are yours to
-remove.
+As you pick a template or builder blocks, a **live read-only preview** of the
+resulting `compose.yml` renders alongside the form, so you see what you'll get
+before creating the project.
+
+**Save as preset** — the editor's 🗎 button snapshots the open project's files
+into a reusable preset that then shows up under **Template** (and on the
+Templates page). Built-in presets and blocks are read-only; the ones you save are
+yours to edit or remove.
 
 > Built-in presets/blocks ship with the binary; saved ones live in the data dir.
 > A future catalog source could pull presets from a remote API.
+
+## Managing templates
+
+The **Templates** page (sidebar, under the Projects permission) is where your
+presets and builder blocks live:
+
+- **Presets** — edit a saved preset's files in the same multi-file editor,
+  rename it / change its description, download it as a `.zip`, or delete it.
+  Built-in presets open read-only so you can inspect what they scaffold.
+- **Service blocks** — create a block, edit an existing one (name, service key,
+  the service YAML, named volumes), or delete it; built-in blocks are read-only.
+  Blocks you add here (and via the builder's **Custom service…**) appear in the
+  builder.
+- **Shared definitions** — create/edit/delete top-level YAML anchors (see the
+  Builder above); built-in ones are read-only. They appear in the builder's
+  **Shared definitions** list.
+
+Built-in presets/blocks can't be modified; only the ones you save are editable.
 
 ## The editor
 
@@ -61,6 +88,12 @@ right, with syntax highlighting for YAML, JSON, shell, Dockerfiles and
   where new items land, with an × to go back to the project root. Upload accepts
   binary/data files too (shown download-only in the tree).
 - **Save** writes the open file; an unsaved-changes dot marks edits.
+- **Image autocomplete** — on a compose `image:` line, suggestions appear for
+  repository names (your locally-pulled images first, then a Docker Hub search)
+  and, once you type a `:`, for that repo's tags (local tags + Docker Hub). The
+  Create-container form's image field offers the same. It's best-effort —
+  offline you still get your local images. (The same powers private images you've
+  already pulled; tag listing for private registries is a future addition.)
 - **Download** a single file (next to *Save*) or the **whole project as a
   `.zip`** (editor header).
 - **Profiles** — if the compose file defines `profiles`, a toggle bar lets you

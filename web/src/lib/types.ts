@@ -145,6 +145,14 @@ export interface ImageSummary {
   inUse: boolean;
 }
 
+// One Docker Hub search hit, used for image-name autocomplete.
+export interface ImageSearchResult {
+  name: string;
+  description: string;
+  stars: number;
+  official: boolean;
+}
+
 export interface PullProgress {
   status?: string;
   id?: string;
@@ -375,10 +383,41 @@ export interface ServiceBlockMeta {
   deletable: boolean;
 }
 
-// A reference the create-project call uses to identify a preset or block.
+// A reference the create-project call uses to identify a preset, block or fragment.
 export interface TemplateRef {
   id: string;
   source: TemplateSource;
+}
+
+// A builder "shared definition" — a top-level compose fragment (YAML anchor).
+export interface ComposeFragmentMeta {
+  id: string;
+  name: string;
+  description: string;
+  source: TemplateSource;
+  deletable: boolean;
+}
+
+export interface ComposeFragmentDetail extends ComposeFragmentMeta {
+  content: string;
+}
+
+// One file in a rendered template/builder preview ({{.Var}} already substituted).
+export interface TemplateFile {
+  path: string;
+  content: string;
+}
+
+// Full block payload (YAML + volumes) for the management page's view/edit.
+export interface ServiceBlockDetail extends ServiceBlockMeta {
+  serviceYaml: string;
+  volumes: string[];
+}
+
+// Full preset payload (its files) for the management page's view; user presets
+// are edited file-by-file via the template file endpoints.
+export interface ProjectTemplateDetail extends ProjectTemplateMeta {
+  files: TemplateFile[];
 }
 
 export interface PortProbe {
