@@ -6,12 +6,11 @@ import type { MCPToken, MCPStatus } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
 import { useDialogs } from "../components/Dialog";
+import { SECTION_LABELS, sectionLabel } from "../lib/sections";
 
-// Mirrors the app's section list; the picker only offers what the user can grant.
-const ALL_SECTIONS = [
-  "dashboard", "containers", "projects", "images", "volumes", "networks", "topology",
-  "logs", "events", "alerts", "hosts", "registries", "audit",
-];
+// Canonical section list (keys mirror the backend's store.Sections). Admins may
+// scope a token to any of these; other users only to their own sections.
+const ALL_SECTIONS = Object.keys(SECTION_LABELS);
 
 export function MCPTokens() {
   const { user } = useAuth();
@@ -159,7 +158,7 @@ function MCPTokenForm({ sections, ownerReadOnly, onCancel, onDone }: {
           {sections.map((s) => (
             <button type="button" key={s} onClick={() => toggle(s)}
               className={`text-xs rounded-md px-2 py-1 border ${picked.includes(s) ? "bg-accent/15 text-accent border-accent/40" : "bg-panel2 text-muted border-border"}`}>
-              {s}
+              {sectionLabel(s)}
             </button>
           ))}
         </div>

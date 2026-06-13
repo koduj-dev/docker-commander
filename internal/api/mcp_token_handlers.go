@@ -82,7 +82,10 @@ func (s *Server) handleCreateMCPToken(w http.ResponseWriter, r *http.Request) {
 		Sections      []string `json:"sections"`
 		ExpiresInDays int      `json:"expiresInDays"`
 	}
-	_ = decodeJSON(r, &b)
+	if err := decodeJSON(r, &b); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
 	b.Name = strings.TrimSpace(b.Name)
 	if b.Name == "" {
 		writeErr(w, http.StatusBadRequest, "name is required")

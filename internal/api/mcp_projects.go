@@ -47,6 +47,9 @@ func (s *Server) mcpDeployProject(ctx context.Context, id int64, profiles []stri
 
 // mcpDownProject runs `docker compose down` for a managed project.
 func (s *Server) mcpDownProject(ctx context.Context, id int64) (string, error) {
+	if !docker.ComposeAvailable(ctx) {
+		return "", errors.New("the `docker compose` CLI is not available on the host running Docker Commander")
+	}
 	p, err := s.store.ProjectByID(ctx, id)
 	if err != nil {
 		return "", err
