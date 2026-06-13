@@ -27,6 +27,8 @@ import type {
   Registry,
   MCPToken,
   MCPStatus,
+  AdminMCPToken,
+  AdminOAuthClient,
   Project,
   ProjectTemplateMeta,
   ProjectTemplateDetail,
@@ -506,6 +508,13 @@ export const api = {
   createMcpToken: (b: { name: string; readOnly: boolean; sections: string[]; expiresInDays: number }) =>
     req<{ id: number; token: string }>("POST", "/api/mcp/tokens", b),
   deleteMcpToken: (id: number) => req<{ ok: boolean }>("DELETE", `/api/mcp/tokens/${id}`),
+
+  // MCP admin overview (admin-only): every user's tokens + registered OAuth clients.
+  mcpAdminTokens: () => req<AdminMCPToken[]>("GET", "/api/mcp-admin/tokens"),
+  mcpAdminRevokeToken: (id: number) => req<{ ok: boolean }>("DELETE", `/api/mcp-admin/tokens/${id}`),
+  mcpAdminOAuthClients: () => req<AdminOAuthClient[]>("GET", "/api/mcp-admin/oauth-clients"),
+  mcpAdminDeleteOAuthClient: (id: string) =>
+    req<{ ok: boolean }>("DELETE", `/api/mcp-admin/oauth-clients/${encodeURIComponent(id)}`),
 
   networks: () => req<NetworkSummary[]>("GET", `/api/networks${hostParam()}`),
   createNetwork: (b: { name: string; driver?: string; subnet?: string; gateway?: string; internal?: boolean; attachable?: boolean }) =>

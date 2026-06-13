@@ -53,6 +53,17 @@ A token can only ever *narrow* your rights; if your account is read-only, every
 token you mint is read-only too. Revoke a token anytime — it stops working
 immediately.
 
+### Admin overview (the MCP Admin page)
+
+Administrators get a second page, **MCP Admin** (under *System*), with a
+fleet-wide view: **every user's** active API tokens (each labelled with its
+owner) and all registered **OAuth clients**. From here an admin can **revoke**
+any token or **remove** any OAuth client — removing a client also purges the
+authorization codes and refresh tokens issued to it, so anything connected
+through it must re-authorize. Only metadata is shown; secrets are never
+recoverable here. This makes a shared instance team-ready: you can audit and cut
+off MCP access for the whole fleet from one place.
+
 ### OAuth (Claude Desktop / Cursor connector)
 
 Add a **custom connector / remote MCP server** in your client pointing at
