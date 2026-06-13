@@ -24,7 +24,19 @@ list. Key ones:
 | `DC_METRICS_TOKEN` | (open) | bearer token guarding `/metrics` |
 | `DC_REDIS_ADDR` | (memory) | Redis for metric history |
 | `DC_METRICS_RETENTION` | `6h` | history retention |
+| `DC_TRUSTED_PROXIES` | (none) | comma-separated reverse-proxy IPs/CIDRs whose `X-Forwarded-For` is trusted for the real client IP — **set this when behind a proxy** (see below) |
 | `DC_UPDATE_CHECK` | `1` | check GitHub Releases for a newer version (admin banner); set `0` to disable the outbound call |
+
+> **Client IP & reverse proxies.** Every IP-based decision — login / OAuth
+> **rate limits**, the **loopback 2FA exemption**, and **audit** entries — uses
+> the connecting client's address. By default Docker Commander trusts **only the
+> real TCP peer** and **ignores** `X-Forwarded-For`, so a client can't forge its
+> address (e.g. claim loopback to skip 2FA, or rotate IPs to evade
+> brute-force throttling). When you run behind a reverse proxy, set
+> `DC_TRUSTED_PROXIES` to the proxy's address(es) (e.g. `127.0.0.1/32,::1/128`)
+> so the **real** client IP is read from `X-Forwarded-For` — only then, and only
+> for connections coming **from** those proxies. Leave it unset if the app is
+> exposed directly.
 
 Docker connection honours `DOCKER_HOST` / `DOCKER_CERT_PATH`.
 
