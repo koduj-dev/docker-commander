@@ -27,6 +27,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
@@ -36,6 +37,13 @@ import (
 	"github.com/koduj-dev/docker-commander/internal/docker"
 	"github.com/koduj-dev/docker-commander/internal/history"
 	"github.com/koduj-dev/docker-commander/internal/store"
+)
+
+// OAuth scopes advertised by both the protected-resource metadata and the
+// authorization server, kept in one place so the two documents never disagree.
+const (
+	ScopeFull     = "mcp"
+	ScopeReadOnly = "mcp:read"
 )
 
 // CheckAccessFunc is the host application's RBAC gate (api.Server.checkAccess).
@@ -74,6 +82,10 @@ type Deps struct {
 	MetadataURL string
 	// IssuerURL is the OAuth authorization-server issuer (the public base URL).
 	IssuerURL string
+	// SigningKey signs and verifies OAuth access tokens (HS256). Dedicated to
+	// MCP — separate from the app session secret. Nil disables the OAuth/JWT
+	// path (API-token bearer auth still works).
+	SigningKey []byte
 }
 
 // handler bundles deps behind the SDK server and the bearer verifier.
@@ -116,7 +128,13 @@ func (d Deps) Handlers() (mcpHandler, metadataHandler http.Handler) {
 	h.registerPrompts(srv)
 
 	streamable := mcpsdk.NewStreamableHTTPHandler(
-		func(*http.Request) *mcpsdk.Server { return srv }, nil)
+		func(*http.Request) *mcpsdk.Server { return srv },
+		// Disable the SDK's loopback/DNS-rebinding guard: it 403s when the server
+		// listens on 127.0.0.1 but the Host header is a public domain — exactly
+		// the reverse-proxy setup this feature targets. The guard defends against
+		// browser DNS-rebinding with ambient auth; /mcp has none (bearer only, no
+		// cookies), so disabling it gains an attacker nothing.
+		&mcpsdk.StreamableHTTPOptions{DisableLocalhostProtection: true})
 
 	gated := auth.RequireBearerToken(h.verifyToken, &auth.RequireBearerTokenOptions{
 		ResourceMetadataURL: d.MetadataURL,
@@ -125,7 +143,7 @@ func (d Deps) Handlers() (mcpHandler, metadataHandler http.Handler) {
 	meta := auth.ProtectedResourceMetadataHandler(&oauthex.ProtectedResourceMetadata{
 		Resource:               d.ResourceURL,
 		AuthorizationServers:   issuers(d.IssuerURL),
-		ScopesSupported:        store.Sections,
+		ScopesSupported:        []string{ScopeFull, ScopeReadOnly},
 		BearerMethodsSupported: []string{"header"},
 		ResourceName:           "Docker Commander",
 	})
@@ -145,6 +163,20 @@ func issuers(issuer string) []string {
 // collapse to ErrInvalidToken so the caller cannot distinguish "unknown token"
 // from "revoked" from "expired".
 func (h *handler) verifyToken(ctx context.Context, token string, req *http.Request) (*auth.TokenInfo, error) {
+	// OAuth access-token (JWT) path, tried first when OAuth is configured. A JWS
+	// has exactly two dots; only accept it if it fully verifies (signature, alg,
+	// expiry, audience), otherwise fall through to the opaque-token path.
+	if len(h.deps.SigningKey) > 0 && h.deps.ResourceURL != "" && strings.Count(token, ".") == 2 {
+		if uid, ro, exp, err := parseAccessToken(h.deps.SigningKey, h.deps.ResourceURL, token); err == nil {
+			u, uerr := h.deps.Store.UserByID(ctx, uid)
+			if uerr != nil {
+				return nil, auth.ErrInvalidToken
+			}
+			return h.tokenInfo(u, &principal{user: u, roOnly: ro, ip: clientIP(req)}, exp), nil
+		}
+	}
+
+	// Opaque API-token path.
 	sum := sha256.Sum256([]byte(token))
 	tok, err := h.deps.Store.APITokenByHash(ctx, hex.EncodeToString(sum[:]))
 	if err != nil || tok.Expired() {
@@ -156,19 +188,22 @@ func (h *handler) verifyToken(ctx context.Context, token string, req *http.Reque
 	}
 	_ = h.deps.Store.TouchAPIToken(ctx, tok.ID) // best-effort last-used stamp
 
-	p := &principal{user: u, roOnly: tok.ReadOnly, scopes: tok.Sections, ip: clientIP(req)}
-
 	// The SDK rejects a zero Expiration; for never-expiring tokens, hand it a
 	// far-future instant. Real expiry is still enforced via tok.Expired() above.
 	exp := tok.ExpiresAt
 	if exp.IsZero() {
 		exp = time.Now().Add(100 * 365 * 24 * time.Hour)
 	}
+	return h.tokenInfo(u, &principal{user: u, roOnly: tok.ReadOnly, scopes: tok.Sections, ip: clientIP(req)}, exp), nil
+}
+
+// tokenInfo packs a resolved principal into the SDK's TokenInfo envelope.
+func (h *handler) tokenInfo(u *store.User, p *principal, exp time.Time) *auth.TokenInfo {
 	return &auth.TokenInfo{
 		UserID:     strconv.FormatInt(u.ID, 10),
 		Expiration: exp,
 		Extra:      map[string]any{principalKey: p},
-	}, nil
+	}
 }
 
 // narrowed applies the token's own constraints — a token can only ever reduce

@@ -229,6 +229,37 @@ CREATE TABLE IF NOT EXISTS api_tokens (
 	revoked      INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id);
+
+-- OAuth 2.1 authorization-server state for the remote MCP server. Clients are
+-- registered dynamically (RFC 7591); codes are single-use and short-lived;
+-- refresh tokens are rotated on use. Only hashes of codes/refresh-tokens are
+-- stored, never the secret itself.
+CREATE TABLE IF NOT EXISTS oauth_clients (
+	client_id     TEXT PRIMARY KEY,
+	client_name   TEXT NOT NULL DEFAULT '',
+	redirect_uris TEXT NOT NULL,            -- JSON array, exact-match validated
+	created_at    TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS oauth_codes (
+	code_hash      TEXT PRIMARY KEY,
+	client_id      TEXT NOT NULL,
+	user_id        INTEGER NOT NULL,
+	redirect_uri   TEXT NOT NULL,
+	code_challenge TEXT NOT NULL,           -- PKCE S256 challenge
+	resource       TEXT NOT NULL DEFAULT '',
+	scope          TEXT NOT NULL DEFAULT '',
+	expires_at     TEXT NOT NULL,
+	created_at     TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
+	token_hash  TEXT PRIMARY KEY,
+	client_id   TEXT NOT NULL,
+	user_id     INTEGER NOT NULL,
+	scope       TEXT NOT NULL DEFAULT '',
+	resource    TEXT NOT NULL DEFAULT '',
+	expires_at  TEXT NOT NULL DEFAULT '',
+	created_at  TEXT NOT NULL
+);
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
