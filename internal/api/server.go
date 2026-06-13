@@ -56,7 +56,7 @@ func NewServer(cfg config.Config, st *store.Store, authSvc *auth.Service, mw *au
 func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
+	r.Use(s.clientIP) // trusted-proxy-aware client IP (replaces spoofable RealIP)
 	r.Use(middleware.Recoverer)
 	r.Use(securityHeaders)
 	if s.cfg.Dev {
@@ -338,7 +338,8 @@ func (s *Server) mountMCP(r chi.Router) {
 }
 
 // oauthThrottle rate-limits an unauthenticated OAuth endpoint per client IP
-// (RealIP-normalized), failing closed with 429 once the per-minute budget is hit.
+// (trusted-proxy-normalized; see clientIP), failing closed with 429 once the
+// per-minute budget is hit.
 func (s *Server) oauthThrottle(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if s.mcpRateLimiter != nil {
