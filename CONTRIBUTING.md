@@ -70,6 +70,22 @@ Please add or update tests for behaviour you change. New backend code should
 come with coverage; heavy integration tests are gated behind `testing.Short()`
 so the default CI run stays deterministic.
 
+## Review discipline
+
+This app controls Docker daemons, so review changes accordingly — proportionally
+to the risk of the change:
+
+- **Before a commit** — read your own diff for correctness *and* security (auth /
+  permissions, input handling, secret exposure, unsafe defaults) and fix what you
+  find.
+- **Before a PR** — do a full code + security review of the whole branch, and for
+  any **new attack surface** (auth, parsers, endpoints, anything taking external
+  input) **add adversarial tests** asserting the attack is rejected — see the
+  `*pentest*` tests for the style. Keep `go test -short ./...` green.
+
+This is guidance, not tooling, but it's how the security-sensitive parts of the
+codebase have been built.
+
 ## Code style
 
 - **Go must be `gofmt`-clean.** CI enforces it with
