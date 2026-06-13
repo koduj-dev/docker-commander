@@ -589,7 +589,10 @@ func (s *Server) storeUserTemplate(ctx context.Context, name, description, creat
 		return 0, slug, err
 	}
 	root := s.templateRoot(id)
-	if err := os.MkdirAll(root, 0o700); err == nil {
+	// NB: assign to the function-scoped err (don't shadow it in the if-initializer),
+	// or a seedProjectFiles failure is lost and the rollback below never fires.
+	err = os.MkdirAll(root, 0o700)
+	if err == nil {
 		err = seedProjectFiles(root, files)
 	}
 	if err != nil {

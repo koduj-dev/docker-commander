@@ -382,6 +382,7 @@ func AssembleCompose(slug string, instances []Instance, fragments []Fragment, va
 	seenVol := map[string]bool{}
 	var sidecars []File
 	seenSidecar := map[string]bool{}
+	usedKeys := map[string]bool{}
 	for _, in := range instances {
 		// Built-in blocks carry declared variables and are rendered; user blocks
 		// declare none and are copied literally, so a stray "{{" in user YAML can't
@@ -398,6 +399,16 @@ func AssembleCompose(slug string, instances []Instance, fragments []Fragment, va
 		if key == "" {
 			key = in.Block.Service
 		}
+		// Defensively guarantee unique service keys even if a client posts blank or
+		// duplicate keys — otherwise two instances would collide into one compose
+		// service (a map key) and silently drop a service.
+		if usedKeys[key] {
+			base := key
+			for n := 2; usedKeys[key]; n++ {
+				key = fmt.Sprintf("%s-%d", base, n)
+			}
+		}
+		usedKeys[key] = true
 		volMap := map[string]string{}
 		for _, v := range in.Block.Volumes {
 			nv := v

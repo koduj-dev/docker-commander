@@ -30,9 +30,11 @@ func (s *Server) handleListImages(w http.ResponseWriter, r *http.Request) {
 // search proxied through the selected host's daemon. Best-effort — any daemon/
 // network error yields an empty list so the editor still offers local images.
 func (s *Server) handleSearchImages(w http.ResponseWriter, r *http.Request) {
+	// Best-effort throughout: a bad host param or a daemon/network error just
+	// yields an empty list so the editor falls back to local-image suggestions.
 	hostID, err := s.resolveHostID(r)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "no host configured")
+		writeJSON(w, http.StatusOK, []docker.ImageSearchResult{})
 		return
 	}
 	res, err := s.docker.SearchImages(r.Context(), hostID, r.URL.Query().Get("q"), 25)

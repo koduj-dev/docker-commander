@@ -75,6 +75,40 @@ func TestAssembleClusterWithMergeAndVolumeDedup(t *testing.T) {
 	}
 }
 
+func TestAssembleDedupesDuplicateAndEmptyKeys(t *testing.T) {
+	blocks, err := BuiltinBlocks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var redis Block
+	for _, b := range blocks {
+		if b.ID == "redis" {
+			redis = b
+		}
+	}
+	if redis.ID == "" {
+		t.Fatal("no redis block")
+	}
+	vars, _ := ResolveVars(redis.Variables, nil)
+	// A bad/buggy client could post duplicate and blank keys; the assembler must
+	// still produce unique compose service keys (no silent service loss).
+	insts := []Instance{
+		{Block: redis, Key: "cache"},
+		{Block: redis, Key: "cache"}, // duplicate
+		{Block: redis, Key: ""},      // blank → block.Service ("redis")
+	}
+	files, err := AssembleCompose("x", insts, nil, vars)
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	c := files[0].Content
+	for _, want := range []string{"  cache:", "  cache-2:", "  redis:"} {
+		if !strings.Contains(c, want) {
+			t.Errorf("missing unique key %q:\n%s", want, c)
+		}
+	}
+}
+
 func TestBuiltinBlocksAssemble(t *testing.T) {
 	blocks, err := BuiltinBlocks()
 	if err != nil {
