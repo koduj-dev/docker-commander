@@ -111,6 +111,9 @@ var errEmptyContainer = errors.New("container_id is required")
 // errProjectsUnavailable is returned when managed-project control is not wired.
 var errProjectsUnavailable = errors.New("managed-project control is not available on this server")
 
+// errInvalidProject is returned when a project tool is called without a valid id.
+var errInvalidProject = errors.New("project_id must be a positive id from list_managed_projects")
+
 // Handlers builds the HTTP handlers for the MCP feature: the bearer-gated /mcp
 // transport and the protected-resource metadata document. The caller mounts
 // these only when MCP is enabled.

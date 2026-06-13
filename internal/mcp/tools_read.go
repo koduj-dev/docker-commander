@@ -212,7 +212,7 @@ func (h *handler) getContainer(ctx context.Context, req *mcpsdk.CallToolRequest,
 const (
 	logsDefaultTail = 200
 	logsMaxTail     = 1000
-	logsMaxBytes    = 64 * 1024 // hard cap so logs can't be a bulk-exfil channel
+	logsMaxBytes    = 64 * 1024 // cap on message bytes so logs can't be a bulk-exfil channel
 )
 
 type logsInput struct {

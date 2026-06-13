@@ -80,6 +80,9 @@ func (h *handler) deployProject(ctx context.Context, req *mcpsdk.CallToolRequest
 	if h.deps.DeployProject == nil {
 		return nil, actionResult{}, errProjectsUnavailable
 	}
+	if in.ProjectID <= 0 {
+		return nil, actionResult{}, errInvalidProject
+	}
 	out, derr := h.deps.DeployProject(ctx, in.ProjectID, in.Profiles)
 	res := actionResult{OK: derr == nil, Action: "deploy", Target: projectTarget(in.ProjectID), Output: out}
 	h.audit(p, "mcp.project.deploy", res.Target, outcome(derr))
@@ -96,6 +99,9 @@ func (h *handler) downProject(ctx context.Context, req *mcpsdk.CallToolRequest, 
 	}
 	if h.deps.DownProject == nil {
 		return nil, actionResult{}, errProjectsUnavailable
+	}
+	if in.ProjectID <= 0 {
+		return nil, actionResult{}, errInvalidProject
 	}
 	out, derr := h.deps.DownProject(ctx, in.ProjectID)
 	res := actionResult{OK: derr == nil, Action: "down", Target: projectTarget(in.ProjectID), Output: out}
