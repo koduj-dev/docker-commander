@@ -16,7 +16,8 @@ import (
 // OAuth clients, and can revoke/delete any of them. They are mounted under
 // /api/mcp-admin/… which sectionForPath maps to "__admin", so the permissions
 // middleware rejects non-admins with 403 before any handler runs. Secrets are
-// never exposed here — only token hashes/metadata and public OAuth client rows.
+// never exposed here — only token metadata (no secret, not even the stored hash)
+// and public OAuth client rows.
 
 type adminMCPTokenJSON struct {
 	ID         int64    `json:"id"`

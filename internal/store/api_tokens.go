@@ -92,10 +92,12 @@ type APITokenWithUser struct {
 // ListAllAPITokens returns every user's tokens (newest first), each annotated
 // with the owner's username, for the admin overview. Revoked tokens are
 // included so an admin can see recently-revoked credentials; the handler/UI
-// distinguishes them via the Revoked flag.
+// distinguishes them via the Revoked flag. The token hash is deliberately NOT
+// selected — the overview is metadata-only, so the digest never even reaches
+// process memory here (no chance of leaking via a log line or panic).
 func (s *Store) ListAllAPITokens(ctx context.Context) ([]APITokenWithUser, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT t.id, t.user_id, t.token_hash, t.name, t.sections, t.read_only,
+		SELECT t.id, t.user_id, t.name, t.sections, t.read_only,
 		       t.created_at, t.last_used_at, t.expires_at, t.revoked, u.username
 		FROM api_tokens t JOIN users u ON u.id = t.user_id
 		ORDER BY t.id DESC`)
@@ -108,7 +110,7 @@ func (s *Store) ListAllAPITokens(ctx context.Context) ([]APITokenWithUser, error
 		var t APIToken
 		var readOnly, revoked int
 		var sections, createdAt, lastUsed, expiresAt, username string
-		if err := rows.Scan(&t.ID, &t.UserID, &t.TokenHash, &t.Name, &sections, &readOnly,
+		if err := rows.Scan(&t.ID, &t.UserID, &t.Name, &sections, &readOnly,
 			&createdAt, &lastUsed, &expiresAt, &revoked, &username); err != nil {
 			return nil, err
 		}
