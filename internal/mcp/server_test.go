@@ -93,7 +93,7 @@ func TestVerifyToken(t *testing.T) {
 				id = tk.ID
 			}
 		}
-		if err := h.deps.Store.RevokeAPIToken(ctx, id, uid); err != nil {
+		if _, err := h.deps.Store.RevokeAPIToken(ctx, id, uid); err != nil {
 			t.Fatalf("revoke: %v", err)
 		}
 		if _, err := h.verifyToken(ctx, "good", httptest.NewRequest("POST", "/mcp", nil)); !errors.Is(err, auth.ErrInvalidToken) {

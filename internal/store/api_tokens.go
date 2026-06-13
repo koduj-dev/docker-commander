@@ -83,11 +83,17 @@ func (s *Store) ListAPITokens(ctx context.Context, userID int64) ([]APIToken, er
 }
 
 // RevokeAPIToken marks a token revoked. It is scoped to userID so a caller can
-// only revoke their own tokens (admins act on behalf of a user explicitly).
-func (s *Store) RevokeAPIToken(ctx context.Context, id, userID int64) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE api_tokens SET revoked = 1 WHERE id = ? AND user_id = ?`, id, userID)
-	return err
+// only revoke their own tokens. The bool reports whether a matching, owned token
+// was actually revoked (false → unknown id or not the caller's), so the handler
+// can return 404 instead of a misleading success.
+func (s *Store) RevokeAPIToken(ctx context.Context, id, userID int64) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE api_tokens SET revoked = 1 WHERE id = ? AND user_id = ? AND revoked = 0`, id, userID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 // TouchAPIToken records the last time a token was used. Best-effort: callers

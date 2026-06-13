@@ -82,6 +82,13 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/auth/totp/setup", s.handleTOTPSetup)
 			r.Post("/auth/totp/enable", s.handleTOTPEnable)
 
+			// MCP access tokens — self-service (each user manages their own).
+			// Ungated: a token can only narrow its owner's rights.
+			r.Get("/mcp/status", s.handleMCPStatus)
+			r.Get("/mcp/tokens", s.handleListMCPTokens)
+			r.Post("/mcp/tokens", s.handleCreateMCPToken)
+			r.Delete("/mcp/tokens/{id}", s.handleRevokeMCPToken)
+
 			// User management + app settings (admin only, enforced by section "__admin").
 			r.Get("/users", s.handleListUsers)
 			r.Post("/users", s.handleCreateUser)

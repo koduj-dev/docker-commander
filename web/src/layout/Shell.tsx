@@ -48,6 +48,7 @@ const navGroups: { title: string; items: NavItem[] }[] = [
       { to: "/hosts", label: "Hosts", icon: Server, section: "hosts" },
       { to: "/registries", label: "Registries", icon: KeyRound, section: "registries" },
       { to: "/audit", label: "Audit log", icon: ScrollText, section: "audit" },
+      { to: "/mcp-tokens", label: "MCP Access", icon: KeyRound },
       { to: "/users", label: "Users", icon: Users, adminOnly: true },
       { to: "/settings", label: "Settings", icon: Settings, adminOnly: true },
     ],
