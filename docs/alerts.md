@@ -26,6 +26,11 @@ Each rule has a **target** (container-name substring; blank/`*` = all), a
 **severity**, a **cooldown** (suppresses repeats — keep it generous, e.g. 60s),
 and optional **webhook** and **email** delivery.
 
+> **Host reachability is watched automatically** — no rule needed. When a host's
+> Docker daemon goes **unreachable** you get a *critical* `host` alert, and a
+> *recover* (*info*) when it comes back. See
+> [Hosts → Reachability monitoring](hosts.md#reachability-monitoring).
+
 ## Webhooks
 Fire to any HTTP endpoint (Slack, Discord, Grafana, n8n…). The body is a Go
 template over `{{.RuleName}} {{.Severity}} {{.Type}} {{.Container}} {{.Message}}

@@ -17,14 +17,19 @@ const navGroups: { title: string; items: NavItem[] }[] = [
     items: [{ to: "/", label: "Dashboard", icon: LayoutDashboard, end: true, section: "dashboard" }],
   },
   {
-    title: "Compute",
+    title: "Workloads",
     items: [
       { to: "/containers", label: "Containers", icon: Boxes, section: "containers" },
       { to: "/stacks", label: "Stacks", icon: Blocks, section: "containers" },
       { to: "/projects", label: "Projects", icon: FolderGit2, section: "projects" },
+      { to: "/templates", label: "Templates", icon: LayoutTemplate, section: "projects" },
+    ],
+  },
+  {
+    title: "Storage",
+    items: [
       { to: "/images", label: "Images", icon: Layers, section: "images" },
       { to: "/volumes", label: "Volumes", icon: Database, section: "volumes" },
-      { to: "/templates", label: "Templates", icon: LayoutTemplate, section: "projects" },
     ],
   },
   {
@@ -98,9 +103,14 @@ function HostSwitcher() {
         }}
       >
         {enabled.map((h) => (
-          <option key={h.id} value={h.id}>{h.name} ({h.kind})</option>
+          <option key={h.id} value={h.id}>{h.reachable === false ? "🔴 " : ""}{h.name} ({h.kind})</option>
         ))}
       </select>
+      {enabled.some((h) => h.reachable === false) && (
+        <div className="mt-1.5 text-[10px] text-danger flex items-center gap-1">
+          <span className="h-1.5 w-1.5 rounded-full bg-danger inline-block" /> a host is unreachable
+        </div>
+      )}
     </div>
   );
 }
