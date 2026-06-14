@@ -45,7 +45,7 @@ func sectionForPath(path string) string {
 		return "registries"
 	case "audit":
 		return "audit"
-	case "users", "settings", "ldap", "update":
+	case "users", "settings", "ldap", "update", "mcp-admin":
 		return "__admin"
 	default:
 		// auth, system, inspect, metrics, ws, … are not section-gated.
