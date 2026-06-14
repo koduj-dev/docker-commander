@@ -40,9 +40,10 @@ type Config struct {
 
 	// MCPEnabled turns on the remote MCP server (and its OAuth endpoints). Off by
 	// default: when false the /mcp, /oauth and MCP /.well-known routes are not
-	// mounted at all, so they 404 with no hint the feature exists. It exposes
-	// Docker read/control to AI tooling over the network — enable consciously,
-	// behind HTTPS.
+	// mounted, so a request is an unknown path (it falls through to the SPA, or a
+	// 404 without an embedded UI) — no hint the feature exists. It exposes Docker
+	// read/control to AI tooling over the network — enable consciously, behind
+	// HTTPS. Startup logs the resolved on/off state.
 	MCPEnabled bool
 	// MCPPublicURL is the externally reachable base URL of this server
 	// (e.g. https://docker.example.com), used as the canonical resource
@@ -71,6 +72,14 @@ type Config struct {
 	// Off by default; when on, the endpoints are restricted to loopback clients
 	// (use an SSH tunnel) since they leak goroutine stacks and heap detail.
 	PProf bool
+
+	// TrustedProxies is the set of reverse-proxy networks whose forwarded client
+	// IP (X-Forwarded-For) we trust. Empty (default) means forwarded headers are
+	// IGNORED and the real TCP peer is used for every IP-based decision (rate
+	// limits, the loopback 2FA exemption, audit) — so a remote client cannot
+	// spoof its address. Set it (e.g. 127.0.0.1/32,::1/128) only for the actual
+	// proxy in front of this server.
+	TrustedProxies []*net.IPNet
 }
 
 // DBPath is the path to the SQLite database file.
@@ -121,7 +130,16 @@ func Load() (Config, error) {
 	retention := flag.Duration("metrics-retention", envDuration("DC_METRICS_RETENTION", 6*time.Hour), "how long to keep metric history")
 	interval := flag.Duration("metrics-interval", envDuration("DC_METRICS_INTERVAL", 15*time.Second), "how often to sample container stats (raise on hosts with many containers)")
 	flag.BoolVar(&c.PProf, "pprof", lookup("DC_PPROF") == "1", "expose net/http/pprof under /debug/pprof (loopback only; for debugging)")
+	trustedProxies := flag.String("trusted-proxies", lookup("DC_TRUSTED_PROXIES"), "comma-separated reverse-proxy IPs/CIDRs whose X-Forwarded-For is trusted (empty = trust none; use the real peer)")
 	flag.Parse()
+
+	// Parse the trusted-proxy list (IPs or CIDRs); a bad entry is a hard error
+	// rather than silently falling back to trusting everything or nothing.
+	nets, err := parseCIDRs(*trustedProxies)
+	if err != nil {
+		return c, err
+	}
+	c.TrustedProxies = nets
 
 	// Listen address is host + port. A full -addr/DC_ADDR (legacy) still wins if
 	// set, so existing host:port configs keep working.
@@ -150,6 +168,37 @@ func Load() (Config, error) {
 		return c, err
 	}
 	return c, nil
+}
+
+// parseCIDRs parses a comma-separated list of IPs and CIDRs into networks. A
+// bare IP becomes a single-host network (/32 or /128). Empty entries are
+// skipped; an unparseable entry is an error.
+func parseCIDRs(raw string) ([]*net.IPNet, error) {
+	var out []*net.IPNet
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if strings.Contains(part, "/") {
+			_, n, err := net.ParseCIDR(part)
+			if err != nil {
+				return nil, errors.New("invalid trusted-proxy CIDR: " + part)
+			}
+			out = append(out, n)
+			continue
+		}
+		ip := net.ParseIP(part)
+		if ip == nil {
+			return nil, errors.New("invalid trusted-proxy IP: " + part)
+		}
+		bits := 32
+		if ip.To4() == nil {
+			bits = 128
+		}
+		out = append(out, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
+	}
+	return out, nil
 }
 
 // defaultDataDir returns an OS-appropriate per-user config directory.

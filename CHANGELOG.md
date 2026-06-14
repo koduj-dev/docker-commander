@@ -6,6 +6,21 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+- **Client IP is no longer spoofable** — the app previously used chi's
+  `middleware.RealIP`, which trusts `X-Forwarded-For` / `X-Real-IP` from **any**
+  client (chi now deprecates it as spoofable). Because every IP-based control —
+  login & OAuth **rate limits**, the **loopback 2FA exemption**, and **audit**
+  records — keys on the client address, a remote attacker could forge it: claim
+  `127.0.0.1` to skip 2FA, or rotate `X-Forwarded-For` values to evade
+  brute-force throttling. Forwarded headers are now honoured **only** from
+  proxies you explicitly trust via **`DC_TRUSTED_PROXIES`** (IPs/CIDRs); with
+  none set (the default) the real TCP peer is used and forwarded headers are
+  ignored. The client IP is also normalised to a bare IP, fixing previously
+  port-keyed (ineffective) rate limiting on direct connections. **If you run
+  behind a reverse proxy, set `DC_TRUSTED_PROXIES`** so the real client IP is
+  recovered — see [deployment](docs/deployment.md).
+
 ### Added
 - **Configurable stats sampling interval** (`DC_METRICS_INTERVAL`, default `15s`)
   — the monitor samples every running container's stats on this interval to feed
@@ -17,6 +32,13 @@ All notable changes to Docker Commander are documented here. The format follows
   it's physically unreachable off-box and immune to `X-Forwarded-For` spoofing),
   for diagnosing CPU/allocation/goroutine issues with `go tool pprof`. Off by
   default. See [deployment → diagnosing high CPU](docs/deployment.md).
+- **MCP Admin overview** — a new admin-only page (**System → MCP Admin**) giving
+  a fleet-wide view of MCP credentials: **every user's** active API tokens
+  (annotated with the owner) and all registered **OAuth clients**, with the
+  ability to **revoke** any token or **remove** any client (the latter purges its
+  codes and refresh tokens too). Secrets are never exposed — only metadata. Gated
+  by the `__admin` section; backed by store/handler unit tests and adversarial
+  pen tests (admin-gating, IDOR, secret-leak). Makes MCP team-ready.
 - **Remote control from AI tools (MCP)** — an optional, **off-by-default**
   **Model Context Protocol** server (`DC_MCP_ENABLED`) so AI tools (**Claude
   Code**, **Claude Desktop**, **Cursor**) can monitor and *safely* operate Docker

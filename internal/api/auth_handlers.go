@@ -194,8 +194,11 @@ func contains(list []string, v string) bool {
 }
 
 // isLoopback reports whether the request originates from a loopback address.
-// Only RemoteAddr is trusted (not forwarded headers), so a reverse proxy does
-// not accidentally grant the exemption to remote clients.
+// It reads r.RemoteAddr, which the clientIP middleware has already resolved:
+// forwarded headers are honoured only from a configured trusted proxy, so a
+// remote client cannot spoof a loopback address to claim the 2FA exemption.
+// (Behind a reverse proxy, set DC_TRUSTED_PROXIES so the real client IP — not
+// the proxy's loopback address — is what this sees.)
 func isLoopback(r *http.Request) bool {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
