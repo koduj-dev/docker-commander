@@ -62,6 +62,16 @@ type Config struct {
 	RedisPassword    string
 	RedisDB          int
 	MetricsRetention time.Duration
+	// MetricsInterval is how often the monitor samples every running container's
+	// stats (feeding the charts/history and resource alert rules). Lower means
+	// fresher data but more CPU on the app and the Docker daemon; raise it on a
+	// host with many containers where the sweep is costly.
+	MetricsInterval time.Duration
+
+	// PProf exposes Go's net/http/pprof profiling endpoints under /debug/pprof.
+	// Off by default; when on, the endpoints are restricted to loopback clients
+	// (use an SSH tunnel) since they leak goroutine stacks and heap detail.
+	PProf bool
 
 	// TrustedProxies is the set of reverse-proxy networks whose forwarded client
 	// IP (X-Forwarded-For) we trust. Empty (default) means forwarded headers are
@@ -118,6 +128,8 @@ func Load() (Config, error) {
 	flag.StringVar(&c.RedisAddr, "redis-addr", lookup("DC_REDIS_ADDR"), "Redis address (host:port) for metrics history; empty = in-memory")
 	flag.StringVar(&c.RedisPassword, "redis-password", lookup("DC_REDIS_PASSWORD"), "Redis password")
 	retention := flag.Duration("metrics-retention", envDuration("DC_METRICS_RETENTION", 6*time.Hour), "how long to keep metric history")
+	interval := flag.Duration("metrics-interval", envDuration("DC_METRICS_INTERVAL", 15*time.Second), "how often to sample container stats (raise on hosts with many containers)")
+	flag.BoolVar(&c.PProf, "pprof", lookup("DC_PPROF") == "1", "expose net/http/pprof under /debug/pprof (loopback only; for debugging)")
 	trustedProxies := flag.String("trusted-proxies", lookup("DC_TRUSTED_PROXIES"), "comma-separated reverse-proxy IPs/CIDRs whose X-Forwarded-For is trusted (empty = trust none; use the real peer)")
 	flag.Parse()
 
@@ -139,6 +151,12 @@ func Load() (Config, error) {
 
 	c.RedisDB = envInt("DC_REDIS_DB", 0)
 	c.MetricsRetention = *retention
+	c.MetricsInterval = *interval
+	// A non-positive interval is meaningless (the monitor would ignore it); clamp
+	// to the default here so the resolved Config value is never misleading.
+	if c.MetricsInterval <= 0 {
+		c.MetricsInterval = 15 * time.Second
+	}
 	c.SessionTTL = *ttl
 
 	// HTTPS needs both halves of the keypair.

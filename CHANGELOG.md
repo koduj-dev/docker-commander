@@ -22,6 +22,16 @@ All notable changes to Docker Commander are documented here. The format follows
   recovered — see [deployment](docs/deployment.md).
 
 ### Added
+- **Configurable stats sampling interval** (`DC_METRICS_INTERVAL`, default `15s`)
+  — the monitor samples every running container's stats on this interval to feed
+  the charts/history and resource alert rules. On a host with **many containers**
+  the sweep can dominate CPU (on the app and the Docker daemon); raising the
+  interval is the first lever. Previously hard-coded.
+- **Optional profiling endpoints** (`DC_PPROF=1`) — serves Go's `net/http/pprof`
+  on a **dedicated `127.0.0.1:6060` listener** (separate from the main port, so
+  it's physically unreachable off-box and immune to `X-Forwarded-For` spoofing),
+  for diagnosing CPU/allocation/goroutine issues with `go tool pprof`. Off by
+  default. See [deployment → diagnosing high CPU](docs/deployment.md).
 - **Per-host reachability monitoring + alerts** — the engine now pings every
   enabled host on an interval and tracks whether its Docker daemon is reachable.
   The **Hosts** page and the sidebar **host switcher** show a 🔴 *unreachable*

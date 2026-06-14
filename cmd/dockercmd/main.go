@@ -148,6 +148,7 @@ func run() error {
 
 	// Start the alerting engine in the background.
 	mon := monitor.New(st, dm, hist)
+	mon.SetStatsInterval(cfg.MetricsInterval)
 	go mon.Run(shutdownCtx)
 
 	// Clear any volume-browser helper containers left over from a previous run.
@@ -175,6 +176,10 @@ func run() error {
 		defer cancel()
 		_ = httpServer.Shutdown(ctx)
 	}()
+
+	if cfg.PProf {
+		startPProf(shutdownCtx)
+	}
 
 	logStartup(cfg)
 	serve := httpServer.ListenAndServe
@@ -212,6 +217,33 @@ func loadOrCreateSecret(ctx context.Context, st *store.Store, key string) ([]byt
 		return nil, err
 	}
 	return buf, nil
+}
+
+// startPProf serves the profiling endpoints on a dedicated loopback-only
+// listener (DC_PPROF=1). Binding to 127.0.0.1 — rather than gating by client IP
+// on the main router — is what makes it safe: the main router sits behind chi's
+// RealIP middleware, whose r.RemoteAddr is spoofable via X-Forwarded-For, so a
+// separate physically-loopback listener is the only reliable boundary. It is
+// never reachable off-box; capture profiles through an SSH tunnel.
+func startPProf(ctx context.Context) {
+	const addr = "127.0.0.1:6060"
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           api.PProfHandler(),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	go func() {
+		<-ctx.Done()
+		sctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(sctx)
+	}()
+	go func() {
+		log.Printf("pprof: profiling on http://%s/debug/pprof/ (loopback only — tunnel in via SSH)", addr)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("pprof: listener error: %v", err)
+		}
+	}()
 }
 
 func serveWebFS(cfg config.Config) fs.FS {

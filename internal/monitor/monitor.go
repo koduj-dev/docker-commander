@@ -20,13 +20,14 @@ import (
 )
 
 const (
-	// statsInterval is how often we sample every container's stats in the
+	// defaultStatsInterval is how often we sample every container's stats in the
 	// background. Each ContainerStats call costs ~1s (the daemon's collection
 	// interval), so on a host with many containers this is a heavy sweep — keep
 	// it infrequent enough not to keep the daemon busy (overview/charts read
-	// this cached snapshot rather than re-sampling).
-	statsInterval   = 15 * time.Second
-	logReconcileInt = 10 * time.Second
+	// this cached snapshot rather than re-sampling). Configurable via
+	// DC_METRICS_INTERVAL → Monitor.SetStatsInterval.
+	defaultStatsInterval = 15 * time.Second
+	logReconcileInt      = 10 * time.Second
 
 	// healthInterval is how often every monitored host is pinged for
 	// reachability; healthTimeout bounds a single ping so a dead host can't
@@ -96,20 +97,32 @@ type Monitor struct {
 	healthMu sync.RWMutex
 	health   map[int64]HostHealth // host id -> reachability
 
+	statsInterval time.Duration // how often pollStats runs (default 15s)
+
 	dispatcher *dispatcher
 }
 
 // New builds a Monitor. hist may be nil to disable history recording.
 func New(st *store.Store, dm *docker.Manager, hist history.Store) *Monitor {
 	return &Monitor{
-		store:      st,
-		docker:     dm,
-		history:    hist,
-		snapshot:   make(map[string]ContainerStat),
-		restarts:   make(map[string][]time.Time),
-		logCancels: make(map[string]context.CancelFunc),
-		health:     make(map[int64]HostHealth),
-		dispatcher: newDispatcher(st),
+		store:         st,
+		docker:        dm,
+		history:       hist,
+		snapshot:      make(map[string]ContainerStat),
+		restarts:      make(map[string][]time.Time),
+		logCancels:    make(map[string]context.CancelFunc),
+		health:        make(map[int64]HostHealth),
+		statsInterval: defaultStatsInterval,
+		dispatcher:    newDispatcher(st),
+	}
+}
+
+// SetStatsInterval overrides how often the stats sweep runs. Values ≤ 0 are
+// ignored (the default stands). Call before Run; it is not safe to change once
+// the loop is running.
+func (m *Monitor) SetStatsInterval(d time.Duration) {
+	if d > 0 {
+		m.statsInterval = d
 	}
 }
 
@@ -138,7 +151,7 @@ func (m *Monitor) Snapshot() []ContainerStat {
 // ---- stats polling + resource rules ----------------------------------------
 
 func (m *Monitor) statsLoop(ctx context.Context) {
-	t := time.NewTicker(statsInterval)
+	t := time.NewTicker(m.statsInterval)
 	defer t.Stop()
 	// The first sweep can take a few seconds on a busy host; log around it so it
 	// is clear when the app is fully up (and any later "loading" is a real error,
