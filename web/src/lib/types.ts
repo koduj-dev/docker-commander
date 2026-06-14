@@ -559,3 +559,17 @@ export interface MCPStatus {
   enabled: boolean; // the MCP server is turned on (DC_MCP_ENABLED)
   oauth: boolean; // OAuth flow available (public URL configured)
 }
+
+// Admin overview rows: every user's tokens (with the owner's username) and the
+// registered OAuth clients. Admin-only; secrets are never included.
+export interface AdminMCPToken extends MCPToken {
+  userId: number;
+  username: string;
+}
+
+export interface AdminOAuthClient {
+  id: string;
+  name: string;
+  redirectUris: string[] | null;
+  createdAt: string;
+}

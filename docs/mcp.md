@@ -24,8 +24,10 @@ DC_MCP_ENABLED=1
 DC_MCP_PUBLIC_URL=https://docker.example.com
 ```
 
-When disabled, the MCP and OAuth routes are **not mounted at all** — they return a
-plain `404`, with no hint the feature exists.
+When disabled, the MCP and OAuth routes are **not mounted** — a request to `/mcp`
+is just an unknown path (it falls through to the SPA, or a plain `404` when no UI
+is embedded), with no hint the feature exists. The startup log says `MCP server:
+disabled` so you can confirm the state at a glance.
 
 ## Two ways to authenticate
 
@@ -52,6 +54,17 @@ Open **MCP Access** in the sidebar. Each user manages **their own** tokens:
 A token can only ever *narrow* your rights; if your account is read-only, every
 token you mint is read-only too. Revoke a token anytime — it stops working
 immediately.
+
+### Admin overview (the MCP Admin page)
+
+Administrators get a second page, **MCP Admin** (under *System*), with a
+fleet-wide view: **every user's** active API tokens (each labelled with its
+owner) and all registered **OAuth clients**. From here an admin can **revoke**
+any token or **remove** any OAuth client — removing a client also purges the
+authorization codes and refresh tokens issued to it, so anything connected
+through it must re-authorize. Only metadata is shown; secrets are never
+recoverable here. This makes a shared instance team-ready: you can audit and cut
+off MCP access for the whole fleet from one place.
 
 ### OAuth (Claude Desktop / Cursor connector)
 

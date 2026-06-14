@@ -238,6 +238,15 @@ func logStartup(cfg config.Config) {
 		log.Printf("config file: none (flags/env only)")
 	}
 	log.Printf("data dir: %s", cfg.DataDir)
+	if cfg.MCPEnabled {
+		oauth := "bearer tokens only (set DC_MCP_PUBLIC_URL to enable OAuth)"
+		if cfg.MCPPublicURL != "" {
+			oauth = "bearer tokens + OAuth (" + cfg.MCPPublicURL + ")"
+		}
+		log.Printf("MCP server: ENABLED at %s://%s/mcp — auth: %s", scheme, cfg.Addr, oauth)
+	} else {
+		log.Printf("MCP server: disabled (set DC_MCP_ENABLED=1 to enable)")
+	}
 	if cfg.Dev {
 		log.Printf("dev mode: serving API only; run the Vite dev server for the UI")
 	}

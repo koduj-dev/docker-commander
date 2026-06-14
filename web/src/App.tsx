@@ -21,6 +21,7 @@ import { Alerts } from "./pages/Alerts";
 import { Hosts } from "./pages/Hosts";
 import { Registries } from "./pages/Registries";
 import { MCPTokens } from "./pages/MCPTokens";
+import { MCPAdmin } from "./pages/MCPAdmin";
 import { Users } from "./pages/Users";
 import { Settings } from "./pages/Settings";
 import { Audit } from "./pages/Audit";
@@ -63,6 +64,7 @@ export default function App() {
         <Route path="/hosts" element={<Hosts />} />
         <Route path="/registries" element={<Registries />} />
         <Route path="/mcp-tokens" element={<MCPTokens />} />
+        <Route path="/mcp-admin" element={<MCPAdmin />} />
         <Route path="/users" element={<Users />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/audit" element={<Audit />} />

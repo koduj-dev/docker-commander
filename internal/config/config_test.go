@@ -2,6 +2,7 @@ package config
 
 import (
 	"flag"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -32,7 +33,43 @@ func TestLoad(t *testing.T) {
 	if c.SessionTTL != 12*time.Hour {
 		t.Errorf("default session TTL: %v", c.SessionTTL)
 	}
+	if len(c.TrustedProxies) != 0 {
+		t.Errorf("trusted proxies should be empty by default, got %v", c.TrustedProxies)
+	}
 }
+
+func TestParseCIDRs(t *testing.T) {
+	// Valid: a CIDR, a bare IPv4 (→ /32) and a bare IPv6 (→ /128), plus blanks.
+	nets, err := parseCIDRs(" 10.0.0.0/8 , 127.0.0.1 ,, ::1 ")
+	if err != nil {
+		t.Fatalf("parseCIDRs: %v", err)
+	}
+	if len(nets) != 3 {
+		t.Fatalf("want 3 nets, got %d (%v)", len(nets), nets)
+	}
+	if !nets[0].Contains(parseIP("10.1.2.3")) {
+		t.Error("10.0.0.0/8 should contain 10.1.2.3")
+	}
+	if !nets[1].Contains(parseIP("127.0.0.1")) || nets[1].Contains(parseIP("127.0.0.2")) {
+		t.Error("bare 127.0.0.1 should match only itself (/32)")
+	}
+	if !nets[2].Contains(parseIP("::1")) {
+		t.Error("bare ::1 should match itself (/128)")
+	}
+
+	// Empty input → no networks, no error.
+	if got, err := parseCIDRs(""); err != nil || len(got) != 0 {
+		t.Errorf("empty input: %v %v", got, err)
+	}
+	// Garbage → error (fail fast on misconfiguration).
+	for _, bad := range []string{"not-an-ip", "10.0.0.0/99", "1.2.3.4/foo"} {
+		if _, err := parseCIDRs(bad); err == nil {
+			t.Errorf("parseCIDRs(%q) should error", bad)
+		}
+	}
+}
+
+func parseIP(s string) net.IP { return net.ParseIP(s) }
 
 func TestLoadConfigFileParsing(t *testing.T) {
 	dir := t.TempDir()
