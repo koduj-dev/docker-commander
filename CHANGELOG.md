@@ -22,6 +22,20 @@ All notable changes to Docker Commander are documented here. The format follows
   recovered — see [deployment](docs/deployment.md).
 
 ### Added
+- **Per-host reachability monitoring + alerts** — the engine now pings every
+  enabled host on an interval and tracks whether its Docker daemon is reachable.
+  The **Hosts** page and the sidebar **host switcher** show a 🔴 *unreachable*
+  badge, and a host going **offline** (or **recovering**) raises an alert in the
+  in-app feed and, when SMTP is configured, an email — honouring the host's
+  per-host alert recipient. This watch is automatic; it needs no alert rule. The
+  first probe never alerts, so an already-down host at startup stays quiet until
+  it actually changes state.
+- **Section-gated live stream** — the shared `/api/ws` WebSocket that streams
+  container **stats** and **logs** is now checked against the user's **live
+  RBAC** per subscription. It was previously open to any authenticated user;
+  both channels now require the `containers` section (every consumer needs it to
+  resolve a container anyway), so a user without it can no longer stream a
+  container's data. Backed by an adversarial test.
 - **MCP Admin overview** — a new admin-only page (**System → MCP Admin**) giving
   a fleet-wide view of MCP credentials: **every user's** active API tokens
   (annotated with the owner) and all registered **OAuth clients**, with the
@@ -87,6 +101,11 @@ All notable changes to Docker Commander are documented here. The format follows
   (macOS), with `--uninstall-service` and `--service-status`. Equivalent
   idempotent installer scripts also ship in `deploy/` (`install-linux.sh`,
   `install-macos.sh`, and `install-windows.ps1` via a Scheduled Task).
+
+### Changed
+- **Sidebar navigation** — the *Compute* group is split into **Workloads**
+  (Containers, Stacks, Projects, Templates) and **Storage** (Images, Volumes) so
+  the menu stays scannable as the feature set grows.
 
 ### Fixed
 - **Bind-mounted project files were unreadable in containers** — seeded and edited

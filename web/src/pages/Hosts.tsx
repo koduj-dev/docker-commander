@@ -29,7 +29,12 @@ export function Hosts() {
   const load = useCallback(() => {
     api.hosts().then(setHosts).catch(() => setHosts([]));
   }, []);
-  useEffect(() => load(), [load]);
+  useEffect(() => {
+    load();
+    // Poll so the reachability badge tracks the monitor (it probes every ~30s).
+    const t = setInterval(load, 15000);
+    return () => clearInterval(t);
+  }, [load]);
 
   const test = async (id: number) => {
     setTests((t) => ({ ...t, [id]: "loading" }));
@@ -104,6 +109,11 @@ export function Hosts() {
                         <Server className={`h-4 w-4 ${h.disabled ? "text-muted" : "text-accent"}`} /> {h.name}
                         <span className="text-xs bg-panel2 rounded-sm px-1.5 py-0.5 text-muted">{h.kind}</span>
                         {h.disabled && <span className="text-xs bg-warn/15 text-warn rounded-sm px-1.5 py-0.5">disabled</span>}
+                        {!h.disabled && h.reachable === false && (
+                          <span className="text-xs bg-danger/15 text-danger rounded-sm px-1.5 py-0.5 flex items-center gap-1" title={h.unreachableSince ? `unreachable since ${new Date(h.unreachableSince).toLocaleString()}` : "the monitor can't reach this host's Docker daemon"}>
+                            <span className="h-1.5 w-1.5 rounded-full bg-danger inline-block" /> unreachable
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs text-muted font-mono mt-1 break-all">{h.address || "(local socket)"}</div>
                     </div>

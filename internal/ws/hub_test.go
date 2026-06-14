@@ -37,7 +37,7 @@ func TestHubSubscribeStatsAndLogs(t *testing.T) {
 		if err != nil {
 			return
 		}
-		hub.Serve(r.Context(), c)
+		hub.Serve(r.Context(), c, nil) // nil allow → all channels permitted
 	}))
 	defer srv.Close()
 
@@ -92,4 +92,61 @@ func TestHubSubscribeStatsAndLogs(t *testing.T) {
 		}
 	}
 	t.Error("expected an error frame for an unknown channel")
+}
+
+// TestHubChannelGate verifies the per-channel RBAC gate: a channel the allow
+// predicate rejects yields a permission error and never starts a stream, while
+// an allowed channel streams normally.
+func TestHubChannelGate(t *testing.T) {
+	hub := NewHub(fakeStreamer{})
+	// Permit "stats", deny everything else (e.g. "logs").
+	allow := func(channel string) bool { return channel == "stats" }
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		hub.Serve(r.Context(), c, allow)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	must := func(m clientMsg) {
+		if err := wsjson.Write(ctx, conn, m); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	// Denied channel → a permission error frame, no stream.
+	must(clientMsg{Type: "subscribe", SubID: "l1", Channel: "logs", ContainerID: "c1"})
+	// Allowed channel → a stats frame.
+	must(clientMsg{Type: "subscribe", SubID: "s1", Channel: "stats", ContainerID: "c1"})
+
+	var deniedErr, sawStats bool
+	for i := 0; i < 10 && !(deniedErr && sawStats); i++ {
+		var msg serverMsg
+		if err := wsjson.Read(ctx, conn, &msg); err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		switch {
+		case msg.Type == "error" && msg.SubID == "l1":
+			if !strings.Contains(msg.Message, "permitted") {
+				t.Errorf("denied channel error = %q, want a permission message", msg.Message)
+			}
+			deniedErr = true
+		case msg.Type == "stats" && msg.SubID == "s1":
+			sawStats = true
+		case msg.Type == "log":
+			t.Error("denied 'logs' channel must not stream a log frame")
+		}
+	}
+	if !deniedErr || !sawStats {
+		t.Errorf("gate wrong: deniedErr=%v sawStats=%v", deniedErr, sawStats)
+	}
 }

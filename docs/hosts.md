@@ -101,6 +101,22 @@ drivers, cgroup, and the current container/image counts.
 > describe that VM, not the Windows/macOS host — the Docker API can't see the
 > underlying OS. The **kernel** is the best hint (e.g. `…-WSL2` ⇒ Windows/WSL2).
 
+## Reachability monitoring
+Beyond the on-demand **Test** button, the background monitor **pings every
+enabled host** on a short interval and tracks whether its Docker daemon is
+reachable. When a host can't be reached, a 🔴 **unreachable** badge appears on
+its card and next to its name in the host switcher; it clears automatically once
+the daemon answers again.
+
+A change of state also raises an **alert**: a host going **offline** fires a
+*critical* event, and its **recovery** fires an *info* event (noting how long it
+was down). These land in the [Alerts](alerts.md) feed and, if SMTP is set up, are
+emailed — to the host's own **Alert email** if set, otherwise the global
+recipient. This watch is automatic and needs **no alert rule**. To avoid noise on
+startup, the very first probe never alerts — a host that is already down when the
+server boots stays quiet until it actually changes state. **Disabled** hosts are
+not probed (and never show the badge).
+
 ## Disabling a host
 The **⏻** button on a host card toggles it **disabled**. A disabled host is
 **ignored by the monitor** — no Docker-events stream, no stats sampling — and is
