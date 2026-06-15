@@ -117,7 +117,7 @@ make build      # builds the UI, then the binary with the UI embedded
 ```bash
 docker run -d --name dockercmd \
   -p 127.0.0.1:8470:8470 \
-  --group-add "$(getent group docker | cut -d: -f3)" \
+  --group-add "$(stat -c '%g' /var/run/docker.sock 2>/dev/null || stat -f '%g' /var/run/docker.sock)" \
   --read-only --tmpfs /tmp \
   --security-opt no-new-privileges \
   --cap-drop ALL \
@@ -132,9 +132,11 @@ Multi-arch (amd64/arm64), distroless, runs as a **non-root** user with a
 - **⚠️ Mounting the Docker socket grants host-root-equivalent access** — whoever
   reaches the UI (or escapes the app) controls the daemon, i.e. the host. Keep
   the UI on **localhost** (as above) or behind **HTTPS + strong auth**; never
-  expose it unauthenticated. The `--group-add` line hands the non-root user the
-  host's `docker` group so it can read the socket; on **rootless / Docker
-  Desktop** (user-owned socket, no `docker` group) drop that line.
+  expose it unauthenticated. The `--group-add` line gives the non-root user the
+  **owning GID of the Docker socket** — read from `/var/run/docker.sock` itself
+  (`stat`, with a BSD fallback), so it works even without a `docker` group. On
+  **rootless / Docker Desktop**, where the socket is owned by your user, drop the
+  `--group-add` line.
 - Data lives in the named volume `dockercmd-data` (a fresh one inherits the
   right ownership). A **bind mount** (`-v /srv/dc:/data`) must be writable by uid
   **65532** first: `sudo chown 65532:65532 /srv/dc`.
@@ -169,7 +171,9 @@ gh attestation verify dockercmd-linux-amd64 --repo koduj-dev/docker-commander
 The container image is signed and carries SLSA provenance + an SBOM as well:
 
 ```bash
-IMAGE=ghcr.io/koduj-dev/docker-commander:1.4.0
+# verify the exact digest you'll run (copy it from the release notes or
+# `docker buildx imagetools inspect ghcr.io/koduj-dev/docker-commander:1.4.0`):
+IMAGE=ghcr.io/koduj-dev/docker-commander@sha256:<digest>
 cosign verify "$IMAGE" \
   --certificate-identity-regexp '^https://github\.com/koduj-dev/docker-commander/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
