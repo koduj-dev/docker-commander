@@ -4,7 +4,7 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.4.2] — 2026-06-15
 
 ### Added
 - **Homebrew tap** — install via `brew install koduj-dev/tap/dockercmd` (macOS &
@@ -368,6 +368,7 @@ Initial release: a single CGO-free Go binary with an embedded React UI.
   per-section permissions / read-only, feature flags, audit log, optional LDAP;
   secrets encrypted at rest.
 
+[1.4.2]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.4.2
 [1.4.1]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.4.1
 [1.4.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.4.0
 [1.3.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.3.0
