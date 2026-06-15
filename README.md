@@ -100,7 +100,17 @@ chmod +x dockercmd-linux-amd64
 
 On Windows, run `dockercmd-windows-amd64.exe` from a terminal.
 
-### Option B — build from source
+### Option B — Homebrew (macOS & Linux)
+
+```bash
+brew install koduj-dev/tap/dockercmd
+dockercmd --version
+```
+
+Installs the signed release binary for your OS/arch from the
+[koduj-dev/homebrew-tap](https://github.com/koduj-dev/homebrew-tap).
+
+### Option C — build from source
 
 Requires **Go ≥ 1.25**, **Node.js ≥ 18** (to build the UI) and a running Docker
 daemon. See [Building](#-building) for per-OS details.
@@ -112,7 +122,7 @@ make build      # builds the UI, then the binary with the UI embedded
 ./dockercmd     # http://127.0.0.1:8470
 ```
 
-### Option C — Docker
+### Option D — Docker
 
 ```bash
 docker run -d --name dockercmd \
@@ -143,7 +153,7 @@ Multi-arch (amd64/arm64), distroless, runs as a **non-root** user with a
 - In production, pin an **immutable digest** (`...@sha256:…`) instead of
   `:latest`, and verify the image (see below).
 
-### Option D — `go install`
+### Option E — `go install`
 
 ```bash
 go install github.com/koduj-dev/docker-commander/cmd/dockercmd@latest

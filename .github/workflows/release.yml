@@ -122,3 +122,44 @@ jobs:
       - name: Sign the image
         # -r signs the index AND each per-platform child manifest.
         run: cosign sign --yes -r "ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}"
+
+  homebrew:
+    needs: release # the release (and its SHA256SUMS) must exist first
+    runs-on: ubuntu-latest
+    env:
+      # Cross-repo push needs a PAT with contents:write on koduj-dev/homebrew-tap
+      # (the default GITHUB_TOKEN can't reach another repo). If the secret isn't
+      # set the bump step is skipped — the formula can be updated by hand until then.
+      TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Bump the Homebrew tap formula
+        if: ${{ env.TAP_TOKEN != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          ver="${VERSION#v}"
+          gh release download "$VERSION" -p SHA256SUMS -D /tmp
+          sha() { awk -v f="dockercmd-$1" '$2==f {print $1}' /tmp/SHA256SUMS; }
+          tap="$(mktemp -d)"
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/koduj-dev/homebrew-tap.git" "$tap"
+          mkdir -p "$tap/Formula"
+          sed -e "s/__VERSION__/${ver}/g" \
+              -e "s/__SHA_DARWIN_AMD64__/$(sha darwin-amd64)/g" \
+              -e "s/__SHA_DARWIN_ARM64__/$(sha darwin-arm64)/g" \
+              -e "s/__SHA_LINUX_AMD64__/$(sha linux-amd64)/g" \
+              -e "s/__SHA_LINUX_ARM64__/$(sha linux-arm64)/g" \
+              deploy/homebrew/dockercmd.rb.tmpl > "$tap/Formula/dockercmd.rb"
+          cd "$tap"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/dockercmd.rb
+          if git diff --cached --quiet; then
+            echo "formula already up to date"
+            exit 0
+          fi
+          git commit -m "dockercmd ${ver}"
+          git push
