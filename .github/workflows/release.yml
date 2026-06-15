@@ -43,7 +43,7 @@ jobs:
 
       # Keyless-sign the checksums file (it covers every binary). Verify with:
       #   cosign verify-blob --certificate SHA256SUMS.pem --signature SHA256SUMS.sig \
-      #     --certificate-identity-regexp 'koduj-dev/docker-commander' \
+      #     --certificate-identity-regexp '^https://github\.com/koduj-dev/docker-commander/\.github/workflows/release\.yml@refs/tags/' \
       #     --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
       - uses: sigstore/cosign-installer@v3
       - name: Sign SHA256SUMS
@@ -87,10 +87,12 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
+          # `latest` is left to the default flavor (latest=auto): it's applied
+          # only to stable semver tags, so a pre-release like v1.5.0-rc1 won't
+          # advance `latest`.
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
 
       - id: build
         uses: docker/build-push-action@v6

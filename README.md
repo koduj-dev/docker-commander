@@ -116,7 +116,7 @@ make build      # builds the UI, then the binary with the UI embedded
 
 ```bash
 docker run -d --name dockercmd \
-  -p 8470:8470 \
+  -p 127.0.0.1:8470:8470 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v dockercmd-data:/data \
   ghcr.io/koduj-dev/docker-commander:latest
@@ -125,7 +125,9 @@ docker run -d --name dockercmd \
 Multi-arch (amd64/arm64), distroless, runs as a non-root user. It needs the
 Docker socket mounted to manage the host; on a typical setup add
 `--group-add "$(getent group docker | cut -d: -f3)"` so the non-root user can
-reach the socket.
+reach the socket. The example binds the UI to **localhost** — drop the
+`127.0.0.1` in `-p` to expose it on the LAN (and put it behind HTTPS / a proxy
+if you do).
 
 ### Option D — `go install`
 
@@ -145,7 +147,7 @@ Every release ships a `SHA256SUMS` plus a keyless **cosign** signature
 sha256sum -c SHA256SUMS --ignore-missing        # checksum
 
 cosign verify-blob --certificate SHA256SUMS.pem --signature SHA256SUMS.sig \
-  --certificate-identity-regexp 'koduj-dev/docker-commander' \
+  --certificate-identity-regexp '^https://github\.com/koduj-dev/docker-commander/\.github/workflows/release\.yml@refs/tags/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
 
 gh attestation verify dockercmd-linux-amd64 --repo koduj-dev/docker-commander
