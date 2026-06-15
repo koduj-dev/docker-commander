@@ -10,9 +10,9 @@ COPY . .
 ARG VERSION=docker
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
     -o /out/dockercmd ./cmd/dockercmd
-# Pre-create the data dir owned by the nonroot uid the runtime image runs as, so
+# Pre-create the data dir; the COPY --chown below gives it to the nonroot uid so
 # a fresh named volume inherits writable ownership.
-RUN mkdir -p /out/data && chown 65532:65532 /out/data
+RUN mkdir -p /out/data
 
 # 2. Minimal runtime: distroless static ships CA certificates (needed for the
 #    update check, registry and SMTP TLS) and has no shell or package manager.

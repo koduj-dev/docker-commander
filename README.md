@@ -117,17 +117,29 @@ make build      # builds the UI, then the binary with the UI embedded
 ```bash
 docker run -d --name dockercmd \
   -p 127.0.0.1:8470:8470 \
+  --group-add "$(getent group docker | cut -d: -f3)" \
+  --read-only --tmpfs /tmp \
+  --security-opt no-new-privileges \
+  --cap-drop ALL \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v dockercmd-data:/data \
   ghcr.io/koduj-dev/docker-commander:latest
 ```
 
-Multi-arch (amd64/arm64), distroless, runs as a non-root user. It needs the
-Docker socket mounted to manage the host; on a typical setup add
-`--group-add "$(getent group docker | cut -d: -f3)"` so the non-root user can
-reach the socket. The example binds the UI to **localhost** — drop the
-`127.0.0.1` in `-p` to expose it on the LAN (and put it behind HTTPS / a proxy
-if you do).
+Multi-arch (amd64/arm64), distroless, runs as a **non-root** user with a
+**read-only** root filesystem and **no added capabilities**. Notes:
+
+- **⚠️ Mounting the Docker socket grants host-root-equivalent access** — whoever
+  reaches the UI (or escapes the app) controls the daemon, i.e. the host. Keep
+  the UI on **localhost** (as above) or behind **HTTPS + strong auth**; never
+  expose it unauthenticated. The `--group-add` line hands the non-root user the
+  host's `docker` group so it can read the socket; on **rootless / Docker
+  Desktop** (user-owned socket, no `docker` group) drop that line.
+- Data lives in the named volume `dockercmd-data` (a fresh one inherits the
+  right ownership). A **bind mount** (`-v /srv/dc:/data`) must be writable by uid
+  **65532** first: `sudo chown 65532:65532 /srv/dc`.
+- In production, pin an **immutable digest** (`...@sha256:…`) instead of
+  `:latest`, and verify the image (see below).
 
 ### Option D — `go install`
 
@@ -141,16 +153,28 @@ Installs to `$(go env GOPATH)/bin/dockercmd`. (Built this way the version report
 ### Verifying a download
 
 Every release ships a `SHA256SUMS` plus a keyless **cosign** signature
-(`SHA256SUMS.sig` / `.pem`), an SPDX **SBOM**, and per-binary build **provenance**:
+(`SHA256SUMS.sig` / `.pem`) covering the binaries **and** the SPDX **SBOM**, plus
+per-binary build **provenance**:
 
 ```bash
-sha256sum -c SHA256SUMS --ignore-missing        # checksum
+sha256sum -c SHA256SUMS --ignore-missing        # checksums (binaries + SBOM)
 
 cosign verify-blob --certificate SHA256SUMS.pem --signature SHA256SUMS.sig \
-  --certificate-identity-regexp '^https://github\.com/koduj-dev/docker-commander/\.github/workflows/release\.yml@refs/tags/' \
+  --certificate-identity-regexp '^https://github\.com/koduj-dev/docker-commander/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
 
 gh attestation verify dockercmd-linux-amd64 --repo koduj-dev/docker-commander
+```
+
+The container image is signed and carries SLSA provenance + an SBOM as well:
+
+```bash
+IMAGE=ghcr.io/koduj-dev/docker-commander:1.4.0
+cosign verify "$IMAGE" \
+  --certificate-identity-regexp '^https://github\.com/koduj-dev/docker-commander/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+gh attestation verify "oci://$IMAGE" --repo koduj-dev/docker-commander
 ```
 
 Open <http://127.0.0.1:8470>, create the admin account, scan the QR code to
