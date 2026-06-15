@@ -9,7 +9,7 @@
 //
 // Env:
 //   DC_BASE_URL  target instance        (default http://127.0.0.1:8470)
-//   DC_USER      admin username         (default "filip")
+//   DC_USER      admin username         (default "admin")
 //   DC_PASS      admin password         (required)
 //   DC_TOTP      current 6-digit code   (only if localhost 2FA exemption is OFF)
 //   CHROME_BIN   chrome executable      (default /usr/bin/google-chrome)
@@ -24,7 +24,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT = resolve(__dirname, '../../docs/images');
 
 const BASE = (process.env.DC_BASE_URL || 'http://127.0.0.1:8470').replace(/\/$/, '');
-const USER = process.env.DC_USER || 'filip';
+const USER = process.env.DC_USER || 'admin';
 const PASS = process.env.DC_PASS;
 const TOTP = process.env.DC_TOTP || '';
 const CHROME = process.env.CHROME_BIN || '/usr/bin/google-chrome';
