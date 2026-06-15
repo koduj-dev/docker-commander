@@ -4,6 +4,19 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **`--help`, `--version`, and a `man` page** — `dockercmd --help` (and `-h`)
+  now prints a complete usage: a synopsis, the **standalone actions**
+  (`--version`, `--self-upgrade`, and `--install-service` /
+  `--uninstall-service` / `--service-status` — previously undiscoverable because
+  they're parsed before the flag set) and every option. `dockercmd --version`
+  (or `dockercmd version`) prints the build version. Installing as a service now
+  also installs a **`man dockercmd`** page — embedded in the binary, kept in
+  sync with the flags by a test, and written by both `--install-service` and the
+  `install-linux.sh` / `install-macos.sh` scripts.
+
 ## [1.4.0] — 2026-06-15
 
 ### Security

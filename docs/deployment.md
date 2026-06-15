@@ -99,6 +99,16 @@ socket). Uninstall leaves the data dir and user in place so reinstalling keeps
 the database and keys. **Windows** isn't covered by the subcommand yet — use the
 script below.
 
+Installing also drops a **`man dockercmd`** page (under
+`/usr/local/share/man/man1/`), so the full option/action reference is available
+offline once the service is in place.
+
+> **Discovering the CLI.** `dockercmd --help` (or `-h`) prints a complete usage
+> — a synopsis, the **standalone actions** (`--version`, `--self-upgrade`,
+> `--install-service` / `--uninstall-service` / `--service-status`) and every
+> option with its default. `dockercmd --version` (or `dockercmd version`) prints
+> the build version.
+
 ### Installer scripts (alternative; Windows)
 Equivalent idempotent installers also live in [`deploy/`](../deploy/) — handy for
 Windows, or to read exactly what gets installed:

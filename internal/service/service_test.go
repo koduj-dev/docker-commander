@@ -23,6 +23,20 @@ func TestSystemdUnitMatchesDeployFile(t *testing.T) {
 	}
 }
 
+// TestManPageMatchesDeployFile keeps the embedded man page and the canonical
+// deploy/dockercmd.1 in lockstep (go:embed can't reach across ../.. into
+// deploy/). If it fails, copy deploy/dockercmd.1 over internal/service/dockercmd.1.
+func TestManPageMatchesDeployFile(t *testing.T) {
+	want, err := os.ReadFile("../../deploy/dockercmd.1")
+	if err != nil {
+		t.Fatalf("read deploy man page: %v", err)
+	}
+	if string(want) != manPage {
+		t.Error("internal/service/dockercmd.1 drifted from deploy/dockercmd.1 — " +
+			"keep them byte-identical (cp deploy/dockercmd.1 internal/service/dockercmd.1)")
+	}
+}
+
 // TestLaunchdPlistEscapesValues renders the embedded plist template the same way
 // the macOS installer does and checks that XML-special characters in a path are
 // escaped — so the result stays valid XML that launchctl can load.

@@ -1,0 +1,184 @@
+.\" Manual page for Docker Commander. Keep the option list in sync with the
+.\" flags in internal/config/config.go -- TestManPageDocumentsAllFlags enforces it.
+.TH DOCKERCMD 1 "2026-06-15" "Docker Commander" "User Commands"
+.SH NAME
+dockercmd \- monitor and control Docker from a single self-contained binary
+.SH SYNOPSIS
+.B dockercmd
+.RI [ options ]
+.br
+.B dockercmd
+.IR action
+.SH DESCRIPTION
+.B Docker Commander
+is a single CGO-free binary with an embedded web UI that monitors and controls
+Docker: containers, stacks, managed Compose projects, images, volumes, networks,
+logs, events, alerts, multi-host, users/RBAC, an audit log, and an optional
+remote MCP server for AI tools.
+.PP
+Run with no arguments it starts the server and serves the UI (default
+.BR 127.0.0.1:8470 ).
+The standalone actions below run a one-off task and exit instead of starting the
+server.
+.SH ACTIONS
+.TP
+.BR \-\-version ", " version
+Print the version and exit.
+.TP
+.B \-\-self-upgrade " [" \fB\-\-check\fR ]
+Download, verify (SHA-256) and atomically replace the binary with the latest
+GitHub release. With
+.B \-\-check
+it only reports whether an update is available and exits.
+.TP
+.B \-\-install-service
+Install Docker Commander as a background service: a hardened
+.BR systemd (1)
+unit on Linux (needs root), or a per-user
+.BR launchd (8)
+LaunchAgent on macOS. Also installs this man page.
+.TP
+.B \-\-uninstall-service
+Stop and remove the service (the data dir and service user are left in place).
+.TP
+.B \-\-service-status
+Show the service status.
+.SH OPTIONS
+Every option also has a
+.B DC_*
+environment variable and an identical config-file key; precedence is
+command-line flag > environment variable > config file > default.
+.TP
+.BI \-config " path"
+Path to a config file (KEY=VALUE, same keys as the environment).
+.TP
+.BI \-host " host"
+Listen host/interface; use
+.B 0.0.0.0
+for all interfaces (default
+.BR 127.0.0.1 ).
+.TP
+.BI \-port " n"
+Listen port (default
+.BR 8470 ).
+.B \-p
+is a shorthand for
+.BR \-port .
+.TP
+.BI \-addr " host:port"
+Full listen address (legacy; overrides
+.B \-host
+and
+.BR \-port ).
+.TP
+.BI \-data-dir " dir"
+Directory for the SQLite database and secrets.
+.TP
+.BI \-session-ttl " duration"
+Session token lifetime (default
+.BR 12h ).
+.TP
+.B \-dev
+Enable development mode (permissive CORS).
+.TP
+.B \-update-check
+Check GitHub for newer releases (default true; disable with
+.BR DC_UPDATE_CHECK=0 ).
+.TP
+.BI \-metrics-token " token"
+Require this bearer token to scrape
+.BR /metrics " (empty = open)."
+.TP
+.BI \-tls-cert " path"
+PEM TLS certificate path (enables HTTPS together with
+.BR \-tls-key ).
+.TP
+.BI \-tls-key " path"
+PEM TLS private-key path.
+.TP
+.B \-mcp-enabled
+Enable the remote MCP server + OAuth endpoints (off by default; requires HTTPS).
+.TP
+.BI \-mcp-public-url " url"
+Externally reachable base URL (https://host[:port]) for the MCP OAuth flow.
+.TP
+.BI \-redis-addr " host:port"
+Redis address for metric history (empty = in-memory ring buffer).
+.TP
+.BI \-redis-password " password"
+Redis password.
+.TP
+.BI \-metrics-retention " duration"
+How long to keep metric history (default
+.BR 6h ).
+.TP
+.BI \-metrics-interval " duration"
+How often to sample container stats; raise on hosts with many containers
+(default
+.BR 15s ).
+.TP
+.B \-pprof
+Expose Go's net/http/pprof on a loopback-only listener
+.RB ( 127.0.0.1:6060 )
+for debugging.
+.TP
+.BI \-trusted-proxies " list"
+Comma-separated reverse-proxy IPs/CIDRs whose
+.B X-Forwarded-For
+is trusted (empty = trust none; use the real peer).
+.SH ENVIRONMENT
+The
+.B DC_*
+variables mirror the options above:
+.BR DC_CONFIG ,
+.BR DC_HOST ,
+.BR DC_PORT ,
+.BR DC_ADDR ,
+.BR DC_DATA_DIR ,
+.BR DC_DEV ,
+.BR DC_UPDATE_CHECK ,
+.BR DC_METRICS_TOKEN ,
+.BR DC_TLS_CERT ,
+.BR DC_TLS_KEY ,
+.BR DC_MCP_ENABLED ,
+.BR DC_MCP_PUBLIC_URL ,
+.BR DC_REDIS_ADDR ,
+.BR DC_REDIS_PASSWORD ,
+.BR DC_REDIS_DB ,
+.BR DC_METRICS_RETENTION ,
+.BR DC_METRICS_INTERVAL ,
+.BR DC_PPROF ,
+.BR DC_TRUSTED_PROXIES .
+.SH FILES
+.TP
+.I /etc/docker-commander/commander.conf
+Default config file on Linux (override with
+.B \-config
+or
+.BR DC_CONFIG ).
+.TP
+.I ~/.config/docker-commander/
+Default data directory (database + secrets) for a foreground run.
+.TP
+.I /var/lib/dockercmd/
+Data directory used by the installed systemd service.
+.SH EXAMPLES
+.TP
+Start on all interfaces, port 9000:
+.B dockercmd \-host 0.0.0.0 \-port 9000
+.TP
+Check for and install an update:
+.B dockercmd \-\-self-upgrade \-\-check
+.br
+.B dockercmd \-\-self-upgrade
+.TP
+Install as a service (Linux):
+.B sudo dockercmd \-\-install-service
+.SH SEE ALSO
+.BR systemd (1),
+.BR launchd (8).
+Full manual:
+.UR https://github.com/koduj-dev/docker-commander
+.UE
+.SH AUTHORS
+Docker Commander contributors.

@@ -77,6 +77,9 @@ func Install(w io.Writer) error {
 	}
 	fmt.Fprintf(w, "Wrote unit → %s\n", unitPath)
 
+	// 4b. Man page (best-effort — never blocks the install).
+	installManPage(w, manDir)
+
 	// 5. Reload + enable + start.
 	if err := runCmd(w, "systemctl", "daemon-reload"); err != nil {
 		return fmt.Errorf("systemctl daemon-reload: %w", err)
@@ -104,6 +107,7 @@ func Uninstall(w io.Writer) error {
 	if err := os.Remove(unitPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove unit %s: %w", unitPath, err)
 	}
+	removeManPage(w, manDir)
 	if err := runCmd(w, "systemctl", "daemon-reload"); err != nil {
 		return fmt.Errorf("systemctl daemon-reload: %w", err)
 	}

@@ -75,6 +75,9 @@ func Install(w io.Writer) error {
 	}
 	fmt.Fprintf(w, "Wrote LaunchAgent → %s\n", plistPath)
 
+	// Man page (best-effort — /usr/local/share/man may not be user-writable).
+	installManPage(w, manDir)
+
 	// (Re)load the agent in the user's GUI domain.
 	domain := fmt.Sprintf("gui/%d", os.Getuid())
 	_ = runCmd(io.Discard, "launchctl", "bootout", domain+"/"+launchdLabel) // ignore "not loaded"
@@ -107,6 +110,7 @@ func Uninstall(w io.Writer) error {
 	if err := os.Remove(plistPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove %s: %w", plistPath, err)
 	}
+	removeManPage(w, manDir)
 	fmt.Fprintf(w, "\nRemoved %s.\n", plistPath)
 	fmt.Fprintf(w, "Left in place: data dir %s (delete it by hand to purge).\n", dataDir)
 	return nil
