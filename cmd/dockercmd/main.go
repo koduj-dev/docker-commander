@@ -107,7 +107,7 @@ Usage:
   dockercmd <action>           run a standalone action and exit
 
 Standalone actions:
-  --version                    print the version and exit
+  --version, version           print the version and exit
   --self-upgrade [--check]     upgrade to the latest GitHub release (--check only reports)
   --install-service            install as a systemd (Linux) / launchd (macOS) service
   --uninstall-service          remove the service

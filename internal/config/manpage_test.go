@@ -3,7 +3,6 @@ package config
 import (
 	"os"
 	"regexp"
-	"strings"
 	"testing"
 )
 
@@ -39,8 +38,12 @@ func TestManPageDocumentsAllFlags(t *testing.T) {
 			continue
 		}
 		seen[name] = true
-		if !strings.Contains(manStr, name) {
-			t.Errorf("flag -%s is defined in config.go but not documented in deploy/dockercmd.1", name)
+		// Require the roff-escaped option token (\-name) as a whole word, so a
+		// short flag like -p can't pass just by being a common letter, and
+		// -port doesn't accidentally satisfy -p.
+		re := regexp.MustCompile(`\\-` + regexp.QuoteMeta(name) + `\b`)
+		if !re.MatchString(manStr) {
+			t.Errorf("flag -%s is defined in config.go but not documented (as \\-%s) in deploy/dockercmd.1", name, name)
 		}
 	}
 }

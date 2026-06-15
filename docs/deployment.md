@@ -106,7 +106,8 @@ offline once the service is in place.
 > **Discovering the CLI.** `dockercmd --help` (or `-h`) prints a complete usage
 > — a synopsis, the **standalone actions** (`--version`, `--self-upgrade`,
 > `--install-service` / `--uninstall-service` / `--service-status`) and every
-> option with its default. `dockercmd --version` prints the build version.
+> option with its default. `dockercmd --version` (or `dockercmd version`) prints
+> the build version.
 
 ### Installer scripts (alternative; Windows)
 Equivalent idempotent installers also live in [`deploy/`](../deploy/) — handy for
