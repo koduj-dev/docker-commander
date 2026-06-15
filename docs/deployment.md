@@ -109,6 +109,21 @@ offline once the service is in place.
 > option with its default. `dockercmd --version` (or `dockercmd version`) prints
 > the build version.
 
+### Debian / Ubuntu & Fedora packages (.deb / .rpm)
+Each release also publishes `.deb` and `.rpm` packages (amd64 + arm64) on the
+[Releases](../../releases) page. They install the binary to `/usr/bin/dockercmd`,
+a hardened **systemd** unit, the man page, and a config at
+`/etc/docker-commander/commander.conf` (a *conffile* — your edits survive
+upgrades), then create the `dockercmd` user and start the service:
+
+```bash
+sudo apt install ./dockercmd_1.4.1_amd64.deb     # Debian / Ubuntu
+sudo dnf install ./dockercmd-1.4.1.x86_64.rpm     # Fedora / RHEL
+```
+
+A signed **APT repository** (so plain `apt install dockercmd` works from a source
+line) is on the way.
+
 ### Installer scripts (alternative; Windows)
 Equivalent idempotent installers also live in [`deploy/`](../deploy/) — handy for
 Windows, or to read exactly what gets installed:

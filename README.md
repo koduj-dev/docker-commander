@@ -100,6 +100,9 @@ chmod +x dockercmd-linux-amd64
 
 On Windows, run `dockercmd-windows-amd64.exe` from a terminal.
 
+Debian/Ubuntu & Fedora users can grab a `.deb` / `.rpm` from the same page — it
+sets up the systemd service. See [Deployment → packages](docs/deployment.md).
+
 ### Option B — Homebrew (macOS & Linux)
 
 ```bash

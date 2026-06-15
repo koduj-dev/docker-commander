@@ -163,3 +163,36 @@ jobs:
           fi
           git commit -m "dockercmd ${ver}"
           git push
+
+  packages:
+    needs: release # reuse the release's already-built linux binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # attach the .deb / .rpm to the release
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Build .deb and .rpm (amd64 + arm64)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          ver="${VERSION#v}"
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+          mkdir -p dist-bin out
+          gh release download "$VERSION" -p 'dockercmd-linux-amd64' -p 'dockercmd-linux-arm64' -D dist-bin
+          # Packaged unit points at /usr/bin (Debian policy keeps packages out of /usr/local).
+          sed 's|/usr/local/bin/dockercmd|/usr/bin/dockercmd|' deploy/dockercmd.service > deploy/packaging/dockercmd.service
+          for arch in amd64 arm64; do
+            rendered="$(mktemp)"
+            sed -e "s/\${ARCH}/${arch}/g" -e "s/\${VERSION}/${ver}/g" deploy/nfpm.yaml > "$rendered"
+            nfpm pkg -p deb -f "$rendered" -t out/
+            nfpm pkg -p rpm -f "$rendered" -t out/
+          done
+          ls -la out
+          gh release upload "$VERSION" out/* --clobber
