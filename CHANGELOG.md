@@ -4,6 +4,15 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [1.4.4] — 2026-06-15
+
+### Fixed
+- **The APT repository is now actually published.** In v1.4.3 the apt job failed
+  to import the signing key (`gpg: no valid OpenPGP data found`) because the
+  armored key in the `APT_GPG_PRIVATE_KEY` secret had lost its armor lines on
+  paste. The key is now stored base64-encoded and decoded in CI, so a multi-line
+  block can't be mangled — `apt install dockercmd` works from the signed repo.
+
 ## [1.4.3] — 2026-06-15
 
 ### Fixed
@@ -380,6 +389,7 @@ Initial release: a single CGO-free Go binary with an embedded React UI.
   per-section permissions / read-only, feature flags, audit log, optional LDAP;
   secrets encrypted at rest.
 
+[1.4.4]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.4.4
 [1.4.3]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.4.3
 [1.4.2]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.4.2
 [1.4.1]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.4.1
