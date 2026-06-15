@@ -4,6 +4,15 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Homebrew tap** — install via `brew install koduj-dev/tap/dockercmd` (macOS &
+  Linux/Linuxbrew). The formula pulls the signed release binary for your
+  OS/arch; a release job renders it from `deploy/homebrew/dockercmd.rb.tmpl` and
+  pushes it to [koduj-dev/homebrew-tap](https://github.com/koduj-dev/homebrew-tap)
+  on each tag (when the `HOMEBREW_TAP_TOKEN` secret is set).
+
 ## [1.4.1] — 2026-06-15
 
 ### Added

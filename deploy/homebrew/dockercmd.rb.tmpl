@@ -1,0 +1,38 @@
+class Dockercmd < Formula
+  desc "Monitor and control Docker from one self-contained binary"
+  homepage "https://github.com/koduj-dev/docker-commander"
+  version "__VERSION__"
+  license "MIT"
+
+  on_macos do
+    on_intel do
+      url "https://github.com/koduj-dev/docker-commander/releases/download/v__VERSION__/dockercmd-darwin-amd64"
+      sha256 "__SHA_DARWIN_AMD64__"
+    end
+    on_arm do
+      url "https://github.com/koduj-dev/docker-commander/releases/download/v__VERSION__/dockercmd-darwin-arm64"
+      sha256 "__SHA_DARWIN_ARM64__"
+    end
+  end
+
+  on_linux do
+    on_intel do
+      url "https://github.com/koduj-dev/docker-commander/releases/download/v__VERSION__/dockercmd-linux-amd64"
+      sha256 "__SHA_LINUX_AMD64__"
+    end
+    on_arm do
+      url "https://github.com/koduj-dev/docker-commander/releases/download/v__VERSION__/dockercmd-linux-arm64"
+      sha256 "__SHA_LINUX_ARM64__"
+    end
+  end
+
+  def install
+    # The release asset is the bare binary (dockercmd-<os>-<arch>); only one is
+    # downloaded per platform, so install it under the canonical name.
+    bin.install Dir["dockercmd-*"].first => "dockercmd"
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/dockercmd --version")
+  end
+end
