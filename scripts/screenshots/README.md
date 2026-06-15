@@ -29,7 +29,7 @@ From the repo root you can also run `DC_PASS=… node scripts/screenshots/genera
 | Var           | Default                  | Notes                                                        |
 | ------------- | ------------------------ | ------------------------------------------------------------ |
 | `DC_BASE_URL` | `http://127.0.0.1:8470`  | Target instance.                                             |
-| `DC_USER`     | `filip`                  | Admin username.                                              |
+| `DC_USER`     | `admin`                  | Admin username.                                              |
 | `DC_PASS`     | —                        | **Required.** Admin password.                                |
 | `DC_TOTP`     | —                        | Current 6-digit code; only if the localhost 2FA exemption is off. |
 | `CHROME_BIN`  | `/usr/bin/google-chrome` | Chrome executable.                                           |

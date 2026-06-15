@@ -111,14 +111,22 @@ const SHOTS = [
 
 // Click the first matching list row/card to open its drawer. Tries to match one
 // of `prefer` substrings first, else falls back to the first clickable card/row.
+// Returns true ONLY after a click actually succeeds — a failed/non-interactive
+// candidate is skipped so we never report success on a screenshot that didn't
+// open the drawer.
 async function openFirstRow(page, prefer = []) {
-  for (const want of prefer) {
-    const el = page.getByText(want, { exact: false }).first();
-    if (await el.count().catch(() => 0)) {
-      await el.click().catch(() => {});
+  const tryClick = async (locator) => {
+    if (!(await locator.count().catch(() => 0))) return false;
+    try {
+      await locator.click({ timeout: 2000 });
       await page.waitForTimeout(900);
       return true;
+    } catch {
+      return false; // not clickable / detached — keep looking
     }
+  };
+  for (const want of prefer) {
+    if (await tryClick(page.getByText(want, { exact: false }).first())) return true;
   }
   const candidates = [
     'table tbody tr',
@@ -128,12 +136,7 @@ async function openFirstRow(page, prefer = []) {
     '.cursor-pointer',
   ];
   for (const sel of candidates) {
-    const el = page.locator(sel).first();
-    if (await el.count().catch(() => 0)) {
-      await el.click().catch(() => {});
-      await page.waitForTimeout(900);
-      return true;
-    }
+    if (await tryClick(page.locator(sel).first())) return true;
   }
   return false;
 }
