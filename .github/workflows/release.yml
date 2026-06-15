@@ -206,7 +206,9 @@ jobs:
       # stays at its current state, no red release). Set them via the repo's
       # Settings → Secrets UI:
       #   APT_REPO_TOKEN       — fine-grained PAT, contents:write on koduj-dev/apt
-      #   APT_GPG_PRIVATE_KEY  — ASCII-armored private signing key (passphraseless)
+      #   APT_GPG_PRIVATE_KEY  — the passphraseless signing key, base64-encoded
+      #     (single line, paste-proof):
+      #       gpg --armor --export-secret-keys <key> | base64 -w0
       APT_TOKEN: ${{ secrets.APT_REPO_TOKEN }}
       APT_GPG_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
     steps:
@@ -220,11 +222,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends reprepro
 
-          # Import the (passphraseless) signing key into a throwaway keyring.
-          # reprepro signs Release via gpg-agent and has no passphrase option, so
-          # the CI signing key must be passphraseless — its secrecy is the secret.
+          # Import the (passphraseless) signing key into a throwaway keyring. The
+          # secret is base64-encoded so a multi-line armored block can't get
+          # mangled (missing -----BEGIN-----/newlines) on paste. reprepro signs
+          # Release via gpg-agent and has no passphrase option, so the CI signing
+          # key must be passphraseless — its secrecy is the secret.
           GNUPGHOME="$(mktemp -d)"; export GNUPGHOME; chmod 700 "$GNUPGHOME"
-          printf '%s' "$APT_GPG_KEY" | gpg --batch --import
+          printf '%s' "$APT_GPG_KEY" | base64 -d | gpg --batch --import
 
           # Fetch the .deb from the release and verify their build provenance.
           mkdir -p pkgs
