@@ -117,8 +117,8 @@ a hardened **systemd** unit, the man page, and a config at
 upgrades), then create the `dockercmd` user and start the service:
 
 ```bash
-sudo apt install ./dockercmd_1.4.1_amd64.deb     # Debian / Ubuntu
-sudo dnf install ./dockercmd-1.4.1.x86_64.rpm     # Fedora / RHEL
+sudo apt install ./dockercmd_<version>_amd64.deb     # Debian / Ubuntu
+sudo dnf install ./dockercmd-<version>.x86_64.rpm     # Fedora / RHEL
 ```
 
 Or add the **signed APT repository** (GPG-signed, served from GitHub Pages) and
