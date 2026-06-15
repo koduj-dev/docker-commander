@@ -4,6 +4,12 @@
 *.test
 *.out
 
+# Packaging (nfpm output + the build-time-generated systemd unit)
+/out/
+*.deb
+*.rpm
+deploy/packaging/dockercmd.service
+
 # Frontend
 web/node_modules/
 # Screenshot generator deps (see scripts/screenshots/README.md)

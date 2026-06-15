@@ -12,6 +12,11 @@ All notable changes to Docker Commander are documented here. The format follows
   OS/arch; a release job renders it from `deploy/homebrew/dockercmd.rb.tmpl` and
   pushes it to [koduj-dev/homebrew-tap](https://github.com/koduj-dev/homebrew-tap)
   on each tag (when the `HOMEBREW_TAP_TOKEN` secret is set).
+- **Debian/Ubuntu `.deb` and Fedora/RHEL `.rpm` packages** — built per release
+  (amd64 + arm64) with `nfpm` and attached to the GitHub release. Each installs
+  the binary, a hardened systemd unit, the man page and an
+  `/etc/docker-commander/commander.conf` conffile, and sets up the `dockercmd`
+  service. (A signed APT repository is planned next.)
 
 ## [1.4.1] — 2026-06-15
 

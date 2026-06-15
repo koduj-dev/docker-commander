@@ -1,0 +1,49 @@
+# nfpm config for the dockercmd .deb / .rpm packages. Rendered per-arch with
+# VERSION and ARCH set in the environment (see the `deb` job in release.yml):
+#   VERSION=1.4.1 ARCH=amd64 nfpm pkg -p deb -f deploy/nfpm.yaml
+#
+# The systemd unit shipped here is derived from deploy/dockercmd.service with the
+# ExecStart path rewritten to /usr/bin/dockercmd (Debian policy keeps packaged
+# binaries out of /usr/local); the build step generates deploy/packaging/dockercmd.service.
+name: dockercmd
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+version_schema: semver
+section: admin
+priority: optional
+maintainer: "koduj-dev <noreply@koduj.dev>"
+vendor: "koduj-dev"
+homepage: "https://github.com/koduj-dev/docker-commander"
+license: MIT
+description: |
+  Monitor and control Docker from one self-contained binary.
+  Docker Commander is a single CGO-free Go binary with an embedded web UI for
+  containers, stacks, Compose projects, images, volumes, networks, logs, events,
+  alerts, multi-host, users/RBAC and an audit log.
+contents:
+  - src: ./dist-bin/dockercmd-linux-${ARCH}
+    dst: /usr/bin/dockercmd
+    file_info:
+      mode: 0755
+  - src: ./deploy/packaging/dockercmd.service
+    dst: /lib/systemd/system/dockercmd.service
+  - src: ./deploy/dockercmd.1
+    dst: /usr/share/man/man1/dockercmd.1
+  - src: ./deploy/commander.conf.example
+    dst: /etc/docker-commander/commander.conf
+    type: "config|noreplace"
+    file_info:
+      # May hold secrets; postinstall chgrp's it to the dockercmd group (0640).
+      mode: 0640
+scripts:
+  postinstall: ./deploy/packaging/postinstall.sh
+  preremove: ./deploy/packaging/preremove.sh
+  postremove: ./deploy/packaging/postremove.sh
+
+# docker.io / docker-ce are Debian package names with `|` alternation — invalid
+# on rpm, so only the .deb carries the weak dependency.
+overrides:
+  deb:
+    recommends:
+      - "docker.io | docker-ce"
