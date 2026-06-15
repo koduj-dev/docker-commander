@@ -16,7 +16,12 @@ All notable changes to Docker Commander are documented here. The format follows
   (amd64 + arm64) with `nfpm` and attached to the GitHub release. Each installs
   the binary, a hardened systemd unit, the man page and an
   `/etc/docker-commander/commander.conf` conffile, and sets up the `dockercmd`
-  service. (A signed APT repository is planned next.)
+  service.
+- **Signed APT repository** — `apt install dockercmd` from a GPG-signed repo
+  served on GitHub Pages (<https://koduj-dev.github.io/apt>). A release job adds
+  the new `.deb` (after verifying its provenance) to the
+  [koduj-dev/apt](https://github.com/koduj-dev/apt) archive with `reprepro` and
+  re-signs it (gated on the `APT_REPO_TOKEN` + `APT_GPG_PRIVATE_KEY` secrets).
 
 ## [1.4.1] — 2026-06-15
 
