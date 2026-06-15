@@ -72,17 +72,41 @@ jobs:
             --output-signature dist-bin/SHA256SUMS.sig \
             --output-certificate dist-bin/SHA256SUMS.pem
 
-      # Tamper-evident build provenance per binary. Verify with:
-      #   gh attestation verify <file> --repo koduj-dev/docker-commander
+      # Build the .deb / .rpm here, NOT in a later job: a GitHub release is
+      # immutable once created, so every asset must be uploaded in the single
+      # `gh release create` below.
+      - name: Build .deb and .rpm (amd64 + arm64)
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          ver="${VERSION#v}"
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.3
+          mkdir -p out
+          # Packaged unit points at /usr/bin (Debian policy keeps packages out of /usr/local).
+          sed 's|/usr/local/bin/dockercmd|/usr/bin/dockercmd|' deploy/dockercmd.service > deploy/packaging/dockercmd.service
+          for arch in amd64 arm64; do
+            rendered="$(mktemp)"
+            sed -e "s/\${ARCH}/${arch}/g" -e "s/\${VERSION}/${ver}/g" deploy/nfpm.yaml > "$rendered"
+            nfpm pkg -p deb -f "$rendered" -t out/
+            nfpm pkg -p rpm -f "$rendered" -t out/
+          done
+          ls -la out
+
+      # Tamper-evident build provenance for the binaries AND the packages.
+      # Verify with: gh attestation verify <file> --repo koduj-dev/docker-commander
       - name: Attest build provenance
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
-          subject-path: "dist-bin/dockercmd-*"
+          subject-path: |
+            dist-bin/dockercmd-*
+            out/*
 
+      # One upload: an immutable release cannot be appended to afterwards.
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" dist-bin/* --title "${GITHUB_REF_NAME}" --generate-notes
+        run: gh release create "${GITHUB_REF_NAME}" dist-bin/* out/* --title "${GITHUB_REF_NAME}" --generate-notes
 
   image:
     runs-on: ubuntu-latest
@@ -172,53 +196,8 @@ jobs:
           git commit -m "dockercmd ${ver}"
           git push
 
-  packages:
-    needs: release # reuse the release's already-built, signed linux binaries
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write # attach the .deb / .rpm to the release
-      id-token: write # build-provenance attestation for the packages
-      attestations: write
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
-        with:
-          go-version: "1.25"
-          cache: true
-
-      - name: Build .deb and .rpm (amd64 + arm64)
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          ver="${VERSION#v}"
-          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.3
-          mkdir -p dist-bin out
-          gh release download "$VERSION" -p 'dockercmd-linux-amd64' -p 'dockercmd-linux-arm64' -p SHA256SUMS -D dist-bin
-          # Verify the binaries against the signed checksums before packaging them.
-          (cd dist-bin && sha256sum -c SHA256SUMS --ignore-missing)
-          test -f dist-bin/dockercmd-linux-amd64 && test -f dist-bin/dockercmd-linux-arm64
-          # Packaged unit points at /usr/bin (Debian policy keeps packages out of /usr/local).
-          sed 's|/usr/local/bin/dockercmd|/usr/bin/dockercmd|' deploy/dockercmd.service > deploy/packaging/dockercmd.service
-          for arch in amd64 arm64; do
-            rendered="$(mktemp)"
-            sed -e "s/\${ARCH}/${arch}/g" -e "s/\${VERSION}/${ver}/g" deploy/nfpm.yaml > "$rendered"
-            nfpm pkg -p deb -f "$rendered" -t out/
-            nfpm pkg -p rpm -f "$rendered" -t out/
-          done
-          ls -la out
-          gh release upload "$VERSION" out/* --clobber
-
-      # Tamper-evident provenance for the packages (verify with
-      # `gh attestation verify <pkg> --repo koduj-dev/docker-commander`).
-      - name: Attest package provenance
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
-        with:
-          subject-path: "out/*"
-
   apt:
-    needs: packages # the .deb must be published (and attested) first
+    needs: release # the .deb are built + published in the release job above
     runs-on: ubuntu-latest
     permissions:
       contents: read # download release assets + verify attestations
