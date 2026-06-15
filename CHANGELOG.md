@@ -4,6 +4,18 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [1.4.3] — 2026-06-15
+
+### Fixed
+- **Release pipeline now actually publishes the `.deb`/`.rpm` packages and the
+  APT repository.** In v1.4.2 these were lost: the packaging/apt jobs tried to
+  add assets to an already-created **immutable** release and hit
+  `422 Cannot upload assets to an immutable release`, which failed packaging and
+  skipped the apt publish. The packages are now built in the `release` job and
+  uploaded in the single `gh release create`, and `apt` publishes from the
+  finished release. (Binaries, signatures, the container image and the Homebrew
+  tap were unaffected in v1.4.2.)
+
 ## [1.4.2] — 2026-06-15
 
 ### Added
@@ -368,6 +380,7 @@ Initial release: a single CGO-free Go binary with an embedded React UI.
   per-section permissions / read-only, feature flags, audit log, optional LDAP;
   secrets encrypted at rest.
 
+[1.4.3]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.4.3
 [1.4.2]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.4.2
 [1.4.1]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.4.1
 [1.4.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.4.0
