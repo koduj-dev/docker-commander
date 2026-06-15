@@ -172,7 +172,7 @@ The container image is signed and carries SLSA provenance + an SBOM as well:
 
 ```bash
 # verify the exact digest you'll run (copy it from the release notes or
-# `docker buildx imagetools inspect ghcr.io/koduj-dev/docker-commander:1.4.0`):
+# `docker buildx imagetools inspect ghcr.io/koduj-dev/docker-commander:latest`):
 IMAGE=ghcr.io/koduj-dev/docker-commander@sha256:<digest>
 cosign verify "$IMAGE" \
   --certificate-identity-regexp '^https://github\.com/koduj-dev/docker-commander/\.github/workflows/release\.yml@refs/tags/v' \
