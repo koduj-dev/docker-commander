@@ -21,8 +21,6 @@ description: |
   Docker Commander is a single CGO-free Go binary with an embedded web UI for
   containers, stacks, Compose projects, images, volumes, networks, logs, events,
   alerts, multi-host, users/RBAC and an audit log.
-recommends:
-  - "docker.io | docker-ce"
 contents:
   - src: ./dist-bin/dockercmd-linux-${ARCH}
     dst: /usr/bin/dockercmd
@@ -35,7 +33,17 @@ contents:
   - src: ./deploy/commander.conf.example
     dst: /etc/docker-commander/commander.conf
     type: "config|noreplace"
+    file_info:
+      # May hold secrets; postinstall chgrp's it to the dockercmd group (0640).
+      mode: 0640
 scripts:
   postinstall: ./deploy/packaging/postinstall.sh
   preremove: ./deploy/packaging/preremove.sh
   postremove: ./deploy/packaging/postremove.sh
+
+# docker.io / docker-ce are Debian package names with `|` alternation — invalid
+# on rpm, so only the .deb carries the weak dependency.
+overrides:
+  deb:
+    recommends:
+      - "docker.io | docker-ce"

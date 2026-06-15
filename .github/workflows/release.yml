@@ -165,10 +165,12 @@ jobs:
           git push
 
   packages:
-    needs: release # reuse the release's already-built linux binaries
+    needs: release # reuse the release's already-built, signed linux binaries
     runs-on: ubuntu-latest
     permissions:
       contents: write # attach the .deb / .rpm to the release
+      id-token: write # build-provenance attestation for the packages
+      attestations: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
@@ -183,9 +185,12 @@ jobs:
         run: |
           set -euo pipefail
           ver="${VERSION#v}"
-          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.3
           mkdir -p dist-bin out
-          gh release download "$VERSION" -p 'dockercmd-linux-amd64' -p 'dockercmd-linux-arm64' -D dist-bin
+          gh release download "$VERSION" -p 'dockercmd-linux-amd64' -p 'dockercmd-linux-arm64' -p SHA256SUMS -D dist-bin
+          # Verify the binaries against the signed checksums before packaging them.
+          (cd dist-bin && sha256sum -c SHA256SUMS --ignore-missing)
+          test -f dist-bin/dockercmd-linux-amd64 && test -f dist-bin/dockercmd-linux-arm64
           # Packaged unit points at /usr/bin (Debian policy keeps packages out of /usr/local).
           sed 's|/usr/local/bin/dockercmd|/usr/bin/dockercmd|' deploy/dockercmd.service > deploy/packaging/dockercmd.service
           for arch in amd64 arm64; do
@@ -196,3 +201,10 @@ jobs:
           done
           ls -la out
           gh release upload "$VERSION" out/* --clobber
+
+      # Tamper-evident provenance for the packages (verify with
+      # `gh attestation verify <pkg> --repo koduj-dev/docker-commander`).
+      - name: Attest package provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: "out/*"
