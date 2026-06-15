@@ -48,6 +48,14 @@ echo "==> Installing $BIN_DST (may prompt for sudo to write /usr/local/bin)"
 sudo install -m755 "$BIN_SRC" "$BIN_DST"
 mkdir -p "$DATA_DIR" "$(dirname "$PLIST")"
 
+# --- man page ----------------------------------------------------------------
+MAN_DIR=/usr/local/share/man/man1
+if [[ -f "$SCRIPT_DIR/dockercmd.1" ]]; then
+  echo "==> Installing man page $MAN_DIR/dockercmd.1  (man dockercmd)"
+  sudo install -d "$MAN_DIR"
+  sudo install -m644 "$SCRIPT_DIR/dockercmd.1" "$MAN_DIR/dockercmd.1"
+fi
+
 # --- write the LaunchAgent plist --------------------------------------------
 # XML-escape every value interpolated into the plist (parity with the Go
 # installer): a home dir containing '&' or '<' would otherwise produce a plist

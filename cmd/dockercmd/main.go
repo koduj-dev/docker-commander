@@ -8,6 +8,8 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"errors"
+	"flag"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
@@ -77,8 +79,59 @@ func serviceAction() string {
 	return ""
 }
 
+// wantsVersion reports whether the user asked for the version and exit, via
+// `--version`, `-version`, or a bare `version` subcommand. Like the other
+// standalone actions it's handled before the flag set parses.
+func wantsVersion() bool {
+	for _, a := range os.Args[1:] {
+		if a == "--" {
+			break
+		}
+		if a == "-version" || a == "--version" || a == "version" {
+			return true
+		}
+	}
+	return false
+}
+
+// usage prints the full help. The standalone actions (--version, --self-upgrade,
+// the --*-service trio) are intercepted before the flag set parses, so they
+// aren't flags and won't show up in flag.PrintDefaults() — they're listed here
+// by hand. Set as flag.Usage so `-h`/`--help` print this and exit 0.
+func usage() {
+	out := flag.CommandLine.Output()
+	fmt.Fprintf(out, `Docker Commander %s — monitor and control Docker from one self-contained binary.
+
+Usage:
+  dockercmd [options]          start the server (default)
+  dockercmd <action>           run a standalone action and exit
+
+Standalone actions:
+  --version                    print the version and exit
+  --self-upgrade [--check]     upgrade to the latest GitHub release (--check only reports)
+  --install-service            install as a systemd (Linux) / launchd (macOS) service
+  --uninstall-service          remove the service
+  --service-status             show the service status
+
+Options:
+`, version)
+	flag.PrintDefaults()
+	fmt.Fprint(out, `
+Most options also have a DC_* environment variable and config-file key; see
+docs/deployment.md, or `+"`man dockercmd`"+` after --install-service.
+`)
+}
+
 func run() error {
+	// -h/--help prints the full help (with the standalone actions) on stdout.
+	flag.CommandLine.SetOutput(os.Stdout)
+	flag.Usage = usage
+
 	// Standalone CLI actions run instead of starting the server.
+	if wantsVersion() {
+		fmt.Printf("dockercmd %s\n", version)
+		return nil
+	}
 	if up, checkOnly := wantsSelfUpgrade(); up {
 		return selfupdate.Run(context.Background(), version, os.Stdout, checkOnly)
 	}

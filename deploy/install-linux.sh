@@ -73,6 +73,14 @@ install -d -o "$SVC_USER" -g "$SVC_USER" -m750 "$DATA_DIR"
 echo "==> Installing unit $UNIT"
 install -m644 "$SCRIPT_DIR/dockercmd.service" "$UNIT"
 
+# --- man page ----------------------------------------------------------------
+MAN_DIR=/usr/local/share/man/man1
+if [[ -f "$SCRIPT_DIR/dockercmd.1" ]]; then
+  echo "==> Installing man page $MAN_DIR/dockercmd.1  (man dockercmd)"
+  install -d "$MAN_DIR"
+  install -m644 "$SCRIPT_DIR/dockercmd.1" "$MAN_DIR/dockercmd.1"
+fi
+
 echo "==> daemon-reload + enable --now"
 systemctl daemon-reload
 systemctl enable --now dockercmd

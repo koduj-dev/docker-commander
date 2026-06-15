@@ -14,6 +14,7 @@ import (
 	_ "embed"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -34,6 +35,16 @@ var systemdUnit string
 //go:embed agent.plist.tmpl
 var launchdPlistTmpl string
 
+// manPage is byte-identical to deploy/dockercmd.1 (enforced by
+// TestManPageMatchesDeployFile); the installer writes it so `man dockercmd`
+// works on the installed machine.
+//
+//go:embed dockercmd.1
+var manPage string
+
+// manFileName is the installed man page's filename (section 1).
+const manFileName = "dockercmd.1"
+
 const (
 	// binDest is where the installer places the binary so the service points at
 	// a stable path that survives moving/`--self-upgrade` of the source binary.
@@ -43,6 +54,10 @@ const (
 	linuxDataDir = "/var/lib/dockercmd"
 	unitPath     = "/etc/systemd/system/dockercmd.service"
 	launchdLabel = "dev.koduj.dockercmd"
+
+	// manDir is a standard man-page directory on the default manpath of both
+	// Linux and macOS, so `man dockercmd` resolves after install.
+	manDir = "/usr/local/share/man/man1"
 )
 
 // copyFile copies src to dst (creating parent dirs) via a temp file + rename, so
@@ -84,6 +99,30 @@ func runCmd(w io.Writer, name string, args ...string) error {
 	c.Stdout = w
 	c.Stderr = w
 	return c.Run()
+}
+
+// installManPage writes the embedded man page into man1Dir. It is best-effort:
+// a failure (e.g. the dir isn't writable) is reported but never fails the
+// install — the service works fine without `man dockercmd`.
+func installManPage(w io.Writer, man1Dir string) {
+	dst := filepath.Join(man1Dir, manFileName)
+	if err := os.MkdirAll(man1Dir, 0o755); err != nil {
+		fmt.Fprintf(w, "note: man page not installed (mkdir %s: %v)\n", man1Dir, err)
+		return
+	}
+	if err := os.WriteFile(dst, []byte(manPage), 0o644); err != nil {
+		fmt.Fprintf(w, "note: man page not installed (%v)\n", err)
+		return
+	}
+	fmt.Fprintf(w, "Wrote man page → %s (try: man dockercmd)\n", dst)
+}
+
+// removeManPage deletes the installed man page; a missing file is not an error.
+func removeManPage(w io.Writer, man1Dir string) {
+	dst := filepath.Join(man1Dir, manFileName)
+	if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
+		fmt.Fprintf(w, "note: could not remove man page %s: %v\n", dst, err)
+	}
 }
 
 // xmlEscape escapes a string for safe interpolation into the launchd plist
