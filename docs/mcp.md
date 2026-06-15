@@ -38,6 +38,8 @@ disabled` so you can confirm the state at a glance.
 
 ### Bearer API tokens (the MCP Access page)
 
+![MCP Access](images/mcp.png)
+
 Open **MCP Access** in the sidebar. Each user manages **their own** tokens:
 
 - Give it a **name**, an optional **expiry**, and optionally restrict it to a
@@ -56,6 +58,8 @@ token you mint is read-only too. Revoke a token anytime — it stops working
 immediately.
 
 ### Admin overview (the MCP Admin page)
+
+![MCP Admin](images/mcp_admin.png)
 
 Administrators get a second page, **MCP Admin** (under *System*), with a
 fleet-wide view: **every user's** active API tokens (each labelled with its

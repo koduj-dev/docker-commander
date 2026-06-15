@@ -1,0 +1,13 @@
+{
+  "name": "dc-screenshots",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Headless-browser screenshot generator for the Docker Commander user manual.",
+  "type": "module",
+  "scripts": {
+    "shoot": "node generate.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "^1.49.0"
+  }
+}

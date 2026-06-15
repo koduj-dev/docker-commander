@@ -23,6 +23,13 @@ DC_PORT=8470
 # DC_TLS_CERT=/etc/docker-commander/tls/cert.pem
 # DC_TLS_KEY=/etc/docker-commander/tls/key.pem
 
+# Behind a reverse proxy, list the proxy IPs/CIDRs whose X-Forwarded-For /
+# X-Real-IP may be trusted to recover the real client IP. Empty (default) trusts
+# none and uses the real TCP peer. The client IP keys rate limits, the loopback
+# 2FA exemption, and audit records, so set this so they work correctly — and
+# never set it to a range you don't control. See docs/deployment.md.
+# DC_TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12
+
 # Optional: remote MCP server for AI tools (Claude Code/Desktop, Cursor).
 # Off by default; serve it behind HTTPS. DC_MCP_PUBLIC_URL is the externally
 # reachable base URL and is required only for the OAuth flow (bearer API tokens,
@@ -33,10 +40,24 @@ DC_PORT=8470
 # Where the SQLite DB + signing/encryption keys live.
 DC_DATA_DIR=/var/lib/dockercmd
 
+# Periodic GitHub-release update check that backs the admin "update available"
+# banner. On by default; set to 0 on air-gapped hosts.
+# DC_UPDATE_CHECK=0
+
 # Session token lifetime is set with the -session-ttl flag (e.g. -session-ttl 8h).
 
 # Optional: protect the Prometheus /metrics endpoint with a bearer token.
 # DC_METRICS_TOKEN=change-me
+
+# How often the monitor samples every running container's stats (feeds the
+# charts, history and resource alert rules). Default 15s; raise it on hosts with
+# many containers where the sweep dominates CPU.
+# DC_METRICS_INTERVAL=15s
+
+# Optional: expose Go's net/http/pprof for CPU/allocation/goroutine profiling.
+# Served on a dedicated loopback listener (127.0.0.1:6060), never off-box. Off
+# by default; tunnel in over SSH to use it. See docs/deployment.md.
+# DC_PPROF=1
 
 # Optional: store metric history in Redis instead of an in-memory ring buffer.
 # DC_REDIS_ADDR=127.0.0.1:6379

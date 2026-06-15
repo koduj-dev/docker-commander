@@ -4,7 +4,7 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.4.0] — 2026-06-15
 
 ### Security
 - **Client IP is no longer spoofable** — the app previously used chi's
@@ -312,6 +312,7 @@ Initial release: a single CGO-free Go binary with an embedded React UI.
   per-section permissions / read-only, feature flags, audit log, optional LDAP;
   secrets encrypted at rest.
 
+[1.4.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.4.0
 [1.3.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.3.0
 [1.2.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.2.0
 [1.1.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.1.0

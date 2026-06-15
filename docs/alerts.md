@@ -2,6 +2,8 @@
 
 [← Manual index](README.md)
 
+![Alerts](images/alerts.png)
+
 The alert engine runs on the **server**, watching **all configured hosts** 24/7
 — it keeps working whether or not anyone has the UI open.
 
