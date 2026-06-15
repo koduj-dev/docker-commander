@@ -11,6 +11,14 @@ on:
   push:
     tags: ["v*"]
 
+# Serialize release runs: the homebrew and apt jobs push to single-writer state
+# in other repos (the tap formula, the reprepro archive), so two overlapping
+# releases (a quick second tag, or a re-run) could collide on push. Queue them
+# instead of cancelling so an in-flight publish always finishes.
+concurrency:
+  group: release-publish
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
