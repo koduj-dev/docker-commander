@@ -1,18 +1,19 @@
 name: Release
 
-# Tag a commit `vX.Y.Z` and push the tag to build cross-platform binaries and
-# publish them on the Releases page:
+# Tag a commit `vX.Y.Z` and push the tag to build cross-platform binaries, sign
+# them, publish the GitHub release, and push a multi-arch container image:
 #   git tag v1.0.0 && git push origin v1.0.0
 on:
   push:
     tags: ["v*"]
 
-permissions:
-  contents: write # create the GitHub release + upload assets
-
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub release + upload assets
+      id-token: write # keyless cosign signing of the checksums
+      attestations: write # build-provenance attestations for the binaries
     steps:
       - uses: actions/checkout@v6
 
@@ -32,7 +33,79 @@ jobs:
       - name: Build release binaries
         run: VERSION="${GITHUB_REF_NAME}" make release
 
+      # Source SBOM (SPDX) shipped alongside the binaries.
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: dist-bin/dockercmd.sbom.spdx.json
+
+      # Keyless-sign the checksums file (it covers every binary). Verify with:
+      #   cosign verify-blob --certificate SHA256SUMS.pem --signature SHA256SUMS.sig \
+      #     --certificate-identity-regexp '^https://github\.com/koduj-dev/docker-commander/\.github/workflows/release\.yml@refs/tags/' \
+      #     --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign SHA256SUMS
+        run: |
+          cosign sign-blob --yes dist-bin/SHA256SUMS \
+            --output-signature dist-bin/SHA256SUMS.sig \
+            --output-certificate dist-bin/SHA256SUMS.pem
+
+      # Tamper-evident build provenance per binary. Verify with:
+      #   gh attestation verify <file> --repo koduj-dev/docker-commander
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist-bin/dockercmd-*"
+
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "${GITHUB_REF_NAME}" dist-bin/* --title "${GITHUB_REF_NAME}" --generate-notes
+
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io
+      id-token: write # keyless cosign signing of the image
+      attestations: write # provenance attestation for the image
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          # `latest` is left to the default flavor (latest=auto): it's applied
+          # only to stable semver tags, so a pre-release like v1.5.0-rc1 won't
+          # advance `latest`.
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: VERSION=${{ github.ref_name }}
+          provenance: true # SLSA provenance attestation on the image
+          sbom: true # SBOM attestation on the image
+
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign the image
+        run: cosign sign --yes "ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}"

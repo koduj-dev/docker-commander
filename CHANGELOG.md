@@ -16,6 +16,19 @@ All notable changes to Docker Commander are documented here. The format follows
   also installs a **`man dockercmd`** page — embedded in the binary, kept in
   sync with the flags by a test, and written by both `--install-service` and the
   `install-linux.sh` / `install-macos.sh` scripts.
+- **Official container image** — a multi-arch (amd64/arm64) image published to
+  **`ghcr.io/koduj-dev/docker-commander`** on each release. Built from a
+  distroless base (no shell/package manager), it runs as a non-root user and
+  embeds the UI; mount the Docker socket and a `/data` volume to run it. See the
+  README Quick start.
+- **Signed releases, SBOM & build provenance** — release artifacts now carry a
+  keyless **cosign** signature over `SHA256SUMS` (`SHA256SUMS.sig` / `.pem`), an
+  SPDX **SBOM** (`dockercmd.sbom.spdx.json`), and per-binary SLSA build
+  **provenance** (`gh attestation verify …`); the container image gets provenance
+  and SBOM attestations and is cosign-signed too. Verification steps are in the
+  README.
+- **`go install` support** — documented `go install
+  github.com/koduj-dev/docker-commander/cmd/dockercmd@latest` as an install path.
 
 ## [1.4.0] — 2026-06-15
 
