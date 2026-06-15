@@ -121,8 +121,16 @@ sudo apt install ./dockercmd_1.4.1_amd64.deb     # Debian / Ubuntu
 sudo dnf install ./dockercmd-1.4.1.x86_64.rpm     # Fedora / RHEL
 ```
 
-A signed **APT repository** (so plain `apt install dockercmd` works from a source
-line) is on the way.
+Or add the **signed APT repository** (GPG-signed, served from GitHub Pages) and
+let `apt` keep it updated:
+
+```bash
+curl -fsSL https://koduj-dev.github.io/apt/key.asc \
+  | sudo tee /etc/apt/keyrings/dockercmd.asc >/dev/null
+echo "deb [signed-by=/etc/apt/keyrings/dockercmd.asc] https://koduj-dev.github.io/apt stable main" \
+  | sudo tee /etc/apt/sources.list.d/dockercmd.list >/dev/null
+sudo apt update && sudo apt install dockercmd
+```
 
 ### Installer scripts (alternative; Windows)
 Equivalent idempotent installers also live in [`deploy/`](../deploy/) — handy for
