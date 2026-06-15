@@ -30,6 +30,17 @@ All notable changes to Docker Commander are documented here. The format follows
 - **`go install` support** — documented `go install
   github.com/koduj-dev/docker-commander/cmd/dockercmd@latest` as an install path.
 
+### Security
+- **Supply-chain hardening of the release pipeline** — every GitHub Actions step
+  is now **pinned by commit SHA** (a moved tag can't slip code into a run that
+  holds `id-token` / `attestations` / `packages` write); the cosign signature
+  over `SHA256SUMS` also **covers the SBOM**; the container image is signed
+  **recursively** (`cosign sign -r`, so each per-platform manifest is signed, not
+  just the index); and the README's `docker run` is hardened (`--read-only`,
+  `--cap-drop ALL`, `--security-opt no-new-privileges`, localhost bind, digest
+  pinning) with an explicit warning that mounting the Docker socket grants
+  host-root-equivalent access.
+
 ## [1.4.0] — 2026-06-15
 
 ### Security
