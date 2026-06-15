@@ -59,6 +59,8 @@ yours to edit or remove.
 
 ## Managing templates
 
+![Templates](images/templates.png)
+
 The **Templates** page (sidebar, under the Projects permission) is where your
 presets and builder blocks live:
 

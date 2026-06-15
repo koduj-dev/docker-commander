@@ -2,6 +2,8 @@
 
 [← Manual index](README.md)
 
+![Registries](images/registries.png)
+
 Store credentials so Docker Commander can **pull private images** and **push**.
 
 ## Adding a registry

@@ -4,6 +4,8 @@
 
 _Admin only._ Manage accounts and what each can do.
 
+![Users & roles](images/users.png)
+
 ## Roles
 - **admin** — full access plus administration (users, settings, all hosts).
 - **user** — limited to the **sections** you grant, and optionally **read-only**
@@ -28,7 +30,8 @@ mutating calls). The menu also hides what you can't reach. Globally
 > `admin` if in the configured admin group) — then you grant their sections like
 > any other account. See [Settings → LDAP](settings.md).
 
-## Note on the WebSocket
-RBAC is enforced on the REST API. The shared live stats/logs WebSocket
-(`/api/ws`) is not section-gated today, so treat read access to live
-stats/logs as available to any signed-in user.
+## Note on the live stream
+RBAC is enforced on the REST API **and** on the shared live stats/logs
+WebSocket (`/api/ws`): each subscription is authorised per channel, and both the
+**stats** and **logs** streams require the **containers** section. A signed-in
+user without it can no longer stream a container's data.

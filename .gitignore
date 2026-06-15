@@ -6,6 +6,9 @@
 
 # Frontend
 web/node_modules/
+# Screenshot generator deps (see scripts/screenshots/README.md)
+scripts/screenshots/node_modules/
+scripts/screenshots/package-lock.json
 # tsc -b incremental cache: regenerated on every build, no value in tracking it.
 web/tsconfig.tsbuildinfo
 # NOTE: web/dist (the built SPA) is committed on purpose so that `go build`

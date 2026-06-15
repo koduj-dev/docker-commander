@@ -2,6 +2,8 @@
 
 [← Manual index](README.md)
 
+![Audit log](images/audit.png)
+
 A record of **privileged actions**: who did what, when, and from where.
 
 Each entry has the **user**, an **action** (e.g. `container.stop`, `image.pull`,
