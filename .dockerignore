@@ -1,0 +1,19 @@
+# Keep the build context small. The Go build embeds web/dist (committed), so the
+# UI does NOT need rebuilding here — but node_modules, build outputs, local data
+# and the docs images are never needed and would bloat the context.
+.git
+.github
+**/node_modules
+web/node_modules
+scripts/screenshots/node_modules
+dist-bin
+/dockercmd
+*.test
+*.out
+*.db
+*.db-wal
+*.db-shm
+docs/images
+.idea
+.vscode
+.DS_Store
