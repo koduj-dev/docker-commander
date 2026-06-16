@@ -16,7 +16,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -98,7 +97,7 @@ func WriteCertPair(dir string, certPEM, keyPEM []byte) (certPath, keyPath string
 	// Open the key with O_NOFOLLOW so a pre-planted symlink can't redirect the
 	// write (or a later chmod) onto another file. O_TRUNC|0600 also guarantees
 	// the key is never group/world-readable, even if a looser file existed.
-	f, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0o600)
+	f, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|oNoFollow, 0o600)
 	if err != nil {
 		return "", "", err
 	}

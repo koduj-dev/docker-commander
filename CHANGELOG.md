@@ -6,6 +6,12 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Windows build** — `internal/tlscert` used `syscall.O_NOFOLLOW`, which is
+  undefined on Windows and broke the cross-compiled Windows release binary. The
+  flag is now applied via a platform constant (`O_NOFOLLOW` on Unix, no-op on
+  Windows).
+
 ### Added
 - **Built-in self-signed TLS certs** — `dockercmd --make-certs [hostnames…]`
   generates an ECDSA self-signed certificate + key into `<data-dir>/tls/` (key
