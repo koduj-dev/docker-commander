@@ -25,6 +25,12 @@ All notable changes to Docker Commander are documented here. The format follows
   unknown webhook name leaves the rule without a destination and is reported.
   Imported rules are validated (type, severity, config shape and size) and always
   created anew — an import never overwrites or deletes existing rules.
+- **In-app one-tap update** — admins now get an "Update & restart" button on the
+  update-available banner. It downloads the latest release, verifies its SHA-256
+  (the same fail-closed check as `--self-upgrade`), atomically replaces the binary
+  and restarts the process in place (re-exec), then the UI reconnects on the new
+  version. Gated to admins and disabled with `DC_SELF_UPDATE=0` (the banner still
+  shows). Not offered on Windows (restart the service manually).
 
 ## [1.4.4] — 2026-06-15
 

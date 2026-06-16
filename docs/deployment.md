@@ -27,6 +27,7 @@ list. Key ones:
 | `DC_METRICS_INTERVAL` | `15s` | how often the monitor samples every running container's stats — **raise it** (e.g. `30s`/`60s`) on a host with many containers if the sampling sweep is costly |
 | `DC_TRUSTED_PROXIES` | (none) | comma-separated reverse-proxy IPs/CIDRs whose `X-Forwarded-For` is trusted for the real client IP — **set this when behind a proxy** (see below) |
 | `DC_UPDATE_CHECK` | `1` | check GitHub Releases for a newer version (admin banner); set `0` to disable the outbound call |
+| `DC_SELF_UPDATE` | `1` | allow admins to apply an update from the web UI (the one-tap "Update & restart"); set `0` to keep the banner but forbid web-triggered self-replacement |
 | `DC_PPROF` | (off) | serve Go's `net/http/pprof` on a **dedicated `127.0.0.1:6060`** listener for profiling; off in normal operation |
 
 > **Diagnosing high CPU.** Enable `DC_PPROF=1` and the app starts a profiling
@@ -267,7 +268,16 @@ Release** and shows an admin **"update available"** banner when a newer version
 exists. The check is cached and runs server-side; set `DC_UPDATE_CHECK=0` to
 disable the outbound call on air-gapped hosts.
 
-To upgrade the binary:
+**One-tap update (web UI).** When an update is available, an admin can click
+**Update & restart** on the banner. It downloads the release for your OS/arch,
+**verifies its SHA-256** (fail-closed — never installs unverified code),
+atomically replaces the binary and restarts the process **in place** (a re-exec,
+same PID — no supervisor required), then the UI reconnects on the new version.
+The binary must be writable by the service user. Disable web-triggered updates
+with `DC_SELF_UPDATE=0` (the banner still shows). Not offered on Windows —
+restart the service manually after updating.
+
+**From the CLI** (equivalent, for scripted or headless upgrades):
 
 ```bash
 dockercmd --self-upgrade           # download, verify SHA-256, replace in place
