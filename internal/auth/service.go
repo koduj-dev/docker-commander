@@ -225,21 +225,53 @@ func (s *Service) ldapLogin(ctx context.Context, existing *store.User, username,
 	if err != nil {
 		return nil, ErrInvalidCreds
 	}
+
+	// When group→section mappings are configured, LDAP is authoritative for a
+	// user's sections: derive them from current group membership.
+	groupMapped := len(cfg.GroupMappings) > 0
+	mappedSections := SectionsForGroups(cfg, res.Groups)
+
 	if existing != nil {
-		// Keep the admin-granted role/sections on subsequent logins.
+		// Re-sync sections from LDAP groups on each login so membership changes
+		// take effect. Role and read-only stay as set locally (admin is sticky to
+		// avoid lockout if the directory is briefly unreachable or misconfigured).
+		if groupMapped && !sameSections(existing.Sections, mappedSections) {
+			if err := s.store.UpdateUserAccess(ctx, existing.ID, existing.Role, existing.ReadOnly, mappedSections); err != nil {
+				return nil, err
+			}
+			existing.Sections = mappedSections
+		}
 		return existing, nil
 	}
 	role := "user"
 	if res.IsAdmin {
 		role = "admin"
 	}
-	u := &store.User{Username: res.Username, Role: role, AuthSource: "ldap"}
+	u := &store.User{Username: res.Username, Role: role, AuthSource: "ldap", Sections: mappedSections}
 	id, err := s.store.CreateUser(ctx, u)
 	if err != nil {
 		return nil, err
 	}
 	u.ID = id
 	return u, nil
+}
+
+// sameSections reports whether two section lists hold the same set (order
+// independent), so we skip a needless write when membership hasn't changed.
+func sameSections(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	set := make(map[string]bool, len(a))
+	for _, s := range a {
+		set[s] = true
+	}
+	for _, s := range b {
+		if !set[s] {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) issueSession(ctx context.Context, u *store.User) (*LoginResult, error) {

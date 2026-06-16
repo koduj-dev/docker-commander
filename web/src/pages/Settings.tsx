@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, ShieldOff, LayoutGrid, Network, Send } from "lucide-react";
+import { Loader2, ShieldOff, LayoutGrid, Network, Send, Plus, Trash2 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import type { LdapConfig } from "../lib/types";
@@ -79,25 +79,34 @@ export function Settings() {
           <button className="btn-primary" onClick={save} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Save settings</button>
         </div>
 
-        <LdapSettings />
+        <LdapSettings allSections={all} />
       </div>
     </>
   );
 }
 
 // LdapSettings configures optional LDAP / Active Directory authentication.
-function LdapSettings() {
+function LdapSettings({ allSections }: { allSections: string[] }) {
   const [cfg, setCfg] = useState<LdapConfig | null>(null);
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState<"" | "save" | "test">("");
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   const load = useCallback(() => {
-    api.ldap().then(setCfg).catch(() => setCfg({ enabled: false, url: "", startTls: false, bindDn: "", userBaseDn: "", userFilter: "(uid=%s)", adminGroupDn: "" }));
+    api.ldap().then(setCfg).catch(() => setCfg({ enabled: false, url: "", startTls: false, bindDn: "", userBaseDn: "", userFilter: "(uid=%s)", adminGroupDn: "", groupMappings: [] }));
   }, []);
   useEffect(() => load(), [load]);
   if (!cfg) return null;
   const patch = (p: Partial<LdapConfig>) => setCfg({ ...cfg, ...p });
+  const mappings = cfg.groupMappings ?? [];
+  const setMappings = (m: typeof mappings) => patch({ groupMappings: m });
+  const addMapping = () => setMappings([...mappings, { groupDn: "", sections: [] }]);
+  const updateMapping = (i: number, p: Partial<(typeof mappings)[number]>) => setMappings(mappings.map((m, j) => (j === i ? { ...m, ...p } : m)));
+  const removeMapping = (i: number) => setMappings(mappings.filter((_, j) => j !== i));
+  const toggleSection = (i: number, sec: string) => {
+    const cur = mappings[i].sections;
+    updateMapping(i, { sections: cur.includes(sec) ? cur.filter((s) => s !== sec) : [...cur, sec] });
+  };
 
   const run = async (kind: "save" | "test") => {
     setBusy(kind); setMsg(null);
@@ -123,6 +132,34 @@ function LdapSettings() {
         <div><label className="label">User filter (must contain %s)</label><input className="input font-mono" value={cfg.userFilter} onChange={(e) => patch({ userFilter: e.target.value })} placeholder="(uid=%s)" /></div>
         <div className="md:col-span-2"><label className="label">Admin group DN (optional — members become admins)</label><input className="input font-mono" value={cfg.adminGroupDn} onChange={(e) => patch({ adminGroupDn: e.target.value })} placeholder="cn=admins,ou=groups,dc=example,dc=com" /></div>
       </div>
+
+      <div className="space-y-2 border-t border-border pt-3">
+        <div className="flex items-center justify-between">
+          <label className="label mb-0">Group → section mappings (optional)</label>
+          <button className="btn-ghost px-2 py-1 text-xs" onClick={addMapping}><Plus className="h-3.5 w-3.5" /> Add mapping</button>
+        </div>
+        <p className="text-xs text-muted">Grant RBAC sections by LDAP group membership. When any mapping is set, group membership is authoritative for non-admin users' sections — re-synced on each login (manual section edits are overwritten). Admins (via the admin group) see everything regardless.</p>
+        {mappings.map((m, i) => (
+          <div key={i} className="rounded-md border border-border p-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <input className="input font-mono flex-1" value={m.groupDn} onChange={(e) => updateMapping(i, { groupDn: e.target.value })} placeholder="cn=devops,ou=groups,dc=example,dc=com" />
+              <button className="btn-ghost px-2 py-1 text-danger" title="Remove mapping" onClick={() => removeMapping(i)}><Trash2 className="h-4 w-4" /></button>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {allSections.map((sec) => (
+                <button
+                  key={sec}
+                  onClick={() => toggleSection(i, sec)}
+                  className={clsx("text-xs px-2 py-0.5 rounded-md border capitalize", m.sections.includes(sec) ? "bg-accent/20 border-accent/40 text-text" : "border-border text-muted")}
+                >
+                  {sectionLabel(sec)}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
       {msg && <p className={clsx("text-sm", msg.ok ? "text-ok" : "text-danger")}>{msg.text}</p>}
       <div className="flex justify-end gap-2">
         <button className="btn-ghost" onClick={() => run("test")} disabled={busy !== ""}>{busy === "test" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Test</button>
