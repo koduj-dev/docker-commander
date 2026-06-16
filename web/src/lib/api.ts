@@ -317,6 +317,7 @@ export const api = {
   createProject: (
     name: string,
     opts?: {
+      hostId?: number;
       template?: TemplateRef;
       instances?: { block: TemplateRef; key: string; merge: TemplateRef[] }[];
       fragments?: TemplateRef[];
@@ -332,7 +333,8 @@ export const api = {
     if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText);
     return data as { id: number; slug: string; files: number };
   },
-  renameProject: (id: number, name: string) => req<{ ok: boolean }>("PATCH", `/api/projects/${id}`, { name }),
+  renameProject: (id: number, name: string, hostId?: number) =>
+    req<{ ok: boolean }>("PATCH", `/api/projects/${id}`, { name, hostId }),
   deleteProject: (id: number, force = false) =>
     req<{ ok: boolean; error?: string; output?: string }>("DELETE", `/api/projects/${id}${force ? "?force=1" : ""}`),
   projectFiles: (id: number) => req<ProjectFile[]>("GET", `/api/projects/${id}/files`),

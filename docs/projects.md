@@ -129,12 +129,27 @@ On the compose file, two extra actions sit in the editor toolbar:
 
 ## Lifecycle
 - **Deploy / Redeploy** — runs `docker compose up -d` (with the selected
-  profiles). Redeploy re-applies after edits. The combined output is shown.
-- **Down** — `docker compose down` (available once the project is deployed).
-- **Rename** — changes the display name; the slug / compose project name stays
-  the same, so deployments remain stable.
+  profiles) **on the project's target host**. Redeploy re-applies after edits.
+  The combined output is shown.
+- **Down** — `docker compose down` on the target host (available once deployed).
+- **Settings** — changes the display name and the **target host**; the slug /
+  compose project name stays fixed, so deployments remain stable.
 - **Delete** — refuses while the project is deployed (offers to bring it down
   first); deleting the last file offers to delete the now-empty project.
+
+## Deploying to a remote host
+A project can target the **local daemon** (default) or any **remote host** you've
+added under [Hosts](hosts.md) — pick it when creating the project or via its
+**Settings**. Deploy/down/restart then run `docker compose` against that host's
+daemon (over TCP, with the host's TLS certs, or SSH).
+
+> **Bind mounts are local-only for now.** A remote daemon can't see files in
+> Docker Commander's own data dir, so a compose file that **bind-mounts a host
+> path** (e.g. `./config:/etc/app`) is **blocked on remote deploy** with a clear
+> message naming the offending mounts. Remote deploy works for **images and named
+> volumes** (and builds). Shipping project files to the remote host is a planned
+> follow-up; until then, use named volumes for remote stacks, or deploy
+> bind-mount projects to the local host.
 
 ## Tips
 - Sidecar files are referenced from the compose file relative to the project

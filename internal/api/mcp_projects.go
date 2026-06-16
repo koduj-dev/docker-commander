@@ -20,15 +20,24 @@ func (s *Server) mcpListProjects(ctx context.Context) ([]mcp.ManagedProject, err
 	if err != nil {
 		return nil, err
 	}
-	deployed := map[string]bool{}
-	if stacks, err := s.docker.ListStacks(ctx, 0); err == nil {
-		for _, st := range stacks {
-			deployed[st.Project] = true
+	// Deployed-state is per host: a project deployed to a remote host won't show
+	// up in the local daemon's stacks. Probe each distinct target host once.
+	deployed := map[int64]map[string]bool{}
+	for _, p := range projs {
+		if _, done := deployed[p.HostID]; done {
+			continue
 		}
+		m := map[string]bool{}
+		if stacks, err := s.docker.ListStacks(ctx, p.HostID); err == nil {
+			for _, st := range stacks {
+				m[st.Project] = true
+			}
+		}
+		deployed[p.HostID] = m
 	}
 	out := make([]mcp.ManagedProject, 0, len(projs))
 	for _, p := range projs {
-		out = append(out, mcp.ManagedProject{ID: p.ID, Name: p.Name, Slug: p.Slug, Deployed: deployed[p.Slug]})
+		out = append(out, mcp.ManagedProject{ID: p.ID, Name: p.Name, Slug: p.Slug, Deployed: deployed[p.HostID][p.Slug]})
 	}
 	return out, nil
 }
@@ -42,7 +51,18 @@ func (s *Server) mcpDeployProject(ctx context.Context, id int64, profiles []stri
 	if err != nil {
 		return "", err
 	}
-	return docker.ComposeUp(ctx, s.projectRoot(p.ID), p.Slug, profiles)
+	if p.HostID != 0 {
+		// MCP tokens carry no per-host authorization, so remote-host deploys go
+		// through the web UI (which enforces the "hosts" permission).
+		return "", errors.New("this project targets a remote host; deploy it from the web UI")
+	}
+	dir := s.projectRoot(p.ID)
+	env, cleanup, err := s.projectComposeEnv(ctx, p, dir, true)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+	return docker.ComposeUp(ctx, dir, p.Slug, profiles, env)
 }
 
 // mcpDownProject runs `docker compose down` for a managed project.
@@ -54,5 +74,14 @@ func (s *Server) mcpDownProject(ctx context.Context, id int64) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return docker.ComposeDown(ctx, s.projectRoot(p.ID), p.Slug)
+	if p.HostID != 0 {
+		return "", errors.New("this project targets a remote host; manage it from the web UI")
+	}
+	dir := s.projectRoot(p.ID)
+	env, cleanup, err := s.projectComposeEnv(ctx, p, dir, false)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+	return docker.ComposeDown(ctx, dir, p.Slug, env)
 }

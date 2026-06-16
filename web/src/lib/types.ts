@@ -329,6 +329,8 @@ export interface Project {
   name: string;
   slug: string;
   composeFile: string;
+  hostId: number;
+  hostName?: string; // resolved label; absent/"" = local daemon
   createdBy: string;
   createdAt: string;
   updatedAt: string;

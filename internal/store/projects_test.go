@@ -46,3 +46,34 @@ func TestProjectsCRUD(t *testing.T) {
 		t.Errorf("expected no projects after delete, got %d", len(list))
 	}
 }
+
+func TestProjectHostIDRoundTrip(t *testing.T) {
+	s, ctx := newStore(t)
+
+	// Defaults to local (0).
+	id, err := s.CreateProject(ctx, &Project{Name: "Local", Slug: "local-app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.ProjectByID(ctx, id); got.HostID != 0 {
+		t.Errorf("default host should be 0 (local), got %d", got.HostID)
+	}
+
+	// Created with an explicit host.
+	id2, err := s.CreateProject(ctx, &Project{Name: "Remote", Slug: "remote-app", HostID: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.ProjectByID(ctx, id2); got.HostID != 7 {
+		t.Errorf("host id not persisted on create: %d", got.HostID)
+	}
+
+	// Update retargets the host.
+	if err := s.UpdateProjectName(ctx, id, "Local renamed", 3); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.ProjectByID(ctx, id)
+	if got.Name != "Local renamed" || got.HostID != 3 {
+		t.Errorf("update name+host: %+v", got)
+	}
+}

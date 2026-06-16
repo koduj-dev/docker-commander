@@ -7,6 +7,14 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Remote Projects** — a managed Compose project can now target a **remote
+  Docker host** (added under Hosts), not just the local daemon. Pick the host at
+  create time or in the project's Settings; deploy/down/restart run
+  `docker compose` against that host (TCP+TLS or SSH). Host TLS certs are written
+  to a private, mode-0600 temp dir only for the duration of the command and wiped
+  afterwards. First cut supports **images and named volumes**: a compose file
+  that bind-mounts a local host path is blocked on remote deploy with a clear
+  message (the remote daemon can't see local files — file sync is a follow-up).
 - **Private-registry tag autocomplete** — image-tag suggestions in the editor and
   Create-container form now also list tags from a **configured private registry**
   (the Docker Registry v2 API, with the registry's stored credentials and a Bearer

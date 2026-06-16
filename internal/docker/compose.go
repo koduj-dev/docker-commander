@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -44,8 +45,10 @@ func composeProbe(ctx context.Context, bin string) bool {
 }
 
 // ComposeUp runs `docker compose -p <slug> [--profile p…] up -d` in dir and
-// returns the combined stdout+stderr (for display) alongside any error.
-func ComposeUp(ctx context.Context, dir, slug string, profiles []string) (string, error) {
+// returns the combined stdout+stderr (for display) alongside any error. env adds
+// to the process environment (e.g. DOCKER_HOST to target a remote daemon); nil
+// runs against the local daemon.
+func ComposeUp(ctx context.Context, dir, slug string, profiles []string, env []string) (string, error) {
 	args := make([]string, 0, len(profiles)*2+2)
 	for _, p := range profiles {
 		if p = strings.TrimSpace(p); p != "" {
@@ -53,13 +56,13 @@ func ComposeUp(ctx context.Context, dir, slug string, profiles []string) (string
 		}
 	}
 	args = append(args, "up", "-d")
-	return runCompose(ctx, dir, slug, args...)
+	return runCompose(ctx, dir, slug, env, args...)
 }
 
 // ComposeProfiles lists the profiles defined in the project's compose file
 // (`docker compose config --profiles`), one per line.
 func ComposeProfiles(ctx context.Context, dir, slug string) ([]string, error) {
-	out, err := runCompose(ctx, dir, slug, "config", "--profiles")
+	out, err := runCompose(ctx, dir, slug, nil, "config", "--profiles")
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +82,7 @@ func ComposeProfiles(ctx context.Context, dir, slug string) ([]string, error) {
 // prints nothing; on failure the combined output carries the error (often with
 // a file/line reference).
 func ComposeConfig(ctx context.Context, dir, slug string) (string, error) {
-	return runCompose(ctx, dir, slug, "config", "--quiet")
+	return runCompose(ctx, dir, slug, nil, "config", "--quiet")
 }
 
 // ComposeResolvedConfig returns the fully-resolved compose configuration
@@ -151,22 +154,25 @@ func ComposeWarnings(out string) []string {
 
 // ComposeDown runs `docker compose -p <slug> down` in dir (removes containers
 // and the project's networks; named volumes are kept, like the CLI default).
-func ComposeDown(ctx context.Context, dir, slug string) (string, error) {
-	return runCompose(ctx, dir, slug, "down")
+func ComposeDown(ctx context.Context, dir, slug string, env []string) (string, error) {
+	return runCompose(ctx, dir, slug, env, "down")
 }
 
 // ComposeRestart runs `docker compose -p <slug> restart` (restarts the running
 // containers without re-creating them).
-func ComposeRestart(ctx context.Context, dir, slug string) (string, error) {
-	return runCompose(ctx, dir, slug, "restart")
+func ComposeRestart(ctx context.Context, dir, slug string, env []string) (string, error) {
+	return runCompose(ctx, dir, slug, env, "restart")
 }
 
-func runCompose(ctx context.Context, dir, slug string, args ...string) (string, error) {
+func runCompose(ctx context.Context, dir, slug string, env []string, args ...string) (string, error) {
 	cctx, cancel := context.WithTimeout(ctx, composeTimeout)
 	defer cancel()
 	full := append([]string{"compose", "-p", slug}, args...)
 	cmd := exec.CommandContext(cctx, "docker", full...)
 	cmd.Dir = dir
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf

@@ -59,6 +59,13 @@ func ClaimsFrom(ctx context.Context) (*Claims, bool) {
 	return c, ok
 }
 
+// WithClaims returns a context carrying the given claims, the counterpart to
+// ClaimsFrom. RequireSession uses the same key after verifying a token; this is
+// exposed for composing authenticated contexts (and tests).
+func WithClaims(ctx context.Context, c *Claims) context.Context {
+	return context.WithValue(ctx, claimsKey, c)
+}
+
 // ParseSessionToken validates a raw token and ensures it is a session token.
 // Used by the WebSocket handler which authenticates before upgrading.
 func (m *Middleware) ParseSessionToken(raw string) (*Claims, error) {
