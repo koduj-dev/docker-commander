@@ -1,5 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import clsx from "clsx";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
   LayoutTemplate, Puzzle, Plus, Trash2, Eye, Pencil, FileText, Download, X, Save, Loader2,
   FilePlus, FolderPlus, Upload, FileBox, Folder, Copy, Anchor,
@@ -8,6 +7,7 @@ import { api, ApiError } from "../lib/api";
 import type { ProjectTemplateMeta, ServiceBlockMeta, ComposeFragmentMeta, ProjectFile } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
+import { Tabs } from "../components/Tabs";
 import { useDialogs } from "../components/Dialog";
 import { buildTree, TreeItem } from "../components/FileTree";
 import { bytes as fmtBytes } from "../lib/format";
@@ -79,13 +79,6 @@ export function Templates() {
   if (!templates || !blocks || !fragments)
     return (<><PageHeader title="Templates" /><div className="p-6 flex items-center gap-2 text-muted"><Spinner /> Loading…</div></>);
 
-  const tabBtn = (key: TplTab, icon: ReactNode, label: string, count: number) => (
-    <button onClick={() => setTab(key)}
-      className={clsx("flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border", tab === key ? "border-accent bg-accent/10 text-text" : "border-border text-muted hover:text-text")}>
-      {icon} {label} <span className="text-[10px] text-muted">{count}</span>
-    </button>
-  );
-
   const headerAction =
     tab === "blocks" ? <button className="btn-primary px-3 py-1.5 text-sm" onClick={() => setOpenBlock("new")}><Plus className="h-4 w-4" /> New service block</button>
     : tab === "definitions" ? <button className="btn-primary px-3 py-1.5 text-sm" onClick={() => setOpenFrag("new")}><Plus className="h-4 w-4" /> New definition</button>
@@ -95,11 +88,15 @@ export function Templates() {
     <>
       <PageHeader title="Templates" actions={headerAction} />
       <div className="p-6 space-y-4">
-        <div className="flex flex-wrap gap-2">
-          {tabBtn("presets", <LayoutTemplate className="h-4 w-4" />, "Presets", templates.length)}
-          {tabBtn("blocks", <Puzzle className="h-4 w-4" />, "Service blocks", blocks.length)}
-          {tabBtn("definitions", <Anchor className="h-4 w-4" />, "Shared definitions", fragments.length)}
-        </div>
+        <Tabs
+          active={tab}
+          onChange={setTab}
+          tabs={[
+            { key: "presets", label: "Presets", icon: <LayoutTemplate className="h-4 w-4" />, count: templates.length },
+            { key: "blocks", label: "Service blocks", icon: <Puzzle className="h-4 w-4" />, count: blocks.length },
+            { key: "definitions", label: "Shared definitions", icon: <Anchor className="h-4 w-4" />, count: fragments.length },
+          ]}
+        />
 
         {/* Presets ------------------------------------------------------------ */}
         {tab === "presets" && (

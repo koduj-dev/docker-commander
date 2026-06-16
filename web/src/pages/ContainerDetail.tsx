@@ -6,6 +6,7 @@ import type { ContainerDetail as Detail, DiffEntry, LogLine, PortMapping, PortPr
 import { live, ensureLive } from "../lib/live";
 import { shortId } from "../lib/format";
 import { StateBadge, Spinner } from "../components/ui";
+import { Tabs } from "../components/Tabs";
 import { StatsCharts } from "../components/StatsChart";
 import { MetricsHistory } from "../components/MetricsHistory";
 import { LogViewer } from "../components/LogViewer";
@@ -112,19 +113,19 @@ export function ContainerDetail() {
         <StatsCharts data={samples} />
         <MetricsHistory containerId={id} />
 
-        <div className="flex gap-1 border-b border-border">
-          {(["overview", "logs", "console", "processes", "files", "changes", "env"] as const).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`px-4 py-2 text-sm font-medium capitalize border-b-2 -mb-px transition-colors ${
-                tab === t ? "border-accent text-accent" : "border-transparent text-muted hover:text-text"
-              }`}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
+        <Tabs
+          active={tab}
+          onChange={setTab}
+          tabs={[
+            { key: "overview", label: "Overview" },
+            { key: "logs", label: "Logs" },
+            { key: "console", label: "Console" },
+            { key: "processes", label: "Processes" },
+            { key: "files", label: "Files" },
+            { key: "changes", label: "Changes" },
+            { key: "env", label: "Env" },
+          ]}
+        />
 
         {tab === "overview" && <Overview detail={detail} />}
         {tab === "logs" && <LogViewer lines={logs} />}

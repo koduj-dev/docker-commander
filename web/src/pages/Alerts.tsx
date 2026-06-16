@@ -6,6 +6,7 @@ import { triggerDownload } from "../components/LoadModal";
 import type { AlertEvent, AlertRule, AlertType, Severity, SmtpConfig, Webhook } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
+import { Tabs } from "../components/Tabs";
 import { useDialogs } from "../components/Dialog";
 
 type Tab = "feed" | "rules" | "webhooks" | "email";
@@ -16,20 +17,16 @@ export function Alerts() {
     <>
       <PageHeader title="Alerts" />
       <div className="p-6 space-y-4">
-        <div className="flex gap-1 border-b border-border">
-          {(["feed", "rules", "webhooks", "email"] as const).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={clsx(
-                "px-4 py-2 text-sm font-medium capitalize border-b-2 -mb-px transition-colors",
-                tab === t ? "border-accent text-accent" : "border-transparent text-muted hover:text-text"
-              )}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
+        <Tabs
+          active={tab}
+          onChange={setTab}
+          tabs={[
+            { key: "feed", label: "Feed" },
+            { key: "rules", label: "Rules" },
+            { key: "webhooks", label: "Webhooks" },
+            { key: "email", label: "Email" },
+          ]}
+        />
         {tab === "feed" && <Feed />}
         {tab === "rules" && <Rules />}
         {tab === "webhooks" && <Webhooks />}
