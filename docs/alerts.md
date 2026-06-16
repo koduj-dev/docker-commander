@@ -33,6 +33,18 @@ and optional **webhook** and **email** delivery.
 > *recover* (*info*) when it comes back. See
 > [Hosts → Reachability monitoring](hosts.md#reachability-monitoring).
 
+### Import / export
+**Export** downloads every rule as a portable JSON bundle (`alert-rules.json`)
+you can keep in version control or move to another instance. **Import** reads such
+a bundle and creates the rules it contains — it never overwrites or deletes
+existing rules, and every rule is re-validated on the way in.
+
+Webhooks are referenced **by name**, and a webhook's URL/headers/secrets are
+never part of the bundle. On import a rule is re-linked to a local webhook only
+if one with the same name already exists; otherwise it's imported without a
+destination and the skipped link is reported. Recreate any missing webhooks (in
+the **Webhooks** tab) before or after importing, then edit the rule to attach it.
+
 ## Webhooks
 Fire to any HTTP endpoint (Slack, Discord, Grafana, n8n…). The body is a Go
 template over `{{.RuleName}} {{.Severity}} {{.Type}} {{.Container}} {{.Message}}

@@ -12,6 +12,13 @@ All notable changes to Docker Commander are documented here. The format follows
   mode 0600), covering localhost / 127.0.0.1 / ::1 plus any hostnames or IPs you
   pass, and prints the `DC_TLS_CERT` / `DC_TLS_KEY` to serve HTTPS — no `openssl`
   needed. For public hosts use a real CA / Let's Encrypt.
+- **Alert rule import/export** — the Alerts → Rules tab can now export every rule
+  to a portable JSON bundle and import rules from one, so rule sets can be
+  version-controlled or moved between instances. Webhooks are referenced by name
+  (never by internal id, and their URLs/secrets are never included); on import an
+  unknown webhook name leaves the rule without a destination and is reported.
+  Imported rules are validated (type, severity, config shape and size) and always
+  created anew — an import never overwrites or deletes existing rules.
 
 ## [1.4.4] — 2026-06-15
 

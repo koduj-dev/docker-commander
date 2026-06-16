@@ -575,6 +575,9 @@ export const api = {
   toggleAlertRule: (id: number, enabled: boolean) =>
     req<{ ok: boolean }>("PATCH", `/api/alert-rules/${id}`, { enabled }),
   deleteAlertRule: (id: number) => req<{ ok: boolean }>("DELETE", `/api/alert-rules/${id}`),
+  exportAlertRulesUrl: () => "/api/alert-rules/export",
+  importAlertRules: (bundle: unknown) =>
+    req<{ imported: number; warnings: string[] }>("POST", "/api/alert-rules/import", bundle),
 
   alerts: () => req<{ events: AlertEvent[]; unread: number }>("GET", "/api/alerts"),
   ackAlert: (id: number) => req<{ ok: boolean }>("POST", `/api/alerts/${id}/ack`),
