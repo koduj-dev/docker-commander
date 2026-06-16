@@ -59,6 +59,11 @@ All notable changes to Docker Commander are documented here. The format follows
   version. Gated to admins and disabled with `DC_SELF_UPDATE=0` (the banner still
   shows). Not offered on Windows (restart the service manually).
 
+### Changed
+- **Consistent tab bars** — Templates now uses the same underline tab strip as
+  Alerts and the container detail view (a shared `Tabs` component), instead of
+  its own pill buttons. Icons and per-tab counts are preserved.
+
 ### Fixed
 - **Windows build** — `internal/tlscert` used `syscall.O_NOFOLLOW`, which is
   undefined on Windows and broke the cross-compiled Windows release binary. The
