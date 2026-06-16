@@ -4,7 +4,7 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.5.0] — 2026-06-16
 
 ### Added
 - **Image vulnerability scanning** — the Images page gains a **Scan** action that
@@ -455,6 +455,7 @@ Initial release: a single CGO-free Go binary with an embedded React UI.
   per-section permissions / read-only, feature flags, audit log, optional LDAP;
   secrets encrypted at rest.
 
+[1.5.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.5.0
 [1.4.4]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.4.4
 [1.4.3]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.4.3
 [1.4.2]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.4.2
