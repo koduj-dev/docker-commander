@@ -201,6 +201,13 @@ func parseCIDRs(raw string) ([]*net.IPNet, error) {
 	return out, nil
 }
 
+// ResolveDataDir returns the data directory for standalone CLI actions, which
+// run before Load parses flags: DC_DATA_DIR if set, else the OS default. The
+// `-data-dir` flag is only honoured in server mode.
+func ResolveDataDir() string {
+	return envOr("DC_DATA_DIR", defaultDataDir())
+}
+
 // defaultDataDir returns an OS-appropriate per-user config directory.
 func defaultDataDir() string {
 	if dir, err := os.UserConfigDir(); err == nil {

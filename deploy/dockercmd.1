@@ -25,6 +25,12 @@ server.
 .BR \-\-version ", " version
 Print the version and exit.
 .TP
+.BI \-\-make-certs " [host...]"
+Write a self-signed TLS certificate and key into
+.I <data-dir>/tls
+for serving HTTPS, covering localhost plus any extra hostnames/IPs given. The
+key is written mode 0600. For public hosts use a real CA / ACME instead.
+.TP
 .B \-\-self-upgrade " [" \fB\-\-check\fR ]
 Download, verify (SHA-256) and atomically replace the binary with the latest
 GitHub release. With
