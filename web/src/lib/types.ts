@@ -34,6 +34,8 @@ export interface UpdateStatus {
   publishedAt?: string;
   disabled?: boolean;
   error?: string;
+  /** True when the in-app one-tap "Update & restart" is offered (admin + allowed + restartable). */
+  selfUpdate?: boolean;
 }
 
 export interface LdapConfig {

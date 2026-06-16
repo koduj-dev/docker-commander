@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -94,7 +96,7 @@ func TestDownloadVerifyReplace(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tmp, sum, err := download(context.Background(), exe, srv.URL)
+	tmp, sum, err := download(context.Background(), exe, srv.URL, int64(len(payload)))
 	if err != nil {
 		t.Fatalf("download: %v", err)
 	}
@@ -120,5 +122,134 @@ func TestDownloadVerifyReplace(t *testing.T) {
 	}
 	if fi, err := os.Stat(exe); err == nil && runtime.GOOS != "windows" && fi.Mode().Perm() != 0o755 {
 		t.Errorf("exe mode = %o, want 0755 (permissions should be preserved)", fi.Mode().Perm())
+	}
+}
+
+// platformAsset is the release asset name for the running OS/arch.
+func platformAsset() string {
+	n := "dockercmd-" + runtime.GOOS + "-" + runtime.GOARCH
+	if runtime.GOOS == "windows" {
+		n += ".exe"
+	}
+	return n
+}
+
+// fakeReleaseServer mimics the GitHub Releases API: the "latest" endpoint plus
+// the asset download. advertisedDigest is what the release CLAIMS the asset's
+// SHA-256 is ("" = use the real one; "none" = omit it, leaving the release
+// unverifiable). It points apiBaseURL at itself for the duration of the test.
+func fakeReleaseServer(t *testing.T, tag string, binary []byte, advertisedDigest string) {
+	t.Helper()
+	asset := platformAsset()
+	sum := sha256.Sum256(binary)
+	realHex := hex.EncodeToString(sum[:])
+
+	var base string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if filepath.Base(r.URL.Path) == "download" {
+			_, _ = w.Write(binary)
+			return
+		}
+		a := map[string]any{"name": asset, "browser_download_url": base + "/download", "size": len(binary)}
+		switch advertisedDigest {
+		case "none":
+			// no digest field, no SHA256SUMS asset → unverifiable
+		case "":
+			a["digest"] = "sha256:" + realHex
+		default:
+			a["digest"] = advertisedDigest
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"tag_name": tag, "html_url": "https://example/r", "assets": []map[string]any{a},
+		})
+	}))
+	base = srv.URL
+	t.Cleanup(srv.Close)
+
+	prevBase, prevExe := apiBaseURL, osExecutable
+	apiBaseURL = srv.URL
+	t.Cleanup(func() { apiBaseURL, osExecutable = prevBase, prevExe })
+}
+
+// fakeExe points osExecutable at a temp file holding old, returning its path.
+func fakeExe(t *testing.T, old []byte) string {
+	t.Helper()
+	exe := filepath.Join(t.TempDir(), "dockercmd")
+	if err := os.WriteFile(exe, old, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	osExecutable = func() (string, error) { return exe, nil }
+	return exe
+}
+
+func TestApplyInstallsVerifiedRelease(t *testing.T) {
+	newBin := []byte("NEW-BINARY-v2")
+	fakeReleaseServer(t, "v2.0.0", newBin, "")
+	exe := fakeExe(t, []byte("OLD-v1"))
+
+	res, err := Apply(context.Background(), "1.0.0")
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if res.From != "1.0.0" || res.To != "2.0.0" {
+		t.Errorf("result = %+v, want 1.0.0 → 2.0.0", res)
+	}
+	if got, _ := os.ReadFile(exe); string(got) != string(newBin) {
+		t.Errorf("binary not replaced: %q", got)
+	}
+}
+
+func TestApplyUpToDate(t *testing.T) {
+	fakeReleaseServer(t, "v1.0.0", []byte("x"), "")
+	fakeExe(t, []byte("OLD"))
+	if _, err := Apply(context.Background(), "1.0.0"); !errors.Is(err, ErrUpToDate) {
+		t.Errorf("Apply on current version: err = %v, want ErrUpToDate", err)
+	}
+}
+
+// PENTEST: the release advertises a digest that doesn't match the downloaded
+// bytes (tampered/swapped asset). Apply MUST refuse and leave the binary as-is.
+func TestApplyRejectsTamperedBinary(t *testing.T) {
+	wrong := sha256.Sum256([]byte("not-what-gets-downloaded"))
+	fakeReleaseServer(t, "v2.0.0", []byte("MALICIOUS"), "sha256:"+hex.EncodeToString(wrong[:]))
+	exe := fakeExe(t, []byte("TRUSTED-ORIGINAL"))
+
+	if _, err := Apply(context.Background(), "1.0.0"); err == nil {
+		t.Fatal("Apply installed a binary whose checksum did not match")
+	}
+	if got, _ := os.ReadFile(exe); string(got) != "TRUSTED-ORIGINAL" {
+		t.Errorf("running binary overwritten despite checksum mismatch: %q", got)
+	}
+}
+
+// PENTEST: the download is bounded — an asset that streams far more than its
+// advertised size is rejected (disk-exhaustion guard) and the binary untouched.
+func TestDownloadRejectsOversizeAsset(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "dockercmd")
+	if err := os.WriteFile(exe, []byte("OLD"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(make([]byte, 4096)) // server sends far more than the advertised 16 bytes
+	}))
+	defer srv.Close()
+
+	if _, _, err := download(context.Background(), exe, srv.URL, 16); err == nil {
+		t.Error("download accepted an asset larger than the advertised size")
+	}
+}
+
+// PENTEST: a release with no digest and no SHA256SUMS is unverifiable; Apply
+// must fail closed and never overwrite the running binary.
+func TestApplyRejectsUnverifiableRelease(t *testing.T) {
+	fakeReleaseServer(t, "v2.0.0", []byte("UNVERIFIED"), "none")
+	exe := fakeExe(t, []byte("ORIGINAL"))
+
+	if _, err := Apply(context.Background(), "1.0.0"); err == nil {
+		t.Fatal("Apply installed an unverifiable release")
+	}
+	if got, _ := os.ReadFile(exe); string(got) != "ORIGINAL" {
+		t.Errorf("exe overwritten by unverifiable release: %q", got)
 	}
 }

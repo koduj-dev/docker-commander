@@ -36,6 +36,9 @@ type Server struct {
 	metricsToken string
 	webFS        fs.FS // built SPA assets, or nil in dev mode
 	update       *updateChecker
+	// onRestart, when set by main, gracefully stops the server and re-execs the
+	// (possibly just-updated) binary. nil when restart isn't supported.
+	onRestart func()
 
 	// mcpSigningKey signs MCP OAuth access tokens; lazily loaded by mountMCP.
 	mcpSigningKey []byte
@@ -48,9 +51,14 @@ func NewServer(cfg config.Config, st *store.Store, authSvc *auth.Service, mw *au
 	return &Server{
 		cfg: cfg, store: st, auth: authSvc, mw: mw, docker: dm, hub: hub,
 		monitor: mon, history: hist, metricsToken: cfg.MetricsToken, webFS: webFS,
-		update: newUpdateChecker(cfg.Version, cfg.UpdateCheck),
+		update: newUpdateChecker(cfg.Version, cfg.UpdateCheck, cfg.SelfUpdate),
 	}
 }
+
+// OnRestart registers the hook that gracefully restarts the process (re-exec of
+// the on-disk binary). main wires this only on platforms/run-modes that support
+// it; without it the in-app restart endpoint returns 501.
+func (s *Server) OnRestart(fn func()) { s.onRestart = fn }
 
 // Handler builds the root http.Handler with all routes mounted.
 func (s *Server) Handler() http.Handler {
@@ -107,7 +115,9 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/ldap", s.handleGetLDAP)
 			r.Put("/ldap", s.handleSetLDAP)
 			r.Post("/ldap/test", s.handleTestLDAP)
-			r.Get("/update", s.handleUpdateStatus) // admin-only (section "__admin")
+			r.Get("/update", s.handleUpdateStatus)     // admin-only (section "__admin")
+			r.Post("/update", s.handleApplyUpdate)     // admin-only: download + verify + swap
+			r.Post("/update/restart", s.handleRestart) // admin-only: re-exec the new binary
 
 			r.Get("/hosts", s.handleListHosts)
 			r.Post("/hosts", s.handleCreateHost)

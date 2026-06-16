@@ -29,6 +29,11 @@ type Config struct {
 	// the admin "update available" banner. On by default; set DC_UPDATE_CHECK=0
 	// (or -update-check=false) to disable outbound calls on air-gapped hosts.
 	UpdateCheck bool
+	// SelfUpdate allows an admin to download and apply an update from the web UI
+	// (the one-tap "Update & restart"). On by default; set DC_SELF_UPDATE=0 to
+	// keep the "update available" banner but forbid web-triggered self-replacement
+	// of the binary (e.g. when updates are managed by your packaging/orchestrator).
+	SelfUpdate bool
 	// MetricsToken, when set, requires a bearer token to scrape /metrics.
 	// Empty means the endpoint is open (fine for loopback-only use).
 	MetricsToken string
@@ -120,6 +125,7 @@ func Load() (Config, error) {
 	ttl := flag.Duration("session-ttl", 12*time.Hour, "session token lifetime")
 	flag.BoolVar(&c.Dev, "dev", lookup("DC_DEV") == "1", "enable development mode (permissive CORS)")
 	flag.BoolVar(&c.UpdateCheck, "update-check", lookup("DC_UPDATE_CHECK") != "0", "check GitHub for newer releases (set DC_UPDATE_CHECK=0 to disable)")
+	flag.BoolVar(&c.SelfUpdate, "self-update", lookup("DC_SELF_UPDATE") != "0", "allow admins to apply updates from the web UI (set DC_SELF_UPDATE=0 to disable)")
 	flag.StringVar(&c.MetricsToken, "metrics-token", lookup("DC_METRICS_TOKEN"), "require this bearer token to scrape /metrics (empty = open)")
 	flag.StringVar(&c.TLSCert, "tls-cert", lookup("DC_TLS_CERT"), "PEM TLS certificate path (enables HTTPS together with -tls-key)")
 	flag.StringVar(&c.TLSKey, "tls-key", lookup("DC_TLS_KEY"), "PEM TLS private-key path")

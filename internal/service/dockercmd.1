@@ -91,6 +91,10 @@ Enable development mode (permissive CORS).
 Check GitHub for newer releases (default true; disable with
 .BR DC_UPDATE_CHECK=0 ).
 .TP
+.B \-self-update
+Allow an admin to apply an update from the web UI (default true; disable with
+.BR DC_SELF_UPDATE=0 ).
+.TP
 .BI \-metrics-token " token"
 Require this bearer token to scrape
 .BR /metrics " (empty = open)."
@@ -143,6 +147,7 @@ variables mirror the options above:
 .BR DC_DATA_DIR ,
 .BR DC_DEV ,
 .BR DC_UPDATE_CHECK ,
+.BR DC_SELF_UPDATE ,
 .BR DC_METRICS_TOKEN ,
 .BR DC_TLS_CERT ,
 .BR DC_TLS_KEY ,

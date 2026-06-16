@@ -1,12 +1,13 @@
 import { Link, NavLink, useNavigate, useLocation, useNavigationType } from "react-router-dom";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Activity, Bell, Blocks, Boxes, Container, Database, FolderGit2, KeyRound, Layers, LayoutDashboard, LayoutTemplate, Network, Plug, ScrollText, Server, Settings, Share2, Terminal, Users, LogOut, ArrowUpCircle, ExternalLink, X } from "lucide-react";
+import { Activity, Bell, Blocks, Boxes, Container, Database, FolderGit2, KeyRound, Layers, LayoutDashboard, LayoutTemplate, Network, Plug, ScrollText, Server, Settings, Share2, Terminal, Users, LogOut, ArrowUpCircle, ExternalLink, X, Loader2 } from "lucide-react";
 import clsx from "clsx";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../lib/api";
 import type { Host, UpdateStatus } from "../lib/types";
 import { getHostId, setHostId } from "../lib/host";
 import { getPref, setPref } from "../lib/prefs";
+import { useDialogs } from "../components/Dialog";
 
 // Navigation grouped into sections so the sidebar stays scannable as the
 // feature set grows.
@@ -277,27 +278,90 @@ export function Shell({ children }: { children: ReactNode }) {
 function UpdateBanner({ admin }: { admin?: boolean }) {
   const [st, setSt] = useState<UpdateStatus | null>(null);
   const [dismissed, setDismissed] = useState<string>(() => getPref("update.dismissed", ""));
+  const [phase, setPhase] = useState<"" | "updating" | "restarting" | "waiting">("");
+  const [err, setErr] = useState("");
+  const dialogs = useDialogs();
   useEffect(() => {
     if (!admin) return;
     api.updateStatus().then(setSt).catch(() => {});
   }, [admin]);
-  if (!admin || !st?.updateAvailable || !st.latest || dismissed === st.latest) return null;
+  if (!admin || !st?.updateAvailable || !st.latest || (dismissed === st.latest && !phase)) return null;
   const dismiss = () => { setPref("update.dismissed", st.latest!); setDismissed(st.latest!); };
+
+  // oneTap: download + verify + swap the binary, then restart and wait for the
+  // server to come back on the new version (re-exec drops the connection briefly).
+  const oneTap = async () => {
+    const ok = await dialogs.confirm({
+      title: "Update & restart",
+      message: <>Download <code className="font-mono">{st.latest}</code>, verify its checksum, replace the binary and restart the server. The UI will disconnect for a few seconds. Continue?</>,
+      confirmLabel: "Update & restart",
+      danger: true,
+    });
+    if (!ok) return;
+    setErr("");
+    try {
+      setPhase("updating");
+      await api.applyUpdate();
+      setPhase("restarting");
+      await api.restartServer();
+      setPhase("waiting");
+      await waitForRestart(st.latest!);
+      window.location.reload();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "update failed");
+      setPhase("");
+    }
+  };
+
+  const busy = phase !== "";
   return (
     <div className="flex items-center gap-3 px-6 py-2.5 bg-accent/10 border-b border-accent/30 text-sm">
       <ArrowUpCircle className="h-4 w-4 text-accent shrink-0" />
       <span>
         Docker Commander <span className="font-semibold">{st.latest}</span> is available
         <span className="text-muted"> — you're on {st.current}</span>
+        {err && <span className="text-danger"> — {err}</span>}
       </span>
-      <a href={st.url} target="_blank" rel="noreferrer" className="btn-ghost px-2 py-1 text-xs ml-auto inline-flex items-center gap-1">
-        View release <ExternalLink className="h-3 w-3" />
-      </a>
-      <button className="btn-ghost px-1.5 py-1" title="Dismiss until the next release" onClick={dismiss}>
-        <X className="h-3.5 w-3.5" />
-      </button>
+      <div className="flex items-center gap-2 ml-auto">
+        {phase === "updating" && <span className="text-muted inline-flex items-center gap-1"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Downloading &amp; verifying…</span>}
+        {(phase === "restarting" || phase === "waiting") && <span className="text-muted inline-flex items-center gap-1"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Restarting…</span>}
+        {!busy && (
+          <a href={st.url} target="_blank" rel="noreferrer" className="btn-ghost px-2 py-1 text-xs inline-flex items-center gap-1">
+            View release <ExternalLink className="h-3 w-3" />
+          </a>
+        )}
+        {!busy && st.selfUpdate && (
+          <button className="btn-primary px-2 py-1 text-xs inline-flex items-center gap-1" onClick={oneTap}>
+            <ArrowUpCircle className="h-3.5 w-3.5" /> Update &amp; restart
+          </button>
+        )}
+        {!busy && (
+          <button className="btn-ghost px-1.5 py-1" title="Dismiss until the next release" onClick={dismiss}>
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
     </div>
   );
+}
+
+// waitForRestart polls /api/version until the server answers on the new version
+// (the re-exec drops the connection, so early polls fail — that's expected).
+// Gives up after ~90s, letting the caller surface a manual-reload hint.
+async function waitForRestart(target: string): Promise<void> {
+  const deadline = Date.now() + 90_000;
+  // small initial delay so we don't catch the old process mid-shutdown
+  await new Promise((r) => setTimeout(r, 1500));
+  while (Date.now() < deadline) {
+    try {
+      const { version } = await api.version();
+      if (version === target || version.replace(/^v/, "") === target.replace(/^v/, "")) return;
+    } catch {
+      // server still down — keep waiting
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  throw new Error("the server is taking longer than expected — reload the page manually");
 }
 
 // iconForPath finds the nav icon for the current route (exact, else the longest

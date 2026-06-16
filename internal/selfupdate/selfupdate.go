@@ -32,6 +32,25 @@ const (
 	httpTimeout = 5 * time.Minute
 )
 
+// Overridable for tests. apiBaseURL is the GitHub API host; osExecutable
+// resolves the running binary's path (so tests can point the swap at a temp
+// file instead of the test binary).
+var (
+	apiBaseURL   = "https://api.github.com"
+	osExecutable = os.Executable
+)
+
+// ErrUpToDate is returned by Apply when the running version is already current.
+var ErrUpToDate = errors.New("already up to date")
+
+// Result describes a completed upgrade.
+type Result struct {
+	From   string `json:"from"`   // version before the upgrade
+	To     string `json:"to"`     // version now staged on disk
+	Asset  string `json:"asset"`  // release asset that was installed
+	SHA256 string `json:"sha256"` // verified checksum of the new binary
+}
+
 type ghAsset struct {
 	Name   string `json:"name"`
 	URL    string `json:"browser_download_url"`
@@ -47,7 +66,7 @@ type ghRelease struct {
 
 // Run checks for a newer release and, unless checkOnly is set, downloads and
 // installs it. Progress is written to w; it is a no-op (with a message) when the
-// running version is already current.
+// running version is already current. This is the CLI (`--self-upgrade`) entry.
 func Run(ctx context.Context, current string, w io.Writer, checkOnly bool) error {
 	ctx, cancel := context.WithTimeout(ctx, httpTimeout)
 	defer cancel()
@@ -75,43 +94,72 @@ func Run(ctx context.Context, current string, w io.Writer, checkOnly bool) error
 		return nil
 	}
 
-	asset, err := assetForPlatform(rel)
+	res, err := installRelease(ctx, current, rel, w)
 	if err != nil {
 		return err
 	}
+	fmt.Fprintf(w, "Upgraded %s → %s. Restart Docker Commander to run the new version.\n", res.From, res.To)
+	return nil
+}
 
-	exe, err := os.Executable()
+// Apply downloads, verifies and installs the latest release, returning a Result
+// describing the upgrade. It is the programmatic (in-app) entry point and writes
+// no progress output. ErrUpToDate is returned when nothing newer exists.
+func Apply(ctx context.Context, current string) (Result, error) {
+	ctx, cancel := context.WithTimeout(ctx, httpTimeout)
+	defer cancel()
+
+	rel, err := latestRelease(ctx)
 	if err != nil {
-		return err
+		return Result{}, err
+	}
+	if !version.Less(current, rel.TagName) {
+		return Result{}, ErrUpToDate
+	}
+	return installRelease(ctx, current, rel, io.Discard)
+}
+
+// installRelease performs the verified download-and-swap for an already-fetched
+// release: pick the asset for this platform, resolve the expected checksum
+// *before* downloading (fail closed without one), verify the download, then
+// atomically replace the running binary. Progress is written to w (io.Discard
+// for the in-app path).
+func installRelease(ctx context.Context, current string, rel *ghRelease, w io.Writer) (Result, error) {
+	latest := strings.TrimPrefix(rel.TagName, "v")
+	asset, err := assetForPlatform(rel)
+	if err != nil {
+		return Result{}, err
+	}
+
+	exe, err := osExecutable()
+	if err != nil {
+		return Result{}, err
 	}
 	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = resolved
 	}
 
-	// Resolve the expected checksum *before* downloading, so we fail closed if no
-	// verifiable digest exists.
 	want, err := expectedSHA256(ctx, rel, asset)
 	if err != nil {
-		return err
+		return Result{}, err
 	}
 
 	fmt.Fprintf(w, "Downloading %s (%.1f MiB)…\n", asset.Name, float64(asset.Size)/(1<<20))
-	tmp, sum, err := download(ctx, exe, asset.URL)
+	tmp, sum, err := download(ctx, exe, asset.URL, asset.Size)
 	if err != nil {
-		return err
+		return Result{}, err
 	}
 	defer os.Remove(tmp) // harmless once the rename has consumed tmp
 
 	if err := verifyDigest("sha256:"+want, sum); err != nil {
-		return err
+		return Result{}, err
 	}
 	fmt.Fprintf(w, "Checksum OK (sha256:%s)\n", sum)
 
 	if err := replaceExecutable(exe, tmp); err != nil {
-		return err
+		return Result{}, err
 	}
-	fmt.Fprintf(w, "Upgraded %s → %s. Restart Docker Commander to run the new version.\n", current, latest)
-	return nil
+	return Result{From: current, To: latest, Asset: asset.Name, SHA256: sum}, nil
 }
 
 // assetForPlatform returns the release asset matching this binary's OS/arch.
@@ -130,7 +178,7 @@ func assetForPlatform(rel *ghRelease) (*ghAsset, error) {
 
 func latestRelease(ctx context.Context) (*ghRelease, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		"https://api.github.com/repos/"+repo+"/releases/latest", nil)
+		apiBaseURL+"/repos/"+repo+"/releases/latest", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -154,10 +202,19 @@ func latestRelease(ctx context.Context) (*ghRelease, error) {
 	return &rel, nil
 }
 
+// maxAssetBytes caps a download when the release doesn't advertise a size, so a
+// rogue/oversized asset can't fill the disk before the checksum is even checked.
+const maxAssetBytes = 512 << 20 // 512 MiB
+
 // download streams url into a temp file in the same directory as exe (so the
 // later rename stays on one filesystem) and returns the temp path plus the
-// hex-encoded SHA-256 of the downloaded bytes.
-func download(ctx context.Context, exe, url string) (path, sum string, err error) {
+// hex-encoded SHA-256 of the downloaded bytes. The body is bounded to limit
+// bytes (the advertised asset size, or maxAssetBytes when unknown) so a rogue or
+// MITM'd response can't exhaust the disk before verification.
+func download(ctx context.Context, exe, url string, limit int64) (path, sum string, err error) {
+	if limit <= 0 {
+		limit = maxAssetBytes
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", "", err
@@ -177,7 +234,13 @@ func download(ctx context.Context, exe, url string) (path, sum string, err error
 		return "", "", err
 	}
 	h := sha256.New()
-	if _, err := io.Copy(f, io.TeeReader(resp.Body, h)); err != nil {
+	// Read at most limit+1 so an over-size body trips the guard rather than
+	// streaming unbounded to disk.
+	n, err := io.Copy(f, io.TeeReader(io.LimitReader(resp.Body, limit+1), h))
+	if err == nil && n > limit {
+		err = fmt.Errorf("asset is larger than expected (%d bytes)", limit)
+	}
+	if err != nil {
 		f.Close()
 		os.Remove(f.Name())
 		return "", "", err

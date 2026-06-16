@@ -17,6 +17,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -261,6 +262,21 @@ func run() error {
 	webFS := serveWebFS(cfg)
 
 	srv := api.NewServer(cfg, st, authSvc, mw, dm, hub, mon, hist, webFS)
+
+	// In-app restart: the API "restart" endpoint signals this channel, which
+	// gracefully stops the server so run() can re-exec the (just-updated) binary.
+	// Only wired where re-exec is possible (not on Windows).
+	restartReq := make(chan struct{}, 1)
+	var reexec atomic.Bool
+	if restartSupported {
+		srv.OnRestart(func() {
+			select {
+			case restartReq <- struct{}{}:
+			default:
+			}
+		})
+	}
+
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           srv.Handler(),
@@ -273,7 +289,12 @@ func run() error {
 	}
 
 	go func() {
-		<-shutdownCtx.Done()
+		select {
+		case <-shutdownCtx.Done():
+		case <-restartReq:
+			reexec.Store(true)
+			log.Println("restart requested (applying update)...")
+		}
 		log.Println("shutting down...")
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -292,6 +313,13 @@ func run() error {
 	}
 	if err := serve(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
+	}
+	// An in-app restart was requested: re-exec the on-disk binary in place. All
+	// open fds (DB, docker socket) carry O_CLOEXEC, so exec releases them for the
+	// new process; reexecSelf only returns on failure.
+	if reexec.Load() {
+		log.Println("re-executing updated binary...")
+		return reexecSelf()
 	}
 	return nil
 }
