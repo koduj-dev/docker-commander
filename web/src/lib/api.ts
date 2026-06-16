@@ -17,6 +17,7 @@ import type {
   FileEntry,
   DiskUsage,
   HistoryEntry,
+  ScanResponse,
   Host,
   ImageSummary,
   ImageSearchResult,
@@ -480,6 +481,12 @@ export const api = {
   },
   tagImage: (source: string, target: string) =>
     req<{ ok: boolean; error?: string }>("POST", `/api/images/tag${hostParam()}`, { source, target }),
+  scanImage: (ref: string) => {
+    const params = new URLSearchParams({ ref });
+    const h = getHostId();
+    if (h != null) params.set("host", String(h));
+    return req<ScanResponse>("GET", `/api/images/scan?${params.toString()}`);
+  },
 
   // Image/container transfer. Save/export are downloads (same-origin GET, cookie
   // auth) so we expose URLs the UI hands to an <a download>.

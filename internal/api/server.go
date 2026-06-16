@@ -208,6 +208,7 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/images/search", s.handleSearchImages)
 			r.Get("/images/tags", s.handleImageTags)
 			r.Get("/images/history", s.handleImageHistory)
+			r.Get("/images/scan", s.handleScanImage)
 			r.Get("/images/save", s.handleSaveImage)
 			r.Post("/images/load", s.handleLoadImage)
 			r.Post("/images/import", s.handleImportImage)

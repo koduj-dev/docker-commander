@@ -8,10 +8,23 @@
 Each image shows its tags, short id, size and age, with badges for **in use**
 (referenced by a container) and **dangling** (untagged). Filter by **in use /
 unused / all**, search by tag or id, and paginate. Per-row actions: **Save**
-(download as a tar), **Push**, **History**,
+(download as a tar), **Push**, **Scan**, **History**,
 **Inspect** (raw JSON), **Remove** (with a *force* fallback when in use).
 
 Header: **Prune** removes dangling images; **Build** and **Load** open dialogs.
+
+## Vulnerability scanning
+The **Scan** action (shield icon) runs [Trivy](https://trivy.dev) against the
+image on the **selected host's** daemon and shows the findings: a count per
+severity (critical / high / medium / low / unknown) and a table of CVEs with the
+affected package, installed version and the version that fixes it (linked to the
+advisory). Scans run **live** and aren't stored — re-scan to pick up newly
+published CVEs.
+
+> Trivy is an **optional** tool that must be installed on the host running
+> Docker Commander (e.g. `apt install trivy`, or see trivy.dev). If it's absent,
+> the scan dialog says so. The first scan also downloads Trivy's vulnerability
+> database, so it takes longer than later ones.
 
 ## Pull
 Type a reference (`nginx:latest`, `ghcr.io/owner/app:tag`) and pull — progress

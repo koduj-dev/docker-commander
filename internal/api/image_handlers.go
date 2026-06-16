@@ -56,6 +56,56 @@ func (s *Server) handleImageTags(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, tags)
 }
 
+// handleScanImage runs a Trivy vulnerability scan of an image on the selected
+// host's daemon. Results are returned live (not persisted). When Trivy isn't
+// installed it returns {available:false} so the UI can prompt to install it.
+func (s *Server) handleScanImage(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	ref := r.URL.Query().Get("ref")
+	if ref == "" {
+		writeErr(w, http.StatusBadRequest, "ref is required")
+		return
+	}
+	if !docker.ValidImageRef(ref) {
+		writeErr(w, http.StatusBadRequest, "invalid image reference")
+		return
+	}
+	if !docker.TrivyAvailable(r.Context()) {
+		writeJSON(w, http.StatusOK, map[string]any{"available": false,
+			"error": "Trivy is not installed on the host running Docker Commander"})
+		return
+	}
+
+	// Target the selected host's daemon (nil env = local).
+	var env []string
+	cleanup := func() {}
+	if hostID != 0 {
+		h, herr := s.store.HostByID(r.Context(), hostID)
+		if herr != nil {
+			writeErr(w, http.StatusBadRequest, "unknown host")
+			return
+		}
+		env, cleanup, herr = docker.ComposeHostEnv(h)
+		if herr != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"available": true, "ok": false, "error": herr.Error()})
+			return
+		}
+	}
+	defer cleanup()
+
+	res, err := docker.ScanImage(r.Context(), env, ref)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"available": true, "ok": false, "error": err.Error()})
+		return
+	}
+	s.audit(r, "image.scan", ref, "")
+	writeJSON(w, http.StatusOK, map[string]any{"available": true, "ok": true, "result": res})
+}
+
 func (s *Server) handleRemoveImage(w http.ResponseWriter, r *http.Request) {
 	hostID, err := s.resolveHostID(r)
 	if err != nil {
