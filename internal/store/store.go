@@ -168,6 +168,7 @@ CREATE TABLE IF NOT EXISTS projects (
 	name         TEXT NOT NULL,            -- user-facing display name
 	slug         TEXT NOT NULL UNIQUE,     -- compose project name (-p), [a-z0-9][a-z0-9_-]*
 	compose_file TEXT NOT NULL DEFAULT 'compose.yml',
+	host_id      INTEGER NOT NULL DEFAULT 0, -- target Docker host (0 = local)
 	created_by   TEXT NOT NULL DEFAULT '',
 	created_at   TEXT NOT NULL,
 	updated_at   TEXT NOT NULL
@@ -278,6 +279,7 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
 		`ALTER TABLE users ADD COLUMN auth_source TEXT NOT NULL DEFAULT 'local'`,
 		`ALTER TABLE users ADD COLUMN ui_prefs TEXT NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE hosts ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE projects ADD COLUMN host_id INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := s.db.ExecContext(ctx, alter); err != nil && !isDuplicateColumn(err) {
 			return err

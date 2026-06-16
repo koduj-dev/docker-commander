@@ -4,11 +4,11 @@ import clsx from "clsx";
 import {
   FolderGit2, Plus, Rocket, Square, Trash2, X, FilePlus, FolderPlus, Upload, Loader2,
   ExternalLink, Save, FileText, FileBox, Folder, Terminal, Pencil, ChevronRight, Download, Search, CheckCircle2, AlertCircle, AlertTriangle, Eye, Boxes,
-  LayoutTemplate, Puzzle, KeyRound, Anchor,
+  LayoutTemplate, Puzzle, KeyRound, Anchor, Server,
 } from "lucide-react";
 import { bytes as fmtBytes } from "../lib/format";
 import { api, ApiError } from "../lib/api";
-import type { Project, ProjectFile, Stack, ComposeModel, ComposeService, ProjectTemplateMeta, ServiceBlockMeta, ComposeFragmentMeta, TemplateRef, TemplateVariable } from "../lib/types";
+import type { Project, ProjectFile, Stack, ComposeModel, ComposeService, ProjectTemplateMeta, ServiceBlockMeta, ComposeFragmentMeta, TemplateRef, TemplateVariable, Host } from "../lib/types";
 import type { ServerCheck } from "../components/CodeEditor";
 import { buildTree, TreeItem } from "../components/FileTree";
 import { PageHeader } from "../layout/Shell";
@@ -148,6 +148,8 @@ export function Projects() {
   const [stacks, setStacks] = useState<Stack[]>([]);
   const [busy, setBusy] = useState(""); // slug acting
   const [editing, setEditing] = useState<Project | null>(null);
+  const [editMeta, setEditMeta] = useState<Project | null>(null);
+  const [hosts, setHosts] = useState<Host[]>([]);
   const [output, setOutput] = useState<Output | null>(null);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [query, setQuery] = useState(() => getPref<string>("projects.query", ""));
@@ -159,6 +161,7 @@ export function Projects() {
   const load = useCallback(() => {
     api.projects().then((r) => { setProjects(r.projects); setComposeAvailable(r.composeAvailable); }).catch(() => setProjects([]));
     api.stacks().then(setStacks).catch(() => {});
+    api.hosts().then(setHosts).catch(() => {}); // best-effort: needs the "hosts" section
   }, []);
   useEffect(() => load(), [load, tick]);
 
@@ -183,12 +186,6 @@ export function Projects() {
   const setSearch = (q: string) => { setQuery(q); setPref("projects.query", q); };
   const onCreated = (p: Project) => { setShowNew(false); load(); setEditing(p); };
 
-  const rename = async (p: Project) => {
-    const name = await dialogs.prompt({ title: "Rename project", label: "Display name (the identifier won't change)", defaultValue: p.name });
-    if (!name || name === p.name) return;
-    try { await api.renameProject(p.id, name); load(); }
-    catch (e) { dialogs.alert({ title: "Rename failed", message: e instanceof Error ? e.message : "unknown error" }); }
-  };
 
   const runCompose = async (p: Project, kind: Kind) => {
     setBusy(p.slug);
@@ -271,14 +268,17 @@ export function Projects() {
                   <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${st.cls}`} style={st.deployed ? { boxShadow: "0 0 6px currentColor" } : undefined} title={st.label} />
                   <FolderGit2 className="h-4 w-4 text-accent shrink-0" />
                   <button className="min-w-0 text-left" onClick={() => setEditing(p)}>
-                    <div className="font-medium truncate hover:text-accent">{p.name}</div>
+                    <div className="font-medium truncate hover:text-accent flex items-center gap-1.5">
+                      {p.name}
+                      {p.hostName && <span className="text-[10px] font-normal bg-panel2 text-muted rounded px-1.5 py-0.5 inline-flex items-center gap-1"><Server className="h-3 w-3" />{p.hostName}</span>}
+                    </div>
                     <div className="text-xs text-muted font-mono truncate">{p.slug}{stack ? ` · ${stack.running}/${stack.containers.length} running` : ""}</div>
                   </button>
                   <div className="flex items-center gap-1 shrink-0 ml-auto">
                     {acting ? <Loader2 className="h-4 w-4 animate-spin text-muted" /> : (
                       <>
                         <button className="btn-ghost px-2 py-1" title="Edit files" onClick={() => setEditing(p)}><FileText className="h-4 w-4" /></button>
-                        <button className="btn-ghost px-2 py-1" title="Rename" onClick={() => rename(p)}><Pencil className="h-4 w-4" /></button>
+                        <button className="btn-ghost px-2 py-1" title="Settings (name, host)" onClick={() => setEditMeta(p)}><Pencil className="h-4 w-4" /></button>
                         {st.deployed ? (
                           <>
                             <button className="btn-ghost px-2 py-1 text-accent disabled:opacity-40" title="Redeploy (docker compose up -d)" disabled={!composeAvailable} onClick={() => runCompose(p, "deploy")}><Rocket className="h-4 w-4" /></button>
@@ -322,7 +322,8 @@ export function Projects() {
         )}
       </div>
 
-      {showNew && <NewProjectModal onClose={() => setShowNew(false)} onCreated={onCreated} />}
+      {showNew && <NewProjectModal hosts={hosts} onClose={() => setShowNew(false)} onCreated={onCreated} />}
+      {editMeta && <EditProjectModal project={editMeta} hosts={hosts} onClose={() => setEditMeta(null)} onSaved={() => { setEditMeta(null); load(); }} />}
 
       {editing && (
         <ProjectEditor
@@ -525,9 +526,59 @@ function dedupeKey(base: string, taken: string[]): string {
   for (let i = 2; ; i++) if (!taken.includes(`${b}-${i}`)) return `${b}-${i}`;
 }
 
-function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreated: (p: Project) => void }) {
+// HostSelect picks the Docker host a project deploys to. Default is the local
+// daemon; remote hosts are listed by name.
+function HostSelect({ hosts, value, onChange }: { hosts: Host[]; value: number; onChange: (id: number) => void }) {
+  return (
+    <label className="block">
+      <span className="label flex items-center gap-1.5"><Server className="h-3.5 w-3.5" /> Deploy to host</span>
+      <select className="input" value={value} onChange={(e) => onChange(Number(e.target.value))}>
+        <option value={0}>Local daemon</option>
+        {hosts.filter((h) => h.kind !== "local").map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
+      </select>
+      {value !== 0 && <span className="block text-xs text-muted mt-1">Remote deploy supports images and named volumes. Compose files that bind-mount local folders are blocked at deploy (a clear message is shown) until file sync lands.</span>}
+    </label>
+  );
+}
+
+// EditProjectModal changes a project's display name and target host (the slug /
+// compose project name stays fixed so deployments remain stable).
+function EditProjectModal({ project, hosts, onClose, onSaved }: { project: Project; hosts: Host[]; onClose: () => void; onSaved: () => void }) {
+  const [name, setName] = useState(project.name);
+  const [hostId, setHostId] = useState(project.hostId ?? 0);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const save = async () => {
+    const n = name.trim();
+    if (!n) { setErr("name is required"); return; }
+    setBusy(true); setErr("");
+    try { await api.renameProject(project.id, n, hostId); onSaved(); }
+    catch (e) { setErr(e instanceof Error ? e.message : "save failed"); setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="card w-full max-w-md p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2"><Pencil className="h-4 w-4 text-accent" /><div className="font-medium">Project settings</div>
+          <button className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button></div>
+        <label className="block"><span className="label">Display name</span>
+          <input autoFocus className="input" value={name} onChange={(e) => setName(e.target.value)} /></label>
+        <div className="text-xs text-muted">Identifier <code className="font-mono">{project.slug}</code> stays fixed.</div>
+        {hosts.length > 0 ? <HostSelect hosts={hosts} value={hostId} onChange={setHostId} />
+          : <p className="text-xs text-muted">No remote hosts available to you.</p>}
+        {err && <p className="text-sm text-danger">{err}</p>}
+        <div className="flex justify-end gap-2">
+          <button className="btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn-primary" onClick={save} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NewProjectModal({ hosts, onClose, onCreated }: { hosts: Host[]; onClose: () => void; onCreated: (p: Project) => void }) {
   const dialogs = useDialogs();
   const [name, setName] = useState("");
+  const [hostId, setHostId] = useState(0);
   const [mode, setMode] = useState<NewMode>("template");
   const [templates, setTemplates] = useState<ProjectTemplateMeta[]>([]);
   const [blocks, setBlocks] = useState<ServiceBlockMeta[]>([]);
@@ -642,11 +693,14 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
       // typed under another template/block don't leak into this create call.
       const variables = Object.fromEntries(activeVars.map((v) => [v.key, vars[v.key] ?? ""]));
       let r: { id: number; slug: string };
-      if (mode === "import" && file) r = await api.importProject(n, file);
-      else if (mode === "builder" && (instances.length || selectedFragments.length)) r = await api.createProject(n, { instances: instancePayload(), fragments: selectedFragments.map((f): TemplateRef => ({ id: f.id, source: f.source })), variables });
-      else if (mode === "template" && selectedTpl) r = await api.createProject(n, { template: { id: selectedTpl.id, source: selectedTpl.source }, variables });
-      else r = await api.createProject(n);
-      onCreated({ id: r.id, name: n, slug: r.slug, composeFile: "compose.yml", createdBy: "", createdAt: "", updatedAt: "" });
+      if (mode === "import" && file) {
+        r = await api.importProject(n, file);
+        if (hostId) await api.renameProject(r.id, n, hostId); // import endpoint has no host param
+      } else if (mode === "builder" && (instances.length || selectedFragments.length)) r = await api.createProject(n, { hostId, instances: instancePayload(), fragments: selectedFragments.map((f): TemplateRef => ({ id: f.id, source: f.source })), variables });
+      else if (mode === "template" && selectedTpl) r = await api.createProject(n, { hostId, template: { id: selectedTpl.id, source: selectedTpl.source }, variables });
+      else r = await api.createProject(n, { hostId });
+      const host = hosts.find((h) => h.id === hostId);
+      onCreated({ id: r.id, name: n, slug: r.slug, composeFile: "compose.yml", hostId, hostName: host?.name, createdBy: "", createdAt: "", updatedAt: "" });
     } catch (e2) {
       setErr(e2 instanceof ApiError ? e2.message : "could not create project");
       setBusy(false);
@@ -684,6 +738,8 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
             <span className="label">Project name</span>
             <input autoFocus className="input" value={name} placeholder="My app" onChange={(e) => setName(e.target.value)} />
           </label>
+
+          {hosts.length > 0 && <HostSelect hosts={hosts} value={hostId} onChange={setHostId} />}
 
           <div className="flex flex-wrap gap-2">
             {tab("template", <LayoutTemplate className="h-4 w-4" />, "Template")}

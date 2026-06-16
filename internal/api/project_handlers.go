@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
@@ -65,18 +66,34 @@ type projectJSON struct {
 	Name        string `json:"name"`
 	Slug        string `json:"slug"`
 	ComposeFile string `json:"composeFile"`
+	HostID      int64  `json:"hostId"`
+	HostName    string `json:"hostName,omitempty"` // resolved label; "" = local
 	CreatedBy   string `json:"createdBy"`
 	CreatedAt   string `json:"createdAt"`
 	UpdatedAt   string `json:"updatedAt"`
 }
 
-func toProjectJSON(p store.Project) projectJSON {
+func toProjectJSON(p store.Project, hostName string) projectJSON {
 	return projectJSON{
 		ID: p.ID, Name: p.Name, Slug: p.Slug, ComposeFile: p.ComposeFile,
+		HostID: p.HostID, HostName: hostName,
 		CreatedBy: p.CreatedBy,
 		CreatedAt: p.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt: p.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
+}
+
+// hostNames returns an id→name map for resolving a project's target host label.
+func (s *Server) hostNames(ctx context.Context) map[int64]string {
+	hosts, err := s.store.ListHosts(ctx)
+	if err != nil {
+		return nil
+	}
+	m := make(map[int64]string, len(hosts))
+	for _, h := range hosts {
+		m[h.ID] = h.Name
+	}
+	return m
 }
 
 type projectFileJSON struct {
@@ -112,9 +129,10 @@ func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	names := s.hostNames(r.Context())
 	out := make([]projectJSON, 0, len(projects))
 	for _, p := range projects {
-		out = append(out, toProjectJSON(p))
+		out = append(out, toProjectJSON(p, names[p.HostID]))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"projects":         out,
@@ -128,6 +146,7 @@ func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name      string            `json:"name"`
+		HostID    int64             `json:"hostId"` // target host; 0 = local
 		Template  *templateRef      `json:"template"`
 		Instances []blockInstance   `json:"instances"`
 		Blocks    []templateRef     `json:"blocks"` // legacy: each becomes a keyless instance
@@ -141,6 +160,14 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
 		writeErr(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if err := s.validateHostID(r.Context(), body.HostID); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.requireHostAccess(r, body.HostID); err != nil {
+		writeErr(w, http.StatusForbidden, err.Error())
 		return
 	}
 	slug := slugify(name)
@@ -162,7 +189,7 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id, err := s.store.CreateProject(r.Context(), &store.Project{
-		Name: name, Slug: slug, ComposeFile: "compose.yml",
+		Name: name, Slug: slug, ComposeFile: "compose.yml", HostID: body.HostID,
 		CreatedBy: currentUsername(r),
 	})
 	if errors.Is(err, store.ErrDuplicate) {
@@ -263,7 +290,7 @@ func (s *Server) handleGetProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, toProjectJSON(*p))
+	writeJSON(w, http.StatusOK, toProjectJSON(*p, s.hostNames(r.Context())[p.HostID]))
 }
 
 // handleDeleteProject removes a project. Refuses if it's currently deployed,
@@ -275,13 +302,24 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 	}
 	force := r.URL.Query().Get("force") == "1"
 
-	if s.projectDeployed(r, p.Slug) {
+	if s.projectDeployed(r, p.Slug, p.HostID) {
 		if !force {
 			writeErr(w, http.StatusConflict, "project is deployed — bring it down first (or force)")
 			return
 		}
-		if out, err := docker.ComposeDown(r.Context(), s.projectRoot(p.ID), p.Slug); err != nil {
-			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "compose down failed: " + err.Error(), "output": out})
+		if err := s.requireHostAccess(r, p.HostID); err != nil {
+			writeErr(w, http.StatusForbidden, err.Error())
+			return
+		}
+		env, cleanup, err := s.projectComposeEnv(r.Context(), p, s.projectRoot(p.ID), false)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		out, derr := docker.ComposeDown(r.Context(), s.projectRoot(p.ID), p.Slug, env)
+		cleanup()
+		if derr != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "compose down failed: " + derr.Error(), "output": out})
 			return
 		}
 		s.audit(r, "project.down", p.Slug, "force-delete")
@@ -544,7 +582,8 @@ func (s *Server) handleRenameProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Name string `json:"name"`
+		Name   string `json:"name"`
+		HostID int64  `json:"hostId"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
@@ -555,7 +594,15 @@ func (s *Server) handleRenameProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	if err := s.store.UpdateProjectName(r.Context(), p.ID, name); err != nil {
+	if err := s.validateHostID(r.Context(), body.HostID); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.requireHostAccess(r, body.HostID); err != nil {
+		writeErr(w, http.StatusForbidden, err.Error())
+		return
+	}
+	if err := s.store.UpdateProjectName(r.Context(), p.ID, name, body.HostID); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -573,11 +620,22 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusPreconditionFailed, "the `docker compose` CLI is not available on the host running Docker Commander")
 		return
 	}
+	if err := s.requireHostAccess(r, p.HostID); err != nil {
+		writeErr(w, http.StatusForbidden, err.Error())
+		return
+	}
 	var body struct {
 		Profiles []string `json:"profiles"`
 	}
 	_ = decodeJSON(r, &body) // body is optional (empty → no profiles)
-	out, err := docker.ComposeUp(r.Context(), s.projectRoot(p.ID), p.Slug, body.Profiles)
+	dir := s.projectRoot(p.ID)
+	env, cleanup, err := s.projectComposeEnv(r.Context(), p, dir, true)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	defer cleanup()
+	out, err := docker.ComposeUp(r.Context(), dir, p.Slug, body.Profiles, env)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "output": out})
 		return
@@ -873,7 +931,7 @@ func zipDir(root string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func (s *Server) runProjectCompose(w http.ResponseWriter, r *http.Request, fn func(ctx context.Context, dir, slug string) (string, error), action string) {
+func (s *Server) runProjectCompose(w http.ResponseWriter, r *http.Request, fn func(ctx context.Context, dir, slug string, env []string) (string, error), action string) {
 	p, ok := s.loadProject(w, r)
 	if !ok {
 		return
@@ -882,13 +940,97 @@ func (s *Server) runProjectCompose(w http.ResponseWriter, r *http.Request, fn fu
 		writeErr(w, http.StatusPreconditionFailed, "the `docker compose` CLI is not available on the host running Docker Commander")
 		return
 	}
-	out, err := fn(r.Context(), s.projectRoot(p.ID), p.Slug)
+	if err := s.requireHostAccess(r, p.HostID); err != nil {
+		writeErr(w, http.StatusForbidden, err.Error())
+		return
+	}
+	dir := s.projectRoot(p.ID)
+	env, cleanup, err := s.projectComposeEnv(r.Context(), p, dir, false)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	defer cleanup()
+	out, err := fn(r.Context(), dir, p.Slug, env)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "output": out})
 		return
 	}
 	s.audit(r, "project."+action, p.Slug, "")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out})
+}
+
+// validateHostID rejects a project's target host id that doesn't exist or is
+// disabled (0 = the local daemon, always valid).
+func (s *Server) validateHostID(ctx context.Context, id int64) error {
+	if id == 0 {
+		return nil
+	}
+	h, err := s.store.HostByID(ctx, id)
+	if err != nil {
+		return errors.New("unknown host")
+	}
+	if h.Disabled {
+		return errors.New("that host is disabled")
+	}
+	return nil
+}
+
+// requireHostAccess enforces that targeting a NON-local host needs the "hosts"
+// section too — otherwise a user with only "projects" could deploy to / tear
+// down workloads on a host they can't otherwise see (a cross-section
+// escalation). Local (hostID 0) is always allowed; admins bypass via checkAccess.
+func (s *Server) requireHostAccess(r *http.Request, hostID int64) error {
+	if hostID == 0 {
+		return nil
+	}
+	claims, ok := auth.ClaimsFrom(r.Context())
+	if !ok {
+		return errors.New("unauthorized")
+	}
+	u, err := s.store.UserByID(r.Context(), claims.UserID)
+	if err != nil {
+		return errors.New("unauthorized")
+	}
+	if s.checkAccess(r.Context(), u, "hosts", false) != nil {
+		return errors.New("deploying to a remote host requires the \"hosts\" permission")
+	}
+	return nil
+}
+
+// projectComposeEnv resolves the `docker compose` environment for a project's
+// target host (nil for the local daemon). When checkBinds is set and the host is
+// remote, it refuses a compose file with host-path bind mounts, which the remote
+// daemon can't see (named volumes / images deploy fine). The returned cleanup
+// must always be called (it removes any materialised TLS certs).
+func (s *Server) projectComposeEnv(ctx context.Context, p *store.Project, dir string, checkBinds bool) ([]string, func(), error) {
+	noop := func() {}
+	if p.HostID == 0 {
+		return nil, noop, nil
+	}
+	h, err := s.store.HostByID(ctx, p.HostID)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, noop, errors.New("the project's target host no longer exists — set one in the project settings")
+	}
+	if err != nil {
+		return nil, noop, err
+	}
+	if h.Disabled {
+		return nil, noop, fmt.Errorf("host %q is disabled", h.Name)
+	}
+	if checkBinds && h.Kind != "" && h.Kind != "local" {
+		// Fail closed: if we can't resolve the compose config we can't prove the
+		// project is bind-mount-free, so refuse the remote deploy rather than
+		// risk mounting a path that exists (and may be sensitive) on the remote.
+		cfgJSON, cerr := docker.ComposeConfigJSON(ctx, dir, p.Slug)
+		if cerr != nil {
+			return nil, noop, fmt.Errorf("cannot validate the compose file for remote deploy: %v", cerr)
+		}
+		if binds, _ := docker.ComposeBindMounts(cfgJSON); len(binds) > 0 {
+			return nil, noop, fmt.Errorf("remote deploy to %q doesn't support host-path bind mounts yet — these mount local paths the remote daemon can't see: %s", h.Name, strings.Join(binds, "; "))
+		}
+	}
+	return docker.ComposeHostEnv(h)
 }
 
 // loadProject resolves {id} to a project, writing the error response on failure.
@@ -912,8 +1054,8 @@ func (s *Server) loadProject(w http.ResponseWriter, r *http.Request) (*store.Pro
 
 // projectDeployed reports whether a stack with this slug currently exists on the
 // local daemon.
-func (s *Server) projectDeployed(r *http.Request, slug string) bool {
-	stacks, err := s.docker.ListStacks(r.Context(), 0)
+func (s *Server) projectDeployed(r *http.Request, slug string, hostID int64) bool {
+	stacks, err := s.docker.ListStacks(r.Context(), hostID)
 	if err != nil {
 		return false
 	}
