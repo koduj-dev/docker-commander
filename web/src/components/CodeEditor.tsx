@@ -14,6 +14,7 @@ import { parseDocument } from "yaml";
 import type { Extension } from "@codemirror/state";
 import type { CompletionContext, CompletionResult, Completion } from "@codemirror/autocomplete";
 import { imageNameSuggestions, imageTagSuggestions } from "../lib/imageSuggest";
+import { composeCompletionsAt, isComposeFilename } from "../lib/composeSchema";
 
 // ServerCheck is the latest authoritative validation result for the open file —
 // from `docker compose config` (compose) or `docker build --check` (dockerfile).
@@ -205,6 +206,23 @@ async function imageCompletionSource(context: CompletionContext): Promise<Comple
   return { from: valueStart, options, validFor: /^[\w][\w./-]*$/ };
 }
 
+// ---- compose schema autocomplete (keys + enum values) ----------------------
+
+// composeCompletionSource offers Compose keys (at the right nesting level) and
+// known enum values (e.g. restart policies). It delegates to the pure
+// composeCompletionsAt so the logic is unit-tested without an editor. It returns
+// null off a schema-relevant position so image/word completion still run.
+function composeCompletionSource(context: CompletionContext): CompletionResult | null {
+  const res = composeCompletionsAt(context.state.doc.toString(), context.pos, context.explicit);
+  if (!res) return null;
+  const options: Completion[] = res.options.map((o) => ({
+    label: o.label,
+    detail: o.detail,
+    type: o.kind === "enum" ? "constant" : "property",
+  }));
+  return { from: res.from, options, validFor: /^[\w.-]*$/ };
+}
+
 // ---- theme + component ------------------------------------------------------
 
 function languageFor(name: string): Extension | null {
@@ -272,6 +290,11 @@ export function CodeEditor({ value, onChange, filename, readOnly, serverCheck }:
       // merges with (rather than replaces) the default word completion.
       if (/\.ya?ml$/.test(filename.toLowerCase())) {
         exts.push((lang as LanguageSupport).language.data.of({ autocomplete: imageCompletionSource }));
+        // Schema-aware key/enum completion, only for Compose files so it doesn't
+        // pollute arbitrary YAML.
+        if (isComposeFilename(filename)) {
+          exts.push((lang as LanguageSupport).language.data.of({ autocomplete: composeCompletionSource }));
+        }
       }
     }
     return exts;

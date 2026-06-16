@@ -16,5 +16,9 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  // Test files are run/type-checked by Vitest (which supplies its own types), so
+  // they stay out of the production `tsc -b` build — the shipped bundle never
+  // depends on dev-only test tooling.
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }

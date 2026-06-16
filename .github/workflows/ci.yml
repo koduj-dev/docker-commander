@@ -22,8 +22,10 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      # Build the embedded UI, then vet/test/build the Go binary.
+      # Build the embedded UI (installs web deps), run the frontend unit tests,
+      # then vet/test/build the Go binary.
       - run: make ui
+      - run: npm run test --prefix web
       - run: gofmt -l $(git ls-files '*.go') | tee /tmp/fmt && test ! -s /tmp/fmt
       - run: go vet ./...
       # -short skips the Docker/Redis/LDAP/SMTP integration tests: they need
