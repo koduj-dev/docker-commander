@@ -94,8 +94,10 @@ right, with syntax highlighting for YAML, JSON, shell, Dockerfiles and
   repository names (your locally-pulled images first, then a Docker Hub search)
   and, once you type a `:`, for that repo's tags (local tags + Docker Hub). The
   Create-container form's image field offers the same. It's best-effort —
-  offline you still get your local images. (The same powers private images you've
-  already pulled; tag listing for private registries is a future addition.)
+  offline you still get your local images. For a host you've added under
+  [Registries](registries.md), tag suggestions also come from that **private
+  registry's** API (using its stored credentials); hosts you haven't configured
+  are never contacted.
 - **Compose autocomplete** — in a Compose file you also get schema-aware
   suggestions: top-level keys, service keys (at the right indent), nested
   `build` / `healthcheck` / `deploy` / `logging` keys, and known enum values

@@ -7,6 +7,12 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Private-registry tag autocomplete** — image-tag suggestions in the editor and
+  Create-container form now also list tags from a **configured private registry**
+  (the Docker Registry v2 API, with the registry's stored credentials and a Bearer
+  token handshake), not just Docker Hub. Only hosts you've added under Registries
+  are ever contacted; the token realm is constrained (https, no internal address)
+  to avoid SSRF.
 - **LDAP group → section mapping** — Settings → LDAP can now map LDAP groups to
   RBAC sections, so a user's allowed sections follow their group membership. A
   user's sections are the union across every mapping whose group they're in. When

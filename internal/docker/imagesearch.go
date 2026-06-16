@@ -63,11 +63,28 @@ func (m *Manager) SearchImages(ctx context.Context, hostID int64, term string, l
 	return out, nil
 }
 
-// ImageTags lists tags for an image reference from Docker Hub. Only Docker Hub
-// repos are supported (the dominant case); other registries return no tags
-// (registry v2 token-auth tag listing is a future addition), so callers fall
-// back to whatever tags the host already has pulled locally.
+// ImageTags lists tags for an image reference. Docker Hub repos use Hub's public
+// API; for any other host, if the admin has configured it as a registry, tags
+// come from that registry's v2 API (with credentials). Unconfigured hosts return
+// no tags — so a ref can never make us contact an arbitrary host — and callers
+// fall back to whatever the daemon already has pulled locally.
 func (m *Manager) ImageTags(ctx context.Context, ref string) ([]string, error) {
+	if host := registryHost(ref); host != "docker.io" {
+		auth, err := m.store.AuthForHost(ctx, host)
+		if err != nil {
+			return []string{}, nil // not a configured registry — no remote tags
+		}
+		repo, ok := repoPathForRef(ref, host)
+		if !ok {
+			return []string{}, nil
+		}
+		return registryV2Tags(ctx, host, repo, auth)
+	}
+	return m.hubTags(ctx, ref)
+}
+
+// hubTags lists a Docker Hub repository's tags via Hub's public API.
+func (m *Manager) hubTags(ctx context.Context, ref string) ([]string, error) {
 	repo, ok := hubRepoPath(ref)
 	if !ok {
 		return []string{}, nil

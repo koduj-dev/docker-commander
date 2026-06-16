@@ -54,7 +54,8 @@ export async function imageNameSuggestions(query: string): Promise<ImageSuggesti
 }
 
 // imageTagSuggestions returns tag suggestions for a repository: tags already
-// pulled locally first, then Docker Hub's tag list.
+// pulled locally first, then the registry's tag list (Docker Hub for hub images,
+// or a configured private registry's v2 API for other hosts).
 export async function imageTagSuggestions(repo: string): Promise<ImageSuggestion[]> {
   const r = repo.trim().toLowerCase();
   if (!r) return [];
