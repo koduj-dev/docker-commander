@@ -227,6 +227,10 @@ func run() error {
 		return err
 	}
 	st.SetCipher(cipher)
+	// Migrate any host TLS private key still stored in plaintext (pre-1.5 rows).
+	if err := st.EncryptPlaintextHostKeys(ctx); err != nil {
+		log.Printf("warning: could not encrypt existing host keys: %v", err)
+	}
 
 	tokens := auth.NewTokenManager(secret, cfg.SessionTTL)
 	authSvc := auth.NewService(st, tokens)

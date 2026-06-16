@@ -64,6 +64,13 @@ All notable changes to Docker Commander are documented here. The format follows
   Alerts and the container detail view (a shared `Tabs` component), instead of
   its own pill buttons. Icons and per-tab counts are preserved.
 
+### Security
+- **Host TLS private keys are encrypted at rest** — a TCP host's client private
+  key (`hosts.tls_key`) was stored in plaintext in the database; it's now
+  encrypted with the same AES-256-GCM cipher that protects registry/SMTP secrets
+  (the CA and client certificate are public, so they're stored as-is). Existing
+  plaintext keys are migrated transparently on the next start.
+
 ### Fixed
 - **Windows build** — `internal/tlscert` used `syscall.O_NOFOLLOW`, which is
   undefined on Windows and broke the cross-compiled Windows release binary. The
