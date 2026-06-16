@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
-import { Plus, Trash2, Webhook as WebhookIcon, Check, Mail, Loader2, Send, Pencil } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Plus, Trash2, Webhook as WebhookIcon, Check, Mail, Loader2, Send, Pencil, Download, Upload } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
+import { triggerDownload } from "../components/LoadModal";
 import type { AlertEvent, AlertRule, AlertType, Severity, SmtpConfig, Webhook } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
@@ -131,6 +132,7 @@ function Rules() {
   useEffect(() => load(), [load]);
 
   const dialogs = useDialogs();
+  const fileRef = useRef<HTMLInputElement>(null);
   const toggle = async (r: AlertRule) => {
     await api.toggleAlertRule(r.id, !r.enabled);
     load();
@@ -141,11 +143,51 @@ function Rules() {
     load();
   };
 
+  const onImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-importing the same file
+    if (!file) return;
+    let bundle: unknown;
+    try {
+      bundle = JSON.parse(await file.text());
+    } catch {
+      await dialogs.alert({ title: "Import failed", message: "That file is not valid JSON." });
+      return;
+    }
+    try {
+      const res = await api.importAlertRules(bundle);
+      const warnings = res.warnings ?? [];
+      await dialogs.alert({
+        title: "Rules imported",
+        message: (
+          <div className="space-y-2">
+            <p>Imported <strong>{res.imported}</strong> rule{res.imported === 1 ? "" : "s"}.</p>
+            {warnings.length > 0 && (
+              <ul className="text-xs text-muted list-disc pl-4 space-y-0.5 max-h-40 overflow-auto">
+                {warnings.map((wmsg, i) => <li key={i}>{wmsg}</li>)}
+              </ul>
+            )}
+          </div>
+        ),
+      });
+      load();
+    } catch (err) {
+      await dialogs.alert({ title: "Import failed", message: err instanceof Error ? err.message : "Could not import rules." });
+    }
+  };
+
   if (!rules) return <Loading />;
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={onImportFile} />
+        <button className="btn-ghost" onClick={() => triggerDownload(api.exportAlertRulesUrl())} disabled={rules.length === 0} title="Download all rules as JSON">
+          <Download className="h-4 w-4" /> Export
+        </button>
+        <button className="btn-ghost" onClick={() => fileRef.current?.click()} title="Import rules from a JSON file">
+          <Upload className="h-4 w-4" /> Import
+        </button>
         <button className="btn-primary" onClick={() => { setEditing(null); setShowForm((v) => !v); }}>
           <Plus className="h-4 w-4" /> New rule
         </button>
