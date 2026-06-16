@@ -7,6 +7,12 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Image vulnerability scanning** — the Images page gains a **Scan** action that
+  runs [Trivy](https://trivy.dev) against an image on the selected host and shows
+  a severity summary plus a CVE table (package, installed vs. fixed version,
+  advisory link). Trivy is an optional dependency probed at runtime; when it's
+  absent the dialog says how to install it. Scans run live (not persisted). The
+  image reference is validated before it reaches the CLI (no argument injection).
 - **Remote Projects** — a managed Compose project can now target a **remote
   Docker host** (added under Hosts), not just the local daemon. Pick the host at
   create time or in the project's Settings; deploy/down/restart run

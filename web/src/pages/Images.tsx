@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Download, Trash2, Layers, Loader2, X, Boxes, Eraser, FileSearch, History, Upload, Hammer, HardDriveDownload } from "lucide-react";
+import { Download, Trash2, Layers, Loader2, X, Boxes, Eraser, FileSearch, History, Upload, Hammer, HardDriveDownload, ShieldAlert } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
-import type { HistoryEntry, ImageSummary, PullProgress } from "../lib/types";
+import type { HistoryEntry, ImageSummary, PullProgress, ScanResult } from "../lib/types";
 import { hostParam } from "../lib/host";
 import { bytes, relTime, shortId } from "../lib/format";
 import { PageHeader } from "../layout/Shell";
@@ -37,6 +37,7 @@ export function Images() {
   const [inspect, setInspect] = useState<ImageSummary | null>(null);
   const [history, setHistory] = useState<ImageSummary | null>(null);
   const [push, setPush] = useState<ImageSummary | null>(null);
+  const [scan, setScan] = useState<ImageSummary | null>(null);
   const [showBuild, setShowBuild] = useState(false);
   const [showLoad, setShowLoad] = useState(false);
   const dialogs = useDialogs();
@@ -149,6 +150,7 @@ export function Images() {
                   <div className="flex items-center gap-1 shrink-0">
                     <button className="btn-ghost px-2 py-1" title="Save (download tar)" onClick={() => triggerDownload(api.saveImageUrl(tags[0] || img.id))}><Download className="h-4 w-4" /></button>
                     <button className="btn-ghost px-2 py-1" title="Push to registry" onClick={() => setPush(img)}><Upload className="h-4 w-4" /></button>
+                    <button className="btn-ghost px-2 py-1" title="Scan for vulnerabilities" onClick={() => setScan(img)}><ShieldAlert className="h-4 w-4" /></button>
                     <button className="btn-ghost px-2 py-1" title="Layer history" onClick={() => setHistory(img)}><History className="h-4 w-4" /></button>
                     <button className="btn-ghost px-2 py-1" title="Inspect (raw JSON)" onClick={() => setInspect(img)}><FileSearch className="h-4 w-4" /></button>
                     <button
@@ -173,6 +175,9 @@ export function Images() {
       )}
       {history && (
         <ImageHistoryModal img={history} onClose={() => setHistory(null)} />
+      )}
+      {scan && (
+        <ScanModal img={scan} onClose={() => setScan(null)} />
       )}
       {push && (
         <PushModal image={push} onClose={() => setPush(null)} onDone={load} />
@@ -227,6 +232,106 @@ function ImageHistoryModal({ img, onClose }: { img: ImageSummary; onClose: () =>
                   {l.tags && l.tags.length > 0 && <div className="text-accent mt-0.5">{l.tags.join(", ")}</div>}
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// safeHttpUrl guards an advisory link from a scan result: only http(s) URLs are
+// rendered as clickable, so a crafted `javascript:` URL from an untrusted image
+// can't execute on click.
+function safeHttpUrl(u?: string): boolean {
+  return !!u && /^https?:\/\//i.test(u);
+}
+
+const SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"] as const;
+const sevColor: Record<string, string> = {
+  CRITICAL: "bg-red-500/20 text-red-300 border-red-500/40",
+  HIGH: "bg-orange-500/20 text-orange-300 border-orange-500/40",
+  MEDIUM: "bg-amber-500/20 text-amber-300 border-amber-500/40",
+  LOW: "bg-sky-500/20 text-sky-300 border-sky-500/40",
+  UNKNOWN: "bg-zinc-500/20 text-zinc-300 border-zinc-500/40",
+};
+
+// ScanModal runs and shows a Trivy vulnerability scan for an image.
+function ScanModal({ img, onClose }: { img: ImageSummary; onClose: () => void }) {
+  const ref = (img.repoTags ?? [])[0] || img.id;
+  const [result, setResult] = useState<ScanResult | null>(null);
+  const [state, setState] = useState<"scanning" | "done" | "error" | "unavailable">("scanning");
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let alive = true;
+    api.scanImage(ref).then((r) => {
+      if (!alive) return;
+      if (!r.available) { setState("unavailable"); setError(r.error ?? ""); return; }
+      if (!r.ok || !r.result) { setState("error"); setError(r.error ?? "scan failed"); return; }
+      setResult(r.result); setState("done");
+    }).catch((e) => { if (alive) { setState("error"); setError(e instanceof Error ? e.message : "scan failed"); } });
+    return () => { alive = false; };
+  }, [ref]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const total = result ? SEVERITIES.reduce((n, s) => n + (result.summary[s] ?? 0), 0) : 0;
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
+      <div className="card w-full max-w-4xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-3 p-4 border-b border-border">
+          <ShieldAlert className="h-4 w-4 text-accent" />
+          <div className="font-medium min-w-0">
+            <span className="text-xs uppercase tracking-wide text-muted mr-2">scan</span>
+            <span className="break-all">{ref}</span>
+          </div>
+          <button className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
+        </div>
+        <div className="flex-1 min-h-0 overflow-auto p-4">
+          {state === "scanning" && <div className="flex items-center gap-2 text-muted text-sm"><Spinner className="h-4 w-4" /> Scanning with Trivy… (the first scan also downloads the vulnerability database)</div>}
+          {state === "unavailable" && (
+            <div className="text-sm space-y-2">
+              <p className="text-danger">Trivy isn't installed on the host running Docker Commander.</p>
+              <p className="text-muted">Install it (e.g. <code className="font-mono">apt install trivy</code> or see trivy.dev) to enable image scanning.</p>
+            </div>
+          )}
+          {state === "error" && <div className="text-sm text-danger break-all">{error}</div>}
+          {state === "done" && result && (
+            <div className="space-y-3">
+              <div className="flex flex-wrap gap-2">
+                {SEVERITIES.map((s) => (
+                  <span key={s} className={clsx("text-xs px-2 py-1 rounded-md border", sevColor[s])}>{s} {result.summary[s] ?? 0}</span>
+                ))}
+              </div>
+              {total === 0 ? (
+                <div className="text-sm text-ok">No known vulnerabilities found. 🎉</div>
+              ) : (
+                <table className="w-full text-xs">
+                  <thead className="text-muted uppercase tracking-wide">
+                    <tr className="border-b border-border text-left">
+                      <th className="py-2 pr-3 font-medium">Severity</th>
+                      <th className="py-2 pr-3 font-medium">CVE</th>
+                      <th className="py-2 pr-3 font-medium">Package</th>
+                      <th className="py-2 pr-3 font-medium">Installed</th>
+                      <th className="py-2 pr-3 font-medium">Fixed in</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.vulns.map((v, i) => (
+                      <tr key={i} className="border-b border-border/40 align-top">
+                        <td className="py-1.5 pr-3"><span className={clsx("px-1.5 py-0.5 rounded border", sevColor[v.severity] ?? sevColor.UNKNOWN)}>{v.severity}</span></td>
+                        <td className="py-1.5 pr-3 font-mono whitespace-nowrap">{safeHttpUrl(v.url) ? <a href={v.url} target="_blank" rel="noreferrer" className="text-accent hover:underline">{v.id}</a> : v.id}</td>
+                        <td className="py-1.5 pr-3 font-mono break-all">{v.package}</td>
+                        <td className="py-1.5 pr-3 font-mono break-all">{v.version}</td>
+                        <td className="py-1.5 pr-3 font-mono break-all text-ok">{v.fixedVersion || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           )}
         </div>

@@ -155,6 +155,30 @@ export interface ImageSummary {
   inUse: boolean;
 }
 
+// Image vulnerability scan (Trivy).
+export interface Vulnerability {
+  id: string;
+  severity: string; // CRITICAL | HIGH | MEDIUM | LOW | UNKNOWN
+  package: string;
+  version: string;
+  fixedVersion?: string;
+  title?: string;
+  url?: string;
+}
+
+export interface ScanResult {
+  ref: string;
+  summary: Record<string, number>;
+  vulns: Vulnerability[];
+}
+
+export interface ScanResponse {
+  available: boolean; // false = Trivy not installed
+  ok?: boolean;
+  error?: string;
+  result?: ScanResult;
+}
+
 // One Docker Hub search hit, used for image-name autocomplete.
 export interface ImageSearchResult {
   name: string;

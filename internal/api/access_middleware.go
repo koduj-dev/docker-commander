@@ -78,7 +78,10 @@ func isWriteRequest(r *http.Request) bool {
 	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
 		return true
 	}
-	for _, suffix := range []string{"/exec", "/pull", "/push"} {
+	// A few GETs are effectively privileged actions: WebSocket exec, pull/push,
+	// and a vulnerability scan (spawns a heavy subprocess + outbound calls), so
+	// they need write access — a read-only account must not trigger them.
+	for _, suffix := range []string{"/exec", "/pull", "/push", "/scan"} {
 		if strings.HasSuffix(r.URL.Path, suffix) {
 			return true
 		}
