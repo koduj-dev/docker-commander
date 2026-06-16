@@ -6,13 +6,13 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ## [Unreleased]
 
-### Fixed
-- **Windows build** — `internal/tlscert` used `syscall.O_NOFOLLOW`, which is
-  undefined on Windows and broke the cross-compiled Windows release binary. The
-  flag is now applied via a platform constant (`O_NOFOLLOW` on Unix, no-op on
-  Windows).
-
 ### Added
+- **Schema-aware Compose autocomplete** — editing a Compose file now suggests
+  keys at the right nesting level (top-level, service, and nested `build` /
+  `healthcheck` / `deploy` / `logging` blocks) and known enum values (e.g.
+  `restart:` → `always` / `unless-stopped` / …) as you type, complementing the
+  existing image-name completion and server-side `docker compose config`
+  validation. Suggestions only apply to Compose files, not arbitrary YAML.
 - **Built-in self-signed TLS certs** — `dockercmd --make-certs [hostnames…]`
   generates an ECDSA self-signed certificate + key into `<data-dir>/tls/` (key
   mode 0600), covering localhost / 127.0.0.1 / ::1 plus any hostnames or IPs you
@@ -31,6 +31,12 @@ All notable changes to Docker Commander are documented here. The format follows
   and restarts the process in place (re-exec), then the UI reconnects on the new
   version. Gated to admins and disabled with `DC_SELF_UPDATE=0` (the banner still
   shows). Not offered on Windows (restart the service manually).
+
+### Fixed
+- **Windows build** — `internal/tlscert` used `syscall.O_NOFOLLOW`, which is
+  undefined on Windows and broke the cross-compiled Windows release binary. The
+  flag is now applied via a platform constant (`O_NOFOLLOW` on Unix, no-op on
+  Windows).
 
 ## [1.4.4] — 2026-06-15
 

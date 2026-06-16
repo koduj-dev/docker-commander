@@ -96,6 +96,12 @@ right, with syntax highlighting for YAML, JSON, shell, Dockerfiles and
   Create-container form's image field offers the same. It's best-effort —
   offline you still get your local images. (The same powers private images you've
   already pulled; tag listing for private registries is a future addition.)
+- **Compose autocomplete** — in a Compose file you also get schema-aware
+  suggestions: top-level keys, service keys (at the right indent), nested
+  `build` / `healthcheck` / `deploy` / `logging` keys, and known enum values
+  (e.g. `restart:` → `always` / `unless-stopped`). Press <kbd>Ctrl</kbd>+<kbd>Space</kbd>
+  to pop the list on a blank line. It's a typing aid, not a validator — the
+  authoritative check is still `docker compose config` (the inline diagnostics).
 - **Download** a single file (next to *Save*) or the **whole project as a
   `.zip`** (editor header).
 - **Profiles** — if the compose file defines `profiles`, a toggle bar lets you
