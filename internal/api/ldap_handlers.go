@@ -10,10 +10,15 @@ import (
 // handleGetLDAP returns the LDAP config with the bind password masked.
 func (s *Server) handleGetLDAP(w http.ResponseWriter, r *http.Request) {
 	c, _ := s.store.GetLDAP(r.Context())
+	mappings := c.GroupMappings
+	if mappings == nil {
+		mappings = []store.LDAPGroupMapping{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"enabled": c.Enabled, "url": c.URL, "startTls": c.StartTLS,
 		"bindDn": c.BindDN, "userBaseDn": c.UserBaseDN, "userFilter": c.UserFilter,
 		"adminGroupDn": c.AdminGroupDN, "hasBindPassword": c.BindPassword != "",
+		"groupMappings": mappings,
 	})
 }
 

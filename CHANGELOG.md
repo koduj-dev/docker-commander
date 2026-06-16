@@ -7,6 +7,13 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **LDAP group → section mapping** — Settings → LDAP can now map LDAP groups to
+  RBAC sections, so a user's allowed sections follow their group membership. A
+  user's sections are the union across every mapping whose group they're in. When
+  any mapping is configured, LDAP is authoritative for non-admin users' sections
+  (recomputed from group membership on each login); group DNs match on the full
+  DN case-insensitively and unknown section names are ignored. The admin role
+  stays sticky once granted (no auto-demote on group removal).
 - **Schema-aware Compose autocomplete** — editing a Compose file now suggests
   keys at the right nesting level (top-level, service, and nested `build` /
   `healthcheck` / `deploy` / `logging` blocks) and known enum values (e.g.

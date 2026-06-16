@@ -40,7 +40,37 @@ func LDAPTest(cfg store.LDAPConfig) (int, error) {
 // LDAPResult is the outcome of a successful LDAP authentication.
 type LDAPResult struct {
 	Username string
-	IsAdmin  bool // member of the configured admin group
+	IsAdmin  bool     // member of the configured admin group
+	Groups   []string // the user's group DNs (memberOf), for section mapping
+}
+
+// SectionsForGroups returns the union of RBAC sections granted to a user who
+// belongs to the given group DNs, per the config's group→section mappings.
+// Group DNs are matched case-insensitively on the full DN (exact, not substring)
+// to mirror the admin-group check, and unknown section names are ignored, so a
+// mapping can never grant access beyond a real, named section.
+func SectionsForGroups(cfg store.LDAPConfig, groups []string) []string {
+	if len(cfg.GroupMappings) == 0 || len(groups) == 0 {
+		return nil
+	}
+	member := make(map[string]bool, len(groups))
+	for _, g := range groups {
+		member[strings.ToLower(strings.TrimSpace(g))] = true
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, m := range cfg.GroupMappings {
+		if !member[strings.ToLower(strings.TrimSpace(m.GroupDN))] {
+			continue
+		}
+		for _, sec := range m.Sections {
+			if store.ValidSection(sec) && !seen[sec] {
+				seen[sec] = true
+				out = append(out, sec)
+			}
+		}
+	}
+	return out
 }
 
 // LDAPAuthenticate verifies a username/password against an LDAP/AD directory:
@@ -88,14 +118,15 @@ func LDAPAuthenticate(cfg store.LDAPConfig, username, password string) (*LDAPRes
 		return nil, ErrInvalidCreds
 	}
 
+	groups := entry.GetAttributeValues("memberOf")
 	isAdmin := false
 	if cfg.AdminGroupDN != "" {
-		for _, g := range entry.GetAttributeValues("memberOf") {
+		for _, g := range groups {
 			if strings.EqualFold(strings.TrimSpace(g), cfg.AdminGroupDN) {
 				isAdmin = true
 				break
 			}
 		}
 	}
-	return &LDAPResult{Username: username, IsAdmin: isAdmin}, nil
+	return &LDAPResult{Username: username, IsAdmin: isAdmin, Groups: groups}, nil
 }

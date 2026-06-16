@@ -89,6 +89,7 @@ function ldapPayload(c: LdapConfig & { bindPassword?: string }) {
     enabled: c.enabled, url: c.url, startTls: c.startTls, bindDn: c.bindDn,
     bindPassword: c.bindPassword ?? "", userBaseDn: c.userBaseDn,
     userFilter: c.userFilter, adminGroupDn: c.adminGroupDn,
+    groupMappings: c.groupMappings ?? [],
   };
 }
 

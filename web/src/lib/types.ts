@@ -38,6 +38,11 @@ export interface UpdateStatus {
   selfUpdate?: boolean;
 }
 
+export interface LdapGroupMapping {
+  groupDn: string;
+  sections: string[];
+}
+
 export interface LdapConfig {
   enabled: boolean;
   url: string;
@@ -46,6 +51,7 @@ export interface LdapConfig {
   userBaseDn: string;
   userFilter: string;
   adminGroupDn: string;
+  groupMappings?: LdapGroupMapping[];
   hasBindPassword?: boolean;
 }
 
