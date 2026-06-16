@@ -46,16 +46,16 @@ level filters, regex search and structured parsing.
 **Control**
 - Containers: **create/run**, start/stop/restart/pause/kill, **rename**, **update** limits & restart policy, **commit** to an image, and an interactive **shell** (xterm.js).
 - **File browser** inside containers **and volumes** — list, download, upload (incl. **upload & extract** a `.zip`/`.tar`/`.tar.gz`), delete, create folders.
-- Images: pull (live progress), build, push, tag, save/load/import, history, prune.
+- Images: pull (live progress), build, push, tag, save/load/import, history, prune, and **vulnerability scanning** (Trivy — severity summary + CVE table).
 - Volumes & networks: list, inspect, create, remove, prune; networks also **connect / disconnect** containers, with a per-network detail (graph or list).
-- **Compose** — discover & manage **Stacks** by label (CLI-created ones too: start/stop/restart/remove, view compose file), and **Projects**: managed compose *folders* edited in a built-in **code editor** (CodeMirror) with **live, inline validation** — compose (anchors/`${VAR}`-aware), **Dockerfile** (`docker build --check`), YAML/JSON/`.env` — plus a **Resolved** preview, a services/ports **Summary**, **templates**, and **deploy via the `docker compose` CLI** with **profiles** and `.zip` import/export.
+- **Compose** — discover & manage **Stacks** by label (CLI-created ones too: start/stop/restart/remove, view compose file), and **Projects**: managed compose *folders* edited in a built-in **code editor** (CodeMirror) with **live, inline validation** — compose (anchors/`${VAR}`-aware), **Dockerfile** (`docker build --check`), YAML/JSON/`.env` — plus a **Resolved** preview, a services/ports **Summary**, **templates**, **schema-aware Compose autocomplete** and **image-name / tag** suggestions (local, Docker Hub, and configured **private registries**), and **deploy via the `docker compose` CLI** with **profiles** and `.zip` import/export — to the **local or a remote host**.
 
 **Multi-host**
 - Manage **local**, **TCP(+TLS)** and **SSH** daemons; SSH **host keys are verified** (known_hosts / trust-on-first-use). Every view rebinds to the selected host, and the alert engine watches **all** hosts. A per-host **detail** panel shows the hardware / OS / engine, and a host can be **disabled** to take it out of monitoring (e.g. an offline laptop).
 
 **Alerting & integrations**
 - Rules on **state**, **resource thresholds**, **log patterns** and **restart/crash-loops** — editable, with severity & cooldown.
-- Notify via **webhooks**, **email (SMTP, per-host routing)**, an in-app feed, and a **Prometheus `/metrics`** exporter.
+- Notify via **webhooks**, **email (SMTP, per-host routing)**, an in-app feed, and a **Prometheus `/metrics`** exporter. Rules **import/export** as a portable JSON bundle.
 
 **Remote control from AI tools (MCP)**
 - An optional, **off-by-default** **Model Context Protocol** server lets AI tools (**Claude Code**, **Claude Desktop**, **Cursor**) **monitor and *safely* operate** Docker **as you**: read tools (containers, logs, images, projects, stats, events, audit…) plus *safe* control (**start/stop/restart**, **deploy/down**), with MCP **resources** & **prompts**.
@@ -64,11 +64,11 @@ level filters, regex search and structured parsing.
 **Security & administration**
 - **Argon2id** passwords + **TOTP 2FA** (optionally exempt for localhost), rate limiting, strict headers, signed `HttpOnly` cookies.
 - **Multi-user** with **roles**, **per-section permissions**, **read-only** mode, global **feature flags**, and an **audit log**. Per-user UI preferences (filters) follow the account across browsers.
-- Optional **LDAP / Active Directory** login with auto-provisioning. Registry / SMTP / LDAP secrets are **encrypted at rest** (AES-256-GCM).
+- Optional **LDAP / Active Directory** login with auto-provisioning and **group → section mapping** (directory-driven permissions). Registry / SMTP / LDAP secrets **and host TLS private keys** are **encrypted at rest** (AES-256-GCM).
 
 **Ops**
-- Single CGO-free binary, embedded UI, systemd unit, config file, **native HTTPS** (or behind a proxy), `/healthz` probe, and structured alert logging to the journal/syslog. See [Deployment](docs/deployment.md).
-- **Self-update** — an admin "update available" banner and a `dockercmd --self-upgrade` command (SHA-256-verified, atomic binary replace).
+- Single CGO-free binary, embedded UI, systemd unit, config file, **native HTTPS** (built-in `--make-certs` self-signed cert helper, or behind a proxy), `/healthz` probe, and structured alert logging to the journal/syslog. See [Deployment](docs/deployment.md).
+- **Self-update** — a **one-tap in-app update & restart** for admins (and an "update available" banner), plus the `dockercmd --self-upgrade` command (SHA-256-verified, atomic binary replace).
 
 ## 🏗️ Architecture
 
