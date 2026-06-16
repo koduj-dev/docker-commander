@@ -238,6 +238,11 @@ Use a real certificate (e.g. Let's Encrypt) for public hosts; both keys must be
 set together (TLS ≥ 1.2). The key file should be readable only by the service
 user.
 
+For a quick **self-signed** cert (LAN / internal use) without `openssl`, run
+`dockercmd --make-certs [hostnames…]`: it writes `cert.pem` + `key.pem` (key mode
+0600) into `<data-dir>/tls/`, covering localhost plus any hosts you list, and
+prints the `DC_TLS_CERT` / `DC_TLS_KEY` to set. Clients warn until they trust it.
+
 **B — reverse proxy (recommended for anything non-trivial).**
 Bind to loopback and terminate TLS at nginx/Caddy. WebSockets must be allowed
 (stats, logs, exec, events) — proxy `Upgrade`/`Connection` headers. Example

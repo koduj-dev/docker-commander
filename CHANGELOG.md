@@ -4,6 +4,15 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Built-in self-signed TLS certs** — `dockercmd --make-certs [hostnames…]`
+  generates an ECDSA self-signed certificate + key into `<data-dir>/tls/` (key
+  mode 0600), covering localhost / 127.0.0.1 / ::1 plus any hostnames or IPs you
+  pass, and prints the `DC_TLS_CERT` / `DC_TLS_KEY` to serve HTTPS — no `openssl`
+  needed. For public hosts use a real CA / Let's Encrypt.
+
 ## [1.4.4] — 2026-06-15
 
 ### Fixed

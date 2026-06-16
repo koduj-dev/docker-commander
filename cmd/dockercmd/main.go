@@ -15,6 +15,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -28,6 +30,7 @@ import (
 	"github.com/koduj-dev/docker-commander/internal/selfupdate"
 	"github.com/koduj-dev/docker-commander/internal/service"
 	"github.com/koduj-dev/docker-commander/internal/store"
+	"github.com/koduj-dev/docker-commander/internal/tlscert"
 	"github.com/koduj-dev/docker-commander/internal/ws"
 	"github.com/koduj-dev/docker-commander/web"
 )
@@ -94,6 +97,49 @@ func wantsVersion() bool {
 	return false
 }
 
+// wantsMakeCerts reports whether the user asked to generate a self-signed TLS
+// cert, and any extra hostnames/IPs to add to the certificate's SAN list (the
+// non-flag args following `--make-certs`).
+func wantsMakeCerts() (yes bool, hosts []string) {
+	args := os.Args[1:]
+	for i, a := range args {
+		if a == "--" {
+			break
+		}
+		if a == "-make-certs" || a == "--make-certs" {
+			yes = true
+			for _, h := range args[i+1:] {
+				if h == "--" || strings.HasPrefix(h, "-") {
+					break
+				}
+				hosts = append(hosts, h)
+			}
+			break
+		}
+	}
+	return yes, hosts
+}
+
+// makeCerts generates a self-signed cert + key into <data-dir>/tls and prints
+// how to serve HTTPS with it.
+func makeCerts(hosts []string) error {
+	certPEM, keyPEM, err := tlscert.GenerateSelfSigned(hosts)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(config.ResolveDataDir(), "tls")
+	certPath, keyPath, err := tlscert.WriteCertPair(dir, certPEM, keyPEM)
+	if err != nil {
+		return err
+	}
+	covered := append([]string{"localhost", "127.0.0.1", "::1"}, hosts...)
+	fmt.Printf("Wrote a self-signed certificate (valid ~13 months) covering %s:\n", strings.Join(covered, ", "))
+	fmt.Printf("  cert: %s\n  key:  %s  (mode 0600)\n\n", certPath, keyPath)
+	fmt.Printf("Serve HTTPS with it:\n  DC_TLS_CERT=%s DC_TLS_KEY=%s dockercmd\n", certPath, keyPath)
+	fmt.Println("  (or the -tls-cert / -tls-key flags). It's self-signed, so clients warn until they trust it.")
+	return nil
+}
+
 // usage prints the full help. The standalone actions (--version, --self-upgrade,
 // the --*-service trio) are intercepted before the flag set parses, so they
 // aren't flags and won't show up in flag.PrintDefaults() — they're listed here
@@ -108,6 +154,7 @@ Usage:
 
 Standalone actions:
   --version, version           print the version and exit
+  --make-certs [host…]         write a self-signed TLS cert + key for HTTPS
   --self-upgrade [--check]     upgrade to the latest GitHub release (--check only reports)
   --install-service            install as a systemd (Linux) / launchd (macOS) service
   --uninstall-service          remove the service
@@ -131,6 +178,9 @@ func run() error {
 	if wantsVersion() {
 		fmt.Printf("dockercmd %s\n", version)
 		return nil
+	}
+	if mk, hosts := wantsMakeCerts(); mk {
+		return makeCerts(hosts)
 	}
 	if up, checkOnly := wantsSelfUpgrade(); up {
 		return selfupdate.Run(context.Background(), version, os.Stdout, checkOnly)

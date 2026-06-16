@@ -106,6 +106,31 @@ func TestStandaloneActionArgs(t *testing.T) {
 	})
 }
 
+func TestWantsMakeCerts(t *testing.T) {
+	withArgs([]string{"--make-certs", "example.lan", "10.0.0.5"}, func() {
+		yes, hosts := wantsMakeCerts()
+		if !yes || len(hosts) != 2 || hosts[0] != "example.lan" || hosts[1] != "10.0.0.5" {
+			t.Errorf("--make-certs host1 host2: yes=%v hosts=%v", yes, hosts)
+		}
+	})
+	withArgs([]string{"--make-certs"}, func() {
+		if yes, hosts := wantsMakeCerts(); !yes || len(hosts) != 0 {
+			t.Errorf("--make-certs alone: yes=%v hosts=%v", yes, hosts)
+		}
+	})
+	// Hostname collection stops at the first flag.
+	withArgs([]string{"--make-certs", "host", "-data-dir", "/x"}, func() {
+		if _, hosts := wantsMakeCerts(); len(hosts) != 1 || hosts[0] != "host" {
+			t.Errorf("hosts should stop at the first flag, got %v", hosts)
+		}
+	})
+	withArgs([]string{"-port", "9000"}, func() {
+		if yes, _ := wantsMakeCerts(); yes {
+			t.Error("a normal server invocation should not trigger --make-certs")
+		}
+	})
+}
+
 func TestUsageListsStandaloneActions(t *testing.T) {
 	var buf bytes.Buffer
 	old := flag.CommandLine.Output()
@@ -114,7 +139,7 @@ func TestUsageListsStandaloneActions(t *testing.T) {
 
 	usage()
 	out := buf.String()
-	for _, want := range []string{"--version", "--self-upgrade", "--install-service", "--uninstall-service", "--service-status"} {
+	for _, want := range []string{"--version", "--make-certs", "--self-upgrade", "--install-service", "--uninstall-service", "--service-status"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("usage() output is missing the %q action:\n%s", want, out)
 		}
@@ -129,7 +154,7 @@ func TestManPageDocumentsActions(t *testing.T) {
 		t.Fatalf("read deploy/dockercmd.1: %v", err)
 	}
 	manStr := string(man)
-	for _, want := range []string{"version", "self-upgrade", "install-service", "uninstall-service", "service-status"} {
+	for _, want := range []string{"version", "make-certs", "self-upgrade", "install-service", "uninstall-service", "service-status"} {
 		if !strings.Contains(manStr, want) {
 			t.Errorf("action %q is not documented in deploy/dockercmd.1", want)
 		}
