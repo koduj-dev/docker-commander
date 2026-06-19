@@ -23,10 +23,10 @@
     "@xyflow/react": "^12.11.0",
     "clsx": "^2.1.1",
     "d3-force": "^3.0.0",
-    "lucide-react": "^1.17.0",
+    "lucide-react": "^1.21.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "react-router-dom": "^7.17.0",
+    "react-router-dom": "^7.18.0",
     "recharts": "^3.8.1",
     "yaml": "^2.9.0"
   },
