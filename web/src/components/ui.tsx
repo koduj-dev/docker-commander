@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { Inbox } from "lucide-react";
 import type { ReactNode } from "react";
 import { stateColor } from "../lib/format";
 
@@ -63,11 +64,38 @@ export function StatCard({
   );
 }
 
-export function EmptyState({ title, hint }: { title: string; hint?: string }) {
+/**
+ * EmptyState is the "nothing here yet" placeholder.
+ *
+ * It is a bounded, dashed-outline panel rather than bare centred text: on a wide
+ * (QHD+) screen the content area is enormous, and two lines of muted text floating
+ * in the middle of it read as a rendering failure rather than as a deliberate
+ * empty list. The outline gives the eye something that obviously belongs there.
+ *
+ * `icon` and `action` are optional — pass an action when the page has an obvious
+ * next step, so the placeholder does the job the user came for.
+ */
+export function EmptyState({
+  title,
+  hint,
+  icon,
+  action,
+}: {
+  title: string;
+  hint?: ReactNode;
+  icon?: ReactNode;
+  action?: ReactNode;
+}) {
   return (
-    <div className="text-center py-16 text-muted">
-      <div className="text-sm font-medium">{title}</div>
-      {hint && <div className="text-xs mt-1">{hint}</div>}
+    <div className="rounded-xl border border-dashed border-border bg-panel2/25 px-6 py-10">
+      <div className="mx-auto flex max-w-md flex-col items-center gap-2 text-center">
+        <div className="grid h-9 w-9 place-items-center rounded-lg border border-border bg-panel2 text-muted">
+          {icon ?? <Inbox className="h-4 w-4" />}
+        </div>
+        <div className="text-sm font-medium text-text">{title}</div>
+        {hint && <div className="text-xs text-muted">{hint}</div>}
+        {action && <div className="mt-2">{action}</div>}
+      </div>
     </div>
   );
 }
