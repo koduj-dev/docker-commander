@@ -25,6 +25,10 @@ var ErrNotFound = errors.New("store: not found")
 // (e.g. a project slug that already exists).
 var ErrDuplicate = errors.New("store: duplicate")
 
+// ErrBuiltinRole is returned when a built-in role is edited or deleted. They are
+// the known-good baseline; the UI offers Duplicate to customise instead.
+var ErrBuiltinRole = errors.New("store: built-in roles cannot be modified")
+
 // Store wraps the database handle and exposes typed queries.
 type Store struct {
 	db     *sql.DB
@@ -163,6 +167,28 @@ CREATE TABLE IF NOT EXISTS registries (
 	created_at TEXT NOT NULL
 );
 
+-- Named bundles of section grants, assignable to users. See internal/store/roles.go.
+CREATE TABLE IF NOT EXISTS roles (
+	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	name        TEXT NOT NULL UNIQUE,
+	description TEXT NOT NULL DEFAULT '',
+	builtin     INTEGER NOT NULL DEFAULT 0  -- built-ins are read-only (Duplicate to customise)
+);
+
+-- One section grant inside a role; write=0 means read-only for that section.
+CREATE TABLE IF NOT EXISTS role_sections (
+	role_id INTEGER NOT NULL,
+	section TEXT NOT NULL,
+	write   INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (role_id, section)
+);
+
+CREATE TABLE IF NOT EXISTS user_roles (
+	user_id INTEGER NOT NULL,
+	role_id INTEGER NOT NULL,
+	PRIMARY KEY (user_id, role_id)
+);
+
 CREATE TABLE IF NOT EXISTS projects (
 	id           INTEGER PRIMARY KEY AUTOINCREMENT,
 	name         TEXT NOT NULL,            -- user-facing display name
@@ -289,7 +315,9 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
 			return err
 		}
 	}
-	return nil
+	// Built-in roles come last: the tables above must exist first, and seeding is
+	// idempotent (an existing row is left untouched).
+	return s.seedBuiltinRoles(ctx)
 }
 
 // isDuplicateColumn reports whether err is SQLite's "duplicate column name"

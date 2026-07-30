@@ -104,6 +104,15 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/mcp-admin/oauth-clients", s.handleAdminListOAuthClients)
 			r.Delete("/mcp-admin/oauth-clients/{id}", s.handleAdminDeleteOAuthClient)
 
+			// Roles: named bundles of section grants. Admin only (section
+			// "__admin") — editing a role widens authority, so this must never be
+			// reachable by a non-admin regardless of which sections they hold.
+			r.Get("/roles", s.handleListRoles)
+			r.Post("/roles", s.handleCreateRole)
+			r.Put("/roles/{id}", s.handleUpdateRole)
+			r.Delete("/roles/{id}", s.handleDeleteRole)
+			r.Post("/roles/{id}/duplicate", s.handleDuplicateRole)
+
 			// User management + app settings (admin only, enforced by section "__admin").
 			r.Get("/users", s.handleListUsers)
 			r.Post("/users", s.handleCreateUser)
