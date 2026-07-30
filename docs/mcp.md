@@ -43,7 +43,13 @@ disabled` so you can confirm the state at a glance.
 Open **MCP Access** in the sidebar. Each user manages **their own** tokens:
 
 - Give it a **name**, an optional **expiry**, and optionally restrict it to a
-  **subset of your sections** and/or mark it **read-only**.
+  **subset of your sections**, a **subset of Docker hosts**, and/or mark it
+  **read-only**.
+
+  Narrowing only ever subtracts. A token cannot reach a section or host its owner
+  can't, and the owner's live permissions are re-checked on **every call** — so a
+  token minted before a role was scoped down stops working the moment the role
+  changes, rather than outliving it.
 - The secret is shown **once** (only a hash is stored) — copy it now. The page
   also gives you a ready-to-paste command:
 

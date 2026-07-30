@@ -277,6 +277,7 @@ function AccessTab({ access }: { access: MyAccess | null }) {
               <tr className="border-b border-border">
                 <th className="text-left font-medium py-2">Section</th>
                 <th className="text-left font-medium py-2">You can</th>
+                <th className="text-left font-medium py-2">Where</th>
                 <th className="text-left font-medium py-2">Granted by</th>
               </tr>
             </thead>
@@ -289,6 +290,11 @@ function AccessTab({ access }: { access: MyAccess | null }) {
                       ? <span className="text-ok">view and change</span>
                       : <span className="text-muted">view only</span>}
                   </td>
+                  <td className="py-2 text-xs text-muted">
+                    {g.allHosts === false
+                      ? `local + ${(g.hosts ?? []).length} host(s)`
+                      : "every host"}
+                  </td>
                   <td className="py-2 text-xs text-muted">{g.from.join(", ") || "—"}</td>
                 </tr>
               ))}
@@ -297,6 +303,7 @@ function AccessTab({ access }: { access: MyAccess | null }) {
         )}
         <p className="text-xs text-muted">
           Sections an admin has turned off installation-wide never appear here, even if a role grants them.
+          <b> Where</b> is the set of Docker hosts a grant reaches; the local daemon is always included.
         </p>
       </div>
     </div>

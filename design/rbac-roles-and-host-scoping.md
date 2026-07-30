@@ -212,10 +212,22 @@ this work is not done until pentests assert:
    exactly the silent access change invariant 6 forbids. The cost is that emptying
    the roles from *every* mapping stops role sync rather than revoking; removing a
    role from *one* mapping still revokes normally.
-2. **Phase 2 — host scoping enforcement.** Host-aware `checkAccess`, the
-   `resolveHostID` chokepoint, WS, MCP, audit host column, plus the full pentest
-   set above.
-3. **Phase 3 — aggregate filtering.** Dashboard/topology/events/alerts scoping.
+2. **Phase 2 — host scoping enforcement.** ✅ **Shipped.** Host-aware
+   `checkAccess`, WS, MCP (tools and token host scope), audit host column, plus
+   invariants 1, 2, 3, 5, 6 and 7 of §5 as pentests.
+
+   One thing landed differently from the sketch above. The enforcement point is
+   **not** `resolveHostID`; it is the `permissions` middleware, which every
+   host-targeting route already passes through. `resolveHostID` stayed a plain
+   parse. Enforcing in the middleware covers the ~60 call sites without editing
+   them, and — more importantly — covers routes added later, which is exactly the
+   failure mode that left `?host=` unauthorised in the first place. The two places
+   a host is named outside the URL still need an explicit call: the WebSocket
+   subscribe frame, and a managed project's own `host_id`.
+3. **Phase 3 — aggregate filtering.** Dashboard/topology/events/alerts scoping,
+   plus the per-container metrics history (which the history store keys by
+   container id with no host column, so it has no host to authorise against).
+   Invariant 4 remains **open** and is the entry criterion for this phase.
    *Could* land with phase 2, but it is the fiddliest and most leak-prone part, so
    splitting it keeps phase 2 reviewable.
 

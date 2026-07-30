@@ -49,7 +49,7 @@ type managedProjectsOut struct {
 }
 
 func (h *handler) listManagedProjects(ctx context.Context, req *mcpsdk.CallToolRequest, _ struct{}) (*mcpsdk.CallToolResult, managedProjectsOut, error) {
-	if _, err := h.authorize(ctx, req, "projects", false); err != nil {
+	if _, err := h.authorize(ctx, req, "projects", false, 0); err != nil {
 		return nil, managedProjectsOut{}, err
 	}
 	if h.deps.ListProjects == nil {
@@ -73,7 +73,7 @@ type projectInput struct {
 }
 
 func (h *handler) deployProject(ctx context.Context, req *mcpsdk.CallToolRequest, in projectInput) (*mcpsdk.CallToolResult, actionResult, error) {
-	p, err := h.authorize(ctx, req, "projects", true)
+	p, err := h.authorize(ctx, req, "projects", true, 0)
 	if err != nil {
 		return nil, actionResult{}, err
 	}
@@ -82,6 +82,9 @@ func (h *handler) deployProject(ctx context.Context, req *mcpsdk.CallToolRequest
 	}
 	if in.ProjectID <= 0 {
 		return nil, actionResult{}, errInvalidProject
+	}
+	if err := h.authorizeProjectHost(ctx, req, in.ProjectID, true); err != nil {
+		return nil, actionResult{}, err
 	}
 	out, derr := h.deps.DeployProject(ctx, in.ProjectID, in.Profiles)
 	res := actionResult{OK: derr == nil, Action: "deploy", Target: projectTarget(in.ProjectID), Output: out}
@@ -93,7 +96,7 @@ func (h *handler) deployProject(ctx context.Context, req *mcpsdk.CallToolRequest
 }
 
 func (h *handler) downProject(ctx context.Context, req *mcpsdk.CallToolRequest, in projectInput) (*mcpsdk.CallToolResult, actionResult, error) {
-	p, err := h.authorize(ctx, req, "projects", true)
+	p, err := h.authorize(ctx, req, "projects", true, 0)
 	if err != nil {
 		return nil, actionResult{}, err
 	}
@@ -103,6 +106,9 @@ func (h *handler) downProject(ctx context.Context, req *mcpsdk.CallToolRequest, 
 	if in.ProjectID <= 0 {
 		return nil, actionResult{}, errInvalidProject
 	}
+	if err := h.authorizeProjectHost(ctx, req, in.ProjectID, true); err != nil {
+		return nil, actionResult{}, err
+	}
 	out, derr := h.deps.DownProject(ctx, in.ProjectID)
 	res := actionResult{OK: derr == nil, Action: "down", Target: projectTarget(in.ProjectID), Output: out}
 	h.audit(p, "mcp.project.down", res.Target, outcome(derr))
@@ -110,6 +116,28 @@ func (h *handler) downProject(ctx context.Context, req *mcpsdk.CallToolRequest, 
 		res.Output = combineErr(out, derr)
 	}
 	return nil, res, nil
+}
+
+// authorizeProjectHost re-checks the caller against the host a managed project
+// actually targets. A project names its host in its own record, not in the tool
+// arguments, so without this a role scoped to staging could deploy a project
+// pointing at production — the section check alone would pass. An unreadable
+// project is treated as a denial rather than as host 0.
+func (h *handler) authorizeProjectHost(ctx context.Context, req *mcpsdk.CallToolRequest, projectID int64, write bool) error {
+	proj, err := h.deps.Store.ProjectByID(ctx, projectID)
+	if err != nil {
+		return errInvalidProject
+	}
+	if proj.HostID == 0 {
+		return nil
+	}
+	// Targeting a remote host needs the "hosts" section too, matching the REST
+	// rule in api.requireHostAccess.
+	if _, err := h.authorize(ctx, req, "hosts", false, proj.HostID); err != nil {
+		return err
+	}
+	_, err = h.authorize(ctx, req, "projects", write, proj.HostID)
+	return err
 }
 
 func projectTarget(id int64) string { return "project#" + strconv.FormatInt(id, 10) }
@@ -134,7 +162,7 @@ func combineErr(out string, err error) string {
 // the model can only ever trigger start/stop/restart.
 func (h *handler) containerActionTool(action string) mcpsdk.ToolHandlerFor[containerInput, actionResult] {
 	return func(ctx context.Context, req *mcpsdk.CallToolRequest, in containerInput) (*mcpsdk.CallToolResult, actionResult, error) {
-		p, err := h.authorize(ctx, req, "containers", true)
+		p, err := h.authorize(ctx, req, "containers", true, in.HostID)
 		if err != nil {
 			return nil, actionResult{}, err
 		}

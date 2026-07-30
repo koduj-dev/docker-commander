@@ -14,6 +14,8 @@ import (
 //   - Sections, when non-empty, restricts the token to a subset of the user's
 //     granted sections (the dispatcher still intersects with the live user
 //     grants, so revoking a section in the admin UI also shrinks the token).
+//   - HostIDs, when non-empty, restricts the token to a subset of Docker hosts.
+//     The local daemon (0) is always reachable, matching the RBAC rule.
 //   - ReadOnly, when true, forces read-only even if the user is read-write.
 type APIToken struct {
 	ID         int64
@@ -21,6 +23,7 @@ type APIToken struct {
 	TokenHash  string
 	Name       string
 	Sections   []string // empty = inherit all of the user's sections
+	HostIDs    []int64  // empty = inherit all of the user's hosts
 	ReadOnly   bool
 	CreatedAt  time.Time
 	LastUsedAt time.Time
@@ -42,9 +45,10 @@ func (s *Store) CreateAPIToken(ctx context.Context, t *APIToken) (int64, error) 
 		expires = t.ExpiresAt.UTC().Format(time.RFC3339)
 	}
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO api_tokens (user_id, token_hash, name, sections, read_only, created_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		t.UserID, t.TokenHash, t.Name, marshalSections(t.Sections), boolToInt(t.ReadOnly), now, expires)
+		INSERT INTO api_tokens (user_id, token_hash, name, sections, host_ids, read_only, created_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.UserID, t.TokenHash, t.Name, marshalSections(t.Sections), marshalIDs(t.HostIDs),
+		boolToInt(t.ReadOnly), now, expires)
 	if err != nil {
 		return 0, err
 	}
@@ -57,7 +61,7 @@ func (s *Store) CreateAPIToken(ctx context.Context, t *APIToken) (int64, error) 
 // revoked.
 func (s *Store) APITokenByHash(ctx context.Context, hash string) (*APIToken, error) {
 	return scanAPITokenRow(s.db.QueryRowContext(ctx, `
-		SELECT id, user_id, token_hash, name, sections, read_only, created_at, last_used_at, expires_at, revoked
+		SELECT id, user_id, token_hash, name, sections, host_ids, read_only, created_at, last_used_at, expires_at, revoked
 		FROM api_tokens WHERE token_hash = ? AND revoked = 0`, hash))
 }
 
@@ -65,7 +69,7 @@ func (s *Store) APITokenByHash(ctx context.Context, hash string) (*APIToken, err
 // The hash is included but is not the secret — the secret is unrecoverable.
 func (s *Store) ListAPITokens(ctx context.Context, userID int64) ([]APIToken, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, user_id, token_hash, name, sections, read_only, created_at, last_used_at, expires_at, revoked
+		SELECT id, user_id, token_hash, name, sections, host_ids, read_only, created_at, last_used_at, expires_at, revoked
 		FROM api_tokens WHERE user_id = ? ORDER BY id DESC`, userID)
 	if err != nil {
 		return nil, err
@@ -97,7 +101,7 @@ type APITokenWithUser struct {
 // process memory here (no chance of leaking via a log line or panic).
 func (s *Store) ListAllAPITokens(ctx context.Context) ([]APITokenWithUser, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT t.id, t.user_id, t.name, t.sections, t.read_only,
+		SELECT t.id, t.user_id, t.name, t.sections, t.host_ids, t.read_only,
 		       t.created_at, t.last_used_at, t.expires_at, t.revoked, u.username
 		FROM api_tokens t JOIN users u ON u.id = t.user_id
 		ORDER BY t.id DESC`)
@@ -109,14 +113,15 @@ func (s *Store) ListAllAPITokens(ctx context.Context) ([]APITokenWithUser, error
 	for rows.Next() {
 		var t APIToken
 		var readOnly, revoked int
-		var sections, createdAt, lastUsed, expiresAt, username string
-		if err := rows.Scan(&t.ID, &t.UserID, &t.Name, &sections, &readOnly,
+		var sections, hostIDs, createdAt, lastUsed, expiresAt, username string
+		if err := rows.Scan(&t.ID, &t.UserID, &t.Name, &sections, &hostIDs, &readOnly,
 			&createdAt, &lastUsed, &expiresAt, &revoked, &username); err != nil {
 			return nil, err
 		}
 		t.ReadOnly = readOnly != 0
 		t.Revoked = revoked != 0
 		t.Sections = unmarshalSections(sections)
+		t.HostIDs = unmarshalIDs(hostIDs)
 		t.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 		t.LastUsedAt, _ = time.Parse(time.RFC3339, lastUsed)
 		if expiresAt != "" {
@@ -167,8 +172,8 @@ func (s *Store) TouchAPIToken(ctx context.Context, id int64) error {
 func scanAPITokenRow(row scanner) (*APIToken, error) {
 	var t APIToken
 	var readOnly, revoked int
-	var sections, createdAt, lastUsed, expiresAt string
-	err := row.Scan(&t.ID, &t.UserID, &t.TokenHash, &t.Name, &sections, &readOnly,
+	var sections, hostIDs, createdAt, lastUsed, expiresAt string
+	err := row.Scan(&t.ID, &t.UserID, &t.TokenHash, &t.Name, &sections, &hostIDs, &readOnly,
 		&createdAt, &lastUsed, &expiresAt, &revoked)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound

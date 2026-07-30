@@ -7,13 +7,17 @@ import (
 
 // AuditEntry is a single recorded security-relevant action.
 type AuditEntry struct {
-	ID        int64     `json:"id"`
-	UserID    int64     `json:"userId"`
-	Username  string    `json:"username"`
-	Action    string    `json:"action"`
-	Target    string    `json:"target"`
-	Detail    string    `json:"detail"`
-	IP        string    `json:"ip"`
+	ID       int64  `json:"id"`
+	UserID   int64  `json:"userId"`
+	Username string `json:"username"`
+	Action   string `json:"action"`
+	Target   string `json:"target"`
+	Detail   string `json:"detail"`
+	IP       string `json:"ip"`
+	// HostID is the Docker host the action targeted, 0 for the local daemon or
+	// for actions with no host dimension. Recorded because a scoped action is only
+	// meaningful with the "where" alongside the "what".
+	HostID    int64     `json:"hostId"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
@@ -21,9 +25,9 @@ type AuditEntry struct {
 // generally log-and-continue: an audit write must never block a user action.
 func (s *Store) Audit(ctx context.Context, e AuditEntry) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO audit_log (user_id, username, action, target, detail, ip, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		e.UserID, e.Username, e.Action, e.Target, e.Detail, e.IP,
+		INSERT INTO audit_log (user_id, username, action, target, detail, ip, host_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.UserID, e.Username, e.Action, e.Target, e.Detail, e.IP, e.HostID,
 		time.Now().UTC().Format(time.RFC3339))
 	return err
 }
@@ -34,7 +38,7 @@ func (s *Store) RecentAudit(ctx context.Context, limit int, before int64) ([]Aud
 	if limit <= 0 || limit > 1000 {
 		limit = 200
 	}
-	query := `SELECT id, user_id, username, action, target, detail, ip, created_at FROM audit_log`
+	query := `SELECT id, user_id, username, action, target, detail, ip, host_id, created_at FROM audit_log`
 	args := []any{}
 	if before > 0 {
 		query += ` WHERE id < ?`
@@ -53,7 +57,7 @@ func (s *Store) RecentAudit(ctx context.Context, limit int, before int64) ([]Aud
 	for rows.Next() {
 		var e AuditEntry
 		var created string
-		if err := rows.Scan(&e.ID, &e.UserID, &e.Username, &e.Action, &e.Target, &e.Detail, &e.IP, &created); err != nil {
+		if err := rows.Scan(&e.ID, &e.UserID, &e.Username, &e.Action, &e.Target, &e.Detail, &e.IP, &e.HostID, &created); err != nil {
 			return nil, err
 		}
 		e.CreatedAt, _ = time.Parse(time.RFC3339, created)

@@ -19,6 +19,10 @@ type roleBody struct {
 	Name        string              `json:"name"`
 	Description string              `json:"description"`
 	Sections    []store.RoleSection `json:"sections"`
+	// HostIDs limits the role to those Docker hosts. Empty means every host —
+	// the backwards-compatible default, so an existing client that doesn't send
+	// the field leaves a role unscoped rather than scoping it to nothing.
+	HostIDs []int64 `json:"hostIds"`
 }
 
 func (s *Server) handleListRoles(w http.ResponseWriter, r *http.Request) {
@@ -42,6 +46,7 @@ func (s *Server) handleListRoles(w http.ResponseWriter, r *http.Request) {
 		out = append(out, map[string]any{
 			"id": role.ID, "name": role.Name, "description": role.Description,
 			"builtin": role.Builtin, "sections": role.Sections, "users": counts[role.ID],
+			"hostIds": role.HostIDs,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -73,7 +78,7 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, err := s.store.CreateRole(r.Context(), &store.Role{
-		Name: b.Name, Description: b.Description, Sections: b.Sections,
+		Name: b.Name, Description: b.Description, Sections: b.Sections, HostIDs: b.HostIDs,
 	})
 	if errors.Is(err, store.ErrDuplicate) {
 		writeErr(w, http.StatusConflict, "a role with that name already exists")
@@ -83,7 +88,7 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.audit(r, "role.create", b.Name, sectionSummary(b.Sections))
+	s.audit(r, "role.create", b.Name, sectionSummary(b.Sections)+scopeSummary(b.HostIDs))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
 }
 
@@ -98,7 +103,7 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	err = s.store.UpdateRole(r.Context(), id, b.Name, b.Description, b.Sections)
+	err = s.store.UpdateRole(r.Context(), id, b.Name, b.Description, b.Sections, b.HostIDs)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		writeErr(w, http.StatusNotFound, "role not found")
@@ -114,7 +119,7 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.audit(r, "role.update", b.Name, sectionSummary(b.Sections))
+	s.audit(r, "role.update", b.Name, sectionSummary(b.Sections)+scopeSummary(b.HostIDs))
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -181,7 +186,7 @@ func (s *Server) handleDuplicateRole(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	newID, err := s.store.CreateRole(r.Context(), &store.Role{
-		Name: name, Description: src.Description, Sections: src.Sections,
+		Name: name, Description: src.Description, Sections: src.Sections, HostIDs: src.HostIDs,
 	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -221,4 +226,21 @@ func sectionSummary(sections []store.RoleSection) string {
 		}
 	}
 	return out
+}
+
+// scopeSummary renders a role's host scope for the audit detail column. An empty
+// scope is spelled out rather than omitted: "every host" is the security-relevant
+// fact, and a blank would read as "unknown".
+func scopeSummary(hostIDs []int64) string {
+	if len(hostIDs) == 0 {
+		return " (every host)"
+	}
+	out := " (hosts:"
+	for i, id := range hostIDs {
+		if i > 0 {
+			out += ","
+		}
+		out += strconv.FormatInt(id, 10)
+	}
+	return out + ")"
 }

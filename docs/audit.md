@@ -9,7 +9,10 @@ A record of **privileged actions**: who did what, when, and from where.
 Each entry has the **user**, an **action** (e.g. `container.stop`, `image.pull`,
 `user.create`, `host.trust`, `settings.update`, and `mcp.*` for AI-tool actions
 such as `mcp.token.create` or `mcp.container.start`), the **target**, an optional
-**detail**, the source **IP**, and a timestamp.
+**detail**, the source **IP**, the **Docker host** the action targeted (0 = the
+local daemon), and a timestamp. The host is recorded because a
+[host-scoped](users.md) action is only meaningful with the *where* alongside the
+*what*.
 
 Read-only views (listing, inspecting, streaming) are not audited — only changes
 and security-relevant operations are, which keeps the log signal-dense.

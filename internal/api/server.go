@@ -404,6 +404,12 @@ func (s *Server) startOAuthSweeper() {
 
 // resolveHostID returns the host id from the "host" query param, or 0 to mean
 // "the default local host" (the docker Manager resolves 0 to the local daemon).
+//
+// This is a PARSE, not a check. Authorisation of the host happens once, in the
+// permissions middleware, which every route reaching this function passes
+// through — so a handler added later is covered whether or not its author
+// remembers. Do not reintroduce a per-handler check here expecting it to be the
+// gate.
 func (s *Server) resolveHostID(r *http.Request) (int64, error) {
 	if q := r.URL.Query().Get("host"); q != "" {
 		return strconv.ParseInt(q, 10, 64)
@@ -420,8 +426,9 @@ func (s *Server) audit(r *http.Request, action, target, detail string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+	hostID, _ := hostParam(r) // 0 when the route names no host
 	_ = s.store.Audit(ctx, store.AuditEntry{
 		UserID: uid, Username: uname, Action: action, Target: target,
-		Detail: detail, IP: r.RemoteAddr,
+		Detail: detail, IP: r.RemoteAddr, HostID: hostID,
 	})
 }

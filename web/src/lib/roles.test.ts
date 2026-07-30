@@ -137,3 +137,23 @@ describe("toggleSection / sectionState", () => {
     expect(sectionState([{ section: "logs", write: true }], "hosts")).toBe("none");
   });
 });
+
+describe("roleSummary host scope", () => {
+  it("says nothing about hosts for an unscoped role", () => {
+    const r: Role = { id: 1, name: "R", description: "", builtin: false, sections: [{ section: "logs", write: true }] };
+    expect(roleSummary(r)).toBe("Logs");
+  });
+
+  it("flags a role limited to specific hosts", () => {
+    const r: Role = {
+      id: 1, name: "R", description: "", builtin: false,
+      sections: [{ section: "logs", write: true }], hostIds: [3, 4],
+    };
+    expect(roleSummary(r)).toBe("Logs · 2 host(s) only");
+  });
+
+  it("flags the scope even when the role grants nothing", () => {
+    const r: Role = { id: 1, name: "R", description: "", builtin: false, sections: [], hostIds: [3] };
+    expect(roleSummary(r)).toBe("no sections · 1 host(s) only");
+  });
+});

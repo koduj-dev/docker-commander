@@ -180,8 +180,11 @@ func TestPentestMyAccess_OnlyOwnData(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("own access = %d (%s)", w.Code, w.Body.String())
 	}
-	body := w.Body.String()
-	if strings.Contains(body, "HostsAdmin") || strings.Contains(body, "hosts") {
+	// The other user's ROLE NAME must not appear anywhere. The "hosts" section is
+	// checked structurally below rather than by substring: since host scoping
+	// shipped, the payload legitimately contains a "hosts" key of its own, and a
+	// substring match on it would fail for the wrong reason.
+	if body := w.Body.String(); strings.Contains(body, "HostsAdmin") {
 		t.Errorf("SECURITY: another user's role leaked into the response: %s", body)
 	}
 
@@ -204,7 +207,7 @@ func TestPentestMyAccess_OnlyOwnData(t *testing.T) {
 		t.Errorf("this user holds no roles, got %v", got.Roles)
 	}
 	if len(got.Effective) != 1 || got.Effective[0].Section != "logs" {
-		t.Fatalf("effective = %+v, want just logs", got.Effective)
+		t.Fatalf("effective = %+v, want just logs — the other user's hosts grant must not appear", got.Effective)
 	}
 	// Provenance is the point of the endpoint: say where the grant came from.
 	if len(got.Effective[0].From) != 1 || got.Effective[0].From[0] != "your account" {

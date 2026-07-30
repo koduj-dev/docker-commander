@@ -23,6 +23,7 @@ type mcpTokenJSON struct {
 	ID         int64    `json:"id"`
 	Name       string   `json:"name"`
 	Sections   []string `json:"sections"`
+	HostIDs    []int64  `json:"hostIds"`
 	ReadOnly   bool     `json:"readOnly"`
 	CreatedAt  string   `json:"createdAt"`
 	LastUsedAt string   `json:"lastUsedAt,omitempty"`
@@ -31,7 +32,7 @@ type mcpTokenJSON struct {
 
 func toMCPTokenJSON(t store.APIToken) mcpTokenJSON {
 	j := mcpTokenJSON{
-		ID: t.ID, Name: t.Name, Sections: t.Sections, ReadOnly: t.ReadOnly,
+		ID: t.ID, Name: t.Name, Sections: t.Sections, HostIDs: t.HostIDs, ReadOnly: t.ReadOnly,
 		CreatedAt: t.CreatedAt.Format(time.RFC3339),
 	}
 	if !t.LastUsedAt.IsZero() {
@@ -80,6 +81,7 @@ func (s *Server) handleCreateMCPToken(w http.ResponseWriter, r *http.Request) {
 		Name          string   `json:"name"`
 		ReadOnly      bool     `json:"readOnly"`
 		Sections      []string `json:"sections"`
+		HostIDs       []int64  `json:"hostIds"`
 		ExpiresInDays int      `json:"expiresInDays"`
 	}
 	if err := decodeJSON(r, &b); err != nil {
@@ -122,6 +124,17 @@ func (s *Server) handleCreateMCPToken(w http.ResponseWriter, r *http.Request) {
 			"none of the requested sections are granted to your account, so this token would not be scoped to anything")
 		return
 	}
+	// Host narrowing. Unlike sections this isn't filtered against the owner's
+	// reach, because it doesn't need to be: the live user check runs on every
+	// call, so a token naming a host its owner can't touch simply can't use it.
+	// What we do enforce is that an explicit list is a real list of ids — an
+	// entry of 0 would mean "the local daemon", which is always in scope and
+	// would quietly turn a narrowing list into a no-op for that host.
+	hostIDs := cleanHostIDs(b.HostIDs)
+	if len(b.HostIDs) > 0 && len(hostIDs) == 0 {
+		writeErr(w, http.StatusBadRequest, "the requested host scope contains no valid host ids")
+		return
+	}
 	// A read-only owner can only mint read-only tokens.
 	readOnly := b.ReadOnly || u.ReadOnly
 
@@ -134,7 +147,7 @@ func (s *Server) handleCreateMCPToken(w http.ResponseWriter, r *http.Request) {
 	sum := sha256.Sum256([]byte(secret))
 	id, err := s.store.CreateAPIToken(r.Context(), &store.APIToken{
 		UserID: u.ID, TokenHash: hex.EncodeToString(sum[:]), Name: b.Name,
-		Sections: sections, ReadOnly: readOnly, ExpiresAt: expiresAt,
+		Sections: sections, HostIDs: hostIDs, ReadOnly: readOnly, ExpiresAt: expiresAt,
 	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not create token")
@@ -166,4 +179,19 @@ func (s *Server) handleRevokeMCPToken(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r, "mcp.token.revoke", chi.URLParam(r, "id"), "")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// cleanHostIDs drops non-positive and duplicate host ids. 0 is dropped rather
+// than kept: the local daemon is always in scope, so listing it would not narrow
+// anything and would misrepresent the token's reach in the UI.
+func cleanHostIDs(in []int64) []int64 {
+	out := make([]int64, 0, len(in))
+	seen := map[int64]bool{}
+	for _, id := range in {
+		if id > 0 && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
 }

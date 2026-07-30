@@ -82,7 +82,7 @@ func TestVerifyTokenOAuthPath(t *testing.T) {
 	}
 	h := &handler{deps: Deps{
 		Store: st, SigningKey: key, ResourceURL: testResource, IssuerURL: testIssuer,
-		CheckAccess: func(context.Context, *store.User, string, bool) error { return nil },
+		CheckAccess: func(context.Context, *store.User, string, bool, int64) error { return nil },
 	}}
 
 	tok, _, _ := MintAccessToken(key, testIssuer, testResource, uid, true, time.Hour)

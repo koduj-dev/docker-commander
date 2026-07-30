@@ -55,11 +55,13 @@ type serverMsg struct {
 }
 
 // Serve handles one accepted WebSocket connection until it closes. allow gates
-// each subscription by its channel: it is called with the channel name and must
-// return true for the stream to start (the caller maps the channel to an RBAC
-// section and checks the user's live permissions). A nil allow permits all
+// each subscription by its channel AND the host it targets: it is called with
+// both and must return true for the stream to start (the caller maps the channel
+// to an RBAC section and checks the user's live permissions for that host). The
+// host matters because a subscribe frame names one — without it, a user scoped
+// to one host could stream a container's logs from another. A nil allow permits all
 // channels (used in tests).
-func (h *Hub) Serve(ctx context.Context, conn *websocket.Conn, allow func(channel string) bool) {
+func (h *Hub) Serve(ctx context.Context, conn *websocket.Conn, allow func(channel string, hostID int64) bool) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -94,7 +96,7 @@ type connState struct {
 	conn    *websocket.Conn
 	docker  Streamer
 	writeMu *sync.Mutex
-	allow   func(channel string) bool
+	allow   func(channel string, hostID int64) bool
 
 	mu   sync.Mutex
 	subs map[string]context.CancelFunc
@@ -108,8 +110,9 @@ func (c *connState) subscribe(parent context.Context, msg clientMsg) {
 	// Replace any existing sub with the same id FIRST, so a re-subscribe that is
 	// then denied doesn't leave the previous stream running under that id.
 	c.unsubscribe(msg.SubID)
-	// RBAC gate: a user may only stream channels whose section they can access.
-	if c.allow != nil && !c.allow(msg.Channel) {
+	// RBAC gate: a user may only stream channels whose section they can access,
+	// and only on hosts their grant reaches.
+	if c.allow != nil && !c.allow(msg.Channel, msg.HostID) {
 		c.write(parent, serverMsg{Type: "error", SubID: msg.SubID, Message: "access to this section is not permitted"})
 		return
 	}

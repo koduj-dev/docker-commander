@@ -49,6 +49,8 @@ export interface Role {
   description: string;
   builtin: boolean;
   sections: RoleSection[] | null;
+  /** Docker hosts the role is limited to. Empty/absent means EVERY host. */
+  hostIds?: number[] | null;
   /** How many accounts currently hold this role. */
   users?: number;
 }
@@ -658,6 +660,9 @@ export interface EffectiveGrant {
   section: string;
   write: boolean;
   from: string[];
+  /** False when the grant only reaches `hosts` (plus the always-in-scope local daemon). */
+  allHosts?: boolean;
+  hosts?: number[] | null;
 }
 
 /** The signed-in account's own permissions, for the profile page. */

@@ -155,7 +155,7 @@ func TestPentestAdminSectionIsNotGrantable(t *testing.T) {
 	if _, ok := grants["__admin"]; ok {
 		t.Error("SECURITY: __admin appeared in effective grants")
 	}
-	if err := srv.checkAccess(ctx, u, "__admin", false); err == nil {
+	if err := srv.checkAccess(ctx, u, "__admin", false, 0); err == nil {
 		t.Error("SECURITY: a non-admin holding a bogus __admin grant reached the admin section")
 	}
 }
@@ -207,11 +207,11 @@ func TestPentestReadOnlyRoleBlocksGetWrites(t *testing.T) {
 			t.Errorf("SECURITY: %s maps to no section", p)
 			continue
 		}
-		if err := srv.checkAccess(ctx, u, section, true); err == nil {
+		if err := srv.checkAccess(ctx, u, section, true, 0); err == nil {
 			t.Errorf("SECURITY: a read-only role allowed the privileged GET %s", p)
 		}
 		// The same path as a plain read stays allowed.
-		if err := srv.checkAccess(ctx, u, section, false); err != nil {
+		if err := srv.checkAccess(ctx, u, section, false, 0); err != nil {
 			t.Errorf("reads on %s should still work: %v", section, err)
 		}
 	}
@@ -286,20 +286,20 @@ func TestRBACSectionMatrix(t *testing.T) {
 			roU, _ := st.UserByID(ctx, roUser)
 			noneU, _ := st.UserByID(ctx, noneUser)
 
-			if err := srv.checkAccess(ctx, rwU, section, true); err != nil {
+			if err := srv.checkAccess(ctx, rwU, section, true, 0); err != nil {
 				t.Errorf("writable role denied a write on %s: %v", section, err)
 			}
-			if err := srv.checkAccess(ctx, roU, section, false); err != nil {
+			if err := srv.checkAccess(ctx, roU, section, false, 0); err != nil {
 				t.Errorf("read-only role denied a read on %s: %v", section, err)
 			}
-			if err := srv.checkAccess(ctx, roU, section, true); err == nil {
+			if err := srv.checkAccess(ctx, roU, section, true, 0); err == nil {
 				t.Errorf("SECURITY: read-only role allowed a write on %s", section)
 			}
-			if err := srv.checkAccess(ctx, noneU, section, false); err == nil {
+			if err := srv.checkAccess(ctx, noneU, section, false, 0); err == nil {
 				t.Errorf("SECURITY: a user with no grants read %s", section)
 			}
 			// No role may reach the admin section.
-			if err := srv.checkAccess(ctx, rwU, "__admin", false); err == nil {
+			if err := srv.checkAccess(ctx, rwU, "__admin", false, 0); err == nil {
 				t.Errorf("SECURITY: the %s role reached __admin", section)
 			}
 		})
@@ -319,12 +319,12 @@ func TestRBACFailsClosedOnStoreError(t *testing.T) {
 	})
 	u, _ := st.UserByID(ctx, uid)
 	srv := &Server{cfg: config.Config{}, store: st}
-	if err := srv.checkAccess(ctx, u, "containers", false); err != nil {
+	if err := srv.checkAccess(ctx, u, "containers", false, 0); err != nil {
 		t.Fatalf("setup: access should work before the store dies: %v", err)
 	}
 
 	st.Close()
-	if err := srv.checkAccess(ctx, u, "containers", false); err == nil {
+	if err := srv.checkAccess(ctx, u, "containers", false, 0); err == nil {
 		t.Error("SECURITY: access was granted while grants could not be computed — the gate must fail closed")
 	}
 }
@@ -356,7 +356,7 @@ func TestPentestRawInspectRequiresTheOwningSection(t *testing.T) {
 		if got != want {
 			t.Errorf("SECURITY: %s maps to %q, want %q", path, got, want)
 		}
-		if err := srv.checkAccess(ctx, nu, got, false); err == nil {
+		if err := srv.checkAccess(ctx, nu, got, false, 0); err == nil {
 			t.Errorf("SECURITY: a zero-grant account can raw-inspect via %s", path)
 		}
 	}
@@ -374,7 +374,7 @@ func TestPentestRawInspectRequiresTheOwningSection(t *testing.T) {
 	viewer, _ := st.CreateUser(ctx, &store.User{Username: "viewer", Role: "user"})
 	_ = st.SetUserRoles(ctx, viewer, []int64{roleID})
 	vu, _ := st.UserByID(ctx, viewer)
-	if err := srv.checkAccess(ctx, vu, sectionForPath("/api/inspect/container"), false); err != nil {
+	if err := srv.checkAccess(ctx, vu, sectionForPath("/api/inspect/container"), false, 0); err != nil {
 		t.Errorf("a containers grant should allow raw container inspect: %v", err)
 	}
 }
@@ -405,6 +405,9 @@ func TestRBACGatedRoutesActuallyMountThePermissionsMiddleware(t *testing.T) {
 		unguarded = append(unguarded, method+" "+route)
 		return nil
 	})
+	// Since phase 2 this test guards the HOST check too: ?host= is authorised in
+	// that same middleware, so a gated route missing it is unscoped as well as
+	// ungated.
 	if err != nil {
 		t.Fatalf("walking routes: %v", err)
 	}
@@ -468,20 +471,20 @@ func TestPentestSMTPConfigIsAdminOnly(t *testing.T) {
 	}
 	u, _ := st.UserByID(ctx, uid)
 
-	if err := srv.checkAccess(ctx, u, sectionForPath("/api/smtp"), true); err == nil {
+	if err := srv.checkAccess(ctx, u, sectionForPath("/api/smtp"), true, 0); err == nil {
 		t.Error("SECURITY: an alerts-only account can still rewrite the instance SMTP relay")
 	}
 	// …while the rest of the alerts surface still works for them, so the change is
 	// narrowly scoped rather than breaking alerting for non-admins.
 	for _, p := range []string{"/api/alerts", "/api/alert-rules", "/api/webhooks"} {
-		if err := srv.checkAccess(ctx, u, sectionForPath(p), true); err != nil {
+		if err := srv.checkAccess(ctx, u, sectionForPath(p), true, 0); err != nil {
 			t.Errorf("an alerts role should still manage %s: %v", p, err)
 		}
 	}
 
 	admin, _ := st.CreateUser(ctx, &store.User{Username: "root", Role: "admin"})
 	au, _ := st.UserByID(ctx, admin)
-	if err := srv.checkAccess(ctx, au, sectionForPath("/api/smtp"), true); err != nil {
+	if err := srv.checkAccess(ctx, au, sectionForPath("/api/smtp"), true, 0); err != nil {
 		t.Errorf("an admin must still configure SMTP: %v", err)
 	}
 }

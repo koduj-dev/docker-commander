@@ -229,3 +229,23 @@ func (s *Store) PromoteTOTPPending(ctx context.Context, userID int64) error {
 		`UPDATE users SET totp_secret = totp_pending, totp_enabled = 1, totp_pending = '' WHERE id = ?`, userID)
 	return err
 }
+
+// marshalIDs / unmarshalIDs store an id list as JSON, with "" for empty so an
+// unset list and an explicitly empty one look the same in the column — both mean
+// "no restriction".
+func marshalIDs(ids []int64) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	b, _ := json.Marshal(ids)
+	return string(b)
+}
+
+func unmarshalIDs(raw string) []int64 {
+	if raw == "" {
+		return nil
+	}
+	var out []int64
+	_ = json.Unmarshal([]byte(raw), &out)
+	return out
+}

@@ -23,16 +23,24 @@ export function rolesForUser(user: ManagedUser, roles: Role[]): Role[] {
  * roleSummary renders a role's grants compactly, e.g.
  * "Containers, Images (read-only), Logs". Writable sections come first because
  * they're the ones that carry risk.
+ *
+ * A host-scoped role says so. An UNSCOPED role deliberately says nothing: every
+ * role was unscoped before scoping shipped, so tagging them all "every host"
+ * would be noise on the common case — while a limited role is exactly the thing
+ * an admin needs to spot at a glance.
  */
 export function roleSummary(role: Role): string {
   const sections = role.sections ?? [];
-  if (sections.length === 0) return "no sections";
+  const scope = (role.hostIds ?? []).length > 0
+    ? ` · ${(role.hostIds ?? []).length} host(s) only`
+    : "";
+  if (sections.length === 0) return "no sections" + scope;
   const write = sections.filter((s) => s.write).map((s) => sectionLabel(s.section));
   const read = sections.filter((s) => !s.write).map((s) => sectionLabel(s.section));
   const parts: string[] = [];
   if (write.length > 0) parts.push(write.join(", "));
   if (read.length > 0) parts.push(`${read.join(", ")} (read-only)`);
-  return parts.join(" · ");
+  return parts.join(" · ") + scope;
 }
 
 /**

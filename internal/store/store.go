@@ -200,6 +200,16 @@ CREATE TABLE IF NOT EXISTS user_roles (
 	PRIMARY KEY (user_id, role_id)
 );
 
+-- Which Docker hosts a role's grants apply to. NO ROWS FOR A ROLE MEANS EVERY
+-- HOST — chosen so that upgrading changes nobody's reach (design note D4). The
+-- local daemon (host 0) is always in scope and is never stored here: making it
+-- scopeable would let a single-host install lock itself out.
+CREATE TABLE IF NOT EXISTS role_hosts (
+	role_id INTEGER NOT NULL,
+	host_id INTEGER NOT NULL,
+	PRIMARY KEY (role_id, host_id)
+);
+
 CREATE TABLE IF NOT EXISTS projects (
 	id           INTEGER PRIMARY KEY AUTOINCREMENT,
 	name         TEXT NOT NULL,            -- user-facing display name
@@ -327,6 +337,11 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
 		// instance-wide SMTP "To" (and the per-host override), so existing rules
 		// deliver exactly as before.
 		`ALTER TABLE alert_rules ADD COLUMN emails TEXT NOT NULL DEFAULT ''`,
+		// Host narrowing for MCP tokens, and the host an audited action happened
+		// on. Both default to the pre-scoping meaning: an empty token host list is
+		// no restriction, and host 0 is the local daemon.
+		`ALTER TABLE api_tokens ADD COLUMN host_ids TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE audit_log ADD COLUMN host_id INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := s.db.ExecContext(ctx, alter); err != nil && !isDuplicateColumn(err) {
 			return err

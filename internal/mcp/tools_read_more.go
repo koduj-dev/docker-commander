@@ -26,7 +26,7 @@ type listVolumesOut struct {
 }
 
 func (h *handler) listVolumes(ctx context.Context, req *mcpsdk.CallToolRequest, in hostInput) (*mcpsdk.CallToolResult, listVolumesOut, error) {
-	if _, err := h.authorize(ctx, req, "volumes", false); err != nil {
+	if _, err := h.authorize(ctx, req, "volumes", false, in.HostID); err != nil {
 		return nil, listVolumesOut{}, err
 	}
 	vols, err := h.deps.Docker.ListVolumes(ctx, in.HostID)
@@ -63,7 +63,7 @@ type listNetworksOut struct {
 }
 
 func (h *handler) listNetworks(ctx context.Context, req *mcpsdk.CallToolRequest, in hostInput) (*mcpsdk.CallToolResult, listNetworksOut, error) {
-	if _, err := h.authorize(ctx, req, "networks", false); err != nil {
+	if _, err := h.authorize(ctx, req, "networks", false, in.HostID); err != nil {
 		return nil, listNetworksOut{}, err
 	}
 	nets, err := h.deps.Docker.ListNetworks(ctx, in.HostID)
@@ -108,7 +108,7 @@ type systemInfoOut struct {
 }
 
 func (h *handler) systemInfo(ctx context.Context, req *mcpsdk.CallToolRequest, in hostInput) (*mcpsdk.CallToolResult, systemInfoOut, error) {
-	if _, err := h.authorize(ctx, req, "dashboard", false); err != nil {
+	if _, err := h.authorize(ctx, req, "dashboard", false, in.HostID); err != nil {
 		return nil, systemInfoOut{}, err
 	}
 	si, err := h.deps.Docker.SystemInfo(ctx, in.HostID)
@@ -150,8 +150,13 @@ type metricsHistoryOut struct {
 	Points []metricsPoint `json:"points"`
 }
 
+// metricsHistory is not host-scoped: the history store keys samples by container
+// id alone, with no host column, so there is no host to authorise against. It is
+// therefore one of the aggregate reads covered by the deferred phase-3
+// limitation documented in docs/users.md — a read that can surface a container
+// from outside the caller's scope. It grants no action.
 func (h *handler) metricsHistory(ctx context.Context, req *mcpsdk.CallToolRequest, in metricsHistoryInput) (*mcpsdk.CallToolResult, metricsHistoryOut, error) {
-	if _, err := h.authorize(ctx, req, "dashboard", false); err != nil {
+	if _, err := h.authorize(ctx, req, "dashboard", false, 0); err != nil {
 		return nil, metricsHistoryOut{}, err
 	}
 	if h.deps.History == nil {
@@ -226,7 +231,7 @@ type recentAuditOut struct {
 }
 
 func (h *handler) recentAudit(ctx context.Context, req *mcpsdk.CallToolRequest, in recentAuditInput) (*mcpsdk.CallToolResult, recentAuditOut, error) {
-	if _, err := h.authorize(ctx, req, "audit", false); err != nil {
+	if _, err := h.authorize(ctx, req, "audit", false, 0); err != nil {
 		return nil, recentAuditOut{}, err
 	}
 	limit := in.Limit
@@ -278,7 +283,7 @@ type recentEventsOut struct {
 }
 
 func (h *handler) recentEvents(ctx context.Context, req *mcpsdk.CallToolRequest, in recentEventsInput) (*mcpsdk.CallToolResult, recentEventsOut, error) {
-	if _, err := h.authorize(ctx, req, "events", false); err != nil {
+	if _, err := h.authorize(ctx, req, "events", false, in.HostID); err != nil {
 		return nil, recentEventsOut{}, err
 	}
 	minutes := in.Minutes
