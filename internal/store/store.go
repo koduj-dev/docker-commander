@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS users (
 	username      TEXT NOT NULL UNIQUE,
 	password_hash TEXT NOT NULL,
 	role          TEXT NOT NULL DEFAULT 'admin',
+	email         TEXT NOT NULL DEFAULT '',  -- where this account's own alerts go
 	totp_secret   TEXT NOT NULL DEFAULT '',
 	totp_enabled  INTEGER NOT NULL DEFAULT 0,
 	created_at    TEXT NOT NULL,
@@ -134,6 +135,7 @@ CREATE TABLE IF NOT EXISTS alert_rules (
 	webhook_id  INTEGER,
 	cooldown_sec INTEGER NOT NULL DEFAULT 60,
 	email       INTEGER NOT NULL DEFAULT 0,
+	emails      TEXT NOT NULL DEFAULT '',      -- JSON list; empty = the instance SMTP "To"
 	created_at  TEXT NOT NULL
 );
 
@@ -311,6 +313,11 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
 		`ALTER TABLE hosts ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE projects ADD COLUMN host_id INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE projects ADD COLUMN allow_remote_host_paths INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''`,
+		// Per-rule recipients. Empty keeps the previous behaviour: fall back to the
+		// instance-wide SMTP "To" (and the per-host override), so existing rules
+		// deliver exactly as before.
+		`ALTER TABLE alert_rules ADD COLUMN emails TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := s.db.ExecContext(ctx, alter); err != nil && !isDuplicateColumn(err) {
 			return err

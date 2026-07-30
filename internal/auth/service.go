@@ -241,13 +241,22 @@ func (s *Service) ldapLogin(ctx context.Context, existing *store.User, username,
 			}
 			existing.Sections = mappedSections
 		}
+		// Keep the alert address in step with the directory when it publishes one.
+		// A blank mail attribute never clears an address the user set by hand —
+		// losing it silently would stop their alerts arriving.
+		if res.Email != "" && res.Email != existing.Email {
+			if err := s.store.SetUserEmail(ctx, existing.ID, res.Email); err != nil {
+				return nil, err
+			}
+			existing.Email = res.Email
+		}
 		return existing, nil
 	}
 	role := "user"
 	if res.IsAdmin {
 		role = "admin"
 	}
-	u := &store.User{Username: res.Username, Role: role, AuthSource: "ldap", Sections: mappedSections}
+	u := &store.User{Username: res.Username, Role: role, AuthSource: "ldap", Sections: mappedSections, Email: res.Email}
 	id, err := s.store.CreateUser(ctx, u)
 	if err != nil {
 		return nil, err

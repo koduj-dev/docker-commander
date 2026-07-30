@@ -70,3 +70,22 @@ Beyond these channels, every fired alert is also written to the process log
 (stderr) as a structured line, so under systemd it lands in the journal — and,
 if you enable forwarding, in syslog. See
 [Deployment → Logs](deployment.md#logs).
+
+## Who receives an alert e-mail
+A rule that has **Also send an email** ticked resolves its recipients in this
+order, most specific first:
+
+1. **The rule's own recipients** — the comma-separated list on the rule.
+2. **The host's alert address** — set per host under [Hosts](hosts.md), for a host
+   whose alerts should go elsewhere.
+3. **The instance-wide recipient** — the *To* field under
+   [Settings → Email](settings.md#email-smtp).
+
+Rules created before per-rule recipients existed have an empty list, so they keep
+using 2 or 3 exactly as before.
+
+Set an **alert e-mail on your account** (the icon beside *Sign out*) and it
+prefills as the recipient the first time you enable e-mail on a rule — clear the
+field to fall back to the instance-wide address instead. If your LDAP directory
+publishes a `mail` attribute, it is filled in for you on login; a directory with no
+address never clears one you set by hand.

@@ -133,6 +133,8 @@ export const api = {
     req<LoginResult>("POST", "/api/auth/2fa", { mfaToken, code }),
   me: () => req<User>("GET", "/api/auth/me"),
   logout: () => req<{ ok: boolean }>("POST", "/api/auth/logout"),
+  // Own alert address. Self-service: it only ever affects this account's alerts.
+  setMyEmail: (email: string) => req<{ ok: boolean }>("PUT", "/api/auth/me/email", { email }),
 
   // User management (admin)
   users: () => req<ManagedUser[]>("GET", "/api/users"),
@@ -603,11 +605,12 @@ export const api = {
     severity: string;
     webhookId: number | null;
     email: boolean;
+    emails?: string[];
     cooldownSec: number;
   }) => req<{ id: number }>("POST", "/api/alert-rules", body),
   updateAlertRule: (
     id: number,
-    body: { name: string; type: string; target: string; config: unknown; severity: string; webhookId: number | null; email: boolean; cooldownSec: number }
+    body: { name: string; type: string; target: string; config: unknown; severity: string; webhookId: number | null; email: boolean; emails?: string[]; cooldownSec: number }
   ) => req<{ ok: boolean }>("PUT", `/api/alert-rules/${id}`, body),
   toggleAlertRule: (id: number, enabled: boolean) =>
     req<{ ok: boolean }>("PATCH", `/api/alert-rules/${id}`, { enabled }),

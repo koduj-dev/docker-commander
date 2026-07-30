@@ -6,6 +6,7 @@ import { triggerDownload } from "../components/LoadModal";
 import type { AlertEvent, AlertRule, AlertType, Severity, Webhook } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
+import { useAuth } from "../auth/AuthContext";
 import { Tabs } from "../components/Tabs";
 import { useDialogs } from "../components/Dialog";
 
@@ -248,7 +249,12 @@ function RuleForm({ hooks, existing, onDone }: { hooks: Webhook[]; existing?: Al
   const [target, setTarget] = useState(existing?.target ?? "");
   const [severity, setSeverity] = useState<Severity>(existing?.severity ?? "warning");
   const [webhookId, setWebhookId] = useState<number | null>(existing?.webhookId ?? null);
+  const { user: me } = useAuth();
   const [email, setEmail] = useState(existing?.email ?? false);
+  // Recipients for THIS rule. Prefilled from the signed-in account's address the
+  // first time e-mail is switched on, so the common case needs no typing; empty
+  // means "use the instance-wide SMTP recipient".
+  const [emails, setEmails] = useState<string>((existing?.emails ?? []).join(", "));
   const [cooldown, setCooldown] = useState(existing?.cooldownSec ?? 60);
 
   // type-specific
@@ -280,7 +286,11 @@ function RuleForm({ hooks, existing, onDone }: { hooks: Webhook[]; existing?: Al
     e.preventDefault();
     setBusy(true);
     try {
-      const body = { name, type, target, config: buildConfig(), severity, webhookId, email, cooldownSec: cooldown };
+      const body = {
+        name, type, target, config: buildConfig(), severity, webhookId, email,
+        emails: email ? emails.split(",").map((e) => e.trim()).filter(Boolean) : [],
+        cooldownSec: cooldown,
+      };
       if (existing) await api.updateAlertRule(existing.id, body);
       else await api.createAlertRule({ ...body, enabled: true });
       onDone();
@@ -411,9 +421,25 @@ function RuleForm({ hooks, existing, onDone }: { hooks: Webhook[]; existing?: Al
       </div>
 
       <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" checked={email} onChange={(e) => setEmail(e.target.checked)} />
+        <input type="checkbox" checked={email} onChange={(e) => {
+          setEmail(e.target.checked);
+          // Prefill on first enable only — never overwrite what the user typed.
+          if (e.target.checked && !emails.trim() && me?.email) setEmails(me.email);
+        }} />
         Also send an email (an admin configures the SMTP server under Settings → Email)
       </label>
+      {email && (
+        <label className="block">
+          <span className="label">Recipients</span>
+          <input className="input" value={emails} onChange={(e) => setEmails(e.target.value)}
+            placeholder="ops@example.com, oncall@example.com" />
+          <span className="block text-xs text-muted mt-1">
+            {me?.email
+              ? "Comma-separated. Prefilled from your account address — clear it to use the instance-wide recipient instead."
+              : "Comma-separated. Leave empty to use the instance-wide recipient, or set an address on your account to prefill it here."}
+          </span>
+        </label>
+      )}
 
       <div className="flex justify-end gap-2">
         <button type="button" className="btn-ghost" onClick={onDone}>Cancel</button>

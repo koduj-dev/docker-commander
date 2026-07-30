@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/koduj-dev/docker-commander/internal/auth"
@@ -149,6 +150,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 func (s *Server) userView(r *http.Request, u *store.User) map[string]any {
 	return map[string]any{
 		"id": u.ID, "username": u.Username, "role": u.Role,
+		"email":    u.Email,
 		"readOnly": u.ReadOnly, "totpEnabled": u.TOTPEnabled,
 		"sections":    s.effectiveSections(r.Context(), u),
 		"mfaEnforced": !s.mfaExempt(r),
@@ -265,4 +267,55 @@ func (s *Server) loginResponse(r *http.Request, res *auth.LoginResult) map[strin
 		"user":      s.userView(r, res.User),
 		"expiresAt": res.ExpiresAt,
 	}
+}
+
+// handleSetMyEmail records the signed-in account's own alert address. Self-service
+// and ungated: it only ever affects where that account's own alerts go, and the
+// value is validated as an address before it is stored.
+func (s *Server) handleSetMyEmail(w http.ResponseWriter, r *http.Request) {
+	c, ok := auth.ClaimsFrom(r.Context())
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var b struct {
+		Email string `json:"email"`
+	}
+	if err := decodeJSON(r, &b); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	email := strings.TrimSpace(b.Email)
+	// Empty clears it, which is how a user opts out of prefilled recipients.
+	if email != "" && !validEmail(email) {
+		writeErr(w, http.StatusBadRequest, "that does not look like an e-mail address")
+		return
+	}
+	if err := s.store.SetUserEmail(r.Context(), c.UserID, email); err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not save the address")
+		return
+	}
+	s.audit(r, "user.email", c.Username, email)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// validEmail is a deliberately loose check: exactly one @, something either side,
+// a dot in the domain, and no spaces. Anything stricter rejects addresses that are
+// perfectly deliverable, and the real proof is the Send test button.
+func validEmail(s string) bool {
+	if strings.ContainsAny(s, " \t\r\n,;<>") {
+		return false
+	}
+	at := strings.Index(s, "@")
+	if at <= 0 || at != strings.LastIndex(s, "@") || at == len(s)-1 {
+		return false
+	}
+	domain := s[at+1:]
+	// A trailing dot is a valid FQDN root label, but in a hand-typed address it is
+	// a typo far more often than intent — and a wrong address means alerts that
+	// silently never arrive.
+	if strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") {
+		return false
+	}
+	return strings.Contains(domain, ".")
 }

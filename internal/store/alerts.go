@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -21,15 +23,19 @@ type Webhook struct {
 
 // AlertRule defines when an alert fires and where it goes.
 type AlertRule struct {
-	ID          int64     `json:"id"`
-	Name        string    `json:"name"`
-	Enabled     bool      `json:"enabled"`
-	Type        string    `json:"type"`     // state | resource | log | restart
-	Target      string    `json:"target"`   // container name substring; '' or '*' = all
-	Config      string    `json:"config"`   // raw JSON, interpreted by the engine
-	Severity    string    `json:"severity"` // info | warning | critical
-	WebhookID   *int64    `json:"webhookId"`
-	Email       bool      `json:"email"` // also send to the configured SMTP recipient
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	Enabled   bool   `json:"enabled"`
+	Type      string `json:"type"`     // state | resource | log | restart
+	Target    string `json:"target"`   // container name substring; '' or '*' = all
+	Config    string `json:"config"`   // raw JSON, interpreted by the engine
+	Severity  string `json:"severity"` // info | warning | critical
+	WebhookID *int64 `json:"webhookId"`
+	Email     bool   `json:"email"` // also send this rule by e-mail
+	// Emails are this rule's own recipients. Empty falls back to the instance-wide
+	// SMTP "To" (and the per-host override), so rules written before per-rule
+	// recipients existed keep delivering exactly as they did.
+	Emails      []string  `json:"emails"`
 	CooldownSec int       `json:"cooldownSec"`
 	CreatedAt   time.Time `json:"createdAt"`
 }
@@ -103,7 +109,7 @@ func (s *Store) DeleteWebhook(ctx context.Context, id int64) error {
 // ListAlertRules returns all alert rules.
 func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, enabled, type, target, config, severity, webhook_id, cooldown_sec, email, created_at
+		SELECT id, name, enabled, type, target, config, severity, webhook_id, cooldown_sec, email, emails, created_at
 		FROM alert_rules ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -123,11 +129,11 @@ func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 // CreateAlertRule inserts an alert rule and returns its ID.
 func (s *Store) CreateAlertRule(ctx context.Context, r *AlertRule) (int64, error) {
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO alert_rules (name, enabled, type, target, config, severity, webhook_id, cooldown_sec, email, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO alert_rules (name, enabled, type, target, config, severity, webhook_id, cooldown_sec, email, emails, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.Name, boolToInt(r.Enabled), r.Type, r.Target, orDefault(r.Config, "{}"),
 		orDefault(r.Severity, "warning"), r.WebhookID, defaultInt(r.CooldownSec, 60), boolToInt(r.Email),
-		time.Now().UTC().Format(time.RFC3339))
+		marshalEmails(r.Emails), time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		return 0, err
 	}
@@ -145,10 +151,10 @@ func (s *Store) SetAlertRuleEnabled(ctx context.Context, id int64, enabled bool)
 func (s *Store) UpdateAlertRule(ctx context.Context, id int64, r *AlertRule) error {
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE alert_rules
-		SET name = ?, type = ?, target = ?, config = ?, severity = ?, webhook_id = ?, cooldown_sec = ?, email = ?
+		SET name = ?, type = ?, target = ?, config = ?, severity = ?, webhook_id = ?, cooldown_sec = ?, email = ?, emails = ?
 		WHERE id = ?`,
 		r.Name, r.Type, r.Target, orDefault(r.Config, "{}"), orDefault(r.Severity, "warning"),
-		r.WebhookID, defaultInt(r.CooldownSec, 60), boolToInt(r.Email), id)
+		r.WebhookID, defaultInt(r.CooldownSec, 60), boolToInt(r.Email), marshalEmails(r.Emails), id)
 	return err
 }
 
@@ -242,10 +248,11 @@ func scanWebhook(r scanner) (*Webhook, error) {
 func scanRule(r scanner) (*AlertRule, error) {
 	var rule AlertRule
 	var enabled, email int
+	var emails string
 	var created string
 	var webhookID sql.NullInt64
 	err := r.Scan(&rule.ID, &rule.Name, &enabled, &rule.Type, &rule.Target, &rule.Config,
-		&rule.Severity, &webhookID, &rule.CooldownSec, &email, &created)
+		&rule.Severity, &webhookID, &rule.CooldownSec, &email, &emails, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -254,6 +261,7 @@ func scanRule(r scanner) (*AlertRule, error) {
 	}
 	rule.Enabled = enabled != 0
 	rule.Email = email != 0
+	rule.Emails = unmarshalEmails(emails)
 	if webhookID.Valid {
 		rule.WebhookID = &webhookID.Int64
 	}
@@ -266,4 +274,33 @@ func defaultInt(v, def int) int {
 		return def
 	}
 	return v
+}
+
+// marshalEmails stores a rule's recipients, dropping blanks and duplicates so a
+// sloppy paste can't produce empty or repeated addresses.
+func marshalEmails(in []string) string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(in))
+	for _, e := range in {
+		e = strings.TrimSpace(e)
+		if e == "" || seen[strings.ToLower(e)] {
+			continue
+		}
+		seen[strings.ToLower(e)] = true
+		out = append(out, e)
+	}
+	if len(out) == 0 {
+		return ""
+	}
+	b, _ := json.Marshal(out)
+	return string(b)
+}
+
+func unmarshalEmails(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	_ = json.Unmarshal([]byte(raw), &out)
+	return out
 }

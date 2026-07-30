@@ -4,6 +4,8 @@ export interface User {
   id: number;
   username: string;
   role: string;
+  /** Where this account's own alert e-mails go. Optional; synced from LDAP when available. */
+  email?: string;
   totpEnabled: boolean;
   readOnly: boolean;
   sections: string[];
@@ -563,6 +565,8 @@ export interface AlertRule {
   severity: Severity;
   webhookId: number | null;
   email: boolean;
+  /** This rule's own recipients. Empty falls back to the instance-wide SMTP "To". */
+  emails?: string[] | null;
   cooldownSec: number;
   createdAt: string;
 }

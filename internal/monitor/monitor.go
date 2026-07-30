@@ -562,7 +562,7 @@ func (m *Monitor) fire(ctx context.Context, r store.AlertRule, hostID int64, hos
 		m.dispatcher.dispatch(*r.WebhookID, ev)
 	}
 	if r.Email {
-		m.emailNotify(ev)
+		m.emailNotify(ev, r.Emails)
 	}
 }
 
@@ -642,7 +642,9 @@ func (m *Monitor) fireHostAlert(hostID int64, hostName string, online bool, down
 	if _, err := m.store.InsertAlertEvent(wctx, ev); err != nil {
 		log.Printf("monitor: insert host alert event: %v", err)
 	}
-	m.emailNotify(ev)
+	// Host reachability isn't tied to a rule, so it uses the host/instance
+	// recipients.
+	m.emailNotify(ev, nil)
 }
 
 // HostHealth returns a snapshot of every tracked host's reachability, keyed by

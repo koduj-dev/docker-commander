@@ -12,9 +12,18 @@ import (
 	"github.com/koduj-dev/docker-commander/internal/store"
 )
 
-// emailNotify sends a fired alert to the configured SMTP recipient. It runs in
-// its own goroutine so a slow mail server never blocks the engine.
-func (m *Monitor) emailNotify(ev *store.AlertEvent) {
+// emailNotify sends a fired alert by e-mail. It runs in its own goroutine so a
+// slow mail server never blocks the engine.
+//
+// Recipients are resolved most-specific-first:
+//
+//  1. ruleEmails — the rule's own list, set by whoever wrote the rule.
+//  2. the host's alert_email override, for a host that routes elsewhere.
+//  3. the instance-wide SMTP "To".
+//
+// A rule created before per-rule recipients existed has an empty list, so it
+// still resolves to 2 or 3 and delivers exactly as it did before.
+func (m *Monitor) emailNotify(ev *store.AlertEvent, ruleEmails []string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -25,14 +34,16 @@ func (m *Monitor) emailNotify(ev *store.AlertEvent) {
 			}
 			return
 		}
-		// Per-host recipient override: a host may route its alerts elsewhere.
-		if ev.HostID != 0 {
+		if len(ruleEmails) > 0 {
+			cfg.To = strings.Join(ruleEmails, ", ")
+		} else if ev.HostID != 0 {
+			// Per-host recipient override: a host may route its alerts elsewhere.
 			if h, err := m.store.HostByID(ctx, ev.HostID); err == nil && h.AlertEmail != "" {
 				cfg.To = h.AlertEmail
 			}
 		}
 		if cfg.To == "" {
-			return // no global or per-host recipient
+			return // no rule, host or instance recipient
 		}
 		subject := fmt.Sprintf("[%s] %s — %s", strings.ToUpper(ev.Severity), ev.RuleName, ev.ContainerName)
 		body := fmt.Sprintf("Rule: %s\nType: %s\nSeverity: %s\nContainer: %s (%s)\nMessage: %s\nTime: %s\n",
