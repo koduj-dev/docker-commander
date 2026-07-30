@@ -167,19 +167,24 @@ Installs to `$(go env GOPATH)/bin/dockercmd`. (Built this way the version report
 
 ### Verifying a download
 
-Every release ships a `SHA256SUMS` plus a keyless **cosign** signature
-(`SHA256SUMS.sig` / `.pem`) covering the binaries **and** the SPDX **SBOM**, plus
+Every release ships a `SHA256SUMS` plus a keyless **cosign** signature bundle
+(`SHA256SUMS.bundle`) covering the binaries **and** the SPDX **SBOM**, plus
 per-binary build **provenance**:
 
 ```bash
 sha256sum -c SHA256SUMS --ignore-missing        # checksums (binaries + SBOM)
 
-cosign verify-blob --certificate SHA256SUMS.pem --signature SHA256SUMS.sig \
+cosign verify-blob --bundle SHA256SUMS.bundle \
   --certificate-identity-regexp '^https://github\.com/koduj-dev/docker-commander/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
 
 gh attestation verify dockercmd-linux-amd64 --repo koduj-dev/docker-commander
 ```
+
+Verifying the bundle needs **cosign v3+**. Releases up to and including v1.5.0
+were signed with cosign v2 and ship a `SHA256SUMS.sig` / `SHA256SUMS.pem` pair
+instead — verify those with
+`cosign verify-blob --certificate SHA256SUMS.pem --signature SHA256SUMS.sig …`.
 
 The container image is signed and carries SLSA provenance + an SBOM as well:
 

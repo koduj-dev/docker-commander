@@ -4,7 +4,17 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
-## [1.5.0] — 2026-06-16
+## [Unreleased]
+
+### Changed
+- **Release signatures are now a cosign bundle.** The release workflow moved to
+  cosign v3, which writes a single Sigstore bundle instead of a detached
+  signature + certificate pair, so releases now ship `SHA256SUMS.bundle` in place
+  of `SHA256SUMS.sig` / `SHA256SUMS.pem`. Verify with
+  `cosign verify-blob --bundle SHA256SUMS.bundle … SHA256SUMS` (needs **cosign
+  v3+**); releases up to v1.5.0 keep the old pair. The workflow now also asserts
+  the bundle exists before publishing, so a signing regression fails the release
+  instead of silently shipping unsigned assets.
 
 ### Added
 - **Image vulnerability scanning** — the Images page gains a **Scan** action that
