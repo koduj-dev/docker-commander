@@ -33,6 +33,11 @@ Their **effective access** is the union, so the more permissive grant wins.
 > could widen their own access, so no combination of section grants reaches role
 > management.
 
+Manage them on **Users & roles → Roles**. Each card shows the role's grants, how
+many accounts hold it, and whether it's built-in or yours. The editor sets every
+section to **—** (not granted), **read** or **write**, with all thirteen visible at
+once. Built-in roles open read-only — use **Duplicate** for an editable copy.
+
 ## Managing accounts
 - **New user** — username, password (min 10 chars), account type, read-only flag,
   any **roles**, and optionally per-account **sections** (checkboxes matching the
