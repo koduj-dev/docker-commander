@@ -33,6 +33,13 @@ type LDAPConfig struct {
 	// GroupMappings grant RBAC sections by LDAP group membership. When any are
 	// set, LDAP is authoritative for a user's sections (re-synced on each login).
 	GroupMappings []LDAPGroupMapping `json:"groupMappings"`
+	// FallbackRoleID is granted in place of a mapped role that no longer exists,
+	// so deleting a role degrades its members to a known baseline instead of
+	// silently leaving them with nothing. 0 means no fallback. It applies only to
+	// a mapping that matched and then failed to resolve — never to a user whose
+	// groups map to nothing, which would hand access to every account in the
+	// directory.
+	FallbackRoleID int64 `json:"fallbackRoleId"`
 }
 
 // cleanGroupMappings drops blank group DNs, any unknown section keys and any
@@ -95,6 +102,9 @@ func (s *Store) GetLDAP(ctx context.Context) (LDAPConfig, error) {
 // password preserves the previously stored one.
 func (s *Store) SetLDAP(ctx context.Context, c LDAPConfig) error {
 	c.GroupMappings = cleanGroupMappings(c.GroupMappings)
+	if c.FallbackRoleID < 0 {
+		c.FallbackRoleID = 0
+	}
 	if c.BindPassword == "" {
 		if prev, err := s.GetLDAP(ctx); err == nil {
 			c.BindPassword = prev.BindPassword

@@ -81,7 +81,21 @@ Two things it deliberately cannot do:
   that. A role cannot contain role management either, so no mapping — however
   generous — hands out the keys.
 - **It cannot lock anyone out by referencing a deleted role.** A stale role id in
-  a mapping simply grants nothing.
+  a mapping simply grants nothing — or the **fallback role**, if you set one.
+
+### The fallback role
+Pick one in *Settings → LDAP*. It's granted **in place of a mapped role that no
+longer exists**, so deleting a role degrades its members to a known baseline
+(**Viewer** is the obvious choice) instead of quietly leaving them with no access
+at all. The two built-in roles can't be deleted, and the role you nominate as the
+fallback can't be deleted either while it holds that job — point the fallback
+somewhere else first.
+
+It deliberately does **not** apply to a user whose groups map to no role at all.
+That's the ordinary "not entitled" case, and granting a baseline there would hand a
+role to every account in the directory that can authenticate. The fallback covers a
+*broken* mapping, not an *absent* one. It also doesn't stack on top of a mapping
+that resolves fine.
 
 Whether the directory is authoritative for roles depends on whether you use them:
 

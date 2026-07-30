@@ -65,6 +65,12 @@ upgrading doesn't strip roles from installs whose mappings predate them. See
 admin — only the admin group DN does that — and a role id left behind by a deleted
 role grants nothing rather than failing the login.
 
+**Fallback role** (optional, shown once a mapping grants a role) — granted in place
+of a mapped role that no longer exists, so deleting a role degrades its members to a
+baseline instead of leaving them with nothing. It does not apply to users whose
+groups map to no role at all, and the nominated role can't be deleted while it's the
+fallback.
+
 The admin role stays "sticky" once granted —
 removing someone from the admin group does not auto-demote them (avoids lockout
 if the directory is unreachable); demote them in [Users](users.md).

@@ -272,11 +272,37 @@ func (s *Store) DeleteRole(ctx context.Context, id int64) error {
 	if existing.Builtin {
 		return ErrBuiltinRole
 	}
+	// The LDAP fallback is what a login falls back to when a mapping names a role
+	// that no longer exists. Deleting the fallback would recreate that hole one
+	// level up, so it has to be pointed elsewhere first.
+	if cfg, err := s.GetLDAP(ctx); err == nil && cfg.FallbackRoleID == id {
+		return ErrRoleInUseAsFallback
+	}
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM user_roles WHERE role_id = ?`, id); err != nil {
 		return err
 	}
 	_, err = s.db.ExecContext(ctx, `DELETE FROM roles WHERE id = ?`, id)
 	return err
+}
+
+// ExistingRoleIDs filters ids down to the ones that still name a role, keeping
+// the caller's order. Used when applying LDAP mappings, where an id can outlive
+// the role it referred to.
+func (s *Store) ExistingRoleIDs(ctx context.Context, ids []int64) ([]int64, error) {
+	out := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		switch _, err := s.RoleByID(ctx, id); {
+		case errors.Is(err, ErrNotFound):
+			continue
+		case err != nil:
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, nil
 }
 
 // RoleIDsForUser returns the ids of the roles assigned to a user.
