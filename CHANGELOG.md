@@ -34,6 +34,17 @@ All notable changes to Docker Commander are documented here. The format follows
   and needs no forwarding, so **Projects deploys succeed while monitoring
   fails**. Also noted that an agent holding several keys can exhaust `sshd`'s
   `MaxAuthTries` before the right key is offered.
+- **New [How it's tested](docs/testing.md) page** — the app is pointed at real
+  Docker daemons, so this spells out the five test tiers (unit, adversarial
+  "pentests", runtime smoke, integration against a real daemon, and multi-daemon
+  end-to-end over TCP and SSH), how to run each, and — deliberately — **what is
+  not covered**: CI runs only the deterministic tiers, there's no browser/UI
+  suite, and coverage is unit-only. Linked from the README and CONTRIBUTING.
+
+### Removed
+- The **Go Report Card badge**, which now renders "go report: retired" since the
+  service shut down. It returned HTTP 200, so it displayed a misleading grade
+  rather than failing visibly as a broken image.
 
 ## [1.5.1] — 2026-07-30
 
