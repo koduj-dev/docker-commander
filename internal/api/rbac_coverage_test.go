@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -369,5 +370,60 @@ func TestPentestRawInspectRequiresTheOwningSection(t *testing.T) {
 	vu, _ := st.UserByID(ctx, viewer)
 	if err := srv.checkAccess(ctx, vu, sectionForPath("/api/inspect/container"), false); err != nil {
 		t.Errorf("a containers grant should allow raw container inspect: %v", err)
+	}
+}
+
+// TestRBACGatedRoutesActuallyMountThePermissionsMiddleware closes a gap in the
+// route-mapping test above: that one proves each route MAPS to a section, not that
+// the gate is in its chain. A route group registered without `r.Use(s.permissions)`
+// would map correctly and still be unenforced — mapping and mounting are separate
+// failures, and only one of them was covered.
+func TestRBACGatedRoutesActuallyMountThePermissionsMiddleware(t *testing.T) {
+	srv := &Server{cfg: config.Config{}}
+	want := reflect.ValueOf(srv.permissions).Pointer()
+	h, ok := srv.Handler().(chi.Routes)
+	if !ok {
+		t.Fatal("the root handler is not a chi.Routes")
+	}
+
+	var unguarded []string
+	err := chi.Walk(h, func(method, route string, _ http.Handler, mws ...func(http.Handler) http.Handler) error {
+		if !strings.HasPrefix(route, "/api") || sectionForPath(route) == "" {
+			return nil // ungated routes are covered by the allowlist test
+		}
+		for _, mw := range mws {
+			if reflect.ValueOf(mw).Pointer() == want {
+				return nil
+			}
+		}
+		unguarded = append(unguarded, method+" "+route)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking routes: %v", err)
+	}
+	if len(unguarded) > 0 {
+		sort.Strings(unguarded)
+		t.Errorf(`SECURITY: %d route(s) map to a section but do NOT have the permissions
+middleware in their chain, so the mapping is never enforced:
+  %s`, len(unguarded), strings.Join(unguarded, "\n  "))
+	}
+}
+
+// PENTEST: an unrecognised WebSocket channel must fail closed. The hub authorises
+// per channel, so a channel added without a mapping would otherwise stream to
+// anyone holding a session.
+func TestPentestWSUnknownChannelFailsClosed(t *testing.T) {
+	for _, ch := range []string{"", "exec", "events", "files", "anything-new"} {
+		if section, ok := wsChannelSection(ch); ok {
+			t.Errorf("SECURITY: unknown ws channel %q was authorised against section %q", ch, section)
+		}
+	}
+	// The two known channels still resolve, or the streams break entirely.
+	for _, ch := range []string{"stats", "logs"} {
+		section, ok := wsChannelSection(ch)
+		if !ok || section != "containers" {
+			t.Errorf("ws channel %q = (%q, %v), want (containers, true)", ch, section, ok)
+		}
 	}
 }
