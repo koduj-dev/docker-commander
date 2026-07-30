@@ -165,6 +165,12 @@ a remote host the same way they do locally, with three things worth knowing:
   the project, so they're easy to spot on the [Volumes](volumes.md) page. Like
   any named volume they **survive a `down`**.
 
+> **Changing a deployed project's target host leaves it running on the old one.**
+> Redeploying after switching hosts brings the stack up on the new host but does
+> not tear down the old deployment (or its seeded volumes), so you end up with two
+> live copies while the UI only shows the new host. Bring the project **down**
+> before changing its host.
+
 Remote deploy also works for **images, named volumes and builds**.
 
 ## Tips
