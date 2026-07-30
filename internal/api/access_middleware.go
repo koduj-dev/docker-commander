@@ -47,9 +47,39 @@ func sectionForPath(path string) string {
 		return "audit"
 	case "users", "roles", "settings", "ldap", "update", "mcp-admin":
 		return "__admin"
+	case "inspect":
+		// /api/inspect/{kind} returns the RAW docker inspect payload, which for a
+		// container includes Config.Env — database passwords, API keys. It must be
+		// gated by whichever section owns the kind being inspected, not left open
+		// to any signed-in account.
+		return sectionForInspectKind(p)
 	default:
-		// auth, system, inspect, metrics, ws, … are not section-gated.
+		// auth, system, metrics, ws, … are not section-gated.
 		return ""
+	}
+}
+
+// sectionForInspectKind maps "inspect/{kind}" to the section that owns that kind.
+// An unrecognised kind falls back to "containers", the most privileged of them, so
+// a new kind fails closed rather than becoming readable by everyone.
+func sectionForInspectKind(p string) string {
+	kind := ""
+	if i := strings.IndexByte(p, '/'); i >= 0 {
+		kind = p[i+1:]
+		if j := strings.IndexByte(kind, '/'); j >= 0 {
+			kind = kind[:j]
+		}
+	}
+	switch kind {
+	case "image":
+		return "images"
+	case "volume":
+		return "volumes"
+	case "network":
+		return "networks"
+	default:
+		// "container" and anything unknown.
+		return "containers"
 	}
 }
 
