@@ -12,11 +12,15 @@ import (
 type memoryStore struct {
 	mu        sync.RWMutex
 	series    map[string]map[string][]Point // containerID -> metric -> points
+	hosts     map[string]int64              // containerID -> host it was sampled from
 	retention time.Duration
 }
 
 func newMemoryStore(retention time.Duration) *memoryStore {
-	return &memoryStore{series: make(map[string]map[string][]Point), retention: retention}
+	return &memoryStore{
+		series: make(map[string]map[string][]Point), hosts: make(map[string]int64),
+		retention: retention,
+	}
 }
 
 func (m *memoryStore) Record(_ context.Context, samples []Sample) error {
@@ -24,6 +28,7 @@ func (m *memoryStore) Record(_ context.Context, samples []Sample) error {
 	defer m.mu.Unlock()
 	cutoff := time.Now().Add(-m.retention).UnixMilli()
 	for _, s := range samples {
+		m.hosts[s.ContainerID] = s.HostID
 		byMetric := m.series[s.ContainerID]
 		if byMetric == nil {
 			byMetric = make(map[string][]Point)
@@ -60,3 +65,10 @@ func (m *memoryStore) Query(_ context.Context, containerID, metric string, since
 }
 
 func (m *memoryStore) Close() error { return nil }
+
+func (m *memoryStore) HostFor(_ context.Context, containerID string) (int64, bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	id, ok := m.hosts[containerID]
+	return id, ok, nil
+}

@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/koduj-dev/docker-commander/internal/docker"
+	"github.com/koduj-dev/docker-commander/internal/store"
 )
 
 func (s *Server) handleListHosts(w http.ResponseWriter, r *http.Request) {
@@ -23,9 +24,16 @@ func (s *Server) handleListHosts(w http.ResponseWriter, r *http.Request) {
 	// monitor hasn't probed yet (or a disabled one it skips) is reported
 	// reachable so the UI doesn't flash a false "offline".
 	health := s.monitor.HostHealth()
+	// Hosts outside the caller's scope are not listed: the list carries names and
+	// addresses, and showing a host you can neither reach nor act on is the leak
+	// per-host scoping exists to prevent.
+	visible := s.visibleHosts(r)
 	// Shape a safe view; never leak TLS key material to the client.
 	out := make([]map[string]any, 0, len(hosts))
 	for _, h := range hosts {
+		if !visible(h.ID) {
+			continue
+		}
 		row := map[string]any{
 			"id": h.ID, "name": h.Name, "kind": h.Kind, "address": h.Address,
 			"alertEmail": h.AlertEmail, "disabled": h.Disabled,
@@ -436,5 +444,16 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "could not read audit log")
 		return
 	}
-	writeJSON(w, http.StatusOK, entries)
+	// An entry names the host its action touched, so an unfiltered log would
+	// describe activity on hosts the reader was scoped away from — the same leak
+	// as the alert feed, in a section that is itself authority-level. Entries with
+	// no host dimension (host 0) stay visible to everyone who holds "audit".
+	visible := s.visibleHosts(r)
+	shown := make([]store.AuditEntry, 0, len(entries))
+	for _, e := range entries {
+		if visible(e.HostID) {
+			shown = append(shown, e)
+		}
+	}
+	writeJSON(w, http.StatusOK, shown)
 }

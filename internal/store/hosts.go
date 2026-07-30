@@ -192,3 +192,22 @@ func (s *Store) EnsureLocalHost(ctx context.Context) error {
 	_, err := s.CreateHost(ctx, &Host{Name: "local", Kind: "local"})
 	return err
 }
+
+// NormalizeHostID collapses the two ways the local daemon can be named into one.
+// A request may say host 0 ("the default local host") or the id of the seeded
+// `kind = 'local'` row — they mean the same daemon, and host scoping has to treat
+// them the same or the local daemon ends up reachable under one name and not the
+// other. Returns 0 for either, and id unchanged for a remote host.
+func (s *Store) NormalizeHostID(ctx context.Context, id int64) int64 {
+	if id == 0 {
+		return 0
+	}
+	var kind string
+	if err := s.db.QueryRowContext(ctx, `SELECT kind FROM hosts WHERE id = ?`, id).Scan(&kind); err != nil {
+		return id // unknown host: leave it alone, the caller's scope will deny it
+	}
+	if kind == "local" {
+		return 0
+	}
+	return id
+}

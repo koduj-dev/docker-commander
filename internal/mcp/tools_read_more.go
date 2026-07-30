@@ -150,17 +150,26 @@ type metricsHistoryOut struct {
 	Points []metricsPoint `json:"points"`
 }
 
-// metricsHistory is not host-scoped: the history store keys samples by container
-// id alone, with no host column, so there is no host to authorise against. It is
-// therefore one of the aggregate reads covered by the deferred phase-3
-// limitation documented in docs/users.md — a read that can surface a container
-// from outside the caller's scope. It grants no action.
+// metricsHistory authorises against the host the samples were recorded from. The
+// series is keyed by container id alone, so without this, knowing an id would be
+// enough to read a container's CPU/memory history from a host outside the
+// caller's scope. A container with no recorded host is unknown, not local.
 func (h *handler) metricsHistory(ctx context.Context, req *mcpsdk.CallToolRequest, in metricsHistoryInput) (*mcpsdk.CallToolResult, metricsHistoryOut, error) {
-	if _, err := h.authorize(ctx, req, "dashboard", false, 0); err != nil {
+	if h.deps.History == nil {
+		if _, err := h.authorize(ctx, req, "dashboard", false, 0); err != nil {
+			return nil, metricsHistoryOut{}, err
+		}
+		return nil, metricsHistoryOut{}, errors.New("metrics history is not available")
+	}
+	hostID, known, err := h.deps.History.HostFor(ctx, in.ContainerID)
+	if err != nil {
 		return nil, metricsHistoryOut{}, err
 	}
-	if h.deps.History == nil {
-		return nil, metricsHistoryOut{}, errors.New("metrics history is not available")
+	if !known {
+		hostID = -1 // reachable only by a caller with no host restriction
+	}
+	if _, err := h.authorize(ctx, req, "dashboard", false, hostID); err != nil {
+		return nil, metricsHistoryOut{}, err
 	}
 	window, ok := rangeWindows[in.Range]
 	if !ok {

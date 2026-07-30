@@ -564,6 +564,48 @@ func (s *Store) EffectiveGrants(ctx context.Context, u *User) (map[string]Grant,
 	return out, nil
 }
 
+// ReachableHosts is the union of every host a user's grants reach, across all
+// sections. all=true means "no restriction anywhere" — either an unscoped grant
+// exists or the user is unconstrained, and the host set is then irrelevant.
+//
+// It answers a coarser question than EffectiveGrants: not "may they do X on host
+// N" but "may they see host N at all". That is what the aggregate views need —
+// the host list, the project list, the alert feed — and what the handful of
+// routes that take ?host= without belonging to a section need, since there is no
+// single section to check them against.
+func (s *Store) ReachableHosts(ctx context.Context, u *User) (hosts map[int64]bool, all bool, err error) {
+	grants, err := s.EffectiveGrants(ctx, u)
+	if err != nil {
+		return nil, false, err
+	}
+	hosts = map[int64]bool{}
+	for _, g := range grants {
+		if !g.Granted {
+			continue
+		}
+		if g.AllHosts {
+			return nil, true, nil
+		}
+		for id := range g.Hosts {
+			hosts[id] = true
+		}
+	}
+	return hosts, false, nil
+}
+
+// CanReachHost reports whether a user may see anything at all on hostID. The
+// local daemon (0) is always reachable, matching Grant.HasHost.
+func (s *Store) CanReachHost(ctx context.Context, u *User, hostID int64) (bool, error) {
+	if s.NormalizeHostID(ctx, hostID) == 0 {
+		return true, nil
+	}
+	hosts, all, err := s.ReachableHosts(ctx, u)
+	if err != nil {
+		return false, err
+	}
+	return all || hosts[hostID], nil
+}
+
 // EffectiveSections lists the sections a user can reach, sorted — used for the
 // users list and for LDAP section syncing.
 func (s *Store) EffectiveSections(ctx context.Context, u *User) ([]string, error) {

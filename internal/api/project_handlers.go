@@ -134,8 +134,14 @@ func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	names := s.hostNames(r.Context())
+	// A project names its target host, so listing one on an out-of-scope host
+	// would disclose that host's workloads to someone who can't deploy there.
+	visible := s.visibleHosts(r)
 	out := make([]projectJSON, 0, len(projects))
 	for _, p := range projects {
+		if !visible(p.HostID) {
+			continue
+		}
 		out = append(out, toProjectJSON(p, names[p.HostID]))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{

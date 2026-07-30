@@ -17,10 +17,15 @@ import (
 // Sample is one moment's resource reading for a container.
 type Sample struct {
 	ContainerID string
-	Time        time.Time
-	CPU         float64 // percent
-	MemPercent  float64 // percent of limit
-	MemBytes    float64 // bytes
+	// HostID is the Docker host the container runs on. Recorded so a series can
+	// be authorised against the caller's host scope: a container id is the only
+	// key here, and knowing one is otherwise enough to read its CPU/memory
+	// history from a host the caller was scoped away from.
+	HostID     int64
+	Time       time.Time
+	CPU        float64 // percent
+	MemPercent float64 // percent of limit
+	MemBytes   float64 // bytes
 }
 
 // Point is a single (timestamp-ms, value) datapoint in a series.
@@ -40,6 +45,10 @@ const (
 type Store interface {
 	Record(ctx context.Context, samples []Sample) error
 	Query(ctx context.Context, containerID, metric string, since time.Time) ([]Point, error)
+	// HostFor reports which host a container's samples were recorded from.
+	// ok=false means nothing has ever been recorded for that id, which callers
+	// must treat as "unknown", not as the local daemon.
+	HostFor(ctx context.Context, containerID string) (hostID int64, ok bool, err error)
 	Close() error
 }
 
