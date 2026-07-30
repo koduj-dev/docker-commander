@@ -580,19 +580,39 @@ function EditProjectModal({ project, hosts, deployed, onClose, onSaved }: { proj
   const [err, setErr] = useState("");
   const hostChanged = hostId !== (project.hostId ?? 0);
   const oldHostName = hosts.find((h) => h.id === project.hostId)?.name ?? "the local host";
+  const moving = deployed && hostChanged;
+  // Default ON: someone changing the host of a deployed project means "move it",
+  // not "run a second copy". It is destructive, so the confirm below spells out
+  // exactly what goes — unticking it keeps the old behaviour.
+  const [tearDown, setTearDown] = useState(true);
+
   const save = async () => {
     const n = name.trim();
     if (!n) { setErr("name is required"); return; }
-    // Retargeting a *deployed* project doesn't tear down the old host, so the
-    // stack keeps running there while the UI only shows the new host. Say so
-    // before saving rather than leaving the user to discover two live copies.
-    if (deployed && hostChanged && !(await dialogs.confirm({
-      title: "This project is deployed",
-      message: `Changing the target host will NOT bring it down on ${oldHostName} — it keeps running there, along with any volumes seeded for it, and this page will only show the new host. Bring the project down first if you want it moved rather than duplicated.`,
-      confirmLabel: "Change host anyway",
+    // Retargeting a deployed project used to leave the old host running it, so
+    // the operator ended up with two live copies and only one of them visible.
+    // Now it is a choice, and either answer gets stated before it happens.
+    if (moving && !(await dialogs.confirm({
+      title: tearDown ? `Move the project off ${oldHostName}?` : "Leave the old copy running?",
+      message: tearDown
+        ? `${project.name} will be brought DOWN on ${oldHostName} — its containers stop and are removed, and any volumes seeded there for its bind mounts are deleted. Named volumes holding your data are left alone. It is not started on the new host automatically; deploy it when you're ready.`
+        : `${project.name} keeps running on ${oldHostName} and this page will only show the new host, so you end up with two live copies. Bring it down there yourself if that isn't what you want.`,
+      confirmLabel: tearDown ? "Bring it down and move" : "Change host anyway",
+      danger: tearDown,
     }))) return;
     setBusy(true); setErr("");
-    try { await api.renameProject(project.id, n, hostId, allowHostPaths); onSaved(); }
+    try {
+      const res = await api.renameProject(project.id, n, hostId, allowHostPaths, moving && tearDown);
+      if (res.volumeError) {
+        // The stack is down and the project has moved; only the seed cleanup
+        // failed. Say so rather than reporting a clean success.
+        await dialogs.alert({
+          title: "Moved, but some seeded volumes remain",
+          message: `The project was brought down on ${oldHostName} and moved, but its seeded volumes could not all be removed: ${res.volumeError}`,
+        });
+      }
+      onSaved();
+    }
     catch (e) { setErr(e instanceof Error ? e.message : "save failed"); setBusy(false); }
   };
   return (
@@ -605,10 +625,18 @@ function EditProjectModal({ project, hosts, deployed, onClose, onSaved }: { proj
         <div className="text-xs text-muted">Identifier <code className="font-mono">{project.slug}</code> stays fixed.</div>
         {hosts.length > 0 ? <HostSelect hosts={hosts} value={hostId} onChange={setHostId} />
           : <p className="text-xs text-muted">No remote hosts available to you.</p>}
-        {deployed && hostChanged && (
-          <p className="text-xs text-warn">
-            This project is deployed on <strong>{oldHostName}</strong> and will keep running there — changing the host does not move it.
-          </p>
+        {moving && (
+          <label className="flex items-start gap-2 text-sm rounded-lg border border-warn/40 bg-warn/5 p-2">
+            <input type="checkbox" className="mt-1" checked={tearDown} onChange={(e) => setTearDown(e.target.checked)} />
+            <span>
+              Bring it down on <strong>{oldHostName}</strong> first
+              <span className="block text-xs text-muted mt-0.5">
+                {tearDown
+                  ? "The stack is stopped and removed there, along with the volumes seeded for its bind mounts. Named volumes are kept. This is a move."
+                  : "The stack keeps running on the old host while this page shows only the new one — you will have two live copies."}
+              </span>
+            </span>
+          </label>
         )}
         {hostId !== 0 && (
           <label className="flex items-start gap-2 text-sm">

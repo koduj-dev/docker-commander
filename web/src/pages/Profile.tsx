@@ -170,15 +170,18 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
         </Field>
 
         {!enr && (
-          <div className="flex items-center gap-3">
+          // Button first, hint underneath — the two used to share a flex row, which
+          // centred the button against a wrapping two-line sentence and read as a
+          // misalignment. This matches how hints sit under controls elsewhere.
+          <div className="space-y-1.5">
             <button className="btn-ghost px-3 py-1.5 text-sm" onClick={start} disabled={busy === "start"}>
               {busy === "start" ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               {user?.totpEnabled ? "Pair a new authenticator" : "Set up 2FA"}
             </button>
             {user?.totpEnabled && (
-              <span className="text-xs text-muted">
+              <p className="text-xs text-muted">
                 Your current authenticator keeps working until you finish pairing the new one.
-              </span>
+              </p>
             )}
           </div>
         )}
@@ -226,12 +229,40 @@ function AccessTab({ access }: { access: MyAccess | null }) {
   if (!access) return <div className="flex items-center gap-2 text-muted"><Spinner /> Loading…</div>;
 
   if (access.admin) {
+    const all = access.allSections ?? [];
     return (
-      <div className="card p-5 space-y-2 max-w-2xl">
-        <div className="flex items-center gap-2 font-medium"><KeyRound className="h-4 w-4 text-accent" /> Access</div>
-        <p className="text-sm">You are an <span className="text-accent">admin</span>, so you can reach every section and every action.</p>
+      <div className="card p-5 space-y-3 max-w-3xl">
+        <div className="flex items-center gap-2 font-medium"><KeyRound className="h-4 w-4 text-accent" /> What you can reach</div>
+        <p className="text-sm">
+          You are an <span className="text-accent">admin</span>. That is not a role and not a grant —
+          it bypasses the permission system, so there is no overlay to compute. Concretely, it means
+          all {all.length} sections, read and write, on{" "}
+          {access.hostCount === 1 ? "the one configured host" : `all ${access.hostCount ?? 0} configured hosts`},
+          plus administration itself: users, roles, settings, LDAP and the audit log.
+        </p>
+        <table className="w-full text-sm">
+          <thead className="text-muted text-xs uppercase tracking-wide">
+            <tr className="border-b border-border">
+              <th className="text-left font-medium py-2">Section</th>
+              <th className="text-left font-medium py-2">You can</th>
+              <th className="text-left font-medium py-2">Where</th>
+              <th className="text-left font-medium py-2">Granted by</th>
+            </tr>
+          </thead>
+          <tbody>
+            {all.map((s) => (
+              <tr key={s} className="border-b border-border/50">
+                <td className="py-2 font-medium">{sectionLabel(s)}</td>
+                <td className="py-2 text-ok">view and change</td>
+                <td className="py-2 text-xs text-muted">every host</td>
+                <td className="py-2 text-xs text-muted">your admin account</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
         <p className="text-xs text-muted">
-          Admins bypass roles and section grants entirely — there is no overlay to show.
+          Sections an admin has turned off installation-wide are hidden from the menu, but an admin can
+          still reach their APIs — the feature flag is not a permission.
         </p>
       </div>
     );

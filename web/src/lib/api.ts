@@ -353,8 +353,10 @@ export const api = {
     if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText);
     return data as { id: number; slug: string; files: number };
   },
-  renameProject: (id: number, name: string, hostId?: number, allowRemoteHostPaths?: boolean) =>
-    req<{ ok: boolean }>("PATCH", `/api/projects/${id}`, { name, hostId, allowRemoteHostPaths: !!allowRemoteHostPaths }),
+  renameProject: (id: number, name: string, hostId?: number, allowRemoteHostPaths?: boolean, tearDownOldHost?: boolean) =>
+    req<{ ok: boolean; tornDown?: boolean; removedVolumes?: string[] | null; volumeError?: string }>(
+      "PATCH", `/api/projects/${id}`,
+      { name, hostId, allowRemoteHostPaths: !!allowRemoteHostPaths, tearDownOldHost: !!tearDownOldHost }),
   // Volumes seeded on a remote host for this project's bind mounts. Used by the
   // delete flow to say how many there are before offering to remove them.
   projectSeedVolumes: (id: number) =>

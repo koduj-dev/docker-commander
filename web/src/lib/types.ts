@@ -673,4 +673,8 @@ export interface MyAccess {
   sections: string[] | null;
   /** Absent for an admin, who bypasses the grant system entirely. */
   effective?: EffectiveGrant[] | null;
+  /** Admin only: every section that exists, so "everything" can be shown rather than asserted. */
+  allSections?: string[] | null;
+  /** Admin only: how many Docker hosts are configured. */
+  hostCount?: number;
 }

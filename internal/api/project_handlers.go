@@ -649,6 +649,10 @@ func (s *Server) handleRenameProject(w http.ResponseWriter, r *http.Request) {
 		Name                 string `json:"name"`
 		HostID               int64  `json:"hostId"`
 		AllowRemoteHostPaths bool   `json:"allowRemoteHostPaths"`
+		// TearDownOldHost brings the stack down on the host being moved AWAY from.
+		// Opt-in and destructive, so the UI asks first; declining leaves the old
+		// copy running, which is the behaviour that shipped before this existed.
+		TearDownOldHost bool `json:"tearDownOldHost"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
@@ -676,16 +680,111 @@ func (s *Server) handleRenameProject(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Retargeting a DEPLOYED project leaves the old host running the stack: the
+	// app has no record that it should be torn down, so the operator ends up with
+	// two live copies and only one of them visible as "the project's host". When
+	// asked, bring the old one down first — before the row moves, because the
+	// teardown needs the OLD host id and a failure must not strand the stack
+	// somewhere the app no longer points at.
+	var teardown *teardownResult
+	if body.TearDownOldHost && body.HostID != p.HostID {
+		// The OLD host needs the caller's authority just as much as the new one:
+		// otherwise "move it away" becomes a way to stop workloads on a host you
+		// were scoped away from. Checked here, separately from the teardown, so a
+		// refusal is a 403 and not swallowed into the 502 below — the two mean
+		// very different things to whoever is reading the error.
+		if err := s.requireHostAccess(r, p.HostID); err != nil {
+			writeErr(w, http.StatusForbidden, err.Error())
+			return
+		}
+		res, err := s.tearDownOnHost(r, p, p.HostID)
+		if err != nil {
+			writeErr(w, http.StatusBadGateway,
+				"could not bring the project down on its current host, so it was NOT moved: "+err.Error())
+			return
+		}
+		teardown = res
+	}
 	if err := s.store.UpdateProjectSettings(r.Context(), p.ID, name, body.HostID, body.AllowRemoteHostPaths); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	s.audit(r, "project.rename", p.Slug, name)
+	if body.HostID != p.HostID {
+		detail := "host " + strconv.FormatInt(p.HostID, 10) + " → " + strconv.FormatInt(body.HostID, 10)
+		if teardown != nil {
+			detail += " (old host torn down)"
+		} else {
+			detail += " (old host left running)"
+		}
+		s.audit(r, "project.retarget", p.Slug, detail)
+	}
 	if body.AllowRemoteHostPaths != p.AllowRemoteHostPaths {
 		// Audited separately: this one changes what the project may mount.
 		s.audit(r, "project.remote_host_paths", p.Slug, boolWord(body.AllowRemoteHostPaths))
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	out := map[string]any{"ok": true}
+	if teardown != nil {
+		out["tornDown"] = true
+		out["output"] = teardown.output
+		out["removedVolumes"] = teardown.removedVolumes
+		if teardown.volumeErr != "" {
+			out["volumeError"] = teardown.volumeErr
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// teardownResult reports what bringing a project down on a host actually did.
+type teardownResult struct {
+	output         string
+	removedVolumes []string
+	volumeErr      string
+}
+
+// tearDownOnHost runs `docker compose down` for a project against a SPECIFIC
+// host — the one it is currently on, which is not necessarily p.HostID by the
+// time the caller is finished. The project value is copied with hostID applied so
+// the compose environment resolves to that daemon.
+//
+// Seeded volumes go too: they are per-host copies of the project's bind sources,
+// so leaving them behind on a host the project no longer targets is litter that
+// nothing will ever clean up. Their removal is best-effort and reported rather
+// than fatal — the stack being down is the part that matters.
+func (s *Server) tearDownOnHost(r *http.Request, p *store.Project, hostID int64) (*teardownResult, error) {
+	if !docker.ComposeAvailable(r.Context()) {
+		return nil, errors.New("the `docker compose` CLI is not available on the host running Docker Commander")
+	}
+	if err := s.requireHostAccess(r, hostID); err != nil {
+		return nil, err
+	}
+	onHost := *p
+	onHost.HostID = hostID
+
+	dir := s.projectRoot(p.ID)
+	env, cleanup, err := s.projectComposeEnv(r.Context(), &onHost, dir)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	out, err := docker.ComposeDown(r.Context(), dir, p.Slug, env)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", strings.TrimSpace(out), err)
+	}
+	s.audit(r, "project.down", p.Slug, "retarget from host "+strconv.FormatInt(hostID, 10))
+
+	res := &teardownResult{output: out}
+	if hostID != 0 {
+		removed, rerr := s.docker.RemoveSeedVolumes(r.Context(), hostID, p.Slug)
+		res.removedVolumes = removed
+		if rerr != nil {
+			res.volumeErr = rerr.Error()
+		}
+		if len(removed) > 0 {
+			s.audit(r, "project.seed_volumes.remove", p.Slug, strings.Join(removed, ","))
+		}
+	}
+	return res, nil
 }
 
 // handleDeployProject runs `docker compose up -d` (with any selected profiles).
