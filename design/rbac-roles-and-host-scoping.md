@@ -1,6 +1,7 @@
 # Design note — named roles & per-host scoping
 
-**Status:** proposal, awaiting a decision. No code has been written.
+**Status:** **decided — see §9.** Implementation may start; phases 1 and 2 are in
+scope, phase 3 is deferred. No code has been written yet.
 **Why this document:** [NEXT.md](../NEXT.md) marks this item *design-first* because
 it touches the app's single authorization gate, every host-targeting operation,
 and the MCP surface. The goal here is to get the **model** and the **blast radius**
@@ -234,3 +235,34 @@ rather than implied to be complete.
   lists it separately)?
 
 Answering **D1–D4** is enough to start phase 1.
+
+---
+
+## 9. Decisions taken
+
+| # | Decision | Notes |
+|---|---|---|
+| **D1** | **Phases 1 and 2.** Roles *and* host-scoping enforcement. **Phase 3 (aggregate filtering) is deferred.** | See the limitation below — it must be documented, not implied away. |
+| **D2** | **Per-section `write`.** `role_sections` carries a write flag; `users.read_only = true` maps to "every granted section read-only", so no behaviour changes on migration. | |
+| **D3** | **Host scope lives on the role.** A role is "Operator on staging". | Cleaner to reason about in the UI and in the audit log. |
+| **D4** | **An empty host set means all hosts.** Backwards compatible: after migration every user keeps exactly today's reach. | Accepted risk: an unset scope is *no* restriction. Phase 1 UI should say so where a scope is empty. |
+| **D5** | Built-in **Viewer** (all sections, read-only) and **Operator** (all except `hosts`, `registries`, `audit`), read-only with **Duplicate** to customise — matching how Templates already separates built-in from user-defined. | |
+| **D6** | LDAP **group→role alongside** group→section, not replacing it. | A hard switch would silently change access on the next login, violating invariant 6. |
+| **D7** | MCP token **host scope lands in phase 2**, since phase 2 is in scope. | |
+
+### The deferred-phase-3 limitation, stated explicitly
+
+With phases 1–2 shipped and phase 3 not, the state is:
+
+> **Actions are authorized per host; some aggregated reads are not.** A user
+> scoped to one host cannot start, stop, exec into or deploy anything on another
+> host — but aggregate views (dashboard, topology, events feed, alert feed) may
+> still surface *names, images, ports and event text* from hosts outside their
+> scope. That is an information leak, not an action bypass.
+
+This must land in `docs/users.md` (and the release notes) in those terms. Shipping
+it silently would let an operator believe scoping is complete when it is not —
+which is worse than not having scoping, because it invites relying on it.
+
+Pentest invariant 4 (§5) therefore stays **open** and is the entry criterion for
+phase 3; the other six must pass before phase 2 ships.
