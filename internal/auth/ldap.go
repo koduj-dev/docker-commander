@@ -42,6 +42,7 @@ type LDAPResult struct {
 	Username string
 	IsAdmin  bool     // member of the configured admin group
 	Groups   []string // the user's group DNs (memberOf), for section mapping
+	Email    string   // the directory's mail attribute, if it publishes one
 }
 
 // SectionsForGroups returns the union of RBAC sections granted to a user who
@@ -102,7 +103,7 @@ func LDAPAuthenticate(cfg store.LDAPConfig, username, password string) (*LDAPRes
 	filter := fmt.Sprintf(cfg.UserFilter, ldap.EscapeFilter(username))
 	sr := ldap.NewSearchRequest(
 		cfg.UserBaseDN, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 10, false,
-		filter, []string{"dn", "memberOf"}, nil,
+		filter, []string{"dn", "memberOf", "mail"}, nil,
 	)
 	res, err := conn.Search(sr)
 	if err != nil {
@@ -128,5 +129,10 @@ func LDAPAuthenticate(cfg store.LDAPConfig, username, password string) (*LDAPRes
 			}
 		}
 	}
-	return &LDAPResult{Username: username, IsAdmin: isAdmin, Groups: groups}, nil
+	return &LDAPResult{
+		Username: username, IsAdmin: isAdmin, Groups: groups,
+		// Directories usually publish an address here. It is optional: when absent
+		// the user simply fills one in themselves.
+		Email: strings.TrimSpace(entry.GetAttributeValue("mail")),
+	}, nil
 }

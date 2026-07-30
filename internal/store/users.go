@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -20,13 +21,16 @@ type User struct {
 	Username     string
 	PasswordHash string
 	Role         string
-	AuthSource   string // "local" (password stored here) or "ldap" (verified externally)
-	ReadOnly     bool
-	Sections     []string
-	TOTPSecret   string
-	TOTPEnabled  bool
-	CreatedAt    time.Time
-	LastLoginAt  time.Time
+	// Email receives alerts from rules this user creates. Optional; when an LDAP
+	// directory publishes a mail attribute it is synced here on login.
+	Email       string
+	AuthSource  string // "local" (password stored here) or "ldap" (verified externally)
+	ReadOnly    bool
+	Sections    []string
+	TOTPSecret  string
+	TOTPEnabled bool
+	CreatedAt   time.Time
+	LastLoginAt time.Time
 }
 
 // IsAdmin reports whether the user has the admin role.
@@ -43,9 +47,9 @@ func (s *Store) CountUsers(ctx context.Context) (int, error) {
 func (s *Store) CreateUser(ctx context.Context, u *User) (int64, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO users (username, password_hash, role, totp_secret, totp_enabled, read_only, sections, auth_source, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		u.Username, u.PasswordHash, orDefault(u.Role, "admin"), u.TOTPSecret, boolToInt(u.TOTPEnabled),
+		INSERT INTO users (username, password_hash, role, email, totp_secret, totp_enabled, read_only, sections, auth_source, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		u.Username, u.PasswordHash, orDefault(u.Role, "admin"), strings.TrimSpace(u.Email), u.TOTPSecret, boolToInt(u.TOTPEnabled),
 		boolToInt(u.ReadOnly), marshalSections(u.Sections), orDefault(u.AuthSource, "local"), now)
 	if err != nil {
 		return 0, err
@@ -56,7 +60,7 @@ func (s *Store) CreateUser(ctx context.Context, u *User) (int64, error) {
 // ListUsers returns all accounts (without secrets) for the admin user manager.
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, username, password_hash, role, totp_secret, totp_enabled, read_only, sections, auth_source, created_at, last_login_at
+		SELECT id, username, password_hash, role, email, totp_secret, totp_enabled, read_only, sections, auth_source, created_at, last_login_at
 		FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
@@ -96,14 +100,14 @@ func (s *Store) UpdateUserAccess(ctx context.Context, id int64, role string, rea
 // UserByUsername looks up a user by their unique username.
 func (s *Store) UserByUsername(ctx context.Context, username string) (*User, error) {
 	return scanUserRow(s.db.QueryRowContext(ctx, `
-		SELECT id, username, password_hash, role, totp_secret, totp_enabled, read_only, sections, auth_source, created_at, last_login_at
+		SELECT id, username, password_hash, role, email, totp_secret, totp_enabled, read_only, sections, auth_source, created_at, last_login_at
 		FROM users WHERE username = ?`, username))
 }
 
 // UserByID looks up a user by primary key.
 func (s *Store) UserByID(ctx context.Context, id int64) (*User, error) {
 	return scanUserRow(s.db.QueryRowContext(ctx, `
-		SELECT id, username, password_hash, role, totp_secret, totp_enabled, read_only, sections, auth_source, created_at, last_login_at
+		SELECT id, username, password_hash, role, email, totp_secret, totp_enabled, read_only, sections, auth_source, created_at, last_login_at
 		FROM users WHERE id = ?`, id))
 }
 
@@ -153,7 +157,7 @@ func scanUserRow(row scanner) (*User, error) {
 	var u User
 	var enabled, readOnly int
 	var sections, createdAt, lastLogin string
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.TOTPSecret, &enabled,
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.Email, &u.TOTPSecret, &enabled,
 		&readOnly, &sections, &u.AuthSource, &createdAt, &lastLogin)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -198,4 +202,12 @@ func orDefault(v, def string) string {
 		return def
 	}
 	return v
+}
+
+// SetUserEmail records where a user's own alert e-mails go. It is self-service —
+// an account edits its own address — and is also written by the LDAP sync when the
+// directory publishes one.
+func (s *Store) SetUserEmail(ctx context.Context, id int64, email string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET email = ? WHERE id = ?`, strings.TrimSpace(email), id)
+	return err
 }

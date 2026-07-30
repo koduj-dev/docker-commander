@@ -7,6 +7,18 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Alert e-mails go where you want them.** An alert rule can now carry **its own
+  recipients** instead of every rule mailing the one instance-wide address. Each
+  account also gets an **alert e-mail** it can set itself (the person icon beside
+  Sign out), which prefills as the recipient the first time you switch e-mail on
+  for a rule — so the common "tell me about my own alerts" case needs no typing.
+
+  Recipients resolve most-specific-first: the rule's own list, then the host's
+  `alert_email` override, then the instance-wide SMTP *To*. Rules created before
+  this have no list, so they deliver exactly as they did. When LDAP publishes a
+  `mail` attribute it is synced to the account on login; a blank attribute never
+  clears an address set by hand, since silently losing it would stop alerts
+  arriving.
 - **Backup & restore** — `dockercmd --backup <file>` writes a complete, portable
   snapshot of the installation (database + `projects/` + `project-templates/`), and
   `dockercmd --restore <file>` puts it back. The snapshot is taken through a live

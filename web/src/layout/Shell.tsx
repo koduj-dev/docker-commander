@@ -1,6 +1,6 @@
 import { Link, NavLink, useNavigate, useLocation, useNavigationType } from "react-router-dom";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Activity, Bell, Blocks, Boxes, Container, Database, FolderGit2, KeyRound, Layers, LayoutDashboard, LayoutTemplate, Network, Plug, ScrollText, Server, Settings, Share2, Terminal, Users, LogOut, ArrowUpCircle, ExternalLink, X, Loader2 } from "lucide-react";
+import { Activity, Bell, Blocks, Boxes, Container, Database, FolderGit2, KeyRound, Layers, LayoutDashboard, LayoutTemplate, Network, Plug, ScrollText, Server, Settings, Share2, Terminal, Users, LogOut, Mail, ArrowUpCircle, ExternalLink, X, Loader2 } from "lucide-react";
 import clsx from "clsx";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../lib/api";
@@ -183,7 +183,8 @@ function useScrollRestoration(ref: React.RefObject<HTMLElement | null>) {
 }
 
 export function Shell({ children }: { children: ReactNode }) {
-  const { user, logout } = useAuth();
+  const { user, logout, refresh } = useAuth();
+  const [showProfile, setShowProfile] = useState(false);
   const navigate = useNavigate();
   const [unread, setUnread] = useState(0);
   const mainRef = useRef<HTMLElement>(null);
@@ -252,6 +253,13 @@ export function Shell({ children }: { children: ReactNode }) {
             </div>
             <button
               className="btn-ghost px-2 py-2"
+              title="My account"
+              onClick={() => setShowProfile(true)}
+            >
+              <Mail className="h-4 w-4" />
+            </button>
+            <button
+              className="btn-ghost px-2 py-2"
               title="Sign out"
               onClick={async () => {
                 await logout();
@@ -263,6 +271,7 @@ export function Shell({ children }: { children: ReactNode }) {
           </div>
           <VersionTag />
         </div>
+        {showProfile && <MyAccountModal onClose={() => setShowProfile(false)} onSaved={refresh} />}
       </aside>
       <main ref={mainRef} className="overflow-auto">
         <UpdateBanner admin={user?.role === "admin"} />
@@ -385,6 +394,58 @@ export function PageHeader({ title, actions }: { title: string; actions?: ReactN
         {title}
       </h1>
       <div className="flex items-center gap-2"><ActiveHostBadge />{actions}</div>
+    </div>
+  );
+}
+
+// MyAccountModal lets the signed-in user set the address their own alerts go to.
+// Self-service by design: it changes nothing about what the account can do, only
+// where its notifications land, so it needs no permission.
+function MyAccountModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => Promise<void> }) {
+  const { user } = useAuth();
+  const [email, setEmail] = useState(user?.email ?? "");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true); setMsg(null);
+    try {
+      await api.setMyEmail(email.trim());
+      await onSaved();
+      setMsg({ ok: true, text: "Saved." });
+    } catch (err) {
+      setMsg({ ok: false, text: err instanceof Error ? err.message : "could not save" });
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+      <form className="card w-full max-w-lg" onClick={(e) => e.stopPropagation()} onSubmit={save}>
+        <div className="flex items-center gap-3 p-4 border-b border-border">
+          <Mail className="h-4 w-4 text-accent" />
+          <div className="font-medium">My account — {user?.username}</div>
+          <button type="button" className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-4 space-y-3">
+          <label className="block">
+            <span className="label">Alert e-mail</span>
+            <input className="input" type="email" value={email} placeholder="you@example.com"
+              onChange={(e) => setEmail(e.target.value)} />
+            <span className="block text-xs text-muted mt-1">
+              Prefilled as the recipient when you switch on e-mail for an alert rule. Leave empty and
+              those rules fall back to the instance-wide recipient. Nothing else uses this address.
+            </span>
+          </label>
+          {msg && <p className={clsx("text-sm", msg.ok ? "text-ok" : "text-danger")}>{msg.text}</p>}
+        </div>
+        <div className="flex justify-end gap-2 p-4 border-t border-border">
+          <button type="button" className="btn-ghost px-3 py-1.5 text-sm" onClick={onClose}>Close</button>
+          <button className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40" disabled={busy}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Save
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

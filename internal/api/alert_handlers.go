@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -66,6 +67,7 @@ type alertRuleBody struct {
 	Severity    string          `json:"severity"`
 	WebhookID   *int64          `json:"webhookId"`
 	Email       bool            `json:"email"`
+	Emails      []string        `json:"emails"` // this rule's own recipients; empty = the instance default
 	CooldownSec int             `json:"cooldownSec"`
 }
 
@@ -97,7 +99,7 @@ func (s *Server) handleCreateAlertRule(w http.ResponseWriter, r *http.Request) {
 	}
 	rule := &store.AlertRule{
 		Name: b.Name, Enabled: b.Enabled, Type: b.Type, Target: b.Target,
-		Config: cfg, Severity: b.Severity, WebhookID: b.WebhookID, Email: b.Email, CooldownSec: b.CooldownSec,
+		Config: cfg, Severity: b.Severity, WebhookID: b.WebhookID, Email: b.Email, Emails: cleanEmails(b.Emails), CooldownSec: b.CooldownSec,
 	}
 	id, err := s.store.CreateAlertRule(r.Context(), rule)
 	if err != nil {
@@ -127,7 +129,7 @@ func (s *Server) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) {
 	}
 	rule := &store.AlertRule{
 		Name: b.Name, Type: b.Type, Target: b.Target, Config: cfg,
-		Severity: b.Severity, WebhookID: b.WebhookID, Email: b.Email, CooldownSec: b.CooldownSec,
+		Severity: b.Severity, WebhookID: b.WebhookID, Email: b.Email, Emails: cleanEmails(b.Emails), CooldownSec: b.CooldownSec,
 	}
 	if err := s.store.UpdateAlertRule(r.Context(), id, rule); err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not update rule")
@@ -185,4 +187,17 @@ func (s *Server) handleAckAlertEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// cleanEmails drops blanks and anything that isn't an address, so a bad paste
+// can't quietly become a recipient that never receives.
+func cleanEmails(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, e := range in {
+		e = strings.TrimSpace(e)
+		if e != "" && validEmail(e) {
+			out = append(out, e)
+		}
+	}
+	return out
 }
