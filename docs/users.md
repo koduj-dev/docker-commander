@@ -34,7 +34,8 @@ Their **effective access** is the union, so the more permissive grant wins.
 > management.
 
 Manage them on **Users & roles → Roles**. Each card shows the role's grants, how
-many accounts hold it, and whether it's built-in or yours. The editor sets every
+many accounts hold it, whether it's limited to specific hosts, and whether it's
+built-in or yours. The editor sets every
 section to **—** (not granted), **read** or **write**, with all thirteen visible at
 once. Built-in roles open read-only — use **Duplicate** for an editable copy.
 
@@ -49,6 +50,36 @@ once. Built-in roles open read-only — use **Duplicate** for an editable copy.
 - **Delete** — with guards: you can't delete your own account or the last admin,
   and you can't demote the last admin.
 
+## Limiting a role to specific hosts
+A role can be limited to a set of Docker hosts, so *"may restart containers"* can
+mean *"on staging, not production"*. Pick the hosts in the role editor.
+
+- **An empty host list means every host.** That's the backwards-compatible
+  default: every role and account keeps exactly the reach it had before scoping
+  existed, and a role you create without thinking about hosts isn't silently
+  scoped to nothing.
+- **The local daemon is always in scope.** Making it scopeable would let a
+  single-host install lock itself out of its own Docker.
+- **Scope is per grant, and grants union.** Hold *Operator on staging* and
+  *Viewer everywhere* and you read everywhere but change only staging. Sections
+  granted directly on your account carry no scope — they reach every host, as they
+  always did.
+- The **read-only flag still caps everything**: being in scope decides *where*,
+  not *what*.
+
+Your own profile page shows the resulting reach per section under **Where**.
+
+> **What scoping does not yet do.** Actions are authorized per host; some
+> aggregated reads are not. A user scoped to one host cannot start, stop, exec
+> into or deploy anything on another host — but aggregate views (dashboard,
+> topology, the events feed, the alert feed, and the per-container metrics
+> history) may still surface **names, images, ports and event text** from hosts
+> outside their scope. That is an information leak, not an action bypass, and it
+> is the deferred phase 3 of
+> [the design note](../design/rbac-roles-and-host-scoping.md). Don't rely on host
+> scoping to hide the existence of a workload from someone who can see the
+> dashboard.
+
 ## How enforcement works
 Permissions are checked on the server for every request: the path maps to a
 section, and a non-admin must have that section granted — with **write** access
@@ -57,12 +88,14 @@ for mutating calls. The menu also hides what you can't reach. Globally
 
 The order the rules apply in, which matters when they disagree:
 
-1. **admin** bypasses section and read-only checks.
+1. **admin** bypasses section, read-only and host checks.
 2. Grants are the **union** of the account's roles and its own section list.
 3. The account-level **read-only flag caps everything** to reads — a writable role
    cannot lift it.
 4. An app-wide **disabled section** is removed last, so a role can never re-enable
    a feature an admin turned off.
+5. The **host scope** of the grant is checked last of all: the right section on the
+   wrong host is a 403.
 
 > LDAP users are provisioned here automatically on first login (as `user`, or
 > `admin` if in the configured admin group). Grant them access by hand, or let
@@ -112,8 +145,10 @@ non-admin's sections and manual edits are overwritten on the next login.
 
 ## Note on the live stream
 RBAC is enforced on the REST API **and** on the shared live stats/logs
-WebSocket (`/api/ws`): each subscription is authorised per channel, and both the
-**stats** and **logs** streams require the **containers** section. A signed-in
+WebSocket (`/api/ws`): each subscription is authorised per **channel and host**,
+and both the **stats** and **logs** streams require the **containers** section.
+A subscribe frame names its own host, so streaming a container on a host outside
+your scope is refused there too. A signed-in
 user without it can no longer stream a container's data.
 
 ## Your own profile

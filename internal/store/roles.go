@@ -32,20 +32,40 @@ type RoleSection struct {
 	Write   bool   `json:"write"`
 }
 
-// Role is a named bundle of section grants.
+// Role is a named bundle of section grants, optionally limited to a set of
+// Docker hosts.
 type Role struct {
 	ID          int64         `json:"id"`
 	Name        string        `json:"name"`
 	Description string        `json:"description"`
 	Builtin     bool          `json:"builtin"`
 	Sections    []RoleSection `json:"sections"`
+	// HostIDs limits the role to those hosts. EMPTY MEANS EVERY HOST, so an
+	// existing role keeps its reach and a newly created one isn't accidentally
+	// scoped to nothing. The local daemon (0) is always reachable and is never
+	// stored here.
+	HostIDs []int64 `json:"hostIds"`
 }
 
-// Grant is the effective access to one section: whether it's granted at all and
-// whether writes are permitted.
+// Grant is the effective access to one section: whether it's granted at all,
+// whether writes are permitted, and on which hosts.
 type Grant struct {
 	Granted bool
 	Write   bool
+	// AllHosts is set when at least one grant of this section came from an
+	// unscoped source (an unscoped role, or the account's own section list).
+	// Then Hosts is irrelevant.
+	AllHosts bool
+	// Hosts are the additional in-scope host ids when AllHosts is false. The
+	// local daemon (0) is always in scope and is not listed.
+	Hosts map[int64]bool
+}
+
+// HasHost reports whether the grant reaches hostID. Host 0 (the local daemon) is
+// always in scope: it is the one host a single-host install cannot afford to
+// lock itself out of.
+func (g Grant) HasHost(hostID int64) bool {
+	return hostID == 0 || g.AllHosts || g.Hosts[hostID]
 }
 
 // operatorSections are the sections BuiltinOperator grants (writable). The
@@ -140,6 +160,51 @@ func (s *Store) replaceRoleSections(ctx context.Context, roleID int64, sections 
 	return tx.Commit()
 }
 
+// replaceRoleHosts rewrites a role's host scope. Host 0 is dropped: the local
+// daemon is always in scope, and storing it would make an "only local" scope
+// indistinguishable from the unscoped case that means every host.
+func (s *Store) replaceRoleHosts(ctx context.Context, roleID int64, hostIDs []int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM role_hosts WHERE role_id = ?`, roleID); err != nil {
+		return err
+	}
+	seen := map[int64]bool{}
+	for _, id := range hostIDs {
+		if id <= 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO role_hosts (role_id, host_id) VALUES (?, ?)`, roleID, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// roleHosts returns a role's host scope. An empty slice means every host.
+func (s *Store) roleHosts(ctx context.Context, roleID int64) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT host_id FROM role_hosts WHERE role_id = ? ORDER BY host_id`, roleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // ListRoles returns every role with its grants, ordered built-ins first then by
 // name (mirroring how Templates lists built-in presets ahead of user ones).
 func (s *Store) ListRoles(ctx context.Context) ([]Role, error) {
@@ -168,6 +233,11 @@ func (s *Store) ListRoles(ctx context.Context) ([]Role, error) {
 			return nil, err
 		}
 		out[i].Sections = secs
+		hosts, err := s.roleHosts(ctx, out[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		out[i].HostIDs = hosts
 	}
 	return out, nil
 }
@@ -191,6 +261,11 @@ func (s *Store) RoleByID(ctx context.Context, id int64) (*Role, error) {
 		return nil, err
 	}
 	r.Sections = secs
+	hosts, err := s.roleHosts(ctx, r.ID)
+	if err != nil {
+		return nil, err
+	}
+	r.HostIDs = hosts
 	return &r, nil
 }
 
@@ -235,12 +310,15 @@ func (s *Store) CreateRole(ctx context.Context, r *Role) (int64, error) {
 	if err := s.replaceRoleSections(ctx, id, r.Sections); err != nil {
 		return 0, err
 	}
+	if err := s.replaceRoleHosts(ctx, id, r.HostIDs); err != nil {
+		return 0, err
+	}
 	return id, nil
 }
 
 // UpdateRole renames a role and replaces its grants. Built-in roles are refused:
 // they are the known-good baseline, and the UI offers Duplicate instead.
-func (s *Store) UpdateRole(ctx context.Context, id int64, name, description string, sections []RoleSection) error {
+func (s *Store) UpdateRole(ctx context.Context, id int64, name, description string, sections []RoleSection, hostIDs []int64) error {
 	existing, err := s.RoleByID(ctx, id)
 	if err != nil {
 		return err
@@ -259,7 +337,10 @@ func (s *Store) UpdateRole(ctx context.Context, id int64, name, description stri
 		}
 		return err
 	}
-	return s.replaceRoleSections(ctx, id, sections)
+	if err := s.replaceRoleSections(ctx, id, sections); err != nil {
+		return err
+	}
+	return s.replaceRoleHosts(ctx, id, hostIDs)
 }
 
 // DeleteRole removes a user-defined role and any assignments of it. Built-ins are
@@ -279,6 +360,9 @@ func (s *Store) DeleteRole(ctx context.Context, id int64) error {
 		return ErrRoleInUseAsFallback
 	}
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM user_roles WHERE role_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM role_hosts WHERE role_id = ?`, id); err != nil {
 		return err
 	}
 	_, err = s.db.ExecContext(ctx, `DELETE FROM roles WHERE id = ?`, id)
@@ -364,6 +448,30 @@ func (s *Store) RolesForUser(ctx context.Context, userID int64) ([]Role, error) 
 	return out, nil
 }
 
+// roleScopesForUser returns the host scope of every role the user holds, keyed by
+// role id. A role with no rows is absent from the map, which callers read as
+// "unscoped" — every host.
+func (s *Store) roleScopesForUser(ctx context.Context, userID int64) (map[int64][]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT rh.role_id, rh.host_id
+		FROM role_hosts rh
+		JOIN user_roles ur ON ur.role_id = rh.role_id
+		WHERE ur.user_id = ?`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64][]int64{}
+	for rows.Next() {
+		var roleID, hostID int64
+		if err := rows.Scan(&roleID, &hostID); err != nil {
+			return nil, err
+		}
+		out[roleID] = append(out[roleID], hostID)
+	}
+	return out, rows.Err()
+}
+
 // EffectiveGrants computes a user's access per section: the union of their roles'
 // grants and their own per-user section list, then capped.
 //
@@ -382,22 +490,45 @@ func (s *Store) EffectiveGrants(ctx context.Context, u *User) (map[string]Grant,
 	if u == nil {
 		return out, nil
 	}
-	add := func(section string, write bool) {
+	// add records one grant. hosts == nil means the grant is unscoped (every
+	// host); an empty-but-non-nil map would mean "no hosts", which never occurs
+	// because a role with no host rows is unscoped by definition.
+	add := func(section string, write bool, hosts []int64) {
 		if !ValidSection(section) {
 			return
 		}
 		g := out[section]
 		g.Granted = true
 		g.Write = g.Write || write
+		if len(hosts) == 0 {
+			g.AllHosts = true
+		} else {
+			if g.Hosts == nil {
+				g.Hosts = map[int64]bool{}
+			}
+			for _, h := range hosts {
+				g.Hosts[h] = true
+			}
+		}
 		out[section] = g
 	}
 	for _, sec := range u.Sections {
-		add(sec, true) // capped below when the account is read-only
+		// A per-user section predates host scoping and carries no scope, so it
+		// reaches every host — the same reach it had before. Scoping therefore only
+		// bites for access that comes from a scoped role, which is what keeps the
+		// migration from narrowing anyone.
+		add(sec, true, nil) // write capped below when the account is read-only
+	}
+	// The role's host scope, loaded once per request rather than per role-section
+	// row. A role absent from this map is unscoped.
+	scopes, err := s.roleScopesForUser(ctx, u.ID)
+	if err != nil {
+		return nil, err
 	}
 	// One join rather than RolesForUser: this runs on every gated request, and
 	// per-role round trips made it O(number of roles) queries per request.
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT rs.section, rs.write
+		SELECT rs.role_id, rs.section, rs.write
 		FROM role_sections rs
 		JOIN user_roles ur ON ur.role_id = rs.role_id
 		WHERE ur.user_id = ?`, u.ID)
@@ -406,12 +537,13 @@ func (s *Store) EffectiveGrants(ctx context.Context, u *User) (map[string]Grant,
 	}
 	defer rows.Close()
 	for rows.Next() {
+		var roleID int64
 		var section string
 		var write int
-		if err := rows.Scan(&section, &write); err != nil {
+		if err := rows.Scan(&roleID, &section, &write); err != nil {
 			return nil, err
 		}
-		add(section, write != 0)
+		add(section, write != 0, scopes[roleID])
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

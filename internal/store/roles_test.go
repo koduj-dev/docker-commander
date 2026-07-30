@@ -134,7 +134,7 @@ func TestRoleCRUD(t *testing.T) {
 		t.Errorf("projects should be writable: %+v", r.Sections[1])
 	}
 
-	if err := s.UpdateRole(ctx, id, "Deployer2", "renamed", []RoleSection{{Section: "images", Write: true}}); err != nil {
+	if err := s.UpdateRole(ctx, id, "Deployer2", "renamed", []RoleSection{{Section: "images", Write: true}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	r, _ = s.RoleByID(ctx, id)
@@ -201,7 +201,7 @@ func TestPentestBuiltinRolesImmutable(t *testing.T) {
 		t.Fatal("Viewer not found")
 	}
 
-	err := s.UpdateRole(ctx, viewer.ID, "Pwned", "", []RoleSection{{Section: "containers", Write: true}})
+	err := s.UpdateRole(ctx, viewer.ID, "Pwned", "", []RoleSection{{Section: "containers", Write: true}}, nil)
 	if !errors.Is(err, ErrBuiltinRole) {
 		t.Errorf("SECURITY: editing a built-in role returned %v, want ErrBuiltinRole", err)
 	}

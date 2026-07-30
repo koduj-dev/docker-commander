@@ -112,7 +112,7 @@ type listHostsOut struct {
 }
 
 func (h *handler) listHosts(ctx context.Context, req *mcpsdk.CallToolRequest, _ struct{}) (*mcpsdk.CallToolResult, listHostsOut, error) {
-	if _, err := h.authorize(ctx, req, "hosts", false); err != nil {
+	if _, err := h.authorize(ctx, req, "hosts", false, 0); err != nil {
 		return nil, listHostsOut{}, err
 	}
 	hosts, err := h.deps.Store.ListHosts(ctx)
@@ -144,7 +144,7 @@ type listContainersOut struct {
 }
 
 func (h *handler) listContainers(ctx context.Context, req *mcpsdk.CallToolRequest, in hostInput) (*mcpsdk.CallToolResult, listContainersOut, error) {
-	if _, err := h.authorize(ctx, req, "containers", false); err != nil {
+	if _, err := h.authorize(ctx, req, "containers", false, in.HostID); err != nil {
 		return nil, listContainersOut{}, err
 	}
 	cs, err := h.deps.Docker.ListContainers(ctx, in.HostID)
@@ -181,7 +181,7 @@ type containerDetailOut struct {
 }
 
 func (h *handler) getContainer(ctx context.Context, req *mcpsdk.CallToolRequest, in containerInput) (*mcpsdk.CallToolResult, containerDetailOut, error) {
-	if _, err := h.authorize(ctx, req, "containers", false); err != nil {
+	if _, err := h.authorize(ctx, req, "containers", false, in.HostID); err != nil {
 		return nil, containerDetailOut{}, err
 	}
 	d, err := h.deps.Docker.InspectContainer(ctx, in.HostID, in.ContainerID)
@@ -233,7 +233,7 @@ type logsOut struct {
 }
 
 func (h *handler) containerLogs(ctx context.Context, req *mcpsdk.CallToolRequest, in logsInput) (*mcpsdk.CallToolResult, logsOut, error) {
-	if _, err := h.authorize(ctx, req, "logs", false); err != nil {
+	if _, err := h.authorize(ctx, req, "logs", false, in.HostID); err != nil {
 		return nil, logsOut{}, err
 	}
 	tail := in.Tail
@@ -284,7 +284,7 @@ type listImagesOut struct {
 }
 
 func (h *handler) listImages(ctx context.Context, req *mcpsdk.CallToolRequest, in hostInput) (*mcpsdk.CallToolResult, listImagesOut, error) {
-	if _, err := h.authorize(ctx, req, "images", false); err != nil {
+	if _, err := h.authorize(ctx, req, "images", false, in.HostID); err != nil {
 		return nil, listImagesOut{}, err
 	}
 	imgs, err := h.deps.Docker.ListImages(ctx, in.HostID)
@@ -319,7 +319,7 @@ type listProjectsOut struct {
 }
 
 func (h *handler) listProjects(ctx context.Context, req *mcpsdk.CallToolRequest, in hostInput) (*mcpsdk.CallToolResult, listProjectsOut, error) {
-	if _, err := h.authorize(ctx, req, "projects", false); err != nil {
+	if _, err := h.authorize(ctx, req, "projects", false, in.HostID); err != nil {
 		return nil, listProjectsOut{}, err
 	}
 	stacks, err := h.deps.Docker.ListStacks(ctx, in.HostID)
@@ -348,7 +348,7 @@ type composeOut struct {
 }
 
 func (h *handler) getCompose(ctx context.Context, req *mcpsdk.CallToolRequest, in composeInput) (*mcpsdk.CallToolResult, composeOut, error) {
-	if _, err := h.authorize(ctx, req, "projects", false); err != nil {
+	if _, err := h.authorize(ctx, req, "projects", false, in.HostID); err != nil {
 		return nil, composeOut{}, err
 	}
 	path, content, err := h.deps.Docker.StackComposeFile(ctx, in.HostID, in.Project)
@@ -375,7 +375,7 @@ type statsOut struct {
 }
 
 func (h *handler) statsOverview(ctx context.Context, req *mcpsdk.CallToolRequest, in hostInput) (*mcpsdk.CallToolResult, statsOut, error) {
-	if _, err := h.authorize(ctx, req, "dashboard", false); err != nil {
+	if _, err := h.authorize(ctx, req, "dashboard", false, in.HostID); err != nil {
 		return nil, statsOut{}, err
 	}
 	ov, err := h.deps.Docker.ResourceOverview(ctx, in.HostID)

@@ -665,7 +665,7 @@ func (s *Server) handleRenameProject(w http.ResponseWriter, r *http.Request) {
 	// it needs the same authority as managing hosts — not merely project access.
 	// Turning it OFF only ever narrows, so it stays allowed.
 	if body.AllowRemoteHostPaths && !p.AllowRemoteHostPaths {
-		if err := s.requireHostsPermission(r); err != nil {
+		if err := s.requireHostsPermission(r, body.HostID); err != nil {
 			writeErr(w, http.StatusForbidden, err.Error())
 			return
 		}
@@ -1048,10 +1048,20 @@ func (s *Server) validateHostID(ctx context.Context, id int64) error {
 	return nil
 }
 
-// requireHostAccess enforces that targeting a NON-local host needs the "hosts"
-// section too — otherwise a user with only "projects" could deploy to / tear
-// down workloads on a host they can't otherwise see (a cross-section
-// escalation). Local (hostID 0) is always allowed; admins bypass via checkAccess.
+// requireHostAccess authorises a project operation against the host the project
+// targets. Two rules apply.
+//
+// First, targeting a NON-local host needs the "hosts" section too — otherwise a
+// user with only "projects" could deploy to / tear down workloads on a host they
+// can't otherwise see (a cross-section escalation).
+//
+// Second, the caller's "projects" grant must actually reach that host. This is
+// the one place the permissions middleware cannot do it for us: a project names
+// its host in its own record, not in ?host=, so the middleware saw host 0 and
+// only checked the section. Without this call a role scoped to staging could
+// deploy a project that points at production.
+//
+// Local (hostID 0) is always allowed; admins bypass via checkAccess.
 func (s *Server) requireHostAccess(r *http.Request, hostID int64) error {
 	if hostID == 0 {
 		return nil
@@ -1064,16 +1074,16 @@ func (s *Server) requireHostAccess(r *http.Request, hostID int64) error {
 	if err != nil {
 		return errors.New("unauthorized")
 	}
-	if s.checkAccess(r.Context(), u, "hosts", false) != nil {
+	if s.checkAccess(r.Context(), u, "hosts", false, hostID) != nil {
 		return errors.New("deploying to a remote host requires the \"hosts\" permission")
 	}
-	return nil
+	return s.checkAccess(r.Context(), u, "projects", isWriteRequest(r), hostID)
 }
 
 // requireHostsPermission gates actions whose authority is really about the remote
 // host rather than the project — currently only opting a project into mounting
 // paths that live on that host.
-func (s *Server) requireHostsPermission(r *http.Request) error {
+func (s *Server) requireHostsPermission(r *http.Request, hostID int64) error {
 	claims, ok := auth.ClaimsFrom(r.Context())
 	if !ok {
 		return errors.New("unauthorized")
@@ -1082,7 +1092,7 @@ func (s *Server) requireHostsPermission(r *http.Request) error {
 	if err != nil {
 		return errors.New("unauthorized")
 	}
-	if s.checkAccess(r.Context(), u, "hosts", true) != nil {
+	if s.checkAccess(r.Context(), u, "hosts", true, hostID) != nil {
 		return errors.New("allowing host paths on a remote deploy requires write access to the \"hosts\" section")
 	}
 	return nil

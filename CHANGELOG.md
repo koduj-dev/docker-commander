@@ -7,6 +7,36 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Per-host RBAC scoping** — a role can be limited to specific Docker hosts, so
+  *"may restart containers"* can mean *"on staging, not production"*. This is
+  phase 2 of [design/rbac-roles-and-host-scoping.md](design/rbac-roles-and-host-scoping.md).
+
+  **This is new authorization, not a tightened check.** Until now a non-admin
+  holding a section could act on **any** daemon by passing `?host=N` — including
+  hosts they couldn't see on the Hosts page, which is gated by the separate
+  `hosts` section. The check now lives in the permissions middleware that every
+  host-targeting route already passes through, so all ~60 call sites are covered
+  at once and a route added later is covered without anyone remembering.
+
+  It is enforced on **every** surface a host can be named on: REST (`?host=`), the
+  **WebSocket** subscribe frame, **MCP** tools' `host_id`, and a managed project's
+  own target host (which lives in the project record, not the URL). MCP tokens can
+  now be narrowed to a host subset too, and the audit log records which host an
+  action happened on.
+
+  Nothing changes on upgrade: **an empty host list means every host**, so every
+  existing role and account keeps exactly its current reach, and a section granted
+  directly on an account stays unscoped. The **local daemon is always in scope** —
+  making it scopeable would let a single-host install lock itself out.
+
+  > **Known limitation, stated plainly.** Actions are authorized per host; some
+  > aggregated reads are not. A scoped user cannot start, stop, exec into or deploy
+  > anything on another host, but the dashboard, topology, events feed, alert feed
+  > and metrics history may still surface **names, images, ports and event text**
+  > from hosts outside their scope. That is an information leak, not an action
+  > bypass. Filtering those reads is phase 3 and is not in this release — don't rely
+  > on scoping to hide that a workload exists.
+
 - **A fallback role for LDAP mappings.** A mapping can name a role that has since
   been deleted; until now its members simply got nothing. Nominate a fallback in
   *Settings → LDAP* and they degrade to that baseline (**Viewer** being the obvious

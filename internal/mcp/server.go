@@ -47,8 +47,9 @@ const (
 )
 
 // CheckAccessFunc is the host application's RBAC gate (api.Server.checkAccess).
-// A nil error means the user may act on section with the given write intent.
-type CheckAccessFunc func(ctx context.Context, u *store.User, section string, write bool) error
+// A nil error means the user may act on section with the given write intent, on
+// the Docker host named by hostID (0 = the local daemon).
+type CheckAccessFunc func(ctx context.Context, u *store.User, section string, write bool, hostID int64) error
 
 // ManagedProject is a Compose project the application manages and can deploy.
 type ManagedProject struct {
@@ -99,6 +100,7 @@ type principal struct {
 	user   *store.User
 	roOnly bool     // token forces read-only on top of the user's own flag
 	scopes []string // when non-empty, restrict to this subset of sections
+	hosts  []int64  // when non-empty, restrict to this subset of Docker hosts
 	ip     string
 }
 
@@ -197,7 +199,7 @@ func (h *handler) verifyToken(ctx context.Context, token string, req *http.Reque
 	if exp.IsZero() {
 		exp = time.Now().Add(100 * 365 * 24 * time.Hour)
 	}
-	return h.tokenInfo(u, &principal{user: u, roOnly: tok.ReadOnly, scopes: tok.Sections, ip: clientIP(req)}, exp), nil
+	return h.tokenInfo(u, &principal{user: u, roOnly: tok.ReadOnly, scopes: tok.Sections, hosts: tok.HostIDs, ip: clientIP(req)}, exp), nil
 }
 
 // tokenInfo packs a resolved principal into the SDK's TokenInfo envelope.
@@ -212,14 +214,30 @@ func (h *handler) tokenInfo(u *store.User, p *principal, exp time.Time) *auth.To
 // narrowed applies the token's own constraints — a token can only ever reduce
 // its owner's rights. It runs BEFORE the user-level RBAC check, so a read-only
 // or section-scoped token is rejected even for an admin owner.
-func (p *principal) narrowed(section string, write bool) error {
+func (p *principal) narrowed(section string, write bool, hostID int64) error {
 	if write && p.roOnly {
 		return errors.New("this token is read-only")
 	}
 	if len(p.scopes) > 0 && !contains(p.scopes, section) {
 		return errors.New("this token is not scoped for the " + section + " section")
 	}
+	// Host narrowing, same rule as sections: an empty list is no restriction, and
+	// the local daemon is always reachable. A token minted before its owner's
+	// scope shrank still can't outrun the user-level check that follows.
+	if hostID != 0 && len(p.hosts) > 0 && !containsID(p.hosts, hostID) {
+		return errors.New("this token is not scoped for that host")
+	}
 	return nil
+}
+
+// containsID reports whether ids holds id.
+func containsID(ids []int64, id int64) bool {
+	for _, x := range ids {
+		if x == id {
+			return true
+		}
+	}
+	return false
 }
 
 // principalFromExtra extracts the request-scoped principal placed by the bearer
@@ -239,23 +257,24 @@ func principalFromExtra(re *mcpsdk.RequestExtra) *principal {
 // authorizeExtra is the shared gate. It applies the token's narrowing first (a
 // token can only reduce rights) and then the live user RBAC. It returns the
 // principal so write tools can audit under the acting user.
-func (h *handler) authorizeExtra(ctx context.Context, re *mcpsdk.RequestExtra, section string, write bool) (*principal, error) {
+func (h *handler) authorizeExtra(ctx context.Context, re *mcpsdk.RequestExtra, section string, write bool, hostID int64) (*principal, error) {
 	p := principalFromExtra(re)
 	if p == nil {
 		return nil, errors.New("unauthenticated")
 	}
-	if err := p.narrowed(section, write); err != nil {
+	if err := p.narrowed(section, write, hostID); err != nil {
 		return nil, err
 	}
-	if err := h.deps.CheckAccess(ctx, p.user, section, write); err != nil {
+	if err := h.deps.CheckAccess(ctx, p.user, section, write, hostID); err != nil {
 		return nil, err
 	}
 	return p, nil
 }
 
-// authorize gates a tool call. Thin wrapper over authorizeExtra.
-func (h *handler) authorize(ctx context.Context, req *mcpsdk.CallToolRequest, section string, write bool) (*principal, error) {
-	return h.authorizeExtra(ctx, req.Extra, section, write)
+// authorize gates a tool call. Thin wrapper over authorizeExtra. hostID is the
+// tool's host_id argument — 0 when the tool doesn't target a host.
+func (h *handler) authorize(ctx context.Context, req *mcpsdk.CallToolRequest, section string, write bool, hostID int64) (*principal, error) {
+	return h.authorizeExtra(ctx, req.Extra, section, write, hostID)
 }
 
 // audit records a mutating tool call under the acting user. Best-effort.

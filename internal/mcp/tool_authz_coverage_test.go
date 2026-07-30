@@ -24,7 +24,7 @@ import (
 // denySentinel is distinctive enough that it can only come from the gate below.
 const denySentinel = "DENIED-BY-COVERAGE-GATE"
 
-func denyAllCheckAccess(_ context.Context, _ *store.User, _ string, _ bool) error {
+func denyAllCheckAccess(_ context.Context, _ *store.User, _ string, _ bool, _ int64) error {
 	return errors.New(denySentinel)
 }
 
@@ -133,7 +133,7 @@ func TestEveryToolRespectsTokenScope(t *testing.T) {
 	// Gate allows everything; only the token scope restricts.
 	deps := Deps{
 		Store: st,
-		CheckAccess: func(context.Context, *store.User, string, bool) error {
+		CheckAccess: func(context.Context, *store.User, string, bool, int64) error {
 			return nil
 		},
 		Version: "test", ResourceURL: "https://cov.test/mcp",

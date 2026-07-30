@@ -150,9 +150,9 @@ export const api = {
 
   // Named roles (admin). Built-ins are immutable — duplicate to customise.
   roles: () => req<Role[]>("GET", "/api/roles"),
-  createRole: (b: { name: string; description: string; sections: RoleSection[] }) =>
+  createRole: (b: { name: string; description: string; sections: RoleSection[]; hostIds: number[] }) =>
     req<{ ok: boolean; id?: number }>("POST", "/api/roles", b),
-  updateRole: (id: number, b: { name: string; description: string; sections: RoleSection[] }) =>
+  updateRole: (id: number, b: { name: string; description: string; sections: RoleSection[]; hostIds: number[] }) =>
     req<{ ok: boolean }>("PUT", `/api/roles/${id}`, b),
   deleteRole: (id: number) => req<{ ok: boolean }>("DELETE", `/api/roles/${id}`),
   duplicateRole: (id: number) =>

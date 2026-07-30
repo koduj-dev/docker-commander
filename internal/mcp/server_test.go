@@ -35,7 +35,7 @@ func newTestHandler(t *testing.T, check CheckAccessFunc) (*handler, int64) {
 		t.Fatalf("create user: %v", err)
 	}
 	if check == nil {
-		check = func(context.Context, *store.User, string, bool) error { return nil }
+		check = func(context.Context, *store.User, string, bool, int64) error { return nil }
 	}
 	return &handler{deps: Deps{Store: st, CheckAccess: check}}, uid
 }
@@ -119,7 +119,7 @@ func TestPrincipalNarrowed(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := tc.p.narrowed(tc.section, tc.write)
+			err := tc.p.narrowed(tc.section, tc.write, 0)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("narrowed(%q, write=%v) err=%v, wantErr=%v", tc.section, tc.write, err, tc.wantErr)
 			}
@@ -143,7 +143,7 @@ func TestAuthorize(t *testing.T) {
 
 	t.Run("missing principal is unauthenticated", func(t *testing.T) {
 		h, _ := newTestHandler(t, nil)
-		if _, err := h.authorize(ctx, &mcpsdk.CallToolRequest{}, "containers", false); err == nil {
+		if _, err := h.authorize(ctx, &mcpsdk.CallToolRequest{}, "containers", false, 0); err == nil {
 			t.Fatal("expected unauthenticated error with no TokenInfo")
 		}
 	})
@@ -153,20 +153,20 @@ func TestAuthorize(t *testing.T) {
 		h, uid := newTestHandler(t, nil)
 		u, _ := h.deps.Store.UserByID(ctx, uid)
 		req := reqFor(&principal{user: u, roOnly: true})
-		if _, err := h.authorize(ctx, req, "containers", true); err == nil {
+		if _, err := h.authorize(ctx, req, "containers", true, 0); err == nil {
 			t.Fatal("read-only token should block a write even with permissive RBAC")
 		}
-		if _, err := h.authorize(ctx, req, "containers", false); err != nil {
+		if _, err := h.authorize(ctx, req, "containers", false, 0); err != nil {
 			t.Fatalf("read-only token should still allow reads: %v", err)
 		}
 	})
 
 	t.Run("live RBAC denial is the final word", func(t *testing.T) {
 		denied := errors.New("access to this section is not permitted")
-		h, uid := newTestHandler(t, func(context.Context, *store.User, string, bool) error { return denied })
+		h, uid := newTestHandler(t, func(context.Context, *store.User, string, bool, int64) error { return denied })
 		u, _ := h.deps.Store.UserByID(ctx, uid)
 		req := reqFor(&principal{user: u}) // token grants everything…
-		if _, err := h.authorize(ctx, req, "containers", false); !errors.Is(err, denied) {
+		if _, err := h.authorize(ctx, req, "containers", false, 0); !errors.Is(err, denied) {
 			t.Fatalf("RBAC denial not surfaced through authorize: %v", err)
 		}
 	})
@@ -175,7 +175,7 @@ func TestAuthorize(t *testing.T) {
 		h, uid := newTestHandler(t, nil)
 		u, _ := h.deps.Store.UserByID(ctx, uid)
 		req := reqFor(&principal{user: u, scopes: []string{"containers"}})
-		if _, err := h.authorize(ctx, req, "containers", false); err != nil {
+		if _, err := h.authorize(ctx, req, "containers", false, 0); err != nil {
 			t.Fatalf("expected allow: %v", err)
 		}
 	})

@@ -43,7 +43,7 @@ func (b bearerRT) RoundTrip(r *http.Request) (*http.Response, error) {
 // membership, read-only on writes). It intentionally omits the global
 // DisabledSections admin toggle (orthogonal to what these tests exercise); the
 // point here is to drive the live-RBAC leg of authorize() end-to-end.
-func smokeCheckAccess(_ context.Context, u *store.User, section string, write bool) error {
+func smokeCheckAccess(_ context.Context, u *store.User, section string, write bool, _ int64) error {
 	if u.IsAdmin() {
 		return nil
 	}

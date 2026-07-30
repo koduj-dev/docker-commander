@@ -100,7 +100,7 @@ func TestHubSubscribeStatsAndLogs(t *testing.T) {
 func TestHubChannelGate(t *testing.T) {
 	hub := NewHub(fakeStreamer{})
 	// Permit "stats", deny everything else (e.g. "logs").
-	allow := func(channel string) bool { return channel == "stats" }
+	allow := func(channel string, _ int64) bool { return channel == "stats" }
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 		if err != nil {

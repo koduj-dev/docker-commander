@@ -29,7 +29,7 @@ func (h *handler) registerResources(s *mcpsdk.Server) {
 }
 
 func (h *handler) resInventory(ctx context.Context, req *mcpsdk.ReadResourceRequest) (*mcpsdk.ReadResourceResult, error) {
-	if _, err := h.authorizeExtra(ctx, req.Extra, "containers", false); err != nil {
+	if _, err := h.authorizeExtra(ctx, req.Extra, "containers", false, 0); err != nil {
 		return nil, err
 	}
 	cs, err := h.deps.Docker.ListContainers(ctx, 0)
@@ -52,7 +52,7 @@ func (h *handler) resInventory(ctx context.Context, req *mcpsdk.ReadResourceRequ
 }
 
 func (h *handler) resCompose(ctx context.Context, req *mcpsdk.ReadResourceRequest) (*mcpsdk.ReadResourceResult, error) {
-	if _, err := h.authorizeExtra(ctx, req.Extra, "projects", false); err != nil {
+	if _, err := h.authorizeExtra(ctx, req.Extra, "projects", false, 0); err != nil {
 		return nil, err
 	}
 	project := strings.TrimPrefix(req.Params.URI, "dc://compose/")

@@ -34,14 +34,17 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	// Stream frames are gated per channel against the user's live RBAC. An
-	// unrecognised channel is denied outright (fail closed).
-	allow := func(channel string) bool {
+	// Stream frames are gated per channel AND per host against the user's live
+	// RBAC. An unrecognised channel is denied outright (fail closed). The host
+	// comes from the subscribe frame: the WebSocket is the one surface where a
+	// host is named outside the URL, so it has to be checked here rather than in
+	// the permissions middleware.
+	allow := func(channel string, hostID int64) bool {
 		section, ok := wsChannelSection(channel)
 		if !ok {
 			return false
 		}
-		return s.checkAccess(r.Context(), u, section, false) == nil
+		return s.checkAccess(r.Context(), u, section, false, hostID) == nil
 	}
 	// Serve blocks until the client disconnects.
 	s.hub.Serve(r.Context(), conn, allow)

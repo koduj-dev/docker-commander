@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Plus, Trash2, Shield, Eye, KeyRound, Pencil, Loader2, X, Copy, IdCard, Users as UsersIcon, Save } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
-import type { AppSettings, ManagedUser, Role, RoleSection } from "../lib/types";
+import type { AppSettings, Host, ManagedUser, Role, RoleSection } from "../lib/types";
 import { sectionLabel } from "../lib/sections";
 import { canWriteAnywhere, describeAccess, roleSummary, rolesForUser, sectionState, toggleSection } from "../lib/roles";
 import { PageHeader } from "../layout/Shell";
@@ -368,16 +368,22 @@ function RoleEditorModal({ role, allSections, onClose, onDone }: { role: Role | 
   const [name, setName] = useState(role?.name ?? "");
   const [description, setDescription] = useState(role?.description ?? "");
   const [sections, setSections] = useState<RoleSection[]>(role?.sections ?? []);
+  const [hostIds, setHostIds] = useState<number[]>(role?.hostIds ?? []);
+  const [hosts, setHosts] = useState<Host[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+
+  useEffect(() => { api.hosts().then(setHosts).catch(() => setHosts([])); }, []);
+  const toggleHost = (id: number) =>
+    setHostIds(hostIds.includes(id) ? hostIds.filter((h) => h !== id) : [...hostIds, id]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (readOnly) { onClose(); return; }
     setBusy(true); setErr("");
     try {
-      if (role) await api.updateRole(role.id, { name, description, sections });
-      else await api.createRole({ name, description, sections });
+      if (role) await api.updateRole(role.id, { name, description, sections, hostIds });
+      else await api.createRole({ name, description, sections, hostIds });
       onDone();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "failed");
@@ -437,6 +443,29 @@ function RoleEditorModal({ role, allSections, onClose, onDone }: { role: Role | 
                   </div>
                 );
               })}
+            </div>
+          </div>
+          <div>
+            <label className="label">Hosts</label>
+            <p className="text-xs text-muted mb-1.5">
+              {hostIds.length === 0
+                ? "This role applies to EVERY Docker host. Pick hosts to limit it."
+                : "This role applies only to the selected hosts. The local daemon is always included — a single-host install must not be able to lock itself out."}
+            </p>
+            <div className={clsx("flex flex-wrap gap-1.5", readOnly && "opacity-70 pointer-events-none")}>
+              {hosts.filter((h) => h.id > 0).length === 0 ? (
+                <span className="text-xs text-muted">No remote hosts configured — there is nothing to scope to yet.</span>
+              ) : hosts.filter((h) => h.id > 0).map((h) => (
+                <button
+                  key={h.id}
+                  type="button"
+                  onClick={() => toggleHost(h.id)}
+                  className={clsx("text-xs px-2 py-0.5 rounded-md border",
+                    hostIds.includes(h.id) ? "bg-accent/20 border-accent/40 text-text" : "border-border text-muted")}
+                >
+                  {h.name}
+                </button>
+              ))}
             </div>
           </div>
           {err && <p className="text-sm text-danger">{err}</p>}

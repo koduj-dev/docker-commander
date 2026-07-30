@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -349,7 +350,7 @@ func (s *Server) handleMyAccess(w http.ResponseWriter, r *http.Request) {
 	for _, role := range roles {
 		roleOut = append(roleOut, map[string]any{
 			"id": role.ID, "name": role.Name, "description": role.Description,
-			"builtin": role.Builtin, "sections": role.Sections,
+			"builtin": role.Builtin, "sections": role.Sections, "hostIds": role.HostIDs,
 		})
 	}
 
@@ -359,6 +360,10 @@ func (s *Server) handleMyAccess(w http.ResponseWriter, r *http.Request) {
 		Section string   `json:"section"`
 		Write   bool     `json:"write"`
 		From    []string `json:"from"`
+		// AllHosts false means the grant is limited to Hosts (plus the local
+		// daemon). Reported so the page can't imply reach the account hasn't got.
+		AllHosts bool    `json:"allHosts"`
+		Hosts    []int64 `json:"hosts"`
 	}
 	out := map[string]any{
 		"admin":    u.IsAdmin(),
@@ -397,7 +402,15 @@ func (s *Server) handleMyAccess(w http.ResponseWriter, r *http.Request) {
 		if !ok || !g.Granted {
 			continue
 		}
-		effective = append(effective, grantOut{Section: sec, Write: g.Write, From: sources[sec]})
+		hosts := make([]int64, 0, len(g.Hosts))
+		for id := range g.Hosts {
+			hosts = append(hosts, id)
+		}
+		sort.Slice(hosts, func(i, j int) bool { return hosts[i] < hosts[j] })
+		effective = append(effective, grantOut{
+			Section: sec, Write: g.Write, From: sources[sec],
+			AllHosts: g.AllHosts, Hosts: hosts,
+		})
 	}
 	out["effective"] = effective
 	writeJSON(w, http.StatusOK, out)

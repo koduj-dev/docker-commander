@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/koduj-dev/docker-commander/internal/auth"
@@ -127,12 +128,13 @@ func isWriteRequest(r *http.Request) bool {
 }
 
 // checkAccess is the shared RBAC gate: it decides whether user u may act on
-// section with the given write intent. A nil result means allowed; a non-nil
+// section with the given write intent, on the Docker host identified by hostID
+// (0 = the local daemon, which is always in scope). A nil result means allowed; a non-nil
 // error describes the denial (always a 403 at the HTTP layer). Both the REST
 // permissions middleware and the MCP tool dispatcher route through here, so
 // there is exactly one source of truth for section grants and the read-only
 // flag — disable a section in the admin UI and the matching MCP tool dies too.
-func (s *Server) checkAccess(ctx context.Context, u *store.User, section string, write bool) error {
+func (s *Server) checkAccess(ctx context.Context, u *store.User, section string, write bool, hostID int64) error {
 	if section == "" {
 		return nil // ungated
 	}
@@ -165,6 +167,14 @@ func (s *Server) checkAccess(ctx context.Context, u *store.User, section string,
 		}
 		return errors.New("your access to this section is read-only")
 	}
+	// Host scope. Until now a grant reached every daemon: holding "containers"
+	// let you act on any host by passing ?host=N, including hosts you couldn't
+	// see on the Hosts page. A role may now be limited to specific hosts, and an
+	// unscoped grant still reaches all of them so nobody's reach changed on
+	// upgrade.
+	if !g.HasHost(hostID) {
+		return errors.New("your access to this section does not include that host")
+	}
 	return nil
 }
 
@@ -187,10 +197,29 @@ func (s *Server) permissions(next http.Handler) http.Handler {
 			writeErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		if err := s.checkAccess(r.Context(), u, section, isWriteRequest(r)); err != nil {
+		// The host is authorised HERE rather than at the ~60 resolveHostID call
+		// sites. Every host-targeting route funnels through this middleware, so a
+		// route added later is covered without anyone remembering to check — the
+		// failure mode that left ?host= unauthorised in the first place.
+		hostID, err := hostParam(r)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid host id")
+			return
+		}
+		if err := s.checkAccess(r.Context(), u, section, isWriteRequest(r), hostID); err != nil {
 			writeErr(w, http.StatusForbidden, err.Error())
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// hostParam reads the "host" query parameter, the one way a REST request names a
+// Docker host. Absent means 0 — the local daemon.
+func hostParam(r *http.Request) (int64, error) {
+	q := r.URL.Query().Get("host")
+	if q == "" {
+		return 0, nil
+	}
+	return strconv.ParseInt(q, 10, 64)
 }
