@@ -172,11 +172,20 @@ a remote host the same way they do locally, with three things worth knowing:
   remove them** — it lists them and asks, since they hold data; declining keeps
   them for a later redeploy.
 
-> **Changing a deployed project's target host leaves it running on the old one.**
-> Redeploying after switching hosts brings the stack up on the new host but does
-> not tear down the old deployment (or its seeded volumes), so you end up with two
-> live copies while the UI only shows the new host. Bring the project **down**
-> before changing its host.
+**Changing a deployed project's target host** offers to bring it down on the host
+it is leaving — ticked by default, because "change the host" usually means *move*,
+not *run a second copy*. What goes: the stack's containers are stopped and removed
+there, and the volumes **seeded** for its bind mounts are deleted. **Named volumes
+holding your data are left alone**, and nothing is started on the new host — deploy
+it when you are ready.
+
+Untick it and the old copy keeps running while this page shows only the new host,
+so you have two live deployments. That is a legitimate thing to want; it is just no
+longer what happens by accident.
+
+> If the teardown fails — the old host is unreachable, say — the project is **not**
+> moved. Leaving a running stack on a host the app no longer points at is the same
+> problem, only invisible.
 
 Remote deploy also works for **images, named volumes and builds**.
 

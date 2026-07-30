@@ -7,6 +7,22 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Moving a project to another host can now actually move it.** Changing a
+  deployed project's target host left the stack running on the old one — the app
+  kept no record that anything was there, so you ended up with two live copies and
+  only one of them visible as "the project's host". The settings dialog now offers
+  to bring it down on the host it is leaving, ticked by default, with a danger
+  confirm that says exactly what goes: containers stopped and removed, and the
+  volumes seeded there for its bind mounts deleted. **Named volumes holding your
+  data are left alone.** Unticking it keeps the old behaviour, and the dialog says
+  what that means too.
+
+  The teardown runs **before** the record moves, and a failure aborts the change —
+  otherwise a stack would be left running on a host the app no longer points at,
+  which is the same problem made invisible. The old host needs the same permission
+  as the new one, so "move it away" can't become a way to stop workloads on a host
+  you were scoped away from.
+
 - **Per-host RBAC scoping** — a role can be limited to specific Docker hosts, so
   *"may restart containers"* can mean *"on staging, not production"*. This is
   phase 2 of [design/rbac-roles-and-host-scoping.md](design/rbac-roles-and-host-scoping.md).

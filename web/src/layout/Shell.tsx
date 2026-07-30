@@ -245,28 +245,34 @@ export function Shell({ children }: { children: ReactNode }) {
           })}
         </nav>
         <div className="p-3 border-t border-border">
-          <div className="flex items-center justify-between px-2 py-1.5">
-            <div className="min-w-0">
+          {/* justify-between across THREE children spread the profile icon into the
+              middle of the gap, where it looked anchored to nothing. The two icon
+              buttons are one group pinned to the right edge; the identity block
+              takes the remaining width. */}
+          <div className="flex items-center gap-2 px-2 py-1.5">
+            <div className="min-w-0 flex-1">
               <div className="text-sm font-medium truncate">{user?.username}</div>
               <div className="text-xs text-muted">{user?.role}</div>
             </div>
-            <button
-              className="btn-ghost px-2 py-2"
-              title="My profile"
-              onClick={() => navigate("/profile")}
-            >
-              <CircleUser className="h-4 w-4" />
-            </button>
-            <button
-              className="btn-ghost px-2 py-2"
-              title="Sign out"
-              onClick={async () => {
-                await logout();
-                navigate("/");
-              }}
-            >
-              <LogOut className="h-4 w-4" />
-            </button>
+            <div className="flex items-center gap-0.5 shrink-0">
+              <button
+                className="btn-ghost px-2 py-2"
+                title="My profile"
+                onClick={() => navigate("/profile")}
+              >
+                <CircleUser className="h-4 w-4" />
+              </button>
+              <button
+                className="btn-ghost px-2 py-2"
+                title="Sign out"
+                onClick={async () => {
+                  await logout();
+                  navigate("/");
+                }}
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
+            </div>
           </div>
           <VersionTag />
         </div>

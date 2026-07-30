@@ -372,6 +372,17 @@ func (s *Server) handleMyAccess(w http.ResponseWriter, r *http.Request) {
 		"sections": u.Sections,
 	}
 	if u.IsAdmin() {
+		// An admin bypasses grants, so there is no overlay to compute — but
+		// "you can reach everything" is not something a reader can check. Send the
+		// concrete list so the page can show WHAT everything is, rather than
+		// asking them to take it on faith.
+		hosts, err := s.store.ListHosts(r.Context())
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "could not list hosts")
+			return
+		}
+		out["allSections"] = store.Sections
+		out["hostCount"] = len(hosts)
 		writeJSON(w, http.StatusOK, out)
 		return
 	}
