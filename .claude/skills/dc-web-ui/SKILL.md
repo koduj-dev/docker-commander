@@ -78,15 +78,27 @@ tabs instead of one long column. Each tab shows a **count badge**.
 
 Two tab styles, by level:
 
-1. **Top-level tabs** — bordered pills. Used for mutually-exclusive *modes* or the
-   main sections of a management page (New project: Template / Builder / Import;
-   Templates page: Presets / Service blocks / Shared definitions).
+1. **Top-level tabs — use the shared `<Tabs>` component**
+   (`web/src/components/Tabs.tsx`). **Never hand-roll a tab bar**: it is the app's
+   one tab bar and every agenda must look identical. It renders an *underline*
+   strip (accent underline + accent label on the active tab, count badge pill), and
+   it is what Alerts, the container detail view, Templates and Users & roles all
+   use. A hand-rolled pill bar was shipped once on Users & roles and immediately
+   flagged as not matching the other agendas (2026-07-30).
    ```tsx
-   <button className={clsx("flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border",
-     active ? "border-accent bg-accent/10 text-text" : "border-border text-muted hover:text-text")}>
-     {icon} {label} <span className="text-[10px] text-muted">{count}</span>
-   </button>
+   <Tabs
+     active={tab}
+     onChange={setTab}
+     tabs={[
+       { key: "accounts", label: "Accounts", icon: <UsersIcon className="h-4 w-4" />, count: users.length },
+       { key: "roles", label: "Roles", icon: <IdCard className="h-4 w-4" />, count: roles.length },
+     ]}
+   />
    ```
+   _(Before v1.5 each page wrote its own bordered-pill bar; the shared component
+   replaced them. The **New project** modal's Template / Builder / Import switcher
+   is still pills on purpose — it picks a creation **mode inside a modal**, not a
+   page's sub-views. Don't "unify" that one.)_
 
 2. **Inner sub-tabs** — a segmented control, for splitting *within* a tab (the
    builder's Services / Shared defs / Variables).

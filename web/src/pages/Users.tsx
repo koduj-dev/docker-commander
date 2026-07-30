@@ -7,6 +7,7 @@ import { sectionLabel } from "../lib/sections";
 import { canWriteAnywhere, describeAccess, roleSummary, rolesForUser, sectionState, toggleSection } from "../lib/roles";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
+import { Tabs } from "../components/Tabs";
 import { useDialogs } from "../components/Dialog";
 
 type Tab = "accounts" | "roles";
@@ -82,10 +83,14 @@ export function Users() {
     <>
       <PageHeader title="Users & roles" actions={action} />
       <div className="p-6 space-y-4">
-        <div className="flex items-center gap-2">
-          <TabButton active={tab === "accounts"} onClick={() => setTab("accounts")} icon={<UsersIcon className="h-4 w-4" />} label="Accounts" count={users.length} />
-          <TabButton active={tab === "roles"} onClick={() => setTab("roles")} icon={<IdCard className="h-4 w-4" />} label="Roles" count={roles.length} />
-        </div>
+        <Tabs
+          active={tab}
+          onChange={setTab}
+          tabs={[
+            { key: "accounts", label: "Accounts", icon: <UsersIcon className="h-4 w-4" />, count: users.length },
+            { key: "roles", label: "Roles", icon: <IdCard className="h-4 w-4" />, count: roles.length },
+          ]}
+        />
         {err && <p className="text-sm text-danger">{err}</p>}
 
         {tab === "accounts" && (
@@ -191,18 +196,6 @@ export function Users() {
       {pwFor && <ResetPasswordModal user={pwFor} onClose={() => setPwFor(null)} />}
       {roleEdit && <RoleEditorModal role={roleEdit === "new" ? null : roleEdit} allSections={allSections} onClose={() => setRoleEdit(null)} onDone={() => { setRoleEdit(null); load(); }} />}
     </>
-  );
-}
-
-function TabButton({ active, onClick, icon, label, count }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string; count: number }) {
-  return (
-    <button
-      className={clsx("flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border",
-        active ? "border-accent bg-accent/10 text-text" : "border-border text-muted hover:text-text")}
-      onClick={onClick}
-    >
-      {icon} {label} <span className="text-[10px] text-muted">{count}</span>
-    </button>
   );
 }
 
