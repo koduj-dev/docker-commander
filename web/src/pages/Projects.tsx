@@ -18,6 +18,7 @@ import { useDialogs } from "../components/Dialog";
 const CodeEditor = lazy(() => import("../components/CodeEditor").then((m) => ({ default: m.CodeEditor })));
 import { getPref, setPref } from "../lib/prefs";
 import { useDockerEventTick } from "../lib/dockerEvents";
+import { composeOutputText } from "../lib/composeOutput";
 
 type Output = { title: string; text: string; ok: boolean };
 type Kind = "deploy" | "down" | "restart";
@@ -192,11 +193,7 @@ export function Projects() {
     try {
       const r = kind === "deploy" ? await api.deployProject(p.id, getPref<string[]>(`projects.profiles.${p.slug}`, []))
         : kind === "down" ? await api.downProject(p.id) : await api.restartProject(p.id);
-      const body = r.output || r.error || "(no output)";
-      // A remote deploy copies bind-mounted paths instead of mounting them live,
-      // which the user has to know about — lead with it, then the compose output.
-      const note = "note" in r && r.note ? `${r.note}\n\n` : "";
-      setOutput({ title: `${p.name} — ${kind}`, text: note + body, ok: r.ok });
+      setOutput({ title: `${p.name} — ${kind}`, text: composeOutputText(r), ok: r.ok });
       load();
     } catch (e) {
       setOutput({ title: `${p.name} — ${kind}`, text: e instanceof Error ? e.message : "failed", ok: false });
@@ -1092,7 +1089,7 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
     setBusy(kind);
     try {
       const r = kind === "deploy" ? await api.deployProject(project.id, selectedProfiles) : kind === "down" ? await api.downProject(project.id) : await api.restartProject(project.id);
-      onOutput({ title: `${project.name} — ${kind}`, text: r.output || r.error || "(no output)", ok: r.ok });
+      onOutput({ title: `${project.name} — ${kind}`, text: composeOutputText(r), ok: r.ok });
     } catch (e) {
       onOutput({ title: `${project.name} — ${kind}`, text: e instanceof Error ? e.message : "failed", ok: false });
     } finally { setBusy(""); }

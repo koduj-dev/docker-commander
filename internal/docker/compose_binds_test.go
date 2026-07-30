@@ -323,6 +323,37 @@ func TestTarPath_Directory(t *testing.T) {
 	}
 }
 
+// A compose file can name a bind source the project doesn't contain yet (a
+// database's ./data, say). Locally Docker creates it on demand, so the remote
+// equivalent is an empty volume — the archive must be empty, not an error, or the
+// whole deploy fails. Classification calls such a source internal
+// (TestClassifyProjectBinds_MissingSourceStillInternal), so seeding has to agree.
+func TestTarPath_MissingSourceYieldsEmptyArchive(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "not-created-yet")
+	for _, isFile := range []bool{false, true} {
+		r, err := tarPath(missing, isFile)
+		if err != nil {
+			t.Fatalf("isFile=%v: tarPath returned %v", isFile, err)
+		}
+		// Drain fully: the error would surface from the writer goroutine, not the
+		// tarPath call itself.
+		n, err := io.Copy(io.Discard, r)
+		if err != nil {
+			t.Errorf("isFile=%v: seeding a missing source must not fail, got %v", isFile, err)
+		}
+		if names := tarNamesFrom(t, n); names {
+			t.Errorf("isFile=%v: expected an empty archive", isFile)
+		}
+	}
+}
+
+// tarNamesFrom reports whether a drained archive carried any entries.
+func tarNamesFrom(t *testing.T, drained int64) bool {
+	t.Helper()
+	// An empty tar is padding only (1024 zero bytes); anything larger holds data.
+	return drained > 1024
+}
+
 func TestTarPath_SingleFile(t *testing.T) {
 	root := t.TempDir()
 	p := filepath.Join(root, "nginx.conf")

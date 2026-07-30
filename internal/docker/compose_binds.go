@@ -287,6 +287,16 @@ func tarPath(src string, isFile bool) (io.Reader, error) {
 }
 
 func writeTar(tw *tar.Writer, src string, isFile bool) error {
+	// A compose file may name a bind source the project doesn't contain yet (e.g.
+	// ./data for a database that creates it on first run). Locally Docker would
+	// materialise it on demand, so the remote equivalent is an empty volume — not
+	// a failed deploy. Emit an empty archive rather than the lstat error.
+	if _, err := os.Lstat(src); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
 	if isFile {
 		return tarOne(tw, src, filepath.Base(src))
 	}

@@ -100,6 +100,41 @@ func TestSeedProjectBinds_Integration(t *testing.T) {
 	}
 }
 
+// Seeding a bind source that doesn't exist yet must produce an empty volume, not
+// a failed deploy — a compose file may name a path the container creates itself.
+// The unit test covers the archive; this proves the whole seed path against a real
+// daemon, which is the gap that let the bug through.
+func TestSeedProjectBinds_MissingSourceSeedsEmptyVolume(t *testing.T) {
+	m, ctx := newManager(t)
+	projectDir := t.TempDir()
+
+	const slug = "seed-missing-source"
+	binds := []ProjectBind{{Service: "db", Target: "/var/lib/postgresql/data", Rel: "data"}}
+	name := SeedVolumeName(slug, binds[0].Rel)
+	t.Cleanup(func() { removeSeedVolume(t, m, 0, name) })
+
+	if err := m.SeedProjectBinds(ctx, 0, projectDir, slug, binds); err != nil {
+		t.Fatalf("seeding a not-yet-created bind source must succeed: %v", err)
+	}
+	assertVolumeLabels(ctx, t, mustClient(t, m, 0), name, slug, "data")
+	entries, err := m.VolumeListPath(ctx, 0, name, "/")
+	if err != nil {
+		t.Fatalf("list %s: %v", name, err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("the volume should be empty, got %v", keys(entryNames(entries)))
+	}
+}
+
+func mustClient(t *testing.T, m *Manager, hostID int64) *client.Client {
+	t.Helper()
+	cli, err := m.Client(context.Background(), hostID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cli
+}
+
 // A project with no internal binds must not create any volume.
 func TestSeedProjectBinds_NoBindsIsNoop(t *testing.T) {
 	m, ctx := newManager(t)
