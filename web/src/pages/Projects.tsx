@@ -192,7 +192,11 @@ export function Projects() {
     try {
       const r = kind === "deploy" ? await api.deployProject(p.id, getPref<string[]>(`projects.profiles.${p.slug}`, []))
         : kind === "down" ? await api.downProject(p.id) : await api.restartProject(p.id);
-      setOutput({ title: `${p.name} — ${kind}`, text: r.output || r.error || "(no output)", ok: r.ok });
+      const body = r.output || r.error || "(no output)";
+      // A remote deploy copies bind-mounted paths instead of mounting them live,
+      // which the user has to know about — lead with it, then the compose output.
+      const note = "note" in r && r.note ? `${r.note}\n\n` : "";
+      setOutput({ title: `${p.name} — ${kind}`, text: note + body, ok: r.ok });
       load();
     } catch (e) {
       setOutput({ title: `${p.name} — ${kind}`, text: e instanceof Error ? e.message : "failed", ok: false });
@@ -238,7 +242,7 @@ export function Projects() {
             The <code>docker compose</code> CLI isn't available on the host running Docker Commander — you can edit files, but Deploy/Down are disabled.
           </div>
         )}
-        <p className="text-xs text-muted">Projects are managed compose folders deployed with <strong>docker&nbsp;compose</strong> on the <strong>local</strong> Docker host. A deployed project also appears on the Stacks page.</p>
+        <p className="text-xs text-muted">Projects are managed compose folders deployed with <strong>docker&nbsp;compose</strong> — on the local Docker host, or on a remote host you pick in the project's settings. Deploying to a remote host copies any bind-mounted paths into volumes there. A deployed project also appears on the Stacks page.</p>
 
         {projects.length === 0 ? (
           <EmptyState title="No projects yet" hint="Create a project to edit a compose file plus its sidecar configs and scripts, then deploy it." />

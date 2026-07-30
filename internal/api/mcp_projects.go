@@ -57,7 +57,7 @@ func (s *Server) mcpDeployProject(ctx context.Context, id int64, profiles []stri
 		return "", errors.New("this project targets a remote host; deploy it from the web UI")
 	}
 	dir := s.projectRoot(p.ID)
-	env, cleanup, err := s.projectComposeEnv(ctx, p, dir, true)
+	env, cleanup, err := s.projectComposeEnv(ctx, p, dir)
 	if err != nil {
 		return "", err
 	}
@@ -78,7 +78,7 @@ func (s *Server) mcpDownProject(ctx context.Context, id int64) (string, error) {
 		return "", errors.New("this project targets a remote host; manage it from the web UI")
 	}
 	dir := s.projectRoot(p.ID)
-	env, cleanup, err := s.projectComposeEnv(ctx, p, dir, false)
+	env, cleanup, err := s.projectComposeEnv(ctx, p, dir)
 	if err != nil {
 		return "", err
 	}

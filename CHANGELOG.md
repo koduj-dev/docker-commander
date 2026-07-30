@@ -4,6 +4,26 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Remote Projects now support bind mounts.** Deploying a managed project to a
+  remote host previously refused any compose file with a host-path bind mount,
+  because the remote daemon can't see Docker Commander's data dir. Each bind
+  whose source lives **inside the project folder** is now copied to a named
+  volume on the target host (`dcseed-<project>-<hash>`, labelled with the
+  project) and the mount is repointed at it via a generated compose override, so
+  sidecar configs and scripts work remotely — including single-file mounts like
+  `./nginx.conf:/etc/nginx/nginx.conf`, which mount out of the volume by
+  subpath. `read_only` is preserved and the project's own named volumes are left
+  untouched. The copy is a **snapshot taken at deploy time, not a live mount**:
+  editing the files needs a redeploy, and writes inside the container stay on the
+  remote host. The deploy output says so explicitly.
+- Bind mounts pointing **outside** the project folder (e.g. `/etc/localtime`,
+  `/var/run/docker.sock`, or anything reached through a symlink out of the
+  folder) are still **refused** on a remote deploy, now with a message naming
+  them: they address paths on the remote host, which won't be mounted blind.
+
 ## [1.5.1] — 2026-07-30
 
 ### Changed

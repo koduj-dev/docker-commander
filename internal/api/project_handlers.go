@@ -311,7 +311,7 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusForbidden, err.Error())
 			return
 		}
-		env, cleanup, err := s.projectComposeEnv(r.Context(), p, s.projectRoot(p.ID), false)
+		env, cleanup, err := s.projectComposeEnv(r.Context(), p, s.projectRoot(p.ID))
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
@@ -629,19 +629,19 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = decodeJSON(r, &body) // body is optional (empty → no profiles)
 	dir := s.projectRoot(p.ID)
-	env, cleanup, err := s.projectComposeEnv(r.Context(), p, dir, true)
+	env, files, note, cleanup, err := s.projectDeployEnv(r.Context(), p, dir)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	defer cleanup()
-	out, err := docker.ComposeUp(r.Context(), dir, p.Slug, body.Profiles, env)
+	out, err := docker.ComposeUpFiles(r.Context(), dir, p.Slug, body.Profiles, env, files)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "output": out})
 		return
 	}
 	s.audit(r, "project.deploy", p.Slug, strings.Join(body.Profiles, ","))
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out, "note": note})
 }
 
 // handleValidateProject runs `docker compose config` over the project to catch
@@ -945,7 +945,7 @@ func (s *Server) runProjectCompose(w http.ResponseWriter, r *http.Request, fn fu
 		return
 	}
 	dir := s.projectRoot(p.ID)
-	env, cleanup, err := s.projectComposeEnv(r.Context(), p, dir, false)
+	env, cleanup, err := s.projectComposeEnv(r.Context(), p, dir)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -999,38 +999,126 @@ func (s *Server) requireHostAccess(r *http.Request, hostID int64) error {
 }
 
 // projectComposeEnv resolves the `docker compose` environment for a project's
-// target host (nil for the local daemon). When checkBinds is set and the host is
-// remote, it refuses a compose file with host-path bind mounts, which the remote
-// daemon can't see (named volumes / images deploy fine). The returned cleanup
-// must always be called (it removes any materialised TLS certs).
-func (s *Server) projectComposeEnv(ctx context.Context, p *store.Project, dir string, checkBinds bool) ([]string, func(), error) {
+// target host (nil for the local daemon). The returned cleanup must always be
+// called (it removes any materialised TLS certs).
+func (s *Server) projectComposeEnv(ctx context.Context, p *store.Project, dir string) ([]string, func(), error) {
 	noop := func() {}
+	h, err := s.projectHost(ctx, p)
+	if err != nil || h == nil {
+		return nil, noop, err
+	}
+	return docker.ComposeHostEnv(h)
+}
+
+// projectHost resolves a project's target host, or (nil, nil) for the local
+// daemon. A missing or disabled host is an error the caller surfaces as-is.
+func (s *Server) projectHost(ctx context.Context, p *store.Project) (*store.Host, error) {
 	if p.HostID == 0 {
-		return nil, noop, nil
+		return nil, nil
 	}
 	h, err := s.store.HostByID(ctx, p.HostID)
 	if errors.Is(err, store.ErrNotFound) {
-		return nil, noop, errors.New("the project's target host no longer exists — set one in the project settings")
+		return nil, errors.New("the project's target host no longer exists — set one in the project settings")
 	}
 	if err != nil {
-		return nil, noop, err
+		return nil, err
 	}
 	if h.Disabled {
-		return nil, noop, fmt.Errorf("host %q is disabled", h.Name)
+		return nil, fmt.Errorf("host %q is disabled", h.Name)
 	}
-	if checkBinds && h.Kind != "" && h.Kind != "local" {
-		// Fail closed: if we can't resolve the compose config we can't prove the
-		// project is bind-mount-free, so refuse the remote deploy rather than
-		// risk mounting a path that exists (and may be sensitive) on the remote.
-		cfgJSON, cerr := docker.ComposeConfigJSON(ctx, dir, p.Slug)
-		if cerr != nil {
-			return nil, noop, fmt.Errorf("cannot validate the compose file for remote deploy: %v", cerr)
-		}
-		if binds, _ := docker.ComposeBindMounts(cfgJSON); len(binds) > 0 {
-			return nil, noop, fmt.Errorf("remote deploy to %q doesn't support host-path bind mounts yet — these mount local paths the remote daemon can't see: %s", h.Name, strings.Join(binds, "; "))
+	return h, nil
+}
+
+// projectDeployEnv resolves the environment plus any compose override needed to
+// deploy a project. A remote daemon can't see the project's host-path bind
+// mounts, so each bind whose source lives inside the project folder is shipped to
+// a seeded named volume on that host and repointed by a generated override; binds
+// pointing outside the project folder are refused rather than mounted blind on
+// the remote. Returns the extra `-f` files (empty for a local deploy), a note to
+// show the user, and a cleanup that must always be called.
+func (s *Server) projectDeployEnv(ctx context.Context, p *store.Project, dir string) (env, files []string, note string, cleanup func(), err error) {
+	noop := func() {}
+	h, err := s.projectHost(ctx, p)
+	if err != nil {
+		return nil, nil, "", noop, err
+	}
+	if h == nil || h.Kind == "" || h.Kind == "local" {
+		env, cleanup, err = s.projectComposeEnv(ctx, p, dir)
+		return env, nil, "", cleanup, err
+	}
+	// Fail closed: without a resolved config we can't prove which paths this
+	// project would mount on the remote host, so don't deploy at all.
+	cfgJSON, err := docker.ComposeConfigJSON(ctx, dir, p.Slug)
+	if err != nil {
+		return nil, nil, "", noop, fmt.Errorf("cannot validate the compose file for remote deploy: %v", err)
+	}
+	internal, external, err := docker.ClassifyProjectBinds(cfgJSON, dir)
+	if err != nil {
+		return nil, nil, "", noop, fmt.Errorf("cannot inspect the project's bind mounts: %v", err)
+	}
+	if len(external) > 0 {
+		return nil, nil, "", noop, fmt.Errorf("remote deploy to %q refuses bind mounts from outside the project folder, because they would mount paths on the remote host: %s", h.Name, joinBinds(external))
+	}
+	if env, cleanup, err = docker.ComposeHostEnv(h); err != nil {
+		return nil, nil, "", noop, err
+	}
+	if len(internal) == 0 {
+		return env, nil, "", cleanup, nil
+	}
+	if err = s.docker.SeedProjectBinds(ctx, p.HostID, dir, p.Slug, internal); err != nil {
+		cleanup()
+		return nil, nil, "", noop, fmt.Errorf("copying the project files to %q failed: %v", h.Name, err)
+	}
+	ov, err := docker.BindOverrideJSON(p.Slug, internal)
+	if err != nil {
+		cleanup()
+		return nil, nil, "", noop, err
+	}
+	// Keep the override outside the project folder so it never shows up in the
+	// user's file tree or a .zip export.
+	f, err := os.CreateTemp("", "dc-bind-override-*.json")
+	if err != nil {
+		cleanup()
+		return nil, nil, "", noop, err
+	}
+	path := f.Name()
+	_, werr := f.Write(ov)
+	cerr := f.Close()
+	if werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		_ = os.Remove(path)
+		cleanup()
+		return nil, nil, "", noop, werr
+	}
+	tlsCleanup := cleanup
+	cleanup = func() { _ = os.Remove(path); tlsCleanup() }
+	return env, []string{p.ComposeFile, path}, remoteBindNote(internal), cleanup, nil
+}
+
+// joinBinds renders binds for a user-facing error message.
+func joinBinds(binds []docker.ProjectBind) string {
+	out := make([]string, 0, len(binds))
+	for _, b := range binds {
+		out = append(out, b.String())
+	}
+	return strings.Join(out, "; ")
+}
+
+// remoteBindNote spells out that a remote deploy copies the bind-mounted files
+// rather than mounting them live — writes inside the container stay on the host.
+func remoteBindNote(binds []docker.ProjectBind) string {
+	paths := make([]string, 0, len(binds))
+	seen := map[string]bool{}
+	for _, b := range binds {
+		if !seen[b.Rel] {
+			seen[b.Rel] = true
+			paths = append(paths, b.Rel)
 		}
 	}
-	return docker.ComposeHostEnv(h)
+	return fmt.Sprintf("Copied %d bind-mounted path(s) to volumes on the remote host: %s. This is a snapshot taken now, not a live mount — edits to the project files need a redeploy, and writes inside the container stay on the remote host.",
+		len(paths), strings.Join(paths, ", "))
 }
 
 // loadProject resolves {id} to a project, writing the error response on failure.
