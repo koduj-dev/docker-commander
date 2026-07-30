@@ -10,6 +10,10 @@ problems, and administer it all from one binary.
 > **One Go binary** with the web UI embedded. No external database, no runtime
 > dependencies, CGO-free. Runs on **Linux, macOS and Windows**.
 
+**🌐 [docker-commander.app](https://docker-commander.app)** — the project's home
+page. · [Documentation](docs/) · [Releases](https://github.com/koduj-dev/docker-commander/releases)
+· [Sponsor](https://github.com/sponsors/koduj-dev)
+
 [![CI](https://github.com/koduj-dev/docker-commander/actions/workflows/ci.yml/badge.svg)](https://github.com/koduj-dev/docker-commander/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/koduj-dev/docker-commander?sort=semver)](https://github.com/koduj-dev/docker-commander/releases)
 [![Go version](https://img.shields.io/github/go-mod/go-version/koduj-dev/docker-commander)](go.mod)

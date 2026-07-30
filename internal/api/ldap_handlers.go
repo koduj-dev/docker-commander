@@ -18,7 +18,7 @@ func (s *Server) handleGetLDAP(w http.ResponseWriter, r *http.Request) {
 		"enabled": c.Enabled, "url": c.URL, "startTls": c.StartTLS,
 		"bindDn": c.BindDN, "userBaseDn": c.UserBaseDN, "userFilter": c.UserFilter,
 		"adminGroupDn": c.AdminGroupDN, "hasBindPassword": c.BindPassword != "",
-		"groupMappings": mappings,
+		"groupMappings": mappings, "fallbackRoleId": c.FallbackRoleID,
 	})
 }
 

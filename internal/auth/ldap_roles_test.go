@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"testing"
 
@@ -269,6 +270,127 @@ func TestPentestGroupRoleMappingCannotGrantAdmin(t *testing.T) {
 	}
 	if _, ok := grants["__admin"]; ok {
 		t.Error("SECURITY: the admin pseudo-section was granted through a role")
+	}
+}
+
+// setFallback points the config's fallback role at id.
+func setFallback(t *testing.T, st *store.Store, id int64) {
+	t.Helper()
+	ctx := context.Background()
+	cfg, _ := st.GetLDAP(ctx)
+	cfg.FallbackRoleID = id
+	if err := st.SetLDAP(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A mapped role that no longer exists degrades its members to the fallback role
+// rather than to nothing — the point of having one.
+func TestFallbackRoleStandsInForADeletedRole(t *testing.T) {
+	svc, st := ldapFixture(t, nil, []string{"cn=ops,dc=example,dc=org"}, false)
+	ctx := context.Background()
+	temp := newRole(t, st, "Temp", store.RoleSection{Section: "containers", Write: true})
+	viewer := newRole(t, st, "Baseline", store.RoleSection{Section: "dashboard"})
+	cfg, _ := st.GetLDAP(ctx)
+	cfg.GroupMappings = []store.LDAPGroupMapping{mapping("cn=ops,dc=example,dc=org", temp)}
+	cfg.FallbackRoleID = viewer
+	if err := st.SetLDAP(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	u := login(t, svc, "alice")
+	if got := roleNames(t, st, u.ID); len(got) != 1 || got[0] != "Temp" {
+		t.Fatalf("roles = %v, want [Temp] while the role exists", got)
+	}
+
+	// Delete Temp out from under the mapping: the group still matches, the role
+	// no longer resolves, so the fallback stands in.
+	if err := st.DeleteRole(ctx, temp); err != nil {
+		t.Fatal(err)
+	}
+	login(t, svc, "alice")
+	if got := roleNames(t, st, u.ID); len(got) != 1 || got[0] != "Baseline" {
+		t.Errorf("roles = %v, want the fallback [Baseline]", got)
+	}
+}
+
+// PENTEST: the fallback stands in for a BROKEN mapping, never for the ordinary
+// "your groups grant you nothing" case. Applying it there would give a role to
+// every account in the directory that can authenticate.
+func TestPentestFallbackNotGrantedToUnmappedUsers(t *testing.T) {
+	svc, st := ldapFixture(t, nil, []string{"cn=nobody,dc=example,dc=org"}, false)
+	ctx := context.Background()
+	ops := newRole(t, st, "Ops", store.RoleSection{Section: "containers", Write: true})
+	baseline := newRole(t, st, "Baseline", store.RoleSection{Section: "dashboard"})
+	cfg, _ := st.GetLDAP(ctx)
+	cfg.GroupMappings = []store.LDAPGroupMapping{mapping("cn=ops,dc=example,dc=org", ops)}
+	cfg.FallbackRoleID = baseline
+	if err := st.SetLDAP(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	u := login(t, svc, "stranger")
+	if got := roleNames(t, st, u.ID); len(got) != 0 {
+		t.Errorf("SECURITY: a user in no mapped group was granted %v via the fallback", got)
+	}
+}
+
+// The fallback also doesn't fire while every mapped role resolves — it isn't an
+// extra grant piled on top of a working mapping.
+func TestFallbackNotGrantedWhenMappingResolves(t *testing.T) {
+	svc, st := ldapFixture(t, nil, []string{"cn=ops,dc=example,dc=org"}, false)
+	ctx := context.Background()
+	ops := newRole(t, st, "Ops", store.RoleSection{Section: "containers", Write: true})
+	baseline := newRole(t, st, "Baseline", store.RoleSection{Section: "dashboard"})
+	cfg, _ := st.GetLDAP(ctx)
+	cfg.GroupMappings = []store.LDAPGroupMapping{mapping("cn=ops,dc=example,dc=org", ops)}
+	cfg.FallbackRoleID = baseline
+	if err := st.SetLDAP(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	u := login(t, svc, "alice")
+	if got := roleNames(t, st, u.ID); len(got) != 1 || got[0] != "Ops" {
+		t.Errorf("roles = %v, want just [Ops] — the fallback is for broken mappings only", got)
+	}
+}
+
+// A fallback id that is itself dangling grants nothing and must not fail the
+// login: the fallback is a safety net, not another way to lock people out.
+func TestFallbackThatIsItselfMissingGrantsNothing(t *testing.T) {
+	svc, st := ldapFixture(t, nil, []string{"cn=ops,dc=example,dc=org"}, false)
+	ctx := context.Background()
+	cfg, _ := st.GetLDAP(ctx)
+	cfg.GroupMappings = []store.LDAPGroupMapping{mapping("cn=ops,dc=example,dc=org", 4242)}
+	cfg.FallbackRoleID = 7777
+	if err := st.SetLDAP(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	u := login(t, svc, "alice")
+	if got := roleNames(t, st, u.ID); len(got) != 0 {
+		t.Errorf("roles = %v, want none", got)
+	}
+}
+
+// PENTEST: the fallback must not survive as a dangling id — deleting the role it
+// points at is refused, so the hole it exists to close can't reopen one level up.
+func TestPentestCannotDeleteTheConfiguredFallbackRole(t *testing.T) {
+	_, st := ldapFixture(t, nil, nil, false)
+	ctx := context.Background()
+	baseline := newRole(t, st, "Baseline", store.RoleSection{Section: "dashboard"})
+	setFallback(t, st, baseline)
+
+	if err := st.DeleteRole(ctx, baseline); !errors.Is(err, store.ErrRoleInUseAsFallback) {
+		t.Fatalf("deleting the fallback = %v, want ErrRoleInUseAsFallback", err)
+	}
+	if _, err := st.RoleByID(ctx, baseline); err != nil {
+		t.Errorf("the role should still exist: %v", err)
+	}
+	// Pointing the fallback elsewhere releases it.
+	setFallback(t, st, 0)
+	if err := st.DeleteRole(ctx, baseline); err != nil {
+		t.Errorf("deleting it after clearing the fallback = %v", err)
 	}
 }
 

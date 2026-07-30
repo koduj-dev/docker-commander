@@ -272,7 +272,7 @@ func (s *Service) ldapLogin(ctx context.Context, existing *store.User, username,
 			existing.Sections = mappedSections
 		}
 		if roleMapped {
-			if err := s.syncRoles(ctx, existing.ID, mappedRoles); err != nil {
+			if err := s.syncRoles(ctx, existing.ID, mappedRoles, cfg.FallbackRoleID); err != nil {
 				return nil, err
 			}
 		}
@@ -298,7 +298,7 @@ func (s *Service) ldapLogin(ctx context.Context, existing *store.User, username,
 	}
 	u.ID = id
 	if roleMapped {
-		if err := s.syncRoles(ctx, u.ID, mappedRoles); err != nil {
+		if err := s.syncRoles(ctx, u.ID, mappedRoles, cfg.FallbackRoleID); err != nil {
 			return nil, err
 		}
 	}
@@ -307,17 +307,50 @@ func (s *Service) ldapLogin(ctx context.Context, existing *store.User, username,
 
 // syncRoles replaces a user's roles with the ones their LDAP groups grant,
 // skipping the write when nothing changed so an unchanged login doesn't churn
-// the table. SetUserRoles ignores ids that no longer name a role, so a role
-// deleted after the mapping was written simply grants nothing.
-func (s *Service) syncRoles(ctx context.Context, userID int64, want []int64) error {
+// the table.
+//
+// A mapping can name a role that has since been deleted. That must not fail the
+// login — deleting a role would then lock out every member of the groups naming
+// it — so the id is dropped. Dropping it silently leaves those users with
+// nothing, which is why an admin can nominate a fallback role: it stands in for
+// whatever failed to resolve, degrading them to a known baseline (Viewer, say)
+// rather than to no access at all.
+//
+// The fallback deliberately does NOT apply to a user whose groups map to no role
+// at all. That is the ordinary "not entitled" case, and granting a baseline there
+// would hand access to every account in the directory that can authenticate.
+func (s *Service) syncRoles(ctx context.Context, userID int64, want []int64, fallback int64) error {
+	valid, err := s.store.ExistingRoleIDs(ctx, want)
+	if err != nil {
+		return err
+	}
+	if len(valid) < len(want) && fallback > 0 {
+		fb, err := s.store.ExistingRoleIDs(ctx, []int64{fallback})
+		if err != nil {
+			return err
+		}
+		if len(fb) == 1 && !containsID(valid, fallback) {
+			valid = append(valid, fallback)
+		}
+	}
 	have, err := s.store.RoleIDsForUser(ctx, userID)
 	if err != nil {
 		return err
 	}
-	if sameIDs(have, want) {
+	if sameIDs(have, valid) {
 		return nil
 	}
-	return s.store.SetUserRoles(ctx, userID, want)
+	return s.store.SetUserRoles(ctx, userID, valid)
+}
+
+// containsID reports whether ids holds id.
+func containsID(ids []int64, id int64) bool {
+	for _, x := range ids {
+		if x == id {
+			return true
+		}
+	}
+	return false
 }
 
 // sameSections reports whether two section lists hold the same set (order

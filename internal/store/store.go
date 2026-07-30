@@ -30,6 +30,11 @@ var ErrDuplicate = errors.New("store: duplicate")
 // the known-good baseline; the UI offers Duplicate to customise instead.
 var ErrBuiltinRole = errors.New("store: built-in roles cannot be modified")
 
+// ErrRoleInUseAsFallback is returned when deleting the role configured as the
+// LDAP fallback. Allowing it would leave the fallback itself dangling — the one
+// thing the fallback exists to prevent.
+var ErrRoleInUseAsFallback = errors.New("store: role is the configured LDAP fallback")
+
 // Store wraps the database handle and exposes typed queries.
 type Store struct {
 	db     *sql.DB

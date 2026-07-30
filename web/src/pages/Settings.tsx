@@ -234,6 +234,27 @@ function LdapSettings({ allSections }: { allSections: string[] }) {
             </div>
           </div>
         ))}
+        {mapsRoles && (
+          <div className="pt-1">
+            <label className="label">Fallback role</label>
+            <select
+              className="input"
+              value={cfg.fallbackRoleId ?? 0}
+              onChange={(e) => patch({ fallbackRoleId: Number(e.target.value) })}
+            >
+              <option value={0}>None — members of a broken mapping get no role</option>
+              {roles.map((r) => (
+                <option key={r.id} value={r.id}>{r.name}{r.builtin ? " (built-in)" : ""}</option>
+              ))}
+            </select>
+            <p className="text-xs text-muted mt-1">
+              Granted in place of a mapped role that no longer exists, so deleting a role degrades its
+              members to a known baseline instead of leaving them with nothing. It does <b>not</b> apply
+              to users whose groups map to no role at all — that would hand a role to everyone in the
+              directory. The chosen role can&apos;t be deleted while it&apos;s the fallback.
+            </p>
+          </div>
+        )}
       </div>
 
       {msg && <p className={clsx("text-sm", msg.ok ? "text-ok" : "text-danger")}>{msg.text}</p>}

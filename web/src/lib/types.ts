@@ -87,6 +87,8 @@ export interface LdapConfig {
   userFilter: string;
   adminGroupDn: string;
   groupMappings?: LdapGroupMapping[];
+  /** Role granted in place of a mapped role that no longer exists. 0 = none. */
+  fallbackRoleId?: number;
   hasBindPassword?: boolean;
 }
 

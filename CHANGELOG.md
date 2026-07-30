@@ -7,6 +7,18 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **A fallback role for LDAP mappings.** A mapping can name a role that has since
+  been deleted; until now its members simply got nothing. Nominate a fallback in
+  *Settings → LDAP* and they degrade to that baseline (**Viewer** being the obvious
+  choice) instead. The nominated role can't be deleted while it holds the job, and
+  the two built-in roles were never deletable, so the fallback itself can't go
+  stale.
+
+  It applies only to a mapping that **matched and then failed to resolve** — never
+  to a user whose groups map to no role at all. That case is "not entitled", and
+  granting a baseline there would hand a role to every account in the directory that
+  can authenticate.
+
 - **LDAP groups can grant named roles**, not just raw sections. A group mapping now
   carries roles, so directory membership drives access the same way it drives
   everything else in an AD shop: put someone in `cn=deployers`, they hold

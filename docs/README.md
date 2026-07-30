@@ -4,6 +4,8 @@ A guide to each part of the app. Most pages map 1:1 to a menu item; the last
 two cover installation and configuration.
 
 > New here? Start with **[Getting started](getting-started.md)**.
+>
+> Project home page: **[docker-commander.app](https://docker-commander.app)**.
 
 ## Compute
 - [Dashboard](dashboard.md) — host overview, disk usage, running containers

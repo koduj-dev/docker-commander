@@ -138,6 +138,11 @@ func (s *Server) handleDeleteRole(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "built-in roles cannot be deleted")
 		return
 	}
+	if errors.Is(err, store.ErrRoleInUseAsFallback) {
+		writeErr(w, http.StatusConflict,
+			"this role is the LDAP fallback — pick a different fallback in Settings → LDAP first")
+		return
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
