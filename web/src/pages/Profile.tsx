@@ -23,15 +23,25 @@ export function Profile() {
   const { user, refresh } = useAuth();
   const [tab, setTab] = useState<Tab>("account");
   const [access, setAccess] = useState<MyAccess | null>(null);
+  // Separate from `access` being null: that meant both "still loading" and
+  // "the request failed", so a failure left the page spinning forever.
+  const [accessErr, setAccessErr] = useState("");
 
   const load = useCallback(() => {
-    api.myAccess().then(setAccess).catch(() => setAccess(null));
+    setAccessErr("");
+    api.myAccess().then(setAccess).catch((e) => {
+      setAccess(null);
+      setAccessErr(e instanceof Error ? e.message : "could not load your permissions");
+    });
   }, []);
   useEffect(() => load(), [load]);
 
   if (!user) return (<><PageHeader title="My profile" /><div className="p-6 flex items-center gap-2 text-muted"><Spinner /> Loading…</div></>);
 
-  const grantCount = access?.admin ? 13 : (access?.effective ?? []).length;
+  // No badge for an admin (their access isn't a computed list) and none while it
+  // is still loading — a hard-coded section count would silently drift the day a
+  // section is added.
+  const grantCount = access && !access.admin ? (access.effective ?? []).length : undefined;
 
   return (
     <>
@@ -49,7 +59,7 @@ export function Profile() {
 
         {tab === "account" && <AccountTab onSaved={refresh} />}
         {tab === "security" && <SecurityTab onChanged={refresh} />}
-        {tab === "access" && <AccessTab access={access} />}
+        {tab === "access" && <AccessTab access={access} error={accessErr} onRetry={load} />}
       </div>
     </>
   );
@@ -225,7 +235,21 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
 
 // AccessTab shows what this account can actually reach and where each permission
 // came from — the overlay of its roles and its own section grants.
-function AccessTab({ access }: { access: MyAccess | null }) {
+function AccessTab({ access, error, onRetry }: { access: MyAccess | null; error: string; onRetry: () => void }) {
+  if (error) {
+    return (
+      <div className="card p-5 space-y-3 max-w-2xl">
+        <p className="text-sm text-danger">Could not load your permissions: {error}</p>
+        <p className="text-xs text-muted">
+          This page reads your own account only, so a failure here means the request didn&apos;t reach the
+          server — it does not mean you have no access.
+        </p>
+        <button className="btn-ghost px-3 py-1.5 text-sm self-start" onClick={onRetry}>
+          <RefreshCw className="h-4 w-4" /> Try again
+        </button>
+      </div>
+    );
+  }
   if (!access) return <div className="flex items-center gap-2 text-muted"><Spinner /> Loading…</div>;
 
   if (access.admin) {

@@ -374,8 +374,10 @@ function RoleEditorModal({ role, allSections, onClose, onDone }: { role: Role | 
   const [err, setErr] = useState("");
 
   useEffect(() => { api.hosts().then(setHosts).catch(() => setHosts([])); }, []);
+  // Functional form: deriving from the render's `hostIds` loses updates when two
+  // toggles land in the same React batch.
   const toggleHost = (id: number) =>
-    setHostIds(hostIds.includes(id) ? hostIds.filter((h) => h !== id) : [...hostIds, id]);
+    setHostIds((prev) => (prev.includes(id) ? prev.filter((h) => h !== id) : [...prev, id]));
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();

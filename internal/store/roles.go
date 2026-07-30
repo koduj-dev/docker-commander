@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 )
@@ -356,7 +357,15 @@ func (s *Store) DeleteRole(ctx context.Context, id int64) error {
 	// The LDAP fallback is what a login falls back to when a mapping names a role
 	// that no longer exists. Deleting the fallback would recreate that hole one
 	// level up, so it has to be pointed elsewhere first.
-	if cfg, err := s.GetLDAP(ctx); err == nil && cfg.FallbackRoleID == id {
+	//
+	// A config we cannot read is a refusal, not a pass: silently allowing the
+	// delete because the settings row failed to parse is exactly how the guard
+	// would fail in the one situation it matters.
+	cfg, err := s.GetLDAP(ctx)
+	if err != nil {
+		return fmt.Errorf("could not check whether this role is the LDAP fallback: %w", err)
+	}
+	if cfg.FallbackRoleID == id {
 		return ErrRoleInUseAsFallback
 	}
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM user_roles WHERE role_id = ?`, id); err != nil {
@@ -378,10 +387,15 @@ func (s *Store) ExistingRoleIDs(ctx context.Context, ids []int64) ([]int64, erro
 		if id <= 0 {
 			continue
 		}
-		switch _, err := s.RoleByID(ctx, id); {
-		case errors.Is(err, ErrNotFound):
+		// An existence probe, not RoleByID: that also loads the role's sections,
+		// which would make an LDAP login two queries per mapped role for data
+		// nobody reads here.
+		var found int64
+		err := s.db.QueryRowContext(ctx, `SELECT id FROM roles WHERE id = ?`, id).Scan(&found)
+		if errors.Is(err, sql.ErrNoRows) {
 			continue
-		case err != nil:
+		}
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, id)

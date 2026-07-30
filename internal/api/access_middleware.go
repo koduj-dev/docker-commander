@@ -231,12 +231,25 @@ func (s *Server) permissions(next http.Handler) http.Handler {
 
 // hostParam reads the "host" query parameter, the one way a REST request names a
 // Docker host. Absent means 0 — the local daemon.
+//
+// Anything <= 0 normalises to 0, matching docker.Manager.Client, which resolves a
+// non-positive id to the local daemon. Without that, ?host=-1 would be served by
+// the local daemon while being authorised (and audited) as host -1: a scoped user
+// would be refused something they are in fact allowed, and the audit log would
+// name a host that doesn't exist.
 func hostParam(r *http.Request) (int64, error) {
 	q := r.URL.Query().Get("host")
 	if q == "" {
 		return 0, nil
 	}
-	return strconv.ParseInt(q, 10, 64)
+	id, err := strconv.ParseInt(q, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	if id < 0 {
+		return 0, nil
+	}
+	return id, nil
 }
 
 // callerCanReachHost reports whether the signed-in caller may see anything on
