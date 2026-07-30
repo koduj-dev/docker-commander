@@ -12,7 +12,6 @@ problems, and administer it all from one binary.
 
 [![CI](https://github.com/koduj-dev/docker-commander/actions/workflows/ci.yml/badge.svg)](https://github.com/koduj-dev/docker-commander/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/koduj-dev/docker-commander?sort=semver)](https://github.com/koduj-dev/docker-commander/releases)
-[![Go Report Card](https://goreportcard.com/badge/github.com/koduj-dev/docker-commander)](https://goreportcard.com/report/github.com/koduj-dev/docker-commander)
 [![Go version](https://img.shields.io/github/go-mod/go-version/koduj-dev/docker-commander)](go.mod)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -316,11 +315,26 @@ notify webhooks (Go-template bodies) and/or email. **Prometheus:** scrape
 - Signing key and at-rest encryption key are generated on first run and stored in the data dir; stored secrets are never returned by the API.
 - The **MCP server is off by default** (`DC_MCP_ENABLED`); when on, it's bearer/OAuth-authenticated, reuses the app's RBAC (with per-token **read-only** / section scope), and exposes only reads + *safe* control — no exec, image export, file reads or prune/remove. See [MCP](docs/mcp.md).
 
+## 🧪 How it's tested
+
+You're pointing this at real Docker daemons, so the fast tests are the floor, not
+the ceiling. Alongside ~293 Go unit tests and 13 frontend tests, the repo carries
+**31 adversarial "pentest" cases** that assert attacks are *rejected* (token
+forgery, OAuth replay, CSRF, IDOR, privilege escalation, path traversal), an
+integration tier against a **real Docker daemon** (plus throwaway Redis / OpenLDAP
+/ SMTP), and an end-to-end tier that deploys to **separate daemons over both TCP
+and SSH** — because a mock daemon can't tell you whether a remote deploy works.
+
+CI runs the deterministic tiers; the daemon-backed ones are developer-run.
+**[docs/testing.md](docs/testing.md)** lays out each tier, how to run it, and
+what is deliberately *not* covered.
+
 ## 📚 Documentation
 
 A per-feature user manual lives in **[docs/](docs/README.md)** — one page per
 agenda (Containers, Images, Logs, Alerts, Hosts, Users, Settings…) plus
-[Getting started](docs/getting-started.md) and [Deployment](docs/deployment.md).
+[Getting started](docs/getting-started.md), [Deployment](docs/deployment.md) and
+[How it's tested](docs/testing.md).
 
 ## 🗺️ Roadmap & changelog
 
