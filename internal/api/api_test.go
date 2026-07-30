@@ -40,16 +40,18 @@ func TestSectionForPath(t *testing.T) {
 		"/api/topology":            "topology",
 		"/api/parse-rules":         "logs",
 		"/api/alert-rules/1":       "alerts",
-		"/api/smtp/test":           "alerts",
-		"/api/hosts/2":             "hosts",
-		"/api/registries":          "registries",
-		"/api/audit":               "audit",
-		"/api/users":               "__admin",
-		"/api/settings":            "__admin",
-		"/api/ldap":                "__admin",
-		"/api/system":              "", // ungated
-		"/api/ws":                  "",
-		"/api/auth/me":             "",
+		// The SMTP relay is instance-wide with a stored credential, so it is
+		// admin-only rather than part of the alerts section.
+		"/api/smtp/test":  "__admin",
+		"/api/hosts/2":    "hosts",
+		"/api/registries": "registries",
+		"/api/audit":      "audit",
+		"/api/users":      "__admin",
+		"/api/settings":   "__admin",
+		"/api/ldap":       "__admin",
+		"/api/system":     "", // ungated
+		"/api/ws":         "",
+		"/api/auth/me":    "",
 	}
 	for path, want := range cases {
 		if got := sectionForPath(path); got != want {

@@ -1,5 +1,7 @@
 # Settings
 
+_Admin only._ Four tabs: **Features**, **Security**, **LDAP** and **Email**.
+
 [← Manual index](README.md)
 
 ![Settings](images/settings.png)
@@ -56,3 +58,15 @@ spaces); if a mapping never applies, check the exact DN with **Test** or your
 directory tooling. The match fails closed — a mismatch only ever denies. The admin role stays "sticky" once granted —
 removing someone from the admin group does not auto-demote them (avoids lockout
 if the directory is unreachable); demote them in [Users](users.md).
+
+## Email (SMTP)
+One outbound mail relay for the **whole installation** — used by alert rules that
+opt into e-mail, and by system notifications. Set host/port, optional credentials,
+implicit TLS, and the From / To addresses, then **Send test** to check it end to
+end. The password is encrypted at rest and never returned by the API.
+
+> **Admin only.** This used to live under [Alerts → Email](alerts.md) and was
+> reachable by anyone with the *alerts* section. Because it is a single
+> instance-wide relay, that let a non-admin repoint the installation's mail — so
+> it moved here. Managing alert rules, webhooks and the feed still only needs the
+> *alerts* section; only the relay itself now needs an admin.

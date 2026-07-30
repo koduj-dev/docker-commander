@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, ShieldOff, LayoutGrid, Network, Send, Plus, Trash2 } from "lucide-react";
+import { Loader2, ShieldOff, LayoutGrid, Network, Send, Plus, Trash2, Mail } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import type { LdapConfig } from "../lib/types";
 import { sectionLabel } from "../lib/sections";
 import { PageHeader } from "../layout/Shell";
 import { Spinner } from "../components/ui";
+import { Tabs } from "../components/Tabs";
+import { EmailConfig } from "../components/EmailConfig";
+
+type Tab = "features" | "security" | "ldap" | "email";
 
 export function Settings() {
   const [all, setAll] = useState<string[]>([]);
@@ -14,6 +18,7 @@ export function Settings() {
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  const [tab, setTab] = useState<Tab>("features");
 
   const load = useCallback(() => {
     api.settings().then((s) => {
@@ -40,46 +45,77 @@ export function Settings() {
   return (
     <>
       <PageHeader title="Settings" />
-      <div className="p-6 space-y-6 max-w-2xl">
-        {/* Feature flags */}
-        <div className="card p-5 space-y-3">
-          <div className="flex items-center gap-2 font-medium"><LayoutGrid className="h-4 w-4 text-accent" /> Enabled features</div>
-          <p className="text-xs text-muted">Turn off whole sections the team doesn't need. Disabled sections are hidden from the menu and their APIs are blocked for everyone.</p>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-1.5">
-            {all.map((s) => {
-              const enabled = !disabled.has(s);
-              return (
-                <label key={s} className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={enabled} onChange={(e) => {
-                    const n = new Set(disabled);
-                    e.target.checked ? n.delete(s) : n.add(s);
-                    setDisabled(n);
-                  }} />
-                  <span className={clsx(!enabled && "text-muted line-through")}>{sectionLabel(s)}</span>
-                </label>
-              );
-            })}
+      <div className="p-6 space-y-4">
+        <Tabs
+          active={tab}
+          onChange={setTab}
+          tabs={[
+            { key: "features", label: "Features", icon: <LayoutGrid className="h-4 w-4" />, count: all.length - disabled.size },
+            { key: "security", label: "Security", icon: <ShieldOff className="h-4 w-4" /> },
+            { key: "ldap", label: "LDAP", icon: <Network className="h-4 w-4" /> },
+            { key: "email", label: "Email", icon: <Mail className="h-4 w-4" /> },
+          ]}
+        />
+
+        {tab === "features" && (
+          <div className="space-y-4 max-w-2xl">
+            <div className="card p-5 space-y-3">
+              <div className="flex items-center gap-2 font-medium"><LayoutGrid className="h-4 w-4 text-accent" /> Enabled features</div>
+              <p className="text-xs text-muted">Turn off whole sections the team doesn&apos;t need. Disabled sections are hidden from the menu and their APIs are blocked for everyone.</p>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-1.5">
+                {all.map((s) => {
+                  const enabled = !disabled.has(s);
+                  return (
+                    <label key={s} className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={enabled} onChange={(e) => {
+                        const n = new Set(disabled);
+                        e.target.checked ? n.delete(s) : n.add(s);
+                        setDisabled(n);
+                      }} />
+                      <span className={clsx(!enabled && "text-muted line-through")}>{sectionLabel(s)}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+            {msg && <p className="text-sm text-ok">{msg}</p>}
+            <div className="flex justify-end">
+              <button className="btn-primary" onClick={save} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Save settings</button>
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* Localhost 2FA */}
-        <div className="card p-5 space-y-3">
-          <div className="flex items-center gap-2 font-medium"><ShieldOff className="h-4 w-4 text-warn" /> Localhost 2FA exemption</div>
-          <label className="flex items-start gap-2 text-sm">
-            <input type="checkbox" checked={no2fa} onChange={(e) => setNo2fa(e.target.checked)} className="mt-1" />
-            <span>
-              Allow password-only login from <code>localhost</code> (loopback).
-              <span className="block text-xs text-muted mt-0.5">When on, connections from 127.0.0.1/::1 skip the mandatory 2FA enrollment and challenge. Remote connections always require 2FA. Leave off for server deployments.</span>
-            </span>
-          </label>
-        </div>
+        {tab === "security" && (
+          <div className="space-y-4 max-w-2xl">
+            <div className="card p-5 space-y-3">
+              <div className="flex items-center gap-2 font-medium"><ShieldOff className="h-4 w-4 text-warn" /> Localhost 2FA exemption</div>
+              <label className="flex items-start gap-2 text-sm">
+                <input type="checkbox" checked={no2fa} onChange={(e) => setNo2fa(e.target.checked)} className="mt-1" />
+                <span>
+                  Allow password-only login from <code>localhost</code> (loopback).
+                  <span className="block text-xs text-muted mt-0.5">When on, connections from 127.0.0.1/::1 skip the mandatory 2FA enrollment and challenge. Remote connections always require 2FA. Leave off for server deployments.</span>
+                </span>
+              </label>
+            </div>
+            {msg && <p className="text-sm text-ok">{msg}</p>}
+            <div className="flex justify-end">
+              <button className="btn-primary" onClick={save} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Save settings</button>
+            </div>
+          </div>
+        )}
 
-        {msg && <p className="text-sm text-ok">{msg}</p>}
-        <div className="flex justify-end">
-          <button className="btn-primary" onClick={save} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Save settings</button>
-        </div>
+        {tab === "ldap" && <div className="max-w-2xl"><LdapSettings allSections={all} /></div>}
 
-        <LdapSettings allSections={all} />
+        {tab === "email" && (
+          <div className="max-w-2xl space-y-3">
+            <p className="text-xs text-muted">
+              One outbound mail relay for the whole installation — used by alert rules and by system
+              notifications. Configuring it is admin-only; the password is encrypted at rest and never
+              returned by the API.
+            </p>
+            <EmailConfig />
+          </div>
+        )}
       </div>
     </>
   );

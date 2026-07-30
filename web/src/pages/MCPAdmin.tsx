@@ -3,6 +3,8 @@ import { Trash2, KeyRound, Clock, ShieldCheck, Plug, User } from "lucide-react";
 import { api } from "../lib/api";
 import type { AdminMCPToken, AdminOAuthClient } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
+import clsx from "clsx";
+import { Tabs } from "../components/Tabs";
 import { EmptyState, Spinner } from "../components/ui";
 import { useDialogs } from "../components/Dialog";
 
@@ -15,6 +17,7 @@ export function MCPAdmin() {
   const dialogs = useDialogs();
   const [tokens, setTokens] = useState<AdminMCPToken[] | null>(null);
   const [clients, setClients] = useState<AdminOAuthClient[] | null>(null);
+  const [tab, setTab] = useState<"tokens" | "clients">("tokens");
 
   const load = useCallback(() => {
     api.mcpAdminTokens().then(setTokens).catch(() => setTokens([]));
@@ -49,9 +52,17 @@ export function MCPAdmin() {
   return (
     <>
       <PageHeader title="MCP Admin" />
-      <div className="p-6 space-y-8">
-        <section className="space-y-3">
-          <h2 className="text-sm font-semibold flex items-center gap-2"><KeyRound className="h-4 w-4 text-accent" /> API tokens <span className="text-muted font-normal">— all users</span></h2>
+      <div className="p-6 space-y-4">
+        <Tabs
+          active={tab}
+          onChange={setTab}
+          tabs={[
+            { key: "tokens", label: "API tokens", icon: <KeyRound className="h-4 w-4" />, count: tokens.length },
+            { key: "clients", label: "OAuth clients", icon: <Plug className="h-4 w-4" />, count: clients.length },
+          ]}
+        />
+        <section className={clsx("space-y-3", tab !== "tokens" && "hidden")}>
+          <p className="text-xs text-muted">Every active API token across all users.</p>
           {tokens.length === 0 ? (
             <EmptyState title="No active tokens" hint="Tokens users create on the MCP Access page appear here." />
           ) : (
@@ -84,8 +95,8 @@ export function MCPAdmin() {
           )}
         </section>
 
-        <section className="space-y-3">
-          <h2 className="text-sm font-semibold flex items-center gap-2"><Plug className="h-4 w-4 text-accent" /> OAuth clients <span className="text-muted font-normal">— registered connectors</span></h2>
+        <section className={clsx("space-y-3", tab !== "clients" && "hidden")}>
+          <p className="text-xs text-muted">Connectors registered through the OAuth flow.</p>
           {clients.length === 0 ? (
             <EmptyState title="No OAuth clients" hint="Clients self-register when a Claude Desktop / Cursor connector first authorizes against this server." />
           ) : (
