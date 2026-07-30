@@ -30,7 +30,12 @@ type User struct {
 	TOTPSecret  string
 	TOTPEnabled bool
 	// TOTPPending holds a secret being paired while an authenticator is already
-	// active. It is promoted on confirmation and discarded otherwise.
+	// active. It is promoted to TOTPSecret on confirmation, and otherwise simply
+	// never takes effect: a wrong code, a cancel or a closed tab leave it sitting
+	// here until the next pairing attempt overwrites it. That is deliberate —
+	// nothing reads it except ConfirmTOTPEnrollment, so a stale value grants
+	// nothing, and clearing it eagerly would mean a cancel path that can itself
+	// fail. Do not treat its presence as "a pairing is in progress".
 	TOTPPending string
 	CreatedAt   time.Time
 	LastLoginAt time.Time

@@ -111,8 +111,14 @@ func (c *connState) subscribe(parent context.Context, msg clientMsg) {
 	// then denied doesn't leave the previous stream running under that id.
 	c.unsubscribe(msg.SubID)
 	// RBAC gate: a user may only stream channels whose section they can access,
-	// and only on hosts their grant reaches.
-	if c.allow != nil && !c.allow(msg.Channel, msg.HostID) {
+	// and only on hosts their grant reaches. A non-positive hostId is the local
+	// daemon, the same convention the docker manager uses — normalised so the gate
+	// and the streamer agree on which host is being named.
+	hostID := msg.HostID
+	if hostID < 0 {
+		hostID = 0
+	}
+	if c.allow != nil && !c.allow(msg.Channel, hostID) {
 		c.write(parent, serverMsg{Type: "error", SubID: msg.SubID, Message: "access to this section is not permitted"})
 		return
 	}

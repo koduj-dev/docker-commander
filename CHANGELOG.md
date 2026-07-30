@@ -6,6 +6,25 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **A role scoped to only-invalid hosts became unscoped instead of being refused.**
+  Sending `hostIds: [0]` was sanitised down to an empty list, which means *every
+  host* — so a request to narrow a role quietly produced an unrestricted one, with
+  an audit line describing a scope that wasn't there. An explicit scope that
+  survives no validation is now a 400, matching the rule already applied to MCP
+  token section scopes.
+- **A non-positive `?host=` is the local daemon everywhere.** The Docker layer has
+  always treated `hostID <= 0` that way, but the new host-scope check took it
+  literally: `?host=-1` was served by the local daemon while being authorised and
+  audited as host −1, so a scoped user was refused something they were allowed.
+  Normalised at all three entry points — REST, the WebSocket subscribe frame and
+  MCP tool arguments.
+- **Deleting the LDAP fallback role could slip through** when the LDAP settings
+  could not be read (corrupt JSON, transient DB error): the guard was skipped
+  rather than failing closed, which is the one situation it exists for.
+- **The profile page span forever if loading permissions failed** — "still loading"
+  and "failed" were the same state. It now says what went wrong and offers a retry.
+
 ### Added
 - **Moving a project to another host can now actually move it.** Changing a
   deployed project's target host left the stack running on the old one — the app

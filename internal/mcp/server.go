@@ -262,6 +262,12 @@ func (h *handler) authorizeExtra(ctx context.Context, re *mcpsdk.RequestExtra, s
 	if p == nil {
 		return nil, errors.New("unauthenticated")
 	}
+	// A non-positive host_id is the local daemon (docker.Manager.Client's rule).
+	// Normalise before both checks so a tool arg of -1 isn't refused as an unknown
+	// host while the call would have been served locally.
+	if hostID < 0 {
+		hostID = 0
+	}
 	if err := p.narrowed(section, write, hostID); err != nil {
 		return nil, err
 	}

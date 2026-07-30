@@ -11,12 +11,14 @@ const ldapSettingKey = "ldap_config"
 // LDAPGroupMapping grants access to members of an LDAP group, matched on the
 // group's full DN. A mapping can hand out named roles, a raw list of sections,
 // or both; a user's effective access is the union over every mapping whose group
-// they belong to. Roles are the intended way to use this — Sections predates
-// them and stays for configs written before roles existed.
+// they belong to. Roles are the intended way to use this; the Sections field
+// predates roles and stays for configs written before they existed.
 type LDAPGroupMapping struct {
 	GroupDN  string   `json:"groupDn"`
 	Sections []string `json:"sections"`
-	RoleIDs  []int64  `json:"roleIds"`
+	// omitempty so a config written before roles existed stays truly absent
+	// rather than serialising as "roleIds": null.
+	RoleIDs []int64 `json:"roleIds,omitempty"`
 }
 
 // LDAPConfig configures optional LDAP / Active Directory authentication. The

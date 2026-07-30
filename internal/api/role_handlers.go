@@ -77,8 +77,12 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	hostIDs, ok := cleanRoleHosts(w, b.HostIDs)
+	if !ok {
+		return
+	}
 	id, err := s.store.CreateRole(r.Context(), &store.Role{
-		Name: b.Name, Description: b.Description, Sections: b.Sections, HostIDs: b.HostIDs,
+		Name: b.Name, Description: b.Description, Sections: b.Sections, HostIDs: hostIDs,
 	})
 	if errors.Is(err, store.ErrDuplicate) {
 		writeErr(w, http.StatusConflict, "a role with that name already exists")
@@ -88,7 +92,7 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.audit(r, "role.create", b.Name, sectionSummary(b.Sections)+scopeSummary(b.HostIDs))
+	s.audit(r, "role.create", b.Name, sectionSummary(b.Sections)+scopeSummary(hostIDs))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
 }
 
@@ -103,7 +107,11 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	err = s.store.UpdateRole(r.Context(), id, b.Name, b.Description, b.Sections, b.HostIDs)
+	hostIDs, ok := cleanRoleHosts(w, b.HostIDs)
+	if !ok {
+		return
+	}
+	err = s.store.UpdateRole(r.Context(), id, b.Name, b.Description, b.Sections, hostIDs)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		writeErr(w, http.StatusNotFound, "role not found")
@@ -119,7 +127,7 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.audit(r, "role.update", b.Name, sectionSummary(b.Sections)+scopeSummary(b.HostIDs))
+	s.audit(r, "role.update", b.Name, sectionSummary(b.Sections)+scopeSummary(hostIDs))
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -243,4 +251,32 @@ func scopeSummary(hostIDs []int64) string {
 		out += strconv.FormatInt(id, 10)
 	}
 	return out + ")"
+}
+
+// cleanRoleHosts drops ids the store would drop anyway (non-positive, duplicates)
+// and REFUSES a scope that survives none of it.
+//
+// The refusal is the point. An empty host list means "every host", so a request
+// asking for hostIds:[0] would otherwise be stored as unscoped — the caller asked
+// to narrow a role and silently got an unrestricted one, with an audit line
+// claiming a scope that isn't there. This mirrors the same rule on MCP token
+// section scopes: an explicit narrowing that filters down to nothing is an error,
+// never a fall-through to "everything".
+//
+// It writes the error response itself and reports whether the caller may proceed.
+func cleanRoleHosts(w http.ResponseWriter, in []int64) ([]int64, bool) {
+	out := make([]int64, 0, len(in))
+	seen := map[int64]bool{}
+	for _, id := range in {
+		if id > 0 && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	if len(in) > 0 && len(out) == 0 {
+		writeErr(w, http.StatusBadRequest,
+			"none of the host ids are valid, so this role would apply to every host instead of the ones you picked")
+		return nil, false
+	}
+	return out, true
 }
