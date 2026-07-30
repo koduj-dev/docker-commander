@@ -152,6 +152,8 @@ func (s *Server) userView(r *http.Request, u *store.User) map[string]any {
 		"id": u.ID, "username": u.Username, "role": u.Role,
 		"email":    u.Email,
 		"readOnly": u.ReadOnly, "totpEnabled": u.TOTPEnabled,
+		"authSource": u.AuthSource,
+		"createdAt":  u.CreatedAt, "lastLoginAt": u.LastLoginAt,
 		"sections":    s.effectiveSections(r.Context(), u),
 		"mfaEnforced": !s.mfaExempt(r),
 	}
@@ -318,4 +320,85 @@ func validEmail(s string) bool {
 		return false
 	}
 	return strings.Contains(domain, ".")
+}
+
+// handleMyAccess returns the caller's own roles and the resulting per-section
+// grants, so the profile page can show where each permission comes from.
+//
+// Self-service and ungated: it reads nothing but the signed-in account. Role
+// management stays admin-only — this exposes the roles a user already holds, not
+// the ability to see or change any others.
+func (s *Server) handleMyAccess(w http.ResponseWriter, r *http.Request) {
+	c, ok := auth.ClaimsFrom(r.Context())
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	u, err := s.store.UserByID(r.Context(), c.UserID)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "user not found")
+		return
+	}
+
+	roles, err := s.store.RolesForUser(r.Context(), u.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not read your roles")
+		return
+	}
+	roleOut := make([]map[string]any, 0, len(roles))
+	for _, role := range roles {
+		roleOut = append(roleOut, map[string]any{
+			"id": role.ID, "name": role.Name, "description": role.Description,
+			"builtin": role.Builtin, "sections": role.Sections,
+		})
+	}
+
+	// The effective tree, with provenance. An admin bypasses the grant system
+	// entirely, so say that rather than inventing a list that isn't consulted.
+	type grantOut struct {
+		Section string   `json:"section"`
+		Write   bool     `json:"write"`
+		From    []string `json:"from"`
+	}
+	out := map[string]any{
+		"admin":    u.IsAdmin(),
+		"readOnly": u.ReadOnly,
+		"roles":    roleOut,
+		"sections": u.Sections,
+	}
+	if u.IsAdmin() {
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+
+	grants, err := s.store.EffectiveGrants(r.Context(), u)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not determine your permissions")
+		return
+	}
+	// Provenance is recomputed here rather than returned by the store: the store
+	// answers "may they?", this answers "and why?", which only the UI needs.
+	sources := map[string][]string{}
+	for _, sec := range u.Sections {
+		if _, ok := grants[sec]; ok {
+			sources[sec] = append(sources[sec], "your account")
+		}
+	}
+	for _, role := range roles {
+		for _, rs := range role.Sections {
+			if _, ok := grants[rs.Section]; ok {
+				sources[rs.Section] = append(sources[rs.Section], role.Name)
+			}
+		}
+	}
+	effective := make([]grantOut, 0, len(grants))
+	for _, sec := range store.Sections { // stable, menu order
+		g, ok := grants[sec]
+		if !ok || !g.Granted {
+			continue
+		}
+		effective = append(effective, grantOut{Section: sec, Write: g.Write, From: sources[sec]})
+	}
+	out["effective"] = effective
+	writeJSON(w, http.StatusOK, out)
 }

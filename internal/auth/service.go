@@ -191,6 +191,18 @@ func (s *Service) BeginTOTPEnrollment(ctx context.Context, userID int64) (*Enrol
 	if err != nil {
 		return nil, err
 	}
+	// Re-pairing: an authenticator already works, so the new secret is held aside
+	// until the user proves they can generate codes from it. Overwriting the live
+	// secret here would mean that abandoning the flow silently disables 2FA and
+	// invalidates the authenticator they still have.
+	if u.TOTPEnabled && u.TOTPSecret != "" {
+		if err := s.store.SetTOTPPending(ctx, userID, enr.Secret); err != nil {
+			return nil, err
+		}
+		return enr, nil
+	}
+	// First enrolment: nothing to protect, so the secret goes straight in
+	// (disabled until confirmed), exactly as before.
 	if err := s.store.SetTOTP(ctx, userID, enr.Secret, false); err != nil {
 		return nil, err
 	}
@@ -202,6 +214,14 @@ func (s *Service) ConfirmTOTPEnrollment(ctx context.Context, userID int64, code 
 	u, err := s.store.UserByID(ctx, userID)
 	if err != nil {
 		return err
+	}
+	// A pending secret means a re-pair: validate against the NEW authenticator and
+	// only then promote it, so a wrong code leaves the working one in place.
+	if u.TOTPPending != "" {
+		if !ValidateTOTP(strings.TrimSpace(code), u.TOTPPending) {
+			return ErrInvalidMFACode
+		}
+		return s.store.PromoteTOTPPending(ctx, userID)
 	}
 	if u.TOTPSecret == "" {
 		return errors.New("auth: no pending enrollment")

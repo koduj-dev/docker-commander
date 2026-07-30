@@ -42,6 +42,9 @@ var ungatedRoutes = map[string]string{
 	// Writes the CALLER's own alert address, taken from their session claims —
 	// it cannot touch another account (TestPentestSetMyEmail_OnlyAffectsTheCaller).
 	"/api/auth/me/email": "own alert address",
+	// Reads only the caller's own roles and grants
+	// (TestPentestMyAccess_OnlyOwnData).
+	"/api/auth/me/access": "own permissions overview",
 	// Self-service MCP tokens: a token can only narrow its owner's own rights.
 	"/api/mcp/status":      "own MCP availability",
 	"/api/mcp/tokens":      "own tokens only",

@@ -87,8 +87,10 @@ func (s *Server) Handler() http.Handler {
 
 			r.Get("/auth/me", s.handleMe)
 			r.Post("/auth/logout", s.handleLogout)
-			// Own alert address: self-service, affects only this account.
+			// Own alert address + own permission overview: self-service, and both
+			// read/write nothing but the signed-in account.
 			r.Put("/auth/me/email", s.handleSetMyEmail)
+			r.Get("/auth/me/access", s.handleMyAccess)
 			r.Post("/auth/totp/setup", s.handleTOTPSetup)
 			r.Post("/auth/totp/enable", s.handleTOTPEnable)
 

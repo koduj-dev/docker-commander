@@ -6,6 +6,10 @@ export interface User {
   role: string;
   /** Where this account's own alert e-mails go. Optional; synced from LDAP when available. */
   email?: string;
+  /** "local" (password stored here) or "ldap" (verified against the directory). */
+  authSource?: string;
+  createdAt?: string;
+  lastLoginAt?: string;
   totpEnabled: boolean;
   readOnly: boolean;
   sections: string[];
@@ -643,4 +647,21 @@ export interface AdminOAuthClient {
   name: string;
   redirectUris: string[] | null;
   createdAt: string;
+}
+
+/** One section a user can reach, and which role(s) or grant it came from. */
+export interface EffectiveGrant {
+  section: string;
+  write: boolean;
+  from: string[];
+}
+
+/** The signed-in account's own permissions, for the profile page. */
+export interface MyAccess {
+  admin: boolean;
+  readOnly: boolean;
+  roles: Role[];
+  sections: string[] | null;
+  /** Absent for an admin, who bypasses the grant system entirely. */
+  effective?: EffectiveGrant[] | null;
 }

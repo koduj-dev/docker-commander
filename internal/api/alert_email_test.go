@@ -149,3 +149,104 @@ func TestSetMyEmail_ReadOnlyAccountAllowed(t *testing.T) {
 		t.Errorf("a read-only account should be able to set its own address, got %d", code)
 	}
 }
+
+// PENTEST: the access overview must expose only the caller's own roles and
+// grants. It is ungated, so if it could be steered at another account it would
+// leak the whole permission map of the installation.
+func TestPentestMyAccess_OnlyOwnData(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	srv := &Server{cfg: config.Config{}, store: st}
+
+	privileged, _ := st.CreateUser(ctx, &store.User{Username: "ops", Role: "user"})
+	plain, _ := st.CreateUser(ctx, &store.User{Username: "dev", Role: "user", Sections: []string{"logs"}})
+	secretRole, err := st.CreateRole(ctx, &store.Role{
+		Name: "HostsAdmin", Sections: []store.RoleSection{{Section: "hosts", Write: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetUserRoles(ctx, privileged, []int64{secretRole}); err != nil {
+		t.Fatal(err)
+	}
+
+	r := httptest.NewRequest("GET", "/api/auth/me/access", nil).WithContext(ctxAs(plain, "user"))
+	w := httptest.NewRecorder()
+	srv.handleMyAccess(w, r)
+	if w.Code != 200 {
+		t.Fatalf("own access = %d (%s)", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if strings.Contains(body, "HostsAdmin") || strings.Contains(body, "hosts") {
+		t.Errorf("SECURITY: another user's role leaked into the response: %s", body)
+	}
+
+	var got struct {
+		Admin     bool `json:"admin"`
+		Effective []struct {
+			Section string   `json:"section"`
+			Write   bool     `json:"write"`
+			From    []string `json:"from"`
+		} `json:"effective"`
+		Roles []map[string]any `json:"roles"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Admin {
+		t.Error("a plain user must not be reported as admin")
+	}
+	if len(got.Roles) != 0 {
+		t.Errorf("this user holds no roles, got %v", got.Roles)
+	}
+	if len(got.Effective) != 1 || got.Effective[0].Section != "logs" {
+		t.Fatalf("effective = %+v, want just logs", got.Effective)
+	}
+	// Provenance is the point of the endpoint: say where the grant came from.
+	if len(got.Effective[0].From) != 1 || got.Effective[0].From[0] != "your account" {
+		t.Errorf("provenance = %v, want [\"your account\"]", got.Effective[0].From)
+	}
+}
+
+// A grant reaching the user through a role names that role, so the profile page
+// can explain it.
+func TestMyAccess_NamesTheRoleAGrantCameFrom(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	srv := &Server{cfg: config.Config{}, store: st}
+
+	uid, _ := st.CreateUser(ctx, &store.User{Username: "u", Role: "user"})
+	roleID, _ := st.CreateRole(ctx, &store.Role{
+		Name: "Deployer", Sections: []store.RoleSection{{Section: "projects", Write: true}},
+	})
+	_ = st.SetUserRoles(ctx, uid, []int64{roleID})
+
+	r := httptest.NewRequest("GET", "/api/auth/me/access", nil).WithContext(ctxAs(uid, "user"))
+	w := httptest.NewRecorder()
+	srv.handleMyAccess(w, r)
+
+	var got struct {
+		Effective []struct {
+			Section string   `json:"section"`
+			Write   bool     `json:"write"`
+			From    []string `json:"from"`
+		} `json:"effective"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Effective) != 1 || got.Effective[0].Section != "projects" || !got.Effective[0].Write {
+		t.Fatalf("effective = %+v", got.Effective)
+	}
+	if len(got.Effective[0].From) != 1 || got.Effective[0].From[0] != "Deployer" {
+		t.Errorf("provenance = %v, want the role name", got.Effective[0].From)
+	}
+}

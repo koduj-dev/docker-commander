@@ -73,3 +73,18 @@ RBAC is enforced on the REST API **and** on the shared live stats/logs
 WebSocket (`/api/ws`): each subscription is authorised per channel, and both the
 **stats** and **logs** streams require the **containers** section. A signed-in
 user without it can no longer stream a container's data.
+
+## Your own profile
+Every signed-in user has a **profile page** (the person icon beside *Sign out*),
+regardless of permissions:
+
+- **Account** — username, account type, whether you sign in locally or through
+  LDAP, when the account was created and last used, and your **alert e-mail**.
+- **Security** — 2FA status, and **Pair a new authenticator** for a new phone.
+  Starting that flow is safe: the authenticator you already have keeps working
+  until you enter a code from the new one, so cancelling changes nothing.
+- **Access** — the roles you hold, plus every section you can reach, whether you
+  can change it, and which role granted it. Handy for answering "why can I see
+  this?" without an admin.
+
+It reads only your own account.

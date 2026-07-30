@@ -29,6 +29,9 @@ type User struct {
 	Sections    []string
 	TOTPSecret  string
 	TOTPEnabled bool
+	// TOTPPending holds a secret being paired while an authenticator is already
+	// active. It is promoted on confirmation and discarded otherwise.
+	TOTPPending string
 	CreatedAt   time.Time
 	LastLoginAt time.Time
 }
@@ -60,7 +63,7 @@ func (s *Store) CreateUser(ctx context.Context, u *User) (int64, error) {
 // ListUsers returns all accounts (without secrets) for the admin user manager.
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, username, password_hash, role, email, totp_secret, totp_enabled, read_only, sections, auth_source, created_at, last_login_at
+		SELECT id, username, password_hash, role, email, totp_secret, totp_enabled, totp_pending, read_only, sections, auth_source, created_at, last_login_at
 		FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
@@ -100,14 +103,14 @@ func (s *Store) UpdateUserAccess(ctx context.Context, id int64, role string, rea
 // UserByUsername looks up a user by their unique username.
 func (s *Store) UserByUsername(ctx context.Context, username string) (*User, error) {
 	return scanUserRow(s.db.QueryRowContext(ctx, `
-		SELECT id, username, password_hash, role, email, totp_secret, totp_enabled, read_only, sections, auth_source, created_at, last_login_at
+		SELECT id, username, password_hash, role, email, totp_secret, totp_enabled, totp_pending, read_only, sections, auth_source, created_at, last_login_at
 		FROM users WHERE username = ?`, username))
 }
 
 // UserByID looks up a user by primary key.
 func (s *Store) UserByID(ctx context.Context, id int64) (*User, error) {
 	return scanUserRow(s.db.QueryRowContext(ctx, `
-		SELECT id, username, password_hash, role, email, totp_secret, totp_enabled, read_only, sections, auth_source, created_at, last_login_at
+		SELECT id, username, password_hash, role, email, totp_secret, totp_enabled, totp_pending, read_only, sections, auth_source, created_at, last_login_at
 		FROM users WHERE id = ?`, id))
 }
 
@@ -158,7 +161,7 @@ func scanUserRow(row scanner) (*User, error) {
 	var enabled, readOnly int
 	var sections, createdAt, lastLogin string
 	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.Email, &u.TOTPSecret, &enabled,
-		&readOnly, &sections, &u.AuthSource, &createdAt, &lastLogin)
+		&u.TOTPPending, &readOnly, &sections, &u.AuthSource, &createdAt, &lastLogin)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -209,5 +212,20 @@ func orDefault(v, def string) string {
 // directory publishes one.
 func (s *Store) SetUserEmail(ctx context.Context, id int64, email string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE users SET email = ? WHERE id = ?`, strings.TrimSpace(email), id)
+	return err
+}
+
+// SetTOTPPending stores a secret for an authenticator being paired while another
+// one is still active, without touching the working secret.
+func (s *Store) SetTOTPPending(ctx context.Context, userID int64, secret string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET totp_pending = ? WHERE id = ?`, secret, userID)
+	return err
+}
+
+// PromoteTOTPPending makes the pending secret the active one and clears it. Used
+// once the user has proved they can generate codes from the new authenticator.
+func (s *Store) PromoteTOTPPending(ctx context.Context, userID int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET totp_secret = totp_pending, totp_enabled = 1, totp_pending = '' WHERE id = ?`, userID)
 	return err
 }
