@@ -372,8 +372,10 @@ export const api = {
   // Lint a Dockerfile via `docker build --check` (no build steps run).
   checkDockerfile: (id: number, content: string) =>
     req<{ level: "ok" | "warning" | "error"; output?: string; unavailable?: boolean }>("POST", `/api/projects/${id}/dockerfile-check`, { content }),
+  // `note` is set when deploying to a remote host copied bind-mounted paths into
+  // seeded volumes — the UI shows it above the compose output.
   deployProject: (id: number, profiles: string[] = []) =>
-    req<{ ok: boolean; output?: string; error?: string }>("POST", `/api/projects/${id}/deploy`, { profiles }),
+    req<{ ok: boolean; output?: string; error?: string; note?: string }>("POST", `/api/projects/${id}/deploy`, { profiles }),
   downProject: (id: number) =>
     req<{ ok: boolean; output?: string; error?: string }>("POST", `/api/projects/${id}/down`),
   restartProject: (id: number) =>

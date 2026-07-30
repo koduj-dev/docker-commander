@@ -17,44 +17,6 @@ func envHas(env []string, want string) bool {
 	return false
 }
 
-func TestComposeBindMounts(t *testing.T) {
-	cfg := []byte(`{
-		"services": {
-			"web": {"volumes": [
-				{"type": "bind", "source": "/srv/app/config", "target": "/etc/app"},
-				{"type": "volume", "source": "data", "target": "/var/lib"}
-			]},
-			"db": {"volumes": [
-				{"type": "tmpfs", "target": "/tmp"},
-				{"type": "bind", "source": "./seed", "target": "/seed"}
-			]}
-		}
-	}`)
-	binds, err := ComposeBindMounts(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(binds) != 2 {
-		t.Fatalf("expected 2 bind mounts, got %v", binds)
-	}
-	// Named volume and tmpfs must NOT be flagged.
-	joined := strings.Join(binds, " | ")
-	if strings.Contains(joined, "data") || strings.Contains(joined, "tmpfs") {
-		t.Errorf("non-bind mount leaked into results: %v", binds)
-	}
-	if !strings.Contains(joined, "/srv/app/config") || !strings.Contains(joined, "./seed") {
-		t.Errorf("bind sources missing: %v", binds)
-	}
-}
-
-func TestComposeBindMounts_NamedVolumesOnly(t *testing.T) {
-	cfg := []byte(`{"services": {"web": {"volumes": [{"type": "volume", "source": "data", "target": "/var"}]}}}`)
-	binds, err := ComposeBindMounts(cfg)
-	if err != nil || len(binds) != 0 {
-		t.Errorf("named-volume-only project should have no bind mounts: %v (err %v)", binds, err)
-	}
-}
-
 func TestComposeHostEnv_Local(t *testing.T) {
 	for _, h := range []*store.Host{nil, {Kind: "local"}, {Kind: ""}} {
 		env, cleanup, err := ComposeHostEnv(h)

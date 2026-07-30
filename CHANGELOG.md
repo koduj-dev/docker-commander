@@ -4,6 +4,48 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Remote Projects now support bind mounts.** Deploying a managed project to a
+  remote host previously refused any compose file with a host-path bind mount,
+  because the remote daemon can't see Docker Commander's data dir. Each bind
+  whose source lives **inside the project folder** is now copied to a named
+  volume on the target host (`dcseed-<project>-<hash>`, labelled with the
+  project) and the mount is repointed at it via a generated compose override, so
+  sidecar configs and scripts work remotely — including single-file mounts like
+  `./nginx.conf:/etc/nginx/nginx.conf`, which mount out of the volume by
+  subpath. `read_only` is preserved and the project's own named volumes are left
+  untouched. The copy is a **snapshot taken at deploy time, not a live mount**:
+  editing the files needs a redeploy, and writes inside the container stay on the
+  remote host. The deploy output says so explicitly.
+- Bind mounts pointing **outside** the project folder (e.g. `/etc/localtime`,
+  `/var/run/docker.sock`, or anything reached through a symlink out of the
+  folder) are still **refused** on a remote deploy, now with a message naming
+  them: they address paths on the remote host, which won't be mounted blind.
+
+### Documentation
+- **`docs/hosts.md` now covers two SSH-host requirements** that produced
+  confusing failures. The remote `sshd` must allow forwarding
+  (`AllowTcpForwarding`) because the Docker API is tunnelled over an SSH channel
+  — Alpine ships it as `no`, and `sshd` honours the *first* occurrence of a
+  keyword, so appending to `sshd_config` is silently ignored. This otherwise
+  yields a half-working host: `docker compose` uses its own `dial-stdio` channel
+  and needs no forwarding, so **Projects deploys succeed while monitoring
+  fails**. Also noted that an agent holding several keys can exhaust `sshd`'s
+  `MaxAuthTries` before the right key is offered.
+- **New [How it's tested](docs/testing.md) page** — the app is pointed at real
+  Docker daemons, so this spells out the five test tiers (unit, adversarial
+  "pentests", runtime smoke, integration against a real daemon, and multi-daemon
+  end-to-end over TCP and SSH), how to run each, and — deliberately — **what is
+  not covered**: CI runs only the deterministic tiers, there's no browser/UI
+  suite, and coverage is unit-only. Linked from the README and CONTRIBUTING.
+
+### Removed
+- The **Go Report Card badge**, which now renders "go report: retired" since the
+  service shut down. It returned HTTP 200, so it displayed a misleading grade
+  rather than failing visibly as a broken image.
+
 ## [1.5.1] — 2026-07-30
 
 ### Changed

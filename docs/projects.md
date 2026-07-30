@@ -143,13 +143,35 @@ added under [Hosts](hosts.md) — pick it when creating the project or via its
 **Settings**. Deploy/down/restart then run `docker compose` against that host's
 daemon (over TCP, with the host's TLS certs, or SSH).
 
-> **Bind mounts are local-only for now.** A remote daemon can't see files in
-> Docker Commander's own data dir, so a compose file that **bind-mounts a host
-> path** (e.g. `./config:/etc/app`) is **blocked on remote deploy** with a clear
-> message naming the offending mounts. Remote deploy works for **images and named
-> volumes** (and builds). Shipping project files to the remote host is a planned
-> follow-up; until then, use named volumes for remote stacks, or deploy
-> bind-mount projects to the local host.
+### Bind mounts on a remote host
+A remote daemon can't see files inside Docker Commander's own data dir, so a
+bind mount can't be handed to it as-is. On a remote deploy each bind mount whose
+source lives **inside the project folder** (e.g. `./html:/usr/share/nginx/html`,
+`./nginx.conf:/etc/nginx/nginx.conf`) is therefore **copied to a named volume on
+that host** and the mount is repointed at it. Sidecar configs and scripts work on
+a remote host the same way they do locally, with three things worth knowing:
+
+- **It's a snapshot, not a live mount.** The files are copied at deploy time.
+  Editing them in the project afterwards needs a **redeploy**, and writes made
+  inside the container stay in the volume on the remote host — they don't flow
+  back into the project files. (A local deploy still mounts the folder directly,
+  so there it *is* live.)
+- **Only paths inside the project folder are shipped.** A bind mount pointing
+  outside it (`/etc/localtime`, `/var/run/docker.sock`, anything reached via a
+  symlink out of the folder) names a path on the *remote* host, so it's
+  **refused** with a message listing the offending mounts rather than mounted
+  blind. Deploy such a project to the local host instead.
+- The seeded volumes are named `dcseed-<project>-<hash>` and are labelled with
+  the project, so they're easy to spot on the [Volumes](volumes.md) page. Like
+  any named volume they **survive a `down`**.
+
+> **Changing a deployed project's target host leaves it running on the old one.**
+> Redeploying after switching hosts brings the stack up on the new host but does
+> not tear down the old deployment (or its seeded volumes), so you end up with two
+> live copies while the UI only shows the new host. Bring the project **down**
+> before changing its host.
+
+Remote deploy also works for **images, named volumes and builds**.
 
 ## Tips
 - Sidecar files are referenced from the compose file relative to the project

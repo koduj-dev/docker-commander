@@ -49,6 +49,14 @@ func composeProbe(ctx context.Context, bin string) bool {
 // to the process environment (e.g. DOCKER_HOST to target a remote daemon); nil
 // runs against the local daemon.
 func ComposeUp(ctx context.Context, dir, slug string, profiles []string, env []string) (string, error) {
+	return ComposeUpFiles(ctx, dir, slug, profiles, env, nil)
+}
+
+// ComposeUpFiles is ComposeUp with an explicit compose file list, passed as
+// `-f` in order so later files override earlier ones. It's used by a remote
+// deploy, which layers an override repointing bind mounts at seeded volumes.
+// Empty files keeps the CLI's own file discovery.
+func ComposeUpFiles(ctx context.Context, dir, slug string, profiles, env, files []string) (string, error) {
 	args := make([]string, 0, len(profiles)*2+2)
 	for _, p := range profiles {
 		if p = strings.TrimSpace(p); p != "" {
@@ -56,7 +64,7 @@ func ComposeUp(ctx context.Context, dir, slug string, profiles []string, env []s
 		}
 	}
 	args = append(args, "up", "-d")
-	return runCompose(ctx, dir, slug, env, args...)
+	return runComposeFiles(ctx, dir, slug, env, files, args...)
 }
 
 // ComposeProfiles lists the profiles defined in the project's compose file
@@ -165,9 +173,21 @@ func ComposeRestart(ctx context.Context, dir, slug string, env []string) (string
 }
 
 func runCompose(ctx context.Context, dir, slug string, env []string, args ...string) (string, error) {
+	return runComposeFiles(ctx, dir, slug, env, nil, args...)
+}
+
+// runComposeFiles runs the compose CLI with an optional explicit `-f` file list
+// (in order, so later files override earlier ones).
+func runComposeFiles(ctx context.Context, dir, slug string, env, files []string, args ...string) (string, error) {
 	cctx, cancel := context.WithTimeout(ctx, composeTimeout)
 	defer cancel()
-	full := append([]string{"compose", "-p", slug}, args...)
+	full := []string{"compose", "-p", slug}
+	for _, f := range files {
+		if f = strings.TrimSpace(f); f != "" {
+			full = append(full, "-f", f)
+		}
+	}
+	full = append(full, args...)
 	cmd := exec.CommandContext(cctx, "docker", full...)
 	cmd.Dir = dir
 	if len(env) > 0 {

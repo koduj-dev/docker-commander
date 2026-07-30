@@ -1,11 +1,9 @@
 package docker
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/koduj-dev/docker-commander/internal/store"
@@ -77,33 +75,4 @@ func writeTLSCerts(h *store.Host) (string, error) {
 		}
 	}
 	return dir, nil
-}
-
-// ComposeBindMounts returns the host-path bind mounts declared in a resolved
-// compose config (the `docker compose config --format json` output), as
-// "service: source → target" strings. Used to block a remote deploy that would
-// bind-mount paths the remote daemon can't see.
-func ComposeBindMounts(configJSON []byte) ([]string, error) {
-	var cfg struct {
-		Services map[string]struct {
-			Volumes []struct {
-				Type   string `json:"type"`
-				Source string `json:"source"`
-				Target string `json:"target"`
-			} `json:"volumes"`
-		} `json:"services"`
-	}
-	if err := json.Unmarshal(configJSON, &cfg); err != nil {
-		return nil, err
-	}
-	var binds []string
-	for name, svc := range cfg.Services {
-		for _, v := range svc.Volumes {
-			if v.Type == "bind" {
-				binds = append(binds, fmt.Sprintf("%s: %s → %s", name, v.Source, v.Target))
-			}
-		}
-	}
-	sort.Strings(binds)
-	return binds, nil
 }

@@ -52,13 +52,27 @@ cd web && npm install && npm run dev    # UI on :5173, proxies /api → :8470
 
 ## Tests
 
+[docs/testing.md](docs/testing.md) describes every tier, what each one proves and
+what isn't covered. The commands:
+
 ```bash
-go test -short ./...     # fast unit tests — this is what CI runs
+go test -short ./...     # fast unit + adversarial tests — this is what CI runs
 go test ./...            # also runs integration tests (need Docker; some spin
                          # throwaway Redis / OpenLDAP / MailHog containers and
                          # skip cleanly when those aren't available)
+npm run test --prefix web    # frontend unit tests
 cd web && npx tsc --noEmit   # type-check the frontend
+
+# Remote/multi-host paths, against real separate daemons over TCP and SSH:
+scripts/remote-test-daemon.sh up 2
+eval "$(scripts/remote-test-daemon.sh env)"
+go test ./internal/docker/ -run 'RemoteBindDeploy|MultiHost' -count=1 -v
+scripts/remote-test-daemon.sh down
 ```
+
+> Pass **`-count=1`** for anything touching a real daemon: Go caches test results
+> and an env-var change doesn't invalidate the cache, so a re-provisioned daemon
+> will otherwise replay the previous verdict.
 
 > ⚠️ **The integration tests run against your *real local* Docker daemon.** They
 > create and clean up their own throwaway resources, but **never** add a
