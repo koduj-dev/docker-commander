@@ -16,8 +16,35 @@ export interface ManagedUser {
   role: string;
   readOnly: boolean;
   sections: string[] | null;
+  /** Ids of the named roles assigned to this account. */
+  roleIds?: number[] | null;
+  /**
+   * Sections the account can actually reach — its own list plus every role's,
+   * minus app-wide disabled ones. Computed by the server.
+   */
+  effectiveSections?: string[] | null;
   totpEnabled: boolean;
   lastLoginAt: string;
+}
+
+/** One section grant inside a role; `write: false` means read-only there. */
+export interface RoleSection {
+  section: string;
+  write: boolean;
+}
+
+/**
+ * A named bundle of section grants. Built-in roles are read-only — the UI offers
+ * Duplicate to make an editable copy, like project templates.
+ */
+export interface Role {
+  id: number;
+  name: string;
+  description: string;
+  builtin: boolean;
+  sections: RoleSection[] | null;
+  /** How many accounts currently hold this role. */
+  users?: number;
 }
 
 export interface AppSettings {

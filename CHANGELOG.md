@@ -24,6 +24,15 @@ All notable changes to Docker Commander are documented here. The format follows
   every change is audited. Changes apply on the user's next request — nothing is
   cached in the session, so revoking a role is immediate.
 
+  **Managed from the UI:** *Users* becomes **Users & roles** with an Accounts /
+  Roles tab pair. The Roles tab lists each role with its grants, how many accounts
+  hold it, and a built-in/yours badge; built-ins open read-only with **Duplicate**
+  to make an editable copy. The role editor sets every section to *—* / *read* /
+  *write* with all thirteen visible at once — no scrolling to check you didn't
+  grant `hosts`. Accounts gained **Roles** and **Access** columns, roles are
+  assignable in the create/edit forms, and an account whose grants are all
+  read-only is labelled *view only* even without the read-only flag.
+
   _This is phase 1 of [design/rbac-roles-and-host-scoping.md](design/rbac-roles-and-host-scoping.md); per-host scoping is phase 2._
 
 ### Security

@@ -26,6 +26,8 @@ import type {
   ParseRule,
   PortProbe,
   Registry,
+  Role,
+  RoleSection,
   MCPToken,
   MCPStatus,
   AdminMCPToken,
@@ -134,10 +136,22 @@ export const api = {
 
   // User management (admin)
   users: () => req<ManagedUser[]>("GET", "/api/users"),
-  createUser: (b: { username: string; password: string; role: string; readOnly: boolean; sections: string[] }) =>
-    req<{ ok: boolean; id?: number; error?: string }>("POST", "/api/users", b),
-  updateUser: (id: number, b: { role: string; readOnly: boolean; sections: string[] }) =>
+  createUser: (b: { username: string; password: string; role: string; readOnly: boolean; sections: string[]; roleIds?: number[] }) =>
+    req<{ ok: boolean; id?: number; error?: string; warning?: string }>("POST", "/api/users", b),
+  // roleIds is sent explicitly (possibly empty) so the server replaces the
+  // assignments; omitting it leaves them untouched.
+  updateUser: (id: number, b: { role: string; readOnly: boolean; sections: string[]; roleIds?: number[] }) =>
     req<{ ok: boolean; error?: string }>("PATCH", `/api/users/${id}`, b),
+
+  // Named roles (admin). Built-ins are immutable — duplicate to customise.
+  roles: () => req<Role[]>("GET", "/api/roles"),
+  createRole: (b: { name: string; description: string; sections: RoleSection[] }) =>
+    req<{ ok: boolean; id?: number }>("POST", "/api/roles", b),
+  updateRole: (id: number, b: { name: string; description: string; sections: RoleSection[] }) =>
+    req<{ ok: boolean }>("PUT", `/api/roles/${id}`, b),
+  deleteRole: (id: number) => req<{ ok: boolean }>("DELETE", `/api/roles/${id}`),
+  duplicateRole: (id: number) =>
+    req<{ ok: boolean; id: number; name: string }>("POST", `/api/roles/${id}/duplicate`),
   resetUserPassword: (id: number, password: string) =>
     req<{ ok: boolean; error?: string }>("POST", `/api/users/${id}/password`, { password }),
   deleteUser: (id: number) => req<{ ok: boolean; error?: string }>("DELETE", `/api/users/${id}`),
