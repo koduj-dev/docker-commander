@@ -27,6 +27,15 @@ All notable changes to Docker Commander are documented here. The format follows
   _This is phase 1 of [design/rbac-roles-and-host-scoping.md](design/rbac-roles-and-host-scoping.md); per-host scoping is phase 2._
 
 ### Security
+- **Raw `inspect` no longer readable without the owning section.**
+  `GET /api/inspect/{kind}` returns the **raw** Docker inspect payload, which for a
+  container includes `Config.Env` — database passwords, API keys. It was ungated,
+  so **any signed-in account** (no sections granted at all, even read-only) could
+  read the environment of any container on **any** host via `?host=`. It is now
+  gated by the section that owns the kind: container→`containers`, image→`images`,
+  volume→`volumes`, network→`networks`, with an unknown kind failing closed onto
+  `containers`. This matches how the UI already uses it — the Inspect dialog only
+  opens from pages those sections already guard — so nothing legitimate changes.
 - **MCP tokens: a scope that narrowed to nothing produced an *unrestricted*
   token.** An empty stored scope means "inherit the owner's rights", so requesting
   a scope consisting only of sections the account doesn't hold was silently turned
