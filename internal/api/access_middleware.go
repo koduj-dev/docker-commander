@@ -45,7 +45,7 @@ func sectionForPath(path string) string {
 		return "registries"
 	case "audit":
 		return "audit"
-	case "users", "settings", "ldap", "update", "mcp-admin":
+	case "users", "roles", "settings", "ldap", "update", "mcp-admin":
 		return "__admin"
 	default:
 		// auth, system, inspect, metrics, ws, … are not section-gated.
@@ -108,12 +108,25 @@ func (s *Server) checkAccess(ctx context.Context, u *store.User, section string,
 	if u.IsAdmin() {
 		return nil // admins bypass section + read-only checks
 	}
-	disabled, _ := s.store.DisabledSections(ctx)
-	if contains(disabled, section) || !contains(u.Sections, section) {
+	// Effective grants are the union of the user's assigned roles and their own
+	// per-user section list, capped by the account's read-only flag, with
+	// app-wide disabled sections removed. A user with no roles behaves exactly as
+	// before roles existed.
+	grants, err := s.store.EffectiveGrants(ctx, u)
+	if err != nil {
+		// Fail closed: if we can't establish what this user may do, deny. An
+		// error here is a store problem, not a grant.
+		return errors.New("could not determine your permissions")
+	}
+	g, ok := grants[section]
+	if !ok || !g.Granted {
 		return errors.New("access to this section is not permitted")
 	}
-	if u.ReadOnly && write {
-		return errors.New("your account is read-only")
+	if write && !g.Write {
+		if u.ReadOnly {
+			return errors.New("your account is read-only")
+		}
+		return errors.New("your access to this section is read-only")
 	}
 	return nil
 }

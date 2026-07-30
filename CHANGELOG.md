@@ -7,6 +7,34 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Named RBAC roles** — a role is a reusable bundle of section grants, so an
+  admin no longer ticks thirteen checkboxes per account. Each section in a role is
+  independently **read-only or writable**, which is finer-grained than the
+  account-level read-only flag. Two roles ship built in and are immutable —
+  **Viewer** (every section, read-only) and **Operator** (day-to-day work, but
+  deliberately not `hosts` / `registries` / `audit`) — with **Duplicate** to make
+  an editable copy, mirroring project templates. A user may hold several roles and
+  still have per-account sections; effective access is the union.
+
+  Existing accounts are unaffected: with no roles assigned, permissions resolve
+  exactly as before. The precedence is explicit and tested — admins bypass; grants
+  union; the **account-level read-only flag caps everything** so a writable role
+  cannot lift it; and an app-wide **disabled section wins over any role**. Role
+  management is **admin-only** (no combination of section grants reaches it) and
+  every change is audited. Changes apply on the user's next request — nothing is
+  cached in the session, so revoking a role is immediate.
+
+  _This is phase 1 of [design/rbac-roles-and-host-scoping.md](design/rbac-roles-and-host-scoping.md); per-host scoping is phase 2._
+
+### Security
+- **MCP tokens: a scope that narrowed to nothing produced an *unrestricted*
+  token.** An empty stored scope means "inherit the owner's rights", so requesting
+  a scope consisting only of sections the account doesn't hold was silently turned
+  into a token with the owner's **full** access — asking for less returned more.
+  Such a request is now refused. Token scopes are also matched against
+  **effective** sections, so access granted through a role can be scoped to (it
+  would otherwise have been dropped, hitting the same widening path). This was
+  reachable before roles existed, by requesting only ungranted sections.
 - **Remote Projects now support bind mounts.** Deploying a managed project to a
   remote host previously refused any compose file with a host-path bind mount,
   because the remote daemon can't see Docker Commander's data dir. Each bind

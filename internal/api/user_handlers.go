@@ -18,12 +18,32 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "could not list users")
 		return
 	}
+	roleIDs := map[int64][]int64{}
+	effective := map[int64][]string{}
+	for i := range users {
+		ids, err := s.store.RoleIDsForUser(r.Context(), users[i].ID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "could not read role assignments")
+			return
+		}
+		roleIDs[users[i].ID] = ids
+		secs, err := s.store.EffectiveSections(r.Context(), &users[i])
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "could not compute effective sections")
+			return
+		}
+		effective[users[i].ID] = secs
+	}
 	out := make([]map[string]any, 0, len(users))
 	for _, u := range users {
 		out = append(out, map[string]any{
 			"id": u.ID, "username": u.Username, "role": u.Role, "readOnly": u.ReadOnly,
 			"sections": u.Sections, "totpEnabled": u.TOTPEnabled,
 			"lastLoginAt": u.LastLoginAt,
+			"roleIds":     roleIDs[u.ID],
+			// Effective sections fold the user's roles into their own list, so the
+			// UI can show what the account can actually reach.
+			"effectiveSections": effective[u.ID],
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -35,6 +55,11 @@ type userBody struct {
 	Role     string   `json:"role"`
 	ReadOnly bool     `json:"readOnly"`
 	Sections []string `json:"sections"`
+	// Pointer so an ABSENT field is distinguishable from an explicit empty list:
+	// omitting it leaves the user's roles alone, whereas `"roleIds": []` clears
+	// them. A plain slice would make every client that predates roles silently
+	// strip them on any other edit.
+	RoleIDs *[]int64 `json:"roleIds"`
 }
 
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
@@ -52,11 +77,24 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	if b.RoleIDs != nil && len(*b.RoleIDs) > 0 {
+		// Best-effort: the account exists either way, so a failed role assignment
+		// is reported without unwinding the creation.
+		if err := s.store.SetUserRoles(r.Context(), u.ID, *b.RoleIDs); err != nil {
+			s.audit(r, "user.create", b.Username, b.Role)
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ok": true, "id": u.ID,
+				"warning": "the account was created but its roles could not be assigned: " + err.Error(),
+			})
+			return
+		}
+	}
 	s.audit(r, "user.create", b.Username, b.Role)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": u.ID})
 }
 
-// handleUpdateUser changes a user's role, read-only flag and section grants.
+// handleUpdateUser changes a user's role, read-only flag, section grants and the
+// roles assigned to them.
 func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	var b userBody
@@ -76,6 +114,12 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.UpdateUserAccess(r.Context(), id, b.Role, b.ReadOnly, cleanSections(b.Sections)); err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not update user")
 		return
+	}
+	if b.RoleIDs != nil {
+		if err := s.store.SetUserRoles(r.Context(), id, *b.RoleIDs); err != nil {
+			writeErr(w, http.StatusInternalServerError, "could not update the user's roles")
+			return
+		}
 	}
 	s.audit(r, "user.update", chi.URLParam(r, "id"), b.Role)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
