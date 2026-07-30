@@ -24,6 +24,17 @@ All notable changes to Docker Commander are documented here. The format follows
   folder) are still **refused** on a remote deploy, now with a message naming
   them: they address paths on the remote host, which won't be mounted blind.
 
+### Documentation
+- **`docs/hosts.md` now covers two SSH-host requirements** that produced
+  confusing failures. The remote `sshd` must allow forwarding
+  (`AllowTcpForwarding`) because the Docker API is tunnelled over an SSH channel
+  — Alpine ships it as `no`, and `sshd` honours the *first* occurrence of a
+  keyword, so appending to `sshd_config` is silently ignored. This otherwise
+  yields a half-working host: `docker compose` uses its own `dial-stdio` channel
+  and needs no forwarding, so **Projects deploys succeed while monitoring
+  fails**. Also noted that an agent holding several keys can exhaust `sshd`'s
+  `MaxAuthTries` before the right key is offered.
+
 ## [1.5.1] — 2026-07-30
 
 ### Changed

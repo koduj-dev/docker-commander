@@ -15,12 +15,15 @@ import (
 // can't reach: a project on this machine deployed to a *different* Docker daemon,
 // which cannot see the project folder at all.
 //
-// Set DC_REMOTE_DOCKER to that daemon's address to run it, e.g. a docker-in-docker
-// sidecar:
+// Set DC_REMOTE_DOCKER to that daemon's address to run it. Both remote transports
+// are covered — the kind is taken from the scheme, so the same test exercises the
+// TCP client and the SSH tunnel:
 //
-//	docker run -d --name dind --privileged -e DOCKER_TLS_CERTDIR="" \
-//	  -p 12375:2375 docker:dind --host=tcp://0.0.0.0:2375 --tls=false
-//	DC_REMOTE_DOCKER=tcp://127.0.0.1:12375 go test ./internal/docker/ -run RemoteBindDeploy -v
+//	DC_REMOTE_DOCKER=tcp://127.0.0.1:12375   (add -count=1: results are cached)
+//	DC_REMOTE_DOCKER=ssh://root@127.0.0.1:12222
+//
+// `scripts/remote-test-daemon.sh up` provisions a docker-in-docker sidecar
+// serving both and prints the exact invocation; it never touches ~/.ssh.
 //
 // Without the seeding this deploy doesn't merely serve empty files — the remote
 // daemon materialises each missing bind source as a *directory*, so a single-file
@@ -28,7 +31,7 @@ import (
 func TestRemoteBindDeployEndToEnd(t *testing.T) {
 	addr := os.Getenv("DC_REMOTE_DOCKER")
 	if addr == "" {
-		t.Skip("set DC_REMOTE_DOCKER=tcp://host:port (a second daemon) to run")
+		t.Skip("set DC_REMOTE_DOCKER=tcp://host:port or ssh://user@host:port to run (see scripts/remote-test-daemon.sh)")
 	}
 	if testing.Short() {
 		t.Skip("docker integration test; skipped under -short")
@@ -37,6 +40,12 @@ func TestRemoteBindDeployEndToEnd(t *testing.T) {
 	if !composeProbe(ctx, "docker") {
 		t.Skip("docker compose CLI not available")
 	}
+
+	kind := "tcp"
+	if strings.HasPrefix(addr, "ssh://") {
+		kind = "ssh"
+	}
+	t.Logf("remote transport: %s (%s)", kind, addr)
 
 	st, err := store.Open(":memory:")
 	if err != nil {
@@ -49,12 +58,30 @@ func TestRemoteBindDeployEndToEnd(t *testing.T) {
 	if err := st.EnsureLocalHost(ctx); err != nil {
 		t.Fatal(err)
 	}
-	hostID, err := st.CreateHost(ctx, &store.Host{Name: "dind", Kind: "tcp", Address: addr})
+	hostID, err := st.CreateHost(ctx, &store.Host{Name: "remote-e2e", Kind: kind, Address: addr})
 	if err != nil {
 		t.Fatal(err)
 	}
 	m := NewManager(st)
 	t.Cleanup(m.Close)
+
+	if kind == "ssh" {
+		// Pin the live host key, which is what the UI's trust flow does — an ssh
+		// host with no pinned key and no known_hosts entry is refused by design.
+		h, err := st.HostByID(ctx, hostID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		keyLine, fp, err := probeSSHHostKey(h)
+		if err != nil {
+			t.Skipf("cannot probe the remote host key at %s: %v", addr, err)
+		}
+		t.Logf("pinned remote host key %s", fp)
+		if err := st.SetHostKey(ctx, hostID, keyLine); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	if _, err := m.SystemInfo(ctx, hostID); err != nil {
 		t.Skipf("remote daemon %s not reachable: %v", addr, err)
 	}

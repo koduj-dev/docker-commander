@@ -55,6 +55,24 @@ after verifying the SSH host-key fingerprint (see below).
 > (e.g. `systemctl` service with `SSH_AUTH_SOCK`, or a passphrase-less key
 > dedicated to this).
 
+> **The remote `sshd` must allow forwarding.** The Docker API is tunnelled to the
+> remote socket over an SSH channel, which `sshd` gates on **`AllowTcpForwarding`**
+> — so a hardened config with `AllowTcpForwarding no` fails with
+> `ssh: rejected: connect failed`. Most distributions default to `yes`; Alpine
+> ships `no`. Note that `sshd` honours the **first** occurrence of a keyword, so
+> append-only edits to `sshd_config` can be silently ignored — check the effective
+> value with `sshd -T | grep -i allowtcpforwarding`.
+>
+> This also produces a confusing half-working host: `docker compose` reaches the
+> remote over its own `dial-stdio` channel, which needs no forwarding, so a
+> **Projects deploy can succeed while monitoring and every other operation
+> fails**. If a host tests fine for deploys but shows nothing on the dashboard,
+> check this first.
+
+> If your agent holds **several keys**, `sshd` may reject them all and hit its
+> `MaxAuthTries` (default 6) before reaching the right one. Either prune the
+> agent or dedicate a key to this host.
+
 ### Option 2 · TCP + TLS
 Prefer SSH (Option 1) — it exposes **no extra port**. Reach for TCP only when
 SSH genuinely isn't possible, and treat it carefully:
