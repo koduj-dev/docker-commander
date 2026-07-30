@@ -8,7 +8,11 @@ func TestSetLDAP_GroupMappingsRoundTripAndClean(t *testing.T) {
 	in := LDAPConfig{
 		Enabled: true, URL: "ldap://x:389", UserBaseDN: "dc=ex", UserFilter: "(uid=%s)",
 		GroupMappings: []LDAPGroupMapping{
-			{GroupDN: "  cn=devops,dc=ex  ", Sections: []string{"containers", "bogus", "logs", "containers"}},
+			{
+				GroupDN:  "  cn=devops,dc=ex  ",
+				Sections: []string{"containers", "bogus", "logs", "containers"},
+				RoleIDs:  []int64{3, 0, 3, -1, 5},
+			},
 			{GroupDN: "", Sections: []string{"images"}}, // blank DN → dropped
 		},
 	}
@@ -30,5 +34,9 @@ func TestSetLDAP_GroupMappingsRoundTripAndClean(t *testing.T) {
 	want := []string{"containers", "logs"}
 	if len(m.Sections) != len(want) || m.Sections[0] != want[0] || m.Sections[1] != want[1] {
 		t.Errorf("sections = %v, want %v (unknown dropped, dupes removed)", m.Sections, want)
+	}
+	// Role ids: zero and negative are not ids, and a repeat grants nothing extra.
+	if len(m.RoleIDs) != 2 || m.RoleIDs[0] != 3 || m.RoleIDs[1] != 5 {
+		t.Errorf("roleIds = %v, want [3 5]", m.RoleIDs)
 	}
 }

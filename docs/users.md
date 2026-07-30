@@ -65,8 +65,36 @@ The order the rules apply in, which matters when they disagree:
    a feature an admin turned off.
 
 > LDAP users are provisioned here automatically on first login (as `user`, or
-> `admin` if in the configured admin group) — then you grant their sections like
-> any other account. See [Settings → LDAP](settings.md).
+> `admin` if in the configured admin group). Grant them access by hand, or let
+> the directory decide with **group mappings** — see below.
+
+## Roles from LDAP groups
+A group mapping in [Settings → LDAP](settings.md) grants **roles** (and, for older
+configs, raw sections) to members of an LDAP group, matched on the group's full DN.
+A user's access is the union over every mapped group they belong to, re-derived on
+**each login**, so moving someone between groups in the directory takes effect the
+next time they sign in — including having a role taken away.
+
+Two things it deliberately cannot do:
+
+- **It cannot make anyone an admin.** Only the configured *admin group DN* does
+  that. A role cannot contain role management either, so no mapping — however
+  generous — hands out the keys.
+- **It cannot lock anyone out by referencing a deleted role.** A stale role id in
+  a mapping simply grants nothing.
+
+Whether the directory is authoritative for roles depends on whether you use them:
+
+| Your mappings | What a login does |
+|---|---|
+| No mapping grants a role | Roles assigned by hand on the account are left alone |
+| Any mapping grants a role | Roles are replaced by what the groups grant — hand-assigned ones are dropped |
+
+That's so upgrading doesn't quietly strip roles from installs whose mappings were
+written before roles existed. Once you map a role anywhere, assign roles in the
+directory rather than per account. **Sections** work the other way round and always
+have: as soon as *any* mapping exists, group membership is authoritative for a
+non-admin's sections and manual edits are overwritten on the next login.
 
 ## Note on the live stream
 RBAC is enforced on the REST API **and** on the shared live stats/logs

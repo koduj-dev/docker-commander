@@ -26,14 +26,19 @@ type Service struct {
 	store   *store.Store
 	tokens  *TokenManager
 	limiter *LoginLimiter
+	// ldapAuth is the directory bind, swappable so the provisioning rules below
+	// (what a login is allowed to grant) can be tested without a directory.
+	// Production always uses LDAPAuthenticate.
+	ldapAuth func(cfg store.LDAPConfig, username, password string) (*LDAPResult, error)
 }
 
 // NewService wires the auth service together.
 func NewService(s *store.Store, tm *TokenManager) *Service {
 	return &Service{
-		store:   s,
-		tokens:  tm,
-		limiter: NewLoginLimiter(5, 15*time.Minute),
+		store:    s,
+		tokens:   tm,
+		limiter:  NewLoginLimiter(5, 15*time.Minute),
+		ldapAuth: LDAPAuthenticate,
 	}
 }
 
@@ -241,7 +246,7 @@ func (s *Service) ldapLogin(ctx context.Context, existing *store.User, username,
 		_, _ = VerifyPassword(password, dummyHash)
 		return nil, ErrInvalidCreds
 	}
-	res, err := LDAPAuthenticate(cfg, username, password)
+	res, err := s.ldapAuth(cfg, username, password)
 	if err != nil {
 		return nil, ErrInvalidCreds
 	}
@@ -250,6 +255,11 @@ func (s *Service) ldapLogin(ctx context.Context, existing *store.User, username,
 	// user's sections: derive them from current group membership.
 	groupMapped := len(cfg.GroupMappings) > 0
 	mappedSections := SectionsForGroups(cfg, res.Groups)
+	// Roles are authoritative only once at least one mapping actually hands one
+	// out. A config written before group→role mapping existed grants sections
+	// only, and must not silently strip roles an admin assigned by hand.
+	roleMapped := MapsRoles(cfg)
+	mappedRoles := RolesForGroups(cfg, res.Groups)
 
 	if existing != nil {
 		// Re-sync sections from LDAP groups on each login so membership changes
@@ -260,6 +270,11 @@ func (s *Service) ldapLogin(ctx context.Context, existing *store.User, username,
 				return nil, err
 			}
 			existing.Sections = mappedSections
+		}
+		if roleMapped {
+			if err := s.syncRoles(ctx, existing.ID, mappedRoles); err != nil {
+				return nil, err
+			}
 		}
 		// Keep the alert address in step with the directory when it publishes one.
 		// A blank mail attribute never clears an address the user set by hand —
@@ -282,7 +297,27 @@ func (s *Service) ldapLogin(ctx context.Context, existing *store.User, username,
 		return nil, err
 	}
 	u.ID = id
+	if roleMapped {
+		if err := s.syncRoles(ctx, u.ID, mappedRoles); err != nil {
+			return nil, err
+		}
+	}
 	return u, nil
+}
+
+// syncRoles replaces a user's roles with the ones their LDAP groups grant,
+// skipping the write when nothing changed so an unchanged login doesn't churn
+// the table. SetUserRoles ignores ids that no longer name a role, so a role
+// deleted after the mapping was written simply grants nothing.
+func (s *Service) syncRoles(ctx context.Context, userID int64, want []int64) error {
+	have, err := s.store.RoleIDsForUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if sameIDs(have, want) {
+		return nil
+	}
+	return s.store.SetUserRoles(ctx, userID, want)
 }
 
 // sameSections reports whether two section lists hold the same set (order
@@ -297,6 +332,23 @@ func sameSections(a, b []string) bool {
 	}
 	for _, s := range b {
 		if !set[s] {
+			return false
+		}
+	}
+	return true
+}
+
+// sameIDs reports whether two id lists hold the same set, order independent.
+func sameIDs(a, b []int64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	set := make(map[int64]bool, len(a))
+	for _, id := range a {
+		set[id] = true
+	}
+	for _, id := range b {
+		if !set[id] {
 			return false
 		}
 	}
