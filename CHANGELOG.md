@@ -4,7 +4,7 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.5.1] — 2026-07-30
 
 ### Changed
 - **Release signatures are now a cosign bundle.** The release workflow moved to
@@ -15,6 +15,17 @@ All notable changes to Docker Commander are documented here. The format follows
   v3+**); releases up to v1.5.0 keep the old pair. The workflow now also asserts
   the bundle exists before publishing, so a signing regression fails the release
   instead of silently shipping unsigned assets.
+- **Dependencies updated** — Go modules (incl. `golang.org/x/crypto`,
+  `modernc.org/sqlite`, `go-chi`, `go-ldap`, `go-redis`, `coder/websocket`),
+  frontend packages (incl. React, Vite, Recharts, `@xyflow/react`) and the
+  pinned GitHub Actions.
+
+### Fixed
+- **`CHANGELOG.md` — restored the missing `[1.5.0]` heading.** The v1.5.0 entries
+  had been left sitting under `[Unreleased]` with no version heading of their own,
+  which also orphaned the existing `[1.5.0]` link definition.
+
+## [1.5.0] — 2026-06-16
 
 ### Added
 - **Image vulnerability scanning** — the Images page gains a **Scan** action that
@@ -472,6 +483,7 @@ Initial release: a single CGO-free Go binary with an embedded React UI.
   per-section permissions / read-only, feature flags, audit log, optional LDAP;
   secrets encrypted at rest.
 
+[1.5.1]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.5.1
 [1.5.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.5.0
 [1.4.4]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.4.4
 [1.4.3]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.4.3
