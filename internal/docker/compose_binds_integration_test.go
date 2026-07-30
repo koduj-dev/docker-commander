@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/docker/docker/api/types/volume"
+	"github.com/docker/docker/client"
 )
 
 // SeedProjectBinds is the piece that actually ships a project's files, so drive
@@ -35,14 +37,8 @@ func TestSeedProjectBinds_Integration(t *testing.T) {
 
 	// Clean up only our own volumes, whatever the outcome.
 	t.Cleanup(func() {
-		cli, err := m.Client(context.Background(), 0)
-		if err != nil {
-			return
-		}
 		for _, b := range binds {
-			name := SeedVolumeName(slug, b.Rel)
-			m.CloseVolumeBrowser(context.Background(), 0, name)
-			_ = cli.VolumeRemove(context.Background(), name, true)
+			removeSeedVolume(t, m, 0, SeedVolumeName(slug, b.Rel))
 		}
 	})
 
@@ -110,6 +106,32 @@ func TestSeedProjectBinds_NoBindsIsNoop(t *testing.T) {
 	if err := m.SeedProjectBinds(ctx, 0, t.TempDir(), "seed-noop", nil); err != nil {
 		t.Errorf("seeding nothing should succeed quietly: %v", err)
 	}
+}
+
+// removeSeedVolume deletes a volume this test created, retrying briefly: tearing
+// down the container that used it is asynchronous, so an immediate remove can hit
+// "volume is in use" — which `force` does not override. Failing to clean up would
+// leave volumes behind on a real daemon, so this reports rather than ignoring it.
+func removeSeedVolume(t *testing.T, m *Manager, hostID int64, name string) {
+	t.Helper()
+	ctx := context.Background()
+	cli, err := m.Client(ctx, hostID)
+	if err != nil {
+		t.Logf("cleanup: no client for host %d: %v", hostID, err)
+		return
+	}
+	m.CloseVolumeBrowser(ctx, hostID, name)
+	var lastErr error
+	for i := 0; i < 25; i++ {
+		if lastErr = cli.VolumeRemove(ctx, name, true); lastErr == nil {
+			return
+		}
+		if client.IsErrNotFound(lastErr) {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Errorf("cleanup: could not remove volume %q, it is left on the daemon: %v", name, lastErr)
 }
 
 // readTarEntry returns the body of the named entry in a TAR stream (the shape
