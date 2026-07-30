@@ -7,6 +7,25 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **A profile page** (person icon beside *Sign out*) with three tabs. **Account** —
+  who the installation thinks you are (username, account type, whether you sign in
+  locally or through LDAP, created and last-seen), and your **alert e-mail**.
+  **Security** — 2FA status and *Pair a new authenticator*. **Access** — the roles
+  you hold and a table of every section you can reach, whether you can change it,
+  and **which role each permission came from**, which was previously invisible to
+  anyone but an admin. It replaces the small e-mail dialog.
+
+  All of it is self-service and reads only your own account; role management stays
+  admin-only.
+
+### Fixed
+- **Starting a 2FA re-pair no longer disables the authenticator you already have.**
+  Beginning enrolment overwrote the live secret and switched 2FA off, so abandoning
+  the flow silently left the account without 2FA *and* invalidated the authenticator
+  in the user's hand. Harmless while first-time enrolment was the only caller;
+  the profile page's *Pair a new authenticator* makes it an everyday path. The new
+  secret is now held aside and only takes over once a code from the new device is
+  accepted — cancel, close the tab or type the wrong code and nothing changes.
 - **Alert e-mails go where you want them.** An alert rule can now carry **its own
   recipients** instead of every rule mailing the one instance-wide address. Each
   account also gets an **alert e-mail** it can set itself (the person icon beside

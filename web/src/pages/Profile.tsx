@@ -1,0 +1,304 @@
+import { useCallback, useEffect, useState } from "react";
+import { Loader2, Mail, ShieldCheck, IdCard, KeyRound, Check, RefreshCw, X } from "lucide-react";
+import clsx from "clsx";
+import { api } from "../lib/api";
+import type { Enrollment } from "../lib/api";
+import type { MyAccess } from "../lib/types";
+import { sectionLabel } from "../lib/sections";
+import { PageHeader } from "../layout/Shell";
+import { Tabs } from "../components/Tabs";
+import { EmptyState, Spinner } from "../components/ui";
+import { useAuth } from "../auth/AuthContext";
+
+type Tab = "account" | "security" | "access";
+
+/**
+ * The signed-in user's own page: who we think they are, where their alerts go,
+ * their authenticator, and — the part that is otherwise invisible — exactly which
+ * sections they can reach and which role each permission came from.
+ *
+ * Everything here is self-service and reads only this account.
+ */
+export function Profile() {
+  const { user, refresh } = useAuth();
+  const [tab, setTab] = useState<Tab>("account");
+  const [access, setAccess] = useState<MyAccess | null>(null);
+
+  const load = useCallback(() => {
+    api.myAccess().then(setAccess).catch(() => setAccess(null));
+  }, []);
+  useEffect(() => load(), [load]);
+
+  if (!user) return (<><PageHeader title="My profile" /><div className="p-6 flex items-center gap-2 text-muted"><Spinner /> Loading…</div></>);
+
+  const grantCount = access?.admin ? 13 : (access?.effective ?? []).length;
+
+  return (
+    <>
+      <PageHeader title="My profile" />
+      <div className="p-6 space-y-4">
+        <Tabs
+          active={tab}
+          onChange={setTab}
+          tabs={[
+            { key: "account", label: "Account", icon: <IdCard className="h-4 w-4" /> },
+            { key: "security", label: "Security", icon: <ShieldCheck className="h-4 w-4" /> },
+            { key: "access", label: "Access", icon: <KeyRound className="h-4 w-4" />, count: grantCount },
+          ]}
+        />
+
+        {tab === "account" && <AccountTab onSaved={refresh} />}
+        {tab === "security" && <SecurityTab onChanged={refresh} />}
+        {tab === "access" && <AccessTab access={access} />}
+      </div>
+    </>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-baseline gap-3 text-sm">
+      <span className="w-36 shrink-0 text-muted">{label}</span>
+      <span className="min-w-0">{children}</span>
+    </div>
+  );
+}
+
+function AccountTab({ onSaved }: { onSaved: () => Promise<void> }) {
+  const { user } = useAuth();
+  const [email, setEmail] = useState(user?.email ?? "");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true); setMsg(null);
+    try {
+      await api.setMyEmail(email.trim());
+      await onSaved();
+      setMsg({ ok: true, text: "Saved." });
+    } catch (err) {
+      setMsg({ ok: false, text: err instanceof Error ? err.message : "could not save" });
+    } finally { setBusy(false); }
+  };
+
+  const fmt = (v?: string) => (v && !v.startsWith("0001-01-01") ? new Date(v).toLocaleString() : "—");
+
+  return (
+    <div className="space-y-4 max-w-2xl">
+      <div className="card p-5 space-y-3">
+        <div className="flex items-center gap-2 font-medium"><IdCard className="h-4 w-4 text-accent" /> Who you are</div>
+        <div className="space-y-1.5">
+          <Field label="Username"><span className="font-medium">{user?.username}</span></Field>
+          <Field label="Account type">
+            {user?.role === "admin"
+              ? <span className="text-accent">admin</span>
+              : user?.readOnly ? <span className="text-warn">user · read-only</span> : "user"}
+          </Field>
+          <Field label="Signs in with">
+            {user?.authSource === "ldap"
+              ? <>LDAP directory <span className="text-xs text-muted">— your password is verified there, not stored here</span></>
+              : "a password stored here"}
+          </Field>
+          <Field label="Account created">{fmt(user?.createdAt)}</Field>
+          <Field label="Last sign-in">{fmt(user?.lastLoginAt)}</Field>
+        </div>
+      </div>
+
+      <form onSubmit={save} className="card p-5 space-y-3">
+        <div className="flex items-center gap-2 font-medium"><Mail className="h-4 w-4 text-accent" /> Alert e-mail</div>
+        <input className="input" type="email" value={email} placeholder="you@example.com"
+          onChange={(e) => setEmail(e.target.value)} />
+        <p className="text-xs text-muted">
+          Prefilled as the recipient when you switch on e-mail for an alert rule. Leave it empty and those
+          rules fall back to the instance-wide recipient instead. Nothing else uses this address.
+          {user?.authSource === "ldap" && " Your directory may overwrite it at sign-in if it publishes one."}
+        </p>
+        {msg && <p className={clsx("text-sm", msg.ok ? "text-ok" : "text-danger")}>{msg.text}</p>}
+        <div className="flex justify-end">
+          <button className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40" disabled={busy}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Save
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// SecurityTab shows 2FA status and pairs a new authenticator. Starting the flow is
+// safe: the new secret is held aside server-side and only replaces the working one
+// once a code from the new device is accepted, so abandoning this leaves the
+// authenticator you already have untouched.
+function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
+  const { user } = useAuth();
+  const [enr, setEnr] = useState<Enrollment | null>(null);
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState<"" | "start" | "confirm">("");
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const start = async () => {
+    setBusy("start"); setMsg(null);
+    try {
+      setEnr(await api.totpSetup());
+      setCode("");
+    } catch (e) {
+      setMsg({ ok: false, text: e instanceof Error ? e.message : "could not start" });
+    } finally { setBusy(""); }
+  };
+
+  const confirm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy("confirm"); setMsg(null);
+    try {
+      await api.totpEnable(code.trim());
+      await onChanged();
+      setEnr(null); setCode("");
+      setMsg({ ok: true, text: "Authenticator paired. Your previous one no longer works." });
+    } catch (err) {
+      setMsg({ ok: false, text: err instanceof Error ? err.message : "that code was not accepted" });
+    } finally { setBusy(""); }
+  };
+
+  return (
+    <div className="space-y-4 max-w-2xl">
+      <div className="card p-5 space-y-3">
+        <div className="flex items-center gap-2 font-medium"><ShieldCheck className="h-4 w-4 text-accent" /> Two-factor authentication</div>
+        <Field label="Status">
+          {user?.totpEnabled
+            ? <span className="inline-flex items-center gap-1 text-ok"><Check className="h-3.5 w-3.5" /> enabled</span>
+            : <span className="text-warn">not set up</span>}
+        </Field>
+
+        {!enr && (
+          <div className="flex items-center gap-3">
+            <button className="btn-ghost px-3 py-1.5 text-sm" onClick={start} disabled={busy === "start"}>
+              {busy === "start" ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              {user?.totpEnabled ? "Pair a new authenticator" : "Set up 2FA"}
+            </button>
+            {user?.totpEnabled && (
+              <span className="text-xs text-muted">
+                Your current authenticator keeps working until you finish pairing the new one.
+              </span>
+            )}
+          </div>
+        )}
+
+        {enr && (
+          <form onSubmit={confirm} className="space-y-3 border-t border-border pt-3">
+            <p className="text-sm">
+              Scan this with your authenticator app, then enter the code it shows.
+            </p>
+            <div className="flex flex-wrap items-start gap-4">
+              <img src={enr.qrDataUri} alt="Authenticator QR code" className="h-44 w-44 rounded-lg bg-white p-2" />
+              <div className="space-y-2 min-w-0">
+                <div className="text-xs text-muted">Can&apos;t scan? Enter this key by hand:</div>
+                <code className="block font-mono text-xs break-all bg-panel2/50 rounded px-2 py-1">{enr.secret}</code>
+                <input className="input font-mono tracking-widest" value={code} inputMode="numeric"
+                  placeholder="123456" maxLength={6} onChange={(e) => setCode(e.target.value)} />
+              </div>
+            </div>
+            {user?.totpEnabled && (
+              <p className="text-xs text-warn">
+                Nothing has changed yet. Your existing authenticator stays valid until you enter a code
+                from the new one — cancel and it stays as it is.
+              </p>
+            )}
+            {msg && <p className={clsx("text-sm", msg.ok ? "text-ok" : "text-danger")}>{msg.text}</p>}
+            <div className="flex justify-end gap-2">
+              <button type="button" className="btn-ghost px-3 py-1.5 text-sm" onClick={() => { setEnr(null); setMsg(null); }}>
+                <X className="h-4 w-4" /> Cancel
+              </button>
+              <button className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40" disabled={busy === "confirm" || code.trim().length < 6}>
+                {busy === "confirm" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Confirm
+              </button>
+            </div>
+          </form>
+        )}
+        {!enr && msg && <p className={clsx("text-sm", msg.ok ? "text-ok" : "text-danger")}>{msg.text}</p>}
+      </div>
+    </div>
+  );
+}
+
+// AccessTab shows what this account can actually reach and where each permission
+// came from — the overlay of its roles and its own section grants.
+function AccessTab({ access }: { access: MyAccess | null }) {
+  if (!access) return <div className="flex items-center gap-2 text-muted"><Spinner /> Loading…</div>;
+
+  if (access.admin) {
+    return (
+      <div className="card p-5 space-y-2 max-w-2xl">
+        <div className="flex items-center gap-2 font-medium"><KeyRound className="h-4 w-4 text-accent" /> Access</div>
+        <p className="text-sm">You are an <span className="text-accent">admin</span>, so you can reach every section and every action.</p>
+        <p className="text-xs text-muted">
+          Admins bypass roles and section grants entirely — there is no overlay to show.
+        </p>
+      </div>
+    );
+  }
+
+  const effective = access.effective ?? [];
+  return (
+    <div className="space-y-4 max-w-3xl">
+      <div className="card p-5 space-y-3">
+        <div className="flex items-center gap-2 font-medium"><IdCard className="h-4 w-4 text-accent" /> Your roles</div>
+        {access.roles.length === 0 ? (
+          <p className="text-sm text-muted">
+            No roles assigned. Anything you can reach comes from grants set directly on your account.
+          </p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {access.roles.map((r) => (
+              <div key={r.id} className="rounded-lg border border-border p-3">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">{r.name}</span>
+                  {r.builtin && <span className="text-[10px] uppercase tracking-wide text-muted border border-border rounded px-1">built-in</span>}
+                </div>
+                {r.description && <div className="text-xs text-muted mt-0.5">{r.description}</div>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="card p-5 space-y-3">
+        <div className="flex items-center gap-2 font-medium"><KeyRound className="h-4 w-4 text-accent" /> What you can reach</div>
+        {access.readOnly && (
+          <p className="text-xs text-warn">
+            Your account is read-only, so every grant below is capped to reading — even where a role
+            allows writing.
+          </p>
+        )}
+        {effective.length === 0 ? (
+          <EmptyState title="No sections granted" hint="An admin assigns you a role or grants sections on your account." />
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="text-muted text-xs uppercase tracking-wide">
+              <tr className="border-b border-border">
+                <th className="text-left font-medium py-2">Section</th>
+                <th className="text-left font-medium py-2">You can</th>
+                <th className="text-left font-medium py-2">Granted by</th>
+              </tr>
+            </thead>
+            <tbody>
+              {effective.map((g) => (
+                <tr key={g.section} className="border-b border-border/50">
+                  <td className="py-2 font-medium">{sectionLabel(g.section)}</td>
+                  <td className="py-2">
+                    {g.write
+                      ? <span className="text-ok">view and change</span>
+                      : <span className="text-muted">view only</span>}
+                  </td>
+                  <td className="py-2 text-xs text-muted">{g.from.join(", ") || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <p className="text-xs text-muted">
+          Sections an admin has turned off installation-wide never appear here, even if a role grants them.
+        </p>
+      </div>
+    </div>
+  );
+}

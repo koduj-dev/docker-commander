@@ -81,6 +81,9 @@ CREATE TABLE IF NOT EXISTS users (
 	email         TEXT NOT NULL DEFAULT '',  -- where this account's own alerts go
 	totp_secret   TEXT NOT NULL DEFAULT '',
 	totp_enabled  INTEGER NOT NULL DEFAULT 0,
+	-- A re-pair in progress. Kept separate so abandoning it can never disable the
+	-- authenticator that already works.
+	totp_pending  TEXT NOT NULL DEFAULT '',
 	created_at    TEXT NOT NULL,
 	last_login_at TEXT NOT NULL DEFAULT ''
 );
@@ -314,6 +317,7 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
 		`ALTER TABLE projects ADD COLUMN host_id INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE projects ADD COLUMN allow_remote_host_paths INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN totp_pending TEXT NOT NULL DEFAULT ''`,
 		// Per-rule recipients. Empty keeps the previous behaviour: fall back to the
 		// instance-wide SMTP "To" (and the per-host override), so existing rules
 		// deliver exactly as before.

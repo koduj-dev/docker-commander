@@ -25,6 +25,7 @@ import type {
   HostPortProbe,
   ParseRule,
   PortProbe,
+  MyAccess,
   Registry,
   Role,
   RoleSection,
@@ -135,6 +136,8 @@ export const api = {
   logout: () => req<{ ok: boolean }>("POST", "/api/auth/logout"),
   // Own alert address. Self-service: it only ever affects this account's alerts.
   setMyEmail: (email: string) => req<{ ok: boolean }>("PUT", "/api/auth/me/email", { email }),
+  // The caller's own roles and resulting grants, for the profile page.
+  myAccess: () => req<MyAccess>("GET", "/api/auth/me/access"),
 
   // User management (admin)
   users: () => req<ManagedUser[]>("GET", "/api/users"),
