@@ -160,10 +160,17 @@ a remote host the same way they do locally, with three things worth knowing:
   outside it (`/etc/localtime`, `/var/run/docker.sock`, anything reached via a
   symlink out of the folder) names a path on the *remote* host, so it's
   **refused** with a message listing the offending mounts rather than mounted
-  blind. Deploy such a project to the local host instead.
+  blind. If that is genuinely what you want, tick **Allow host paths** in the
+  project's Settings: those mounts are then taken from the remote host's own
+  filesystem, with whatever they hold there, and nothing is copied. The deploy
+  output names them every time. Enabling it needs **write access to the Hosts
+  section** — it is authority over the host, not over the project — and is
+  recorded in the [audit log](audit.md).
 - The seeded volumes are named `dcseed-<project>-<hash>` and are labelled with
   the project, so they're easy to spot on the [Volumes](volumes.md) page. Like
-  any named volume they **survive a `down`**.
+  any named volume they **survive a `down`**. **Deleting the project offers to
+  remove them** — it lists them and asks, since they hold data; declining keeps
+  them for a later redeploy.
 
 > **Changing a deployed project's target host leaves it running on the old one.**
 > Redeploying after switching hosts brings the stack up on the new host but does

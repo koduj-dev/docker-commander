@@ -24,6 +24,26 @@ All notable changes to Docker Commander are documented here. The format follows
   folder) are still **refused** on a remote deploy, now with a message naming
   them: they address paths on the remote host, which won't be mounted blind.
 
+- **Remote deploys can opt into host paths.** Bind mounts pointing outside the
+  project folder are still refused by default, but a project's Settings now has
+  **Allow host paths** to mount them from the remote host's own filesystem
+  instead (contents are whatever exists there; nothing is copied, and the deploy
+  output names them every time). Enabling it needs **write access to the Hosts
+  section** — it is authority over the host, not the project — and is audited;
+  turning it back off needs only project access, so a restricted user can always
+  close a hole they cannot open.
+- **Deleting a project offers to remove its seeded volumes.** A remote deploy
+  leaves `dcseed-*` volumes on the target host, which used to accumulate
+  silently. The delete flow now lists them and asks, since they hold data;
+  declining keeps them for a later redeploy. Only volumes carrying that
+  project's seed label are touched.
+
+### Changed
+- **Changing a deployed project's target host now warns first.** It does not tear
+  the project down on the old host, so you would end up with two live copies
+  while the page showed only the new one. The host picker says so inline and asks
+  for confirmation before saving.
+
 ### Documentation
 - **`docs/hosts.md` now covers two SSH-host requirements** that produced
   confusing failures. The remote `sshd` must allow forwarding

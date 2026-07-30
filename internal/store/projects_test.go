@@ -69,11 +69,38 @@ func TestProjectHostIDRoundTrip(t *testing.T) {
 	}
 
 	// Update retargets the host.
-	if err := s.UpdateProjectName(ctx, id, "Local renamed", 3); err != nil {
+	if err := s.UpdateProjectSettings(ctx, id, "Local renamed", 3, false); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := s.ProjectByID(ctx, id)
 	if got.Name != "Local renamed" || got.HostID != 3 {
 		t.Errorf("update name+host: %+v", got)
+	}
+	if got.AllowRemoteHostPaths {
+		t.Error("the host-path opt-in must default to off")
+	}
+
+	// The opt-in round-trips, and is independent of the name/host.
+	if err := s.UpdateProjectSettings(ctx, id, "Local renamed", 3, true); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = s.ProjectByID(ctx, id); !got.AllowRemoteHostPaths {
+		t.Error("the host-path opt-in did not persist")
+	}
+	// And it survives a listing, not just a by-id read.
+	list, err := s.ListProjects(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range list {
+		if p.ID == id && !p.AllowRemoteHostPaths {
+			t.Error("the opt-in is missing from ListProjects")
+		}
+	}
+	if err := s.UpdateProjectSettings(ctx, id, "Local renamed", 3, false); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = s.ProjectByID(ctx, id); got.AllowRemoteHostPaths {
+		t.Error("the opt-in could not be turned back off")
 	}
 }

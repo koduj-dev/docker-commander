@@ -355,6 +355,12 @@ export interface Project {
   composeFile: string;
   hostId: number;
   hostName?: string; // resolved label; absent/"" = local daemon
+  /**
+   * Opt-in: let a remote deploy mount bind sources from OUTSIDE the project
+   * folder, i.e. paths on the remote host itself. Off by default; enabling it
+   * needs write access to the "hosts" section.
+   */
+  allowRemoteHostPaths?: boolean;
   createdBy: string;
   createdAt: string;
   updatedAt: string;

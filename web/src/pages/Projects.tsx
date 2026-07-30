@@ -23,6 +23,27 @@ import { composeOutputText } from "../lib/composeOutput";
 type Output = { title: string; text: string; ok: boolean };
 type Kind = "deploy" | "down" | "restart";
 
+/**
+ * Asks whether to also delete the volumes seeded on a remote host for this
+ * project's bind mounts, returning the answer. They hold data and outlive the
+ * project like any named volume, so this never assumes — and it stays quiet when
+ * there are none (a local project, or an unreachable host reporting nothing).
+ *
+ * Shared by both delete paths (the project list and the editor's
+ * "that was the last file" prompt) so neither can silently skip the offer.
+ */
+async function confirmSeedVolumeCleanup(dialogs: ReturnType<typeof useDialogs>, p: Project): Promise<boolean> {
+  if (p.hostId === 0) return false;
+  const seeded = await api.projectSeedVolumes(p.id).catch(() => ({ volumes: [] as string[] }));
+  if (seeded.volumes.length === 0) return false;
+  return dialogs.confirm({
+    title: `Also delete ${seeded.volumes.length} seeded volume(s)?`,
+    message: `On ${p.hostName || "the target host"} this project has ${seeded.volumes.length} volume(s) holding copies of its bind-mounted files: ${seeded.volumes.join(", ")}. Deleting them discards anything written there since the last deploy. Keep them if you might redeploy this project.`,
+    danger: true,
+    confirmLabel: "Delete volumes too",
+  });
+}
+
 function projectState(stack: Stack | undefined): { cls: string; label: string; deployed: boolean } {
   if (!stack) return { cls: "bg-muted/40", label: "Not deployed", deployed: false };
   const total = stack.containers.length;
@@ -204,14 +225,20 @@ export function Projects() {
 
   const remove = async (p: Project) => {
     if (!(await dialogs.confirm({ title: `Delete project "${p.name}"?`, message: "This removes its folder and all files.", danger: true, confirmLabel: "Delete" }))) return;
+    const alsoVolumes = await confirmSeedVolumeCleanup(dialogs, p);
     setBusy(p.slug);
+    const report = (r: { removedVolumes?: string[]; volumeError?: string }) => {
+      if (r.volumeError) {
+        dialogs.alert({ title: "Project deleted, volumes not", message: r.volumeError });
+      }
+    };
     try {
-      await api.deleteProject(p.id);
+      report(await api.deleteProject(p.id, false, alsoVolumes));
       load();
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
         if (await dialogs.confirm({ title: `"${p.name}" is deployed`, message: "Run docker compose down and delete it anyway?", danger: true, confirmLabel: "Down & delete" })) {
-          try { await api.deleteProject(p.id, true); load(); }
+          try { report(await api.deleteProject(p.id, true, alsoVolumes)); load(); }
           catch (e2) { dialogs.alert({ title: "Delete failed", message: e2 instanceof Error ? e2.message : "unknown error" }); }
         }
       } else {
@@ -324,7 +351,7 @@ export function Projects() {
       </div>
 
       {showNew && <NewProjectModal hosts={hosts} onClose={() => setShowNew(false)} onCreated={onCreated} />}
-      {editMeta && <EditProjectModal project={editMeta} hosts={hosts} onClose={() => setEditMeta(null)} onSaved={() => { setEditMeta(null); load(); }} />}
+      {editMeta && <EditProjectModal project={editMeta} hosts={hosts} deployed={projectState(stackBySlug.get(editMeta.slug)).deployed} onClose={() => setEditMeta(null)} onSaved={() => { setEditMeta(null); load(); }} />}
 
       {editing && (
         <ProjectEditor
@@ -544,16 +571,28 @@ function HostSelect({ hosts, value, onChange }: { hosts: Host[]; value: number; 
 
 // EditProjectModal changes a project's display name and target host (the slug /
 // compose project name stays fixed so deployments remain stable).
-function EditProjectModal({ project, hosts, onClose, onSaved }: { project: Project; hosts: Host[]; onClose: () => void; onSaved: () => void }) {
+function EditProjectModal({ project, hosts, deployed, onClose, onSaved }: { project: Project; hosts: Host[]; deployed: boolean; onClose: () => void; onSaved: () => void }) {
+  const dialogs = useDialogs();
   const [name, setName] = useState(project.name);
   const [hostId, setHostId] = useState(project.hostId ?? 0);
+  const [allowHostPaths, setAllowHostPaths] = useState(!!project.allowRemoteHostPaths);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const hostChanged = hostId !== (project.hostId ?? 0);
+  const oldHostName = hosts.find((h) => h.id === project.hostId)?.name ?? "the local host";
   const save = async () => {
     const n = name.trim();
     if (!n) { setErr("name is required"); return; }
+    // Retargeting a *deployed* project doesn't tear down the old host, so the
+    // stack keeps running there while the UI only shows the new host. Say so
+    // before saving rather than leaving the user to discover two live copies.
+    if (deployed && hostChanged && !(await dialogs.confirm({
+      title: "This project is deployed",
+      message: `Changing the target host will NOT bring it down on ${oldHostName} — it keeps running there, along with any volumes seeded for it, and this page will only show the new host. Bring the project down first if you want it moved rather than duplicated.`,
+      confirmLabel: "Change host anyway",
+    }))) return;
     setBusy(true); setErr("");
-    try { await api.renameProject(project.id, n, hostId); onSaved(); }
+    try { await api.renameProject(project.id, n, hostId, allowHostPaths); onSaved(); }
     catch (e) { setErr(e instanceof Error ? e.message : "save failed"); setBusy(false); }
   };
   return (
@@ -566,6 +605,24 @@ function EditProjectModal({ project, hosts, onClose, onSaved }: { project: Proje
         <div className="text-xs text-muted">Identifier <code className="font-mono">{project.slug}</code> stays fixed.</div>
         {hosts.length > 0 ? <HostSelect hosts={hosts} value={hostId} onChange={setHostId} />
           : <p className="text-xs text-muted">No remote hosts available to you.</p>}
+        {deployed && hostChanged && (
+          <p className="text-xs text-warn">
+            This project is deployed on <strong>{oldHostName}</strong> and will keep running there — changing the host does not move it.
+          </p>
+        )}
+        {hostId !== 0 && (
+          <label className="flex items-start gap-2 text-sm">
+            {/* Checkboxes nested in a label double-fire on click, so this one is
+                a plain sibling of its text rather than wrapping it. */}
+            <input type="checkbox" className="mt-1" checked={allowHostPaths} onChange={(e) => setAllowHostPaths(e.target.checked)} />
+            <span>
+              Allow host paths
+              <span className="block text-xs text-muted mt-0.5">
+                Bind mounts pointing outside the project folder are normally refused on a remote deploy. Enable this to mount them from <strong>{hosts.find((h) => h.id === hostId)?.name ?? "the target host"}</strong>&apos;s own filesystem instead — their contents are whatever exists there, and nothing is copied. Requires the Hosts permission.
+              </span>
+            </span>
+          </label>
+        )}
         {err && <p className="text-sm text-danger">{err}</p>}
         <div className="flex justify-end gap-2">
           <button className="btn-ghost" onClick={onClose}>Cancel</button>
@@ -1052,8 +1109,13 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
       // Offer to delete the whole project once it has no editable files left.
       if (!fs.some((x) => !x.isDir)) {
         if (await dialogs.confirm({ title: "Delete project?", message: "That was the last file — this project is now empty. Delete the whole project?", danger: true, confirmLabel: "Delete project" })) {
+          const alsoVolumes = await confirmSeedVolumeCleanup(dialogs, project);
           setBusy("delproj");
-          try { await api.deleteProject(project.id); onClose(); }
+          try {
+            const r = await api.deleteProject(project.id, false, alsoVolumes);
+            if (r.volumeError) dialogs.alert({ title: "Project deleted, volumes not", message: r.volumeError });
+            onClose();
+          }
           catch (e) { dialogs.alert({ title: "Could not delete project", message: e instanceof ApiError ? e.message : e instanceof Error ? e.message : "unknown error" }); }
         }
       }

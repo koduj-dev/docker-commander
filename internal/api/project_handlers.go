@@ -67,19 +67,23 @@ type projectJSON struct {
 	Slug        string `json:"slug"`
 	ComposeFile string `json:"composeFile"`
 	HostID      int64  `json:"hostId"`
-	HostName    string `json:"hostName,omitempty"` // resolved label; "" = local
-	CreatedBy   string `json:"createdBy"`
-	CreatedAt   string `json:"createdAt"`
-	UpdatedAt   string `json:"updatedAt"`
+	// AllowRemoteHostPaths surfaces the opt-in so Settings can show it and the
+	// deploy path can explain why external binds were allowed through.
+	AllowRemoteHostPaths bool   `json:"allowRemoteHostPaths"`
+	HostName             string `json:"hostName,omitempty"` // resolved label; "" = local
+	CreatedBy            string `json:"createdBy"`
+	CreatedAt            string `json:"createdAt"`
+	UpdatedAt            string `json:"updatedAt"`
 }
 
 func toProjectJSON(p store.Project, hostName string) projectJSON {
 	return projectJSON{
 		ID: p.ID, Name: p.Name, Slug: p.Slug, ComposeFile: p.ComposeFile,
 		HostID: p.HostID, HostName: hostName,
-		CreatedBy: p.CreatedBy,
-		CreatedAt: p.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		UpdatedAt: p.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		AllowRemoteHostPaths: p.AllowRemoteHostPaths,
+		CreatedBy:            p.CreatedBy,
+		CreatedAt:            p.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		UpdatedAt:            p.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 }
 
@@ -325,6 +329,27 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 		s.audit(r, "project.down", p.Slug, "force-delete")
 	}
 
+	// Seeded volumes on the target host are the project's data, so they are only
+	// removed when the caller explicitly asked (?volumes=1). Done before the row
+	// goes away, since the host id lives on it. A failure here doesn't abort the
+	// delete — the project is still going — it's reported instead.
+	var removedVolumes []string
+	var volumeErr string
+	if r.URL.Query().Get("volumes") == "1" && p.HostID != 0 {
+		if err := s.requireHostAccess(r, p.HostID); err != nil {
+			writeErr(w, http.StatusForbidden, err.Error())
+			return
+		}
+		var rerr error
+		removedVolumes, rerr = s.docker.RemoveSeedVolumes(r.Context(), p.HostID, p.Slug)
+		if rerr != nil {
+			volumeErr = rerr.Error()
+		}
+		if len(removedVolumes) > 0 {
+			s.audit(r, "project.seed_volumes.remove", p.Slug, strings.Join(removedVolumes, ","))
+		}
+	}
+
 	if err := os.RemoveAll(s.projectRoot(p.ID)); err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not remove files: "+err.Error())
 		return
@@ -334,7 +359,40 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, "project.delete", p.Slug, "")
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	resp := map[string]any{"ok": true, "removedVolumes": removedVolumes}
+	if volumeErr != "" {
+		resp["volumeError"] = volumeErr
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleProjectSeedVolumes lists the volumes seeded for a project on its target
+// host, so the delete flow can say how many there are before offering to remove
+// them (they hold data, so the user has to opt in knowingly).
+func (s *Server) handleProjectSeedVolumes(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	if p.HostID == 0 {
+		// Seeding only happens for remote deploys, so a local project has none.
+		writeJSON(w, http.StatusOK, map[string]any{"volumes": []string{}})
+		return
+	}
+	if err := s.requireHostAccess(r, p.HostID); err != nil {
+		writeErr(w, http.StatusForbidden, err.Error())
+		return
+	}
+	names, err := s.docker.ListSeedVolumes(r.Context(), p.HostID, p.Slug)
+	if err != nil {
+		// The host may be unreachable; that shouldn't block deleting a project.
+		writeJSON(w, http.StatusOK, map[string]any{"volumes": []string{}, "error": err.Error()})
+		return
+	}
+	if names == nil {
+		names = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"volumes": names})
 }
 
 // handleListProjectFiles returns every file in the project folder with content
@@ -582,8 +640,9 @@ func (s *Server) handleRenameProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Name   string `json:"name"`
-		HostID int64  `json:"hostId"`
+		Name                 string `json:"name"`
+		HostID               int64  `json:"hostId"`
+		AllowRemoteHostPaths bool   `json:"allowRemoteHostPaths"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
@@ -602,11 +661,24 @@ func (s *Server) handleRenameProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, err.Error())
 		return
 	}
-	if err := s.store.UpdateProjectName(r.Context(), p.ID, name, body.HostID); err != nil {
+	// Turning the opt-in ON means "mount arbitrary paths on the remote host", so
+	// it needs the same authority as managing hosts — not merely project access.
+	// Turning it OFF only ever narrows, so it stays allowed.
+	if body.AllowRemoteHostPaths && !p.AllowRemoteHostPaths {
+		if err := s.requireHostsPermission(r); err != nil {
+			writeErr(w, http.StatusForbidden, err.Error())
+			return
+		}
+	}
+	if err := s.store.UpdateProjectSettings(r.Context(), p.ID, name, body.HostID, body.AllowRemoteHostPaths); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	s.audit(r, "project.rename", p.Slug, name)
+	if body.AllowRemoteHostPaths != p.AllowRemoteHostPaths {
+		// Audited separately: this one changes what the project may mount.
+		s.audit(r, "project.remote_host_paths", p.Slug, boolWord(body.AllowRemoteHostPaths))
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -998,6 +1070,32 @@ func (s *Server) requireHostAccess(r *http.Request, hostID int64) error {
 	return nil
 }
 
+// requireHostsPermission gates actions whose authority is really about the remote
+// host rather than the project — currently only opting a project into mounting
+// paths that live on that host.
+func (s *Server) requireHostsPermission(r *http.Request) error {
+	claims, ok := auth.ClaimsFrom(r.Context())
+	if !ok {
+		return errors.New("unauthorized")
+	}
+	u, err := s.store.UserByID(r.Context(), claims.UserID)
+	if err != nil {
+		return errors.New("unauthorized")
+	}
+	if s.checkAccess(r.Context(), u, "hosts", true) != nil {
+		return errors.New("allowing host paths on a remote deploy requires write access to the \"hosts\" section")
+	}
+	return nil
+}
+
+// boolWord renders a flag for the audit detail column.
+func boolWord(b bool) string {
+	if b {
+		return "enabled"
+	}
+	return "disabled"
+}
+
 // projectComposeEnv resolves the `docker compose` environment for a project's
 // target host (nil for the local daemon). The returned cleanup must always be
 // called (it removes any materialised TLS certs).
@@ -1056,14 +1154,19 @@ func (s *Server) projectDeployEnv(ctx context.Context, p *store.Project, dir str
 	if err != nil {
 		return nil, nil, "", noop, fmt.Errorf("cannot inspect the project's bind mounts: %v", err)
 	}
-	if len(external) > 0 {
-		return nil, nil, "", noop, fmt.Errorf("remote deploy to %q refuses bind mounts from outside the project folder, because they would mount paths on the remote host: %s", h.Name, joinBinds(external))
+	// Binds from outside the project folder address paths on the remote host, so
+	// they're refused unless the project was explicitly opted in (which needs the
+	// "hosts" permission). Opted in, they're passed through untouched — we can't
+	// ship what we can't see — and the note tells the user exactly which ones.
+	if len(external) > 0 && !p.AllowRemoteHostPaths {
+		return nil, nil, "", noop, fmt.Errorf("remote deploy to %q refuses bind mounts from outside the project folder, because they would mount paths on the remote host: %s — enable \"allow host paths\" in the project's settings if that is intended", h.Name, joinBinds(external))
 	}
 	if env, cleanup, err = docker.ComposeHostEnv(h); err != nil {
 		return nil, nil, "", noop, err
 	}
 	if len(internal) == 0 {
-		return env, nil, "", cleanup, nil
+		// Nothing to ship, but any passed-through host paths still need saying.
+		return env, nil, remoteBindNote(nil, external), cleanup, nil
 	}
 	if err = s.docker.SeedProjectBinds(ctx, p.HostID, dir, p.Slug, internal); err != nil {
 		cleanup()
@@ -1094,7 +1197,7 @@ func (s *Server) projectDeployEnv(ctx context.Context, p *store.Project, dir str
 	}
 	tlsCleanup := cleanup
 	cleanup = func() { _ = os.Remove(path); tlsCleanup() }
-	return env, []string{p.ComposeFile, path}, remoteBindNote(internal), cleanup, nil
+	return env, []string{p.ComposeFile, path}, remoteBindNote(internal, external), cleanup, nil
 }
 
 // joinBinds renders binds for a user-facing error message.
@@ -1106,19 +1209,38 @@ func joinBinds(binds []docker.ProjectBind) string {
 	return strings.Join(out, "; ")
 }
 
-// remoteBindNote spells out that a remote deploy copies the bind-mounted files
-// rather than mounting them live — writes inside the container stay on the host.
-func remoteBindNote(binds []docker.ProjectBind) string {
-	paths := make([]string, 0, len(binds))
+// remoteBindNote spells out what a remote deploy did with the project's bind
+// mounts: which paths were copied (a snapshot, not a live mount), and which were
+// passed through to the remote host's own filesystem because the project opted in.
+// Returns "" when there was nothing of either kind to report.
+func remoteBindNote(copied, passedThrough []docker.ProjectBind) string {
+	var parts []string
+	if len(copied) > 0 {
+		paths := uniqueRels(copied)
+		parts = append(parts, fmt.Sprintf(
+			"Copied %d bind-mounted path(s) to volumes on the remote host: %s. This is a snapshot taken now, not a live mount — edits to the project files need a redeploy, and writes inside the container stay on the remote host.",
+			len(paths), strings.Join(paths, ", ")))
+	}
+	if len(passedThrough) > 0 {
+		parts = append(parts, fmt.Sprintf(
+			"WARNING: %d bind mount(s) point outside the project folder and were mounted from the REMOTE host's own filesystem, because this project allows host paths: %s. Their contents are whatever exists on that host — nothing was copied.",
+			len(passedThrough), joinBinds(passedThrough)))
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// uniqueRels lists each distinct project-relative path once (two services can
+// share one bind source).
+func uniqueRels(binds []docker.ProjectBind) []string {
+	out := make([]string, 0, len(binds))
 	seen := map[string]bool{}
 	for _, b := range binds {
 		if !seen[b.Rel] {
 			seen[b.Rel] = true
-			paths = append(paths, b.Rel)
+			out = append(out, b.Rel)
 		}
 	}
-	return fmt.Sprintf("Copied %d bind-mounted path(s) to volumes on the remote host: %s. This is a snapshot taken now, not a live mount — edits to the project files need a redeploy, and writes inside the container stay on the remote host.",
-		len(paths), strings.Join(paths, ", "))
+	return out
 }
 
 // loadProject resolves {id} to a project, writing the error response on failure.
