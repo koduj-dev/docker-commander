@@ -61,16 +61,24 @@ jobs:
         run: (cd dist-bin && sha256sum dockercmd.sbom.spdx.json >> SHA256SUMS)
 
       # Keyless-sign the checksums file (it covers every binary + the SBOM).
+      # cosign v3 writes a single Sigstore *bundle* (signature + certificate);
+      # the old --output-signature/--output-certificate pair is deprecated and
+      # silently ignored under the now-default --new-bundle-format, so it must
+      # not come back — it would publish a release with no signature at all.
       # Verify with:
-      #   cosign verify-blob --certificate SHA256SUMS.pem --signature SHA256SUMS.sig \
+      #   cosign verify-blob --bundle SHA256SUMS.bundle \
       #     --certificate-identity-regexp '^https://github\.com/koduj-dev/docker-commander/\.github/workflows/release\.yml@refs/tags/v' \
       #     --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Sign SHA256SUMS
         run: |
           cosign sign-blob --yes dist-bin/SHA256SUMS \
-            --output-signature dist-bin/SHA256SUMS.sig \
-            --output-certificate dist-bin/SHA256SUMS.pem
+            --bundle dist-bin/SHA256SUMS.bundle
+
+      # Fail loudly if the signature didn't materialise: the release upload below
+      # is a glob, so a missing bundle would otherwise ship an unsigned release.
+      - name: Verify the signature bundle exists
+        run: test -s dist-bin/SHA256SUMS.bundle
 
       # Build the .deb / .rpm here, NOT in a later job: a GitHub release is
       # immutable once created, so every asset must be uploaded in the single
