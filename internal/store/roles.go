@@ -111,8 +111,17 @@ func writable(sections []string) []RoleSection {
 
 // replaceRoleSections rewrites a role's grants wholesale, dropping unknown
 // section keys so a bad payload can't grant something that doesn't exist.
+//
+// Transactional on purpose: the delete-then-insert would otherwise be visible
+// half-applied to a concurrent request, and a failure partway would leave the
+// role holding an arbitrary subset of its grants.
 func (s *Store) replaceRoleSections(ctx context.Context, roleID int64, sections []RoleSection) error {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM role_sections WHERE role_id = ?`, roleID); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }() // no-op once committed
+	if _, err := tx.ExecContext(ctx, `DELETE FROM role_sections WHERE role_id = ?`, roleID); err != nil {
 		return err
 	}
 	seen := map[string]bool{}
@@ -122,13 +131,13 @@ func (s *Store) replaceRoleSections(ctx context.Context, roleID int64, sections 
 			continue
 		}
 		seen[key] = true
-		if _, err := s.db.ExecContext(ctx,
+		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO role_sections (role_id, section, write) VALUES (?, ?, ?)`,
 			roleID, key, boolToInt(rs.Write)); err != nil {
 			return err
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 // ListRoles returns every role with its grants, ordered built-ins first then by
@@ -359,14 +368,27 @@ func (s *Store) EffectiveGrants(ctx context.Context, u *User) (map[string]Grant,
 	for _, sec := range u.Sections {
 		add(sec, true) // capped below when the account is read-only
 	}
-	roles, err := s.RolesForUser(ctx, u.ID)
+	// One join rather than RolesForUser: this runs on every gated request, and
+	// per-role round trips made it O(number of roles) queries per request.
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT rs.section, rs.write
+		FROM role_sections rs
+		JOIN user_roles ur ON ur.role_id = rs.role_id
+		WHERE ur.user_id = ?`, u.ID)
 	if err != nil {
 		return nil, err
 	}
-	for _, r := range roles {
-		for _, rs := range r.Sections {
-			add(rs.Section, rs.Write)
+	defer rows.Close()
+	for rows.Next() {
+		var section string
+		var write int
+		if err := rows.Scan(&section, &write); err != nil {
+			return nil, err
 		}
+		add(section, write != 0)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	if u.ReadOnly {
 		for sec, g := range out {

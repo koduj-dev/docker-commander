@@ -94,17 +94,33 @@ func (s *Server) handleCreateMCPToken(w http.ResponseWriter, r *http.Request) {
 
 	// Section narrowing: a token may only reference sections the owner actually
 	// has (admins may use any valid section). Empty = inherit all of the owner's.
-	sections := cleanSections(b.Sections)
+	requested := cleanSections(b.Sections)
+	sections := requested
 	if !u.IsAdmin() {
+		// Effective sections, not u.Sections: access may come from an assigned
+		// role, and a token must be scopeable to those too.
+		effective, err := s.store.EffectiveSections(r.Context(), u)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "could not determine your permissions")
+			return
+		}
 		// Filter in place. Safe: cleanSections returns a fresh slice (not aliasing
-		// u.Sections/b.Sections) and the write index never outruns the read index.
+		// b.Sections) and the write index never outruns the read index.
 		allowed := sections[:0]
 		for _, sec := range sections {
-			if contains(u.Sections, sec) {
+			if contains(effective, sec) {
 				allowed = append(allowed, sec)
 			}
 		}
 		sections = allowed
+	}
+	// An explicit scope that filters down to nothing must NOT fall through to
+	// "empty = inherit everything" — the caller asked to narrow, and silently
+	// handing back an unrestricted token would widen their reach instead.
+	if len(requested) > 0 && len(sections) == 0 {
+		writeErr(w, http.StatusBadRequest,
+			"none of the requested sections are granted to your account, so this token would not be scoped to anything")
+		return
 	}
 	// A read-only owner can only mint read-only tokens.
 	readOnly := b.ReadOnly || u.ReadOnly
