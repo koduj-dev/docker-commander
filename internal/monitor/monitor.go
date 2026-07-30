@@ -246,7 +246,7 @@ func (m *Monitor) recordHistory(ctx context.Context, snap map[string]ContainerSt
 			continue
 		}
 		samples = append(samples, history.Sample{
-			ContainerID: cs.ID, Time: now,
+			ContainerID: cs.ID, HostID: cs.HostID, Time: now,
 			CPU: cs.CPUPercent, MemPercent: cs.MemPercent, MemBytes: float64(cs.MemBytes),
 		})
 	}

@@ -25,6 +25,27 @@ func (s *Server) handleMetricsHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The series is keyed by container id alone, so knowing an id would otherwise
+	// be enough to read a container's CPU/memory history from a host the caller
+	// was scoped away from. Authorise against the host the samples were recorded
+	// from. A container with no recorded host is unknown, not local: allow it only
+	// for callers who can reach every host anyway, so a scoped caller can't probe
+	// ids to find out what exists.
+	if s.history != nil {
+		hostID, known, err := s.history.HostFor(r.Context(), containerID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "could not determine the container's host")
+			return
+		}
+		if !known {
+			hostID = -1 // reachable only by a caller with no host restriction
+		}
+		if !s.callerCanReachHost(r, hostID) {
+			writeErr(w, http.StatusForbidden, "your access does not include that container's host")
+			return
+		}
+	}
+
 	rng := 30 * time.Minute
 	if v := r.URL.Query().Get("range"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {

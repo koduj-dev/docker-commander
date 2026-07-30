@@ -2,6 +2,7 @@ package history
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -37,6 +38,12 @@ func key(containerID, metric string) string {
 	return "dc:m:" + containerID + ":" + metric
 }
 
+// hostKey holds which host a container's samples came from, so a series can be
+// authorised. It carries the same TTL as the series it describes.
+func hostKey(containerID string) string {
+	return "dc:mh:" + containerID
+}
+
 func (s *redisStore) Record(ctx context.Context, samples []Sample) error {
 	if len(samples) == 0 {
 		return nil
@@ -46,6 +53,7 @@ func (s *redisStore) Record(ctx context.Context, samples []Sample) error {
 	pipe := s.rdb.Pipeline()
 	for _, sm := range samples {
 		t := sm.Time.UnixMilli()
+		pipe.Set(ctx, hostKey(sm.ContainerID), sm.HostID, s.retention*2)
 		for _, metric := range allMetrics {
 			v, _ := metricValue(sm, metric)
 			k := key(sm.ContainerID, metric)
@@ -84,3 +92,14 @@ func (s *redisStore) Query(ctx context.Context, containerID, metric string, sinc
 }
 
 func (s *redisStore) Close() error { return s.rdb.Close() }
+
+func (s *redisStore) HostFor(ctx context.Context, containerID string) (int64, bool, error) {
+	v, err := s.rdb.Get(ctx, hostKey(containerID)).Int64()
+	if errors.Is(err, redis.Nil) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return v, true, nil
+}

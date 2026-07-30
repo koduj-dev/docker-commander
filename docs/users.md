@@ -69,16 +69,18 @@ mean *"on staging, not production"*. Pick the hosts in the role editor.
 
 Your own profile page shows the resulting reach per section under **Where**.
 
-> **What scoping does not yet do.** Actions are authorized per host; some
-> aggregated reads are not. A user scoped to one host cannot start, stop, exec
-> into or deploy anything on another host — but aggregate views (dashboard,
-> topology, the events feed, the alert feed, and the per-container metrics
-> history) may still surface **names, images, ports and event text** from hosts
-> outside their scope. That is an information leak, not an action bypass, and it
-> is the deferred phase 3 of
-> [the design note](../design/rbac-roles-and-host-scoping.md). Don't rely on host
-> scoping to hide the existence of a workload from someone who can see the
-> dashboard.
+Scoping **hides as well as blocks**. A host outside your scope doesn't appear in
+the host list, its projects aren't listed, its alerts don't reach your feed (nor
+the unread badge), its entries don't appear in the audit log, and a container's
+metrics history is refused even if you know the container id. The per-host views —
+dashboard counts, disk usage, published ports, topology, the events feed — are
+each authorized against the host they name.
+
+> **The one thing scoping still doesn't cover.** The **alert engine** watches every
+> host by design: it is background work with no user context. So if a rule lists
+> you as an e-mail recipient, you can receive mail about a host you can't see in
+> the app. That's a property of how you configure recipients, not something the
+> app decides per viewer — set the rule's recipients accordingly.
 
 ## How enforcement works
 Permissions are checked on the server for every request: the path maps to a

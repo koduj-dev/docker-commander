@@ -224,10 +224,30 @@ this work is not done until pentests assert:
    failure mode that left `?host=` unauthorised in the first place. The two places
    a host is named outside the URL still need an explicit call: the WebSocket
    subscribe frame, and a managed project's own `host_id`.
-3. **Phase 3 — aggregate filtering.** Dashboard/topology/events/alerts scoping,
-   plus the per-container metrics history (which the history store keys by
-   container id with no host column, so it has no host to authorise against).
-   Invariant 4 remains **open** and is the entry criterion for this phase.
+3. **Phase 3 — aggregate filtering.** ✅ **Shipped.** Invariant 4 is now asserted.
+
+   It turned out smaller than this note feared, and for an instructive reason: most
+   of the "aggregates" aren't aggregates at all. Topology, the events feed, disk
+   usage, stats overview and published ports are each **per-host reads taking
+   `?host=`**, so phase 2's middleware check already covered the ones that map to a
+   section. What actually leaked was narrower and sharper:
+
+   - **Three dashboard routes map to no section** (`/api/stats/overview`,
+     `/api/system/df`, `/api/stats/ports`), so the middleware returned before it
+     looked at the host. Ungated means "no section required", not "any host you
+     like" — a named host now has to be one the caller's grants reach *somewhere*
+     (`Store.ReachableHosts`), since there is no single section to check against.
+   - **List endpoints**: hosts, projects, the alert feed and the audit log are now
+     filtered by the same predicate. The alert feed's **unread count** is computed
+     after filtering — a badge that still counted hidden events would announce them.
+   - **Metrics history** was the one real gap. The store keys by container id, so
+     knowing an id was enough. `ContainerStat` already carried `HostID` and
+     `recordHistory` was dropping it; `history.Sample` now keeps it and the series
+     is authorised against it. An unrecorded id is **unknown**, not local, so ids
+     can't be probed.
+
+   Left deliberately global: the **alert engine**, which watches every host as
+   background work with no user context. Documented in `docs/users.md`.
    *Could* land with phase 2, but it is the fiddliest and most leak-prone part, so
    splitting it keeps phase 2 reviewable.
 

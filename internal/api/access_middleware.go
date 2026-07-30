@@ -172,7 +172,7 @@ func (s *Server) checkAccess(ctx context.Context, u *store.User, section string,
 	// see on the Hosts page. A role may now be limited to specific hosts, and an
 	// unscoped grant still reaches all of them so nobody's reach changed on
 	// upgrade.
-	if !g.HasHost(hostID) {
+	if !g.HasHost(s.store.NormalizeHostID(ctx, hostID)) {
 		return errors.New("your access to this section does not include that host")
 	}
 	return nil
@@ -183,7 +183,23 @@ func (s *Server) checkAccess(ctx context.Context, u *store.User, section string,
 func (s *Server) permissions(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		section := sectionForPath(r.URL.Path)
+		hostID, hostErr := hostParam(r)
 		if section == "" {
+			// An ungated route can still NAME a host: /api/stats/overview,
+			// /api/system/df and /api/stats/ports are dashboard reads that take
+			// ?host=. They belong to no section, so there is nothing to check them
+			// against — which is exactly how they slipped past the phase-2 gate and
+			// leaked another host's counts, disk usage and published ports. Ungated
+			// means "no section required", not "any host you like", so a named host
+			// must at least be one the caller's grants reach somewhere.
+			if hostErr != nil {
+				writeErr(w, http.StatusBadRequest, "invalid host id")
+				return
+			}
+			if hostID != 0 && !s.callerCanReachHost(r, hostID) {
+				writeErr(w, http.StatusForbidden, "your access does not include that host")
+				return
+			}
 			next.ServeHTTP(w, r) // ungated
 			return
 		}
@@ -201,8 +217,7 @@ func (s *Server) permissions(next http.Handler) http.Handler {
 		// sites. Every host-targeting route funnels through this middleware, so a
 		// route added later is covered without anyone remembering to check — the
 		// failure mode that left ?host= unauthorised in the first place.
-		hostID, err := hostParam(r)
-		if err != nil {
+		if hostErr != nil {
 			writeErr(w, http.StatusBadRequest, "invalid host id")
 			return
 		}
@@ -222,4 +237,57 @@ func hostParam(r *http.Request) (int64, error) {
 		return 0, nil
 	}
 	return strconv.ParseInt(q, 10, 64)
+}
+
+// callerCanReachHost reports whether the signed-in caller may see anything on
+// hostID. Used for the routes that name a host but belong to no section, where
+// there is no section grant to consult. Fails CLOSED: an unidentifiable caller or
+// a store error denies rather than falling through to the handler.
+func (s *Server) callerCanReachHost(r *http.Request, hostID int64) bool {
+	claims, ok := auth.ClaimsFrom(r.Context())
+	if !ok {
+		return false
+	}
+	u, err := s.store.UserByID(r.Context(), claims.UserID)
+	if err != nil {
+		return false
+	}
+	if u.IsAdmin() {
+		return true
+	}
+	ok, err = s.store.CanReachHost(r.Context(), u, hostID)
+	return err == nil && ok
+}
+
+// visibleHosts returns a predicate for filtering aggregate views to the hosts the
+// caller may see. Everything about host scoping is enforcement — this is the
+// other half, hiding what the caller can't act on so a list doesn't advertise
+// names, images and ports from a host they were deliberately scoped away from.
+//
+// It fails CLOSED in a specific sense: if the caller can't be identified or their
+// grants can't be computed, only the local daemon is visible. That degrades an
+// aggregate view rather than leaking one.
+func (s *Server) visibleHosts(r *http.Request) func(hostID int64) bool {
+	local := func(hostID int64) bool { return s.store.NormalizeHostID(r.Context(), hostID) == 0 }
+	claims, ok := auth.ClaimsFrom(r.Context())
+	if !ok {
+		return local
+	}
+	u, err := s.store.UserByID(r.Context(), claims.UserID)
+	if err != nil {
+		return local
+	}
+	if u.IsAdmin() {
+		return func(int64) bool { return true }
+	}
+	hosts, all, err := s.store.ReachableHosts(r.Context(), u)
+	if err != nil {
+		return local
+	}
+	if all {
+		return func(int64) bool { return true }
+	}
+	return func(hostID int64) bool {
+		return s.store.NormalizeHostID(r.Context(), hostID) == 0 || hosts[hostID]
+	}
 }

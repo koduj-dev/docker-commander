@@ -173,11 +173,23 @@ func (s *Server) handleListAlertEvents(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "could not list alerts")
 		return
 	}
-	if events == nil {
-		events = []store.AlertEvent{}
+	// Alert events carry the host they fired on, plus the container name and the
+	// message text — enough to map another host's workloads. Filter to the hosts
+	// the caller may see, and count only what's left, so the unread badge doesn't
+	// betray the events it hid.
+	visible := s.visibleHosts(r)
+	shown := make([]store.AlertEvent, 0, len(events))
+	unread := 0
+	for _, e := range events {
+		if !visible(e.HostID) {
+			continue
+		}
+		shown = append(shown, e)
+		if !e.Acknowledged {
+			unread++
+		}
 	}
-	unread, _ := s.store.CountUnacknowledged(r.Context())
-	writeJSON(w, http.StatusOK, map[string]any{"events": events, "unread": unread})
+	writeJSON(w, http.StatusOK, map[string]any{"events": shown, "unread": unread})
 }
 
 func (s *Server) handleAckAlertEvent(w http.ResponseWriter, r *http.Request) {

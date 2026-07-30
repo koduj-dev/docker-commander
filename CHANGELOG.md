@@ -29,13 +29,29 @@ All notable changes to Docker Commander are documented here. The format follows
   directly on an account stays unscoped. The **local daemon is always in scope** —
   making it scopeable would let a single-host install lock itself out.
 
-  > **Known limitation, stated plainly.** Actions are authorized per host; some
-  > aggregated reads are not. A scoped user cannot start, stop, exec into or deploy
-  > anything on another host, but the dashboard, topology, events feed, alert feed
-  > and metrics history may still surface **names, images, ports and event text**
-  > from hosts outside their scope. That is an information leak, not an action
-  > bypass. Filtering those reads is phase 3 and is not in this release — don't rely
-  > on scoping to hide that a workload exists.
+  **Scoping hides as well as blocks** (phase 3, landed in the same release). A host
+  outside your scope is absent from the host list, its projects aren't listed, its
+  alerts don't reach the feed *or the unread badge*, its entries don't appear in the
+  audit log, and a container's metrics history is refused even if you know the
+  container id.
+
+  Three dashboard endpoints — `/api/stats/overview`, `/api/system/df` and
+  `/api/stats/ports` — took `?host=` while belonging to **no section**, so the check
+  above returned before it ever looked at the host and they served another host's
+  counts, disk usage and published ports. Ungated means "no section required", not
+  "any host you like"; a named host must now be one your grants reach.
+
+  The metrics series is keyed by container id alone, so knowing an id used to be
+  enough to read its CPU/memory history from any host. The monitor already knew
+  which host each sample came from and was discarding it; it's now recorded and the
+  series is authorized against it. An id with nothing recorded is treated as
+  **unknown**, not as the local daemon, so a scoped caller can't probe ids to learn
+  what exists.
+
+  > The **alert engine** still watches every host, by design — it's background work
+  > with no user context. A rule that lists you as a recipient can therefore mail you
+  > about a host you can't see in the app. That's how you configure recipients, not
+  > something the app decides per viewer.
 
 - **A fallback role for LDAP mappings.** A mapping can name a role that has since
   been deleted; until now its members simply got nothing. Nominate a fallback in
