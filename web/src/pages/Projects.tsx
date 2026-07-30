@@ -614,10 +614,10 @@ function EditProjectModal({ project, hosts, deployed, onClose, onSaved }: { proj
           <label className="flex items-start gap-2 text-sm">
             {/* Checkboxes nested in a label double-fire on click, so this one is
                 a plain sibling of its text rather than wrapping it. */}
-            <input type="checkbox" className="mt-0.5" checked={allowHostPaths} onChange={(e) => setAllowHostPaths(e.target.checked)} />
+            <input type="checkbox" className="mt-1" checked={allowHostPaths} onChange={(e) => setAllowHostPaths(e.target.checked)} />
             <span>
               Allow host paths
-              <span className="block text-xs text-muted">
+              <span className="block text-xs text-muted mt-0.5">
                 Bind mounts pointing outside the project folder are normally refused on a remote deploy. Enable this to mount them from <strong>{hosts.find((h) => h.id === hostId)?.name ?? "the target host"}</strong>&apos;s own filesystem instead — their contents are whatever exists there, and nothing is copied. Requires the Hosts permission.
               </span>
             </span>
