@@ -1,5 +1,9 @@
 # Alerts
 
+
+> The **SMTP server** moved to [Settings → Email](settings.md#email-smtp) and is
+> now admin-only — it is one relay for the whole installation. Alert rules still
+> opt into e-mail here.
 [← Manual index](README.md)
 
 ![Alerts](images/alerts.png)

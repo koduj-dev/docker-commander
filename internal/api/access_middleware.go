@@ -37,8 +37,15 @@ func sectionForPath(path string) string {
 		return "events"
 	case "parse-rules":
 		return "logs"
-	case "alerts", "alert-rules", "webhooks", "smtp":
+	case "alerts", "alert-rules", "webhooks":
 		return "alerts"
+	case "smtp":
+		// The SMTP config is a single INSTANCE-WIDE outbound mail relay with a
+		// stored credential — the same category as the LDAP bind password, and it
+		// is growing beyond alerting into system notifications. It used to sit
+		// under "alerts", which let any non-admin holding that section repoint the
+		// whole instance's mail (and thus receive its notifications).
+		return "__admin"
 	case "hosts":
 		return "hosts"
 	case "registries":

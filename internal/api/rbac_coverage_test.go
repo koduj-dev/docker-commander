@@ -427,3 +427,55 @@ func TestPentestWSUnknownChannelFailsClosed(t *testing.T) {
 		}
 	}
 }
+
+// PENTEST: the SMTP config is a single instance-wide mail relay with a stored
+// credential, so it is admin-only. It used to be gated by the "alerts" section,
+// which let any non-admin holding that section repoint the whole instance's
+// outbound mail to a server they control — and thereby receive its notifications.
+// The password is never returned by the API, so this is about redirection and
+// takeover of delivery, not credential theft.
+func TestPentestSMTPConfigIsAdminOnly(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	srv := &Server{cfg: config.Config{}, store: st}
+
+	for _, p := range []string{"/api/smtp", "/api/smtp/test"} {
+		if got := sectionForPath(p); got != "__admin" {
+			t.Errorf("SECURITY: %s maps to %q, want \"__admin\"", p, got)
+		}
+	}
+
+	// A user holding alerts (writable, via a role) must be refused.
+	uid, _ := st.CreateUser(ctx, &store.User{Username: "alerter", Role: "user"})
+	roleID, err := st.CreateRole(ctx, &store.Role{
+		Name: "Alerter", Sections: []store.RoleSection{{Section: "alerts", Write: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetUserRoles(ctx, uid, []int64{roleID}); err != nil {
+		t.Fatal(err)
+	}
+	u, _ := st.UserByID(ctx, uid)
+
+	if err := srv.checkAccess(ctx, u, sectionForPath("/api/smtp"), true); err == nil {
+		t.Error("SECURITY: an alerts-only account can still rewrite the instance SMTP relay")
+	}
+	// …while the rest of the alerts surface still works for them, so the change is
+	// narrowly scoped rather than breaking alerting for non-admins.
+	for _, p := range []string{"/api/alerts", "/api/alert-rules", "/api/webhooks"} {
+		if err := srv.checkAccess(ctx, u, sectionForPath(p), true); err != nil {
+			t.Errorf("an alerts role should still manage %s: %v", p, err)
+		}
+	}
+
+	admin, _ := st.CreateUser(ctx, &store.User{Username: "root", Role: "admin"})
+	au, _ := st.UserByID(ctx, admin)
+	if err := srv.checkAccess(ctx, au, sectionForPath("/api/smtp"), true); err != nil {
+		t.Errorf("an admin must still configure SMTP: %v", err)
+	}
+}

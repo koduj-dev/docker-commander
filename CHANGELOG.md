@@ -36,6 +36,18 @@ All notable changes to Docker Commander are documented here. The format follows
   _This is phase 1 of [design/rbac-roles-and-host-scoping.md](design/rbac-roles-and-host-scoping.md); per-host scoping is phase 2._
 
 ### Security
+- **The SMTP config is now admin-only, and lives under Settings → Email.**
+  It is a *single instance-wide* outbound mail relay with a stored credential, but
+  it was gated by the **alerts** section — so any non-admin with write access to
+  alerts could repoint the whole installation's mail at a server they control and
+  receive its notifications. (The password was never returned by the API, so this
+  was about redirecting delivery, not reading the secret.) `/api/smtp` and
+  `/api/smtp/test` now require admin.
+
+  **This narrows an existing permission:** someone who managed alerts *including*
+  their e-mail delivery will now need an admin to configure the relay. The rest of
+  the alerts surface — feed, rules, webhooks — is unchanged for them, and alert
+  rules can still opt into e-mail.
 - **Raw `inspect` no longer readable without the owning section.**
   `GET /api/inspect/{kind}` returns the **raw** Docker inspect payload, which for a
   container includes `Config.Env` — database passwords, API keys. It was ungated,
@@ -85,6 +97,11 @@ All notable changes to Docker Commander are documented here. The format follows
   project's seed label are touched.
 
 ### Changed
+- **Settings and MCP Admin are now tabbed**, using the same shared tab bar as
+  Alerts, Templates and the container detail view: Settings splits into
+  **Features / Security / LDAP / Email**, and MCP Admin into **API tokens / OAuth
+  clients**. The SMTP form moved from Alerts → Settings → Email (see Security
+  above); Alerts keeps Feed / Rules / Webhooks.
 - **Changing a deployed project's target host now warns first.** It does not tear
   the project down on the old host, so you would end up with two live copies
   while the page showed only the new one. The host picker says so inline and asks
