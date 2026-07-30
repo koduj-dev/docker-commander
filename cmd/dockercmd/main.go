@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"crypto/tls"
@@ -10,6 +11,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -21,8 +23,11 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/term"
+
 	"github.com/koduj-dev/docker-commander/internal/api"
 	"github.com/koduj-dev/docker-commander/internal/auth"
+	"github.com/koduj-dev/docker-commander/internal/backup"
 	"github.com/koduj-dev/docker-commander/internal/config"
 	"github.com/koduj-dev/docker-commander/internal/crypto"
 	"github.com/koduj-dev/docker-commander/internal/docker"
@@ -83,6 +88,37 @@ func serviceAction() string {
 	return ""
 }
 
+// backupAction reports a --backup/--restore request: the action, the file it
+// names, and whether --passphrase was given. Like the other standalone actions it
+// runs instead of the server, so it is parsed before the flag set.
+//
+// --passphrase takes no value on the command line: the passphrase is read from
+// the terminal (or stdin when piped), so it never lands in shell history or in
+// the process list where any local user could read it.
+func backupAction() (action, file string, passphrase bool) {
+	args := os.Args[1:]
+	for i, a := range args {
+		if a == "--" {
+			break
+		}
+		switch a {
+		case "-backup", "--backup":
+			action = "backup"
+		case "-restore", "--restore":
+			action = "restore"
+		case "-passphrase", "--passphrase":
+			passphrase = true
+			continue
+		default:
+			continue
+		}
+		if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			file = args[i+1]
+		}
+	}
+	return action, file, passphrase
+}
+
 // wantsVersion reports whether the user asked for the version and exit, via
 // `--version`, `-version`, or a bare `version` subcommand. Like the other
 // standalone actions it's handled before the flag set parses.
@@ -141,6 +177,146 @@ func makeCerts(hosts []string) error {
 	return nil
 }
 
+// runBackupAction performs --backup / --restore and exits. Both need the data dir
+// from the normal config resolution, so the config is loaded but the server is
+// never started.
+func runBackupAction(action, file string, wantPassphrase bool) error {
+	if file == "" {
+		return fmt.Errorf("--%s needs a file path", action)
+	}
+	// Resolve the data dir WITHOUT config.Load(): that parses the server flag set,
+	// which doesn't know --backup/--restore and would reject them. Same approach
+	// as --make-certs. --data-dir is read by hand so it still works here.
+	dataDir := flagValue("-data-dir", "--data-dir")
+	if dataDir == "" {
+		dataDir = config.ResolveDataDir()
+	}
+	var passphrase string
+	var err error
+	if wantPassphrase {
+		if passphrase, err = readPassphrase(action == "backup"); err != nil {
+			return err
+		}
+	}
+
+	switch action {
+	case "backup":
+		// Snapshot through a live connection so the WAL is accounted for. This is
+		// safe with the server running.
+		st, err := store.Open(filepath.Join(dataDir, "docker-commander.db"))
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		if err := backup.Create(dataDir, file, storeBackuper{st}, passphrase); err != nil {
+			return err
+		}
+		fmt.Printf("backup written to %s\n", file)
+		if passphrase == "" {
+			fmt.Println("WARNING: this archive is NOT encrypted and contains the encryption key alongside")
+			fmt.Println("         every stored secret (host TLS keys, SMTP and LDAP passwords, registry")
+			fmt.Println("         credentials). Treat it exactly like those secrets, or re-run with --passphrase.")
+		}
+		return nil
+	case "restore":
+		force := hasFlag("-force", "--force")
+		if err := backup.Restore(file, dataDir, passphrase, force); err != nil {
+			return err
+		}
+		fmt.Printf("restored %s into %s\n", file, dataDir)
+		fmt.Println("Start the server to use it.")
+		return nil
+	}
+	return fmt.Errorf("unknown action %q", action)
+}
+
+// storeBackuper adapts the store to backup.SQLiteBackuper (which is
+// context-free, so the package doesn't depend on the store).
+type storeBackuper struct{ st *store.Store }
+
+func (b storeBackuper) BackupTo(path string) error {
+	return b.st.BackupTo(context.Background(), path)
+}
+
+// flagValue returns the value following one of the given flag names, supporting
+// both "--name value" and "--name=value".
+func flagValue(names ...string) string {
+	args := os.Args[1:]
+	for i, a := range args {
+		if a == "--" {
+			break
+		}
+		for _, n := range names {
+			if a == n && i+1 < len(args) {
+				return args[i+1]
+			}
+			if strings.HasPrefix(a, n+"=") {
+				return strings.TrimPrefix(a, n+"=")
+			}
+		}
+	}
+	return ""
+}
+
+// hasFlag reports whether a bare flag was passed.
+func hasFlag(names ...string) bool {
+	for _, a := range os.Args[1:] {
+		if a == "--" {
+			break
+		}
+		for _, n := range names {
+			if a == n {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// readPassphrase obtains the backup passphrase without ever putting it on the
+// command line, where it would land in shell history and in /proc/<pid>/cmdline
+// for any local user to read.
+//
+// On a terminal it prompts with echo off (and asks twice when creating a backup).
+// When stdin is a pipe or file it reads one line instead — otherwise scheduled
+// backups could not be encrypted at all, which is the case that matters most.
+func readPassphrase(confirm bool) (string, error) {
+	fd := int(os.Stdin.Fd())
+	if !term.IsTerminal(fd) {
+		line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return "", fmt.Errorf("could not read the passphrase from stdin: %w", err)
+		}
+		pass := strings.TrimRight(line, "\r\n")
+		if pass == "" {
+			return "", errors.New("empty passphrase on stdin")
+		}
+		return pass, nil
+	}
+
+	fmt.Print("Passphrase: ")
+	first, err := term.ReadPassword(fd)
+	fmt.Println()
+	if err != nil {
+		return "", fmt.Errorf("could not read the passphrase: %w", err)
+	}
+	if len(first) == 0 {
+		return "", errors.New("empty passphrase")
+	}
+	if confirm {
+		fmt.Print("Repeat: ")
+		again, err := term.ReadPassword(fd)
+		fmt.Println()
+		if err != nil {
+			return "", err
+		}
+		if string(again) != string(first) {
+			return "", errors.New("the passphrases do not match")
+		}
+	}
+	return string(first), nil
+}
+
 // usage prints the full help. The standalone actions (--version, --self-upgrade,
 // the --*-service trio) are intercepted before the flag set parses, so they
 // aren't flags and won't show up in flag.PrintDefaults() — they're listed here
@@ -157,6 +333,8 @@ Standalone actions:
   --version, version           print the version and exit
   --make-certs [host…]         write a self-signed TLS cert + key for HTTPS
   --self-upgrade [--check]     upgrade to the latest GitHub release (--check only reports)
+  --backup <file>              write a full backup of the data dir (add --passphrase to encrypt)
+  --restore <file>             restore a backup into the data dir (server must be stopped)
   --install-service            install as a systemd (Linux) / launchd (macOS) service
   --uninstall-service          remove the service
   --service-status             show the service status
@@ -193,6 +371,9 @@ func run() error {
 		return service.Uninstall(os.Stdout)
 	case "status":
 		return service.Status(os.Stdout)
+	}
+	if act, file, wantPass := backupAction(); act != "" {
+		return runBackupAction(act, file, wantPass)
 	}
 
 	cfg, err := config.Load()

@@ -10,6 +10,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -324,4 +325,19 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
 // error, which an idempotent ADD COLUMN migration expects on existing DBs.
 func isDuplicateColumn(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "duplicate column name")
+}
+
+// BackupTo writes a consistent snapshot of the database to path using
+// `VACUUM INTO`. The database runs in WAL mode, so copying the file directly is
+// unsafe: committed data can still live in the -wal file, and a copy taken during
+// a write yields a torn database. VACUUM INTO takes the snapshot through the
+// live connection instead, so it is safe while the server is running.
+func (s *Store) BackupTo(ctx context.Context, path string) error {
+	if _, err := os.Stat(path); err == nil {
+		// VACUUM INTO refuses to overwrite, and a stale file would fail the backup
+		// for a confusing reason.
+		return fmt.Errorf("store: %s already exists", path)
+	}
+	_, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, path)
+	return err
 }

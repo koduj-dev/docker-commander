@@ -290,7 +290,39 @@ permissions). The binary must be writable by the invoking user; **restart** the
 service afterwards to run the new version. (Installed from a package manager?
 Update through that instead.)
 
-## Backup
-Back up `DC_DATA_DIR` — it holds the SQLite database and the keys that sign
-sessions and encrypt stored secrets. Losing the keys means re-entering registry
-/ SMTP / LDAP passwords.
+## Backup & restore
+
+Everything the installation needs lives under the **data dir**: the SQLite
+database plus `projects/` and `project-templates/`. Both secret keys — the session
+signing secret and the at-rest encryption key — are rows *inside that database*, so
+a backup is self-contained and restores onto a fresh machine as-is.
+
+```bash
+dockercmd --backup /var/backups/dc-$(date +%F).tar.gz               # plain
+dockercmd --backup /var/backups/dc.tar.gz --passphrase              # encrypted (prompts)
+echo "$PASS" | dockercmd --backup /var/backups/dc.tar.gz --passphrase   # for cron
+```
+
+The backup is taken through a live database connection (`VACUUM INTO`), so it is
+**safe while the server is running** — copying the `.db` file yourself is not, as
+it runs in WAL mode and committed data can still sit in the `-wal` file.
+
+> ⚠️ **A backup is equivalent to every secret you have stored.** Because the
+> encryption key travels inside the database, the archive effectively contains the
+> plaintext of host TLS keys, the SMTP and LDAP passwords and registry credentials.
+> The file is written mode `0600`; use `--passphrase` (AES-256-GCM, Argon2id) if it
+> leaves the machine. The passphrase is read from the terminal or stdin, never from
+> the command line, so it stays out of shell history and `/proc/<pid>/cmdline`.
+
+Restoring replaces the data dir, so **stop the server first**:
+
+```bash
+systemctl stop dockercmd
+dockercmd --restore /var/backups/dc.tar.gz            # refuses if a DB is present
+dockercmd --restore /var/backups/dc.tar.gz --force    # overwrite an existing install
+systemctl start dockercmd
+```
+
+Restore refuses to overwrite an existing installation unless `--force`, so a
+mistyped path can't destroy a running instance. Archive entries are jailed to the
+data dir, so a tampered backup can't write elsewhere on the filesystem.

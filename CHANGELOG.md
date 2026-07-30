@@ -7,6 +7,20 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Backup & restore** — `dockercmd --backup <file>` writes a complete, portable
+  snapshot of the installation (database + `projects/` + `project-templates/`), and
+  `dockercmd --restore <file>` puts it back. The snapshot is taken through a live
+  connection with `VACUUM INTO`, so it is **safe to run while the server is up** —
+  copying the `.db` yourself is not, since it runs in WAL mode.
+
+  Both secret keys live inside the database, so a backup restores onto a fresh
+  machine as-is — and, for the same reason, the archive is equivalent to the
+  plaintext of every stored secret. It is written `0600`, and **`--passphrase`
+  encrypts it** (AES-256-GCM with an Argon2id-derived key). The passphrase is read
+  from the terminal, or from stdin when piped so scheduled backups can be encrypted
+  too; it is never passed as an argument, where it would land in shell history and
+  `/proc/<pid>/cmdline`. Restore refuses to overwrite an existing installation
+  without `--force`, and every archive entry is jailed to the data dir.
 - **Named RBAC roles** — a role is a reusable bundle of section grants, so an
   admin no longer ticks thirteen checkboxes per account. Each section in a role is
   independently **read-only or writable**, which is finer-grained than the
