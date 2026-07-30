@@ -52,6 +52,18 @@ encrypted secrets), useful locally out of the box, and friendly to ops
 - **OIDC / SSO** — Google/Azure/Okta login. _Why: enterprises standardise on SSO; LDAP (incl. group→section, v1.5) is step one._
 - **MCP — next** — the tool surface is deliberately **read + safe-control**; deferred by design (would need explicit, audited opt-in): `exec`/shell, image export, `prune`/`remove`, volume-content reads. Other ideas: **early revocation** of in-flight OAuth access JWTs (currently capped by the short 15-min TTL + live-RBAC recheck, not a denylist); a delegated **external IdP** option for the OAuth side (today the AS is self-contained). _Why: keep the default surface safe and let operators widen it consciously._
 
+- **Version matrix** — _shipped:_ the whole Docker suite re-runs against a pinned
+  `docker:NN-dind` per Engine major, nightly and on demand
+  ([compat.yml](.github/workflows/compat.yml)), with the floor (API 1.43) asserted
+  by a test rather than written down. Verified locally across all five: Engine
+  24.0.9 (API 1.43), 25.0.5 (1.44), 26.1.4 (1.45), 27.5.1 (1.47), 28.5.2 (1.51).
+  _Still open:_ it pins Engine **majors**, so `docker:24-dind` resolves to the
+  newest 24.x at pull time and a regression in a specific patch isn't caught the
+  moment it ships. Also unpinned: the **Compose** plugin version, which comes from
+  the runner rather than the matrix — worth its own axis if a Compose-shaped break
+  ever shows up, and the more likely one to bite, since Compose has since moved to
+  v5 while the matrix only ever varies the daemon.
+
 ## ⚠️ Gotchas worth remembering
 
 - `internal/api/respond.go` `decodeJSON` uses `DisallowUnknownFields()` — request bodies must contain **only** struct-declared fields (read-only fields like `hasPassword` must be stripped client-side; see `smtpPayload`/`ldapPayload`).

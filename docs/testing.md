@@ -20,6 +20,7 @@ you whether a remote deploy actually works.
 | **3 · Runtime smoke** | The real transport/CLI behaves as assumed — no mocks in the loop | MCP over real HTTP with the official SDK client; the Compose override resolved by the real `docker compose` | ⛔ needs Docker |
 | **4 · Integration** | Real Docker daemon, real Redis / OpenLDAP / SMTP | 10 test files behind `testing.Short()`; throwaway containers, skipped cleanly when unavailable | ⛔ needs Docker |
 | **5 · Multi-daemon end-to-end** | Remote operations against daemons that genuinely cannot see this machine | docker-in-docker sidecars over **TCP and SSH**, 1–3 at a time | ⛔ needs Docker + provisioning |
+| **6 · Version matrix** | The app works on the Docker Engine *you* run, not just the maintainer's | Tier 4 re-run against pinned `docker:NN-dind` for Engine 24–28 | 🌙 nightly + on demand ([compat.yml](../.github/workflows/compat.yml)) |
 
 ### Tier 2 — why adversarial tests get their own tier
 
@@ -61,6 +62,46 @@ transports, and two projects on one host not clobbering each other's data.
 The provisioning script never reads or writes your `~/.ssh` — it uses a throwaway
 key, its own `known_hosts`, and a dedicated single-key `ssh-agent`.
 
+### Tier 6 — why a version matrix, and what it already caught
+
+"Works on my daemon" is not an answer to "which Docker versions does this
+support?". Users run whatever their distro ships, and both halves of the Docker
+surface move: the Engine API (through the Go SDK) and the `docker compose` CLI.
+
+The matrix doesn't add new tests — it **re-runs tier 4** with the app pointed at a
+pinned `docker:NN-dind`, once per Engine major. `DC_COMPAT_DOCKER` swaps the
+fixture's host row for that daemon, and because host id 0 falls back to the first
+configured host, every existing test follows along unchanged.
+
+It earned its place on the first run. Against **Engine 24 (API 1.43)** one test
+failed that passes on Engine 29: after stopping a stack, `/containers/json` still
+reported a container as `running` for ~250 ms, while `inspect` already said
+`exited`. Newer engines are consistent immediately. The app polls that endpoint,
+so a user sees the correct state on the next refresh — the *test* was asserting
+instantaneous consistency, which is stricter than the app needs, and it now polls
+with a bounded wait. Without the matrix, that difference would have surfaced as a
+confusing bug report from someone on an older distro.
+
+**A slow first run against a fresh dind is not a hang.** The daemon starts with an
+empty image cache, so `alpine` is pulled from Docker Hub inside it, and the
+lifecycle test spends 2 × 10 s in `restart` + `stop` because busybox `sleep`
+ignores SIGTERM and Docker waits out the full grace period before SIGKILL. Budget
+a couple of minutes per major; a tight `-timeout` turns that into a panic that
+reads exactly like an incompatibility. (It did once — an "Engine 25 hang" that was
+nothing of the sort.)
+
+**A killed run poisons the next one.** `t.Cleanup` doesn't run when the binary
+dies on a `-timeout` panic or a Ctrl-C, so containers with fixed names survive and
+every later run fails with *"name is already in use"* — against a throwaway dind
+that also reads like a version-specific break. The fixture now force-removes its
+own names before creating them (`freeName`), so a poisoned daemon self-heals.
+
+**Both env vars are required**, and forgetting one fails confusingly:
+`DC_COMPAT_DOCKER` points the app's Docker client at the pinned daemon, while
+`DOCKER_HOST` points the `docker compose` subprocess at the same one. Set only the
+first and the Compose tests deploy to your own daemon, then hang waiting for
+containers that started somewhere else.
+
 ## Running the tests
 
 ```bash
@@ -80,6 +121,21 @@ DC_SSH_INTEGRATION=user@host:port go test ./internal/docker/ -run SSHHostKey   #
 scripts/remote-test-daemon.sh up 2                                             # tier 5, above
 ```
 
+Tier 6 — the version matrix — against one Engine major:
+
+```bash
+docker run -d --name dc-compat --privileged -e DOCKER_TLS_CERTDIR="" \
+  -p 127.0.0.1:12375:2375 docker:24-dind --host=tcp://0.0.0.0:2375 --tls=false
+DC_COMPAT_DOCKER=tcp://127.0.0.1:12375 DOCKER_HOST=tcp://127.0.0.1:12375 \
+  go test -count=1 -run 'TestIntegration|TestCompat' ./internal/docker/
+docker rm -f dc-compat
+```
+
+`TestCompatNegotiatedVersions` logs a `COMPAT=` line with the engine, negotiated
+API and Compose versions, and fails if the negotiation lands below the floor in
+`minAPIVersion`. That constant, not a sentence in a doc, is what makes the README
+table true.
+
 > **Pass `-count=1` for tiers 3–5.** Go caches test results, and an environment
 > variable change does **not** invalidate that cache — a re-provisioned daemon will
 > otherwise replay the previous run's verdict. This is easy to lose an hour to.
@@ -94,10 +150,14 @@ scripts/remote-test-daemon.sh up 2                                             #
 
 Stated plainly, so nobody infers more than is there:
 
-- **CI runs tiers 1–2 only.** Everything touching a real daemon is developer-run,
-  because GitHub's runners would need Docker-in-Docker and provisioned sidecars.
-  A green CI badge therefore means "unit + adversarial tests pass", not "verified
-  against real daemons".
+- **CI runs tiers 1–2 on every push**, and **tier 6 nightly**. Tiers 3–5 are
+  developer-run, because GitHub's runners would need provisioned sidecars for the
+  multi-daemon work. A green CI badge therefore means "unit + adversarial tests
+  pass"; the nightly matrix badge is what says "and it still works on Engine
+  24–28".
+- **The matrix pins Engine majors, not every patch release.** `docker:24-dind`
+  resolves to the newest 24.x at pull time, so a regression in a specific patch
+  between nightly runs is not caught the moment it ships.
 - **No automated browser/UI test suite.** The frontend has type-checking and unit
   tests for logic, and UI changes are verified by hand. (`scripts/screenshots/`
   drives a real browser, but it generates documentation images — it asserts

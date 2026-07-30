@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,14 @@ import (
 
 // newManager builds a Manager backed by an in-memory store with a local host,
 // skipping the test if no Docker daemon is reachable.
+//
+// When DC_COMPAT_DOCKER names a daemon (e.g. tcp://127.0.0.1:12375), the suite
+// runs against THAT daemon instead of the local one. That is how the version
+// matrix works: the workflow points it at a pinned docker:NN-dind and this whole
+// file — the app's real Docker surface — becomes the compatibility test for that
+// Engine release. No test needed changing, because host id 0 resolves through
+// Manager.defaultHostID, which falls back to the first host when there is no
+// kind='local' row.
 func newManager(t *testing.T) (*Manager, context.Context) {
 	t.Helper()
 	if testing.Short() {
@@ -27,16 +36,34 @@ func newManager(t *testing.T) (*Manager, context.Context) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.EnsureLocalHost(context.Background()); err != nil {
+	ctx := context.Background()
+	if addr := os.Getenv("DC_COMPAT_DOCKER"); addr != "" {
+		if _, err := st.CreateHost(ctx, &store.Host{
+			Name: "compat", Kind: hostKindFor(addr), Address: addr,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	} else if err := st.EnsureLocalHost(ctx); err != nil {
 		t.Fatal(err)
 	}
 	m := NewManager(st)
 	t.Cleanup(m.Close)
-	ctx := context.Background()
 	if _, err := m.SystemInfo(ctx, 0); err != nil {
 		t.Skipf("docker daemon not available: %v", err)
 	}
 	return m, ctx
+}
+
+// hostKindFor maps a daemon address to the store's host kind.
+func hostKindFor(addr string) string {
+	switch {
+	case strings.HasPrefix(addr, "ssh://"):
+		return "ssh"
+	case strings.HasPrefix(addr, "tcp://"), strings.HasPrefix(addr, "http://"), strings.HasPrefix(addr, "https://"):
+		return "tcp"
+	default:
+		return "local"
+	}
 }
 
 const testImage = "alpine:latest"
@@ -66,9 +93,25 @@ func rmContainer(ctx context.Context, t *testing.T, m *Manager, id string) {
 	_ = cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true})
 }
 
+// freeName force-removes any container already holding a fixed test name.
+//
+// t.Cleanup does not run when a test binary dies on a `-timeout` panic or a
+// Ctrl-C, so one killed run leaves containers behind and every later run fails
+// on "name is already in use" — a fixture artefact that reads exactly like a
+// real incompatibility when the daemon under test is a throwaway dind. Making
+// the fixture self-healing is cheaper than diagnosing that twice.
+func freeName(ctx context.Context, m *Manager, name string) {
+	cli, err := m.Client(ctx, 0)
+	if err != nil {
+		return
+	}
+	_ = cli.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
+}
+
 func startTestContainer(ctx context.Context, t *testing.T, m *Manager, name string) string {
 	t.Helper()
 	ensureImage(ctx, t, m)
+	freeName(ctx, m, name)
 	id, err := m.CreateContainer(ctx, 0, CreateSpec{
 		Image: testImage, Name: name, Cmd: []string{"sleep", "300"},
 		Env: []string{"FOO=bar"}, Start: true,
@@ -145,6 +188,7 @@ func TestIntegrationContainerLifecycle(t *testing.T) {
 	}
 
 	// rename + update limits + commit
+	freeName(ctx, m, "dctest_life2")
 	if err := m.RenameContainer(ctx, 0, id, "dctest_life2"); err != nil {
 		t.Errorf("RenameContainer: %v", err)
 	}
@@ -333,6 +377,7 @@ func TestIntegrationLogsAndEvents(t *testing.T) {
 func TestIntegrationProbePorts(t *testing.T) {
 	m, ctx := newManager(t)
 	ensureImage(ctx, t, m) // alpine is already present — no extra pull
+	freeName(ctx, m, "dctest_probe")
 	id, err := m.CreateContainer(ctx, 0, CreateSpec{
 		Image: testImage, Name: "dctest_probe", Cmd: []string{"sleep", "300"}, Start: true,
 		Ports: []PortSpec{{ContainerPort: "80", HostPort: "0"}}, // published; nothing listens

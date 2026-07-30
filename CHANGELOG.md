@@ -26,6 +26,31 @@ All notable changes to Docker Commander are documented here. The format follows
   and "failed" were the same state. It now says what went wrong and offers a retry.
 
 ### Added
+- **A Docker version compatibility matrix, and a README that says which versions
+  are tested.** The app talks to Docker two ways — the Engine API through the Go
+  SDK and the `docker compose` CLI as a subprocess — and both move, while users run
+  whatever their distro ships. Until now nothing said which versions that covers.
+
+  A [nightly workflow](.github/workflows/compat.yml) re-runs the whole Docker
+  integration suite against a pinned `docker:NN-dind` for **Engine 24 through 28**
+  and reports the negotiated API version. It isn't a new set of tests: pointing
+  `DC_COMPAT_DOCKER` at a daemon swaps the fixture's host, so every existing test
+  follows along. The README now states the floor — **Engine API 1.43 (Docker 24)** —
+  and a test fails if the app negotiates below it, so the table can't quietly drift
+  from reality.
+
+  All five majors pass: Engine 24.0.9 (API 1.43), 25.0.5 (1.44), 26.1.4 (1.45),
+  27.5.1 (1.47) and 28.5.2 (1.51). The matrix pins the **Engine**; the Compose
+  plugin is whichever one the runner ships, so it answers "which daemons work",
+  not "which Compose releases work".
+
+  **It caught a real difference on its first run.** On Engine 24, `/containers/json`
+  reports a container as `running` for ~250 ms after it has stopped, while `inspect`
+  already says `exited`; newer engines are consistent immediately. The app polls, so
+  a user sees the right state on the next refresh — but the stack test asserted
+  instantaneous consistency and was the one failure in the Engine 24 run. It now
+  polls with a bounded wait.
+
 - **Moving a project to another host can now actually move it.** Changing a
   deployed project's target host left the stack running on the old one — the app
   kept no record that anything was there, so you ended up with two live copies and

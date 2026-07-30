@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 )
@@ -15,6 +16,7 @@ func createLabeled(ctx context.Context, t *testing.T, m *Manager, name string, l
 	if err != nil {
 		t.Fatal(err)
 	}
+	freeName(ctx, m, name)
 	created, err := cli.ContainerCreate(ctx,
 		&container.Config{Image: testImage, Cmd: []string{"sleep", "300"}, Labels: labels},
 		&container.HostConfig{}, nil, nil, name)
@@ -65,7 +67,13 @@ func TestIntegrationStacks(t *testing.T) {
 	if err := m.StackAction(ctx, 0, project, "stop"); err != nil {
 		t.Fatalf("StackAction stop: %v", err)
 	}
-	if st := find(); st == nil || st.Running != 0 {
+	// Poll rather than assert instantly. Engine 24 (API 1.43) serves a briefly
+	// STALE /containers/json after a stop: inspect reports "exited" immediately
+	// while the list still says "running" for ~250ms. Newer engines are
+	// consistent at once. The app polls this endpoint, so it self-corrects within
+	// one refresh — asserting instantaneously is stricter than the app needs, and
+	// it is what made this test the only failure in the Engine 24 matrix run.
+	if st := findStopped(t, find); st == nil || st.Running != 0 {
 		t.Errorf("stack should be stopped: %+v", st)
 	}
 
@@ -81,4 +89,19 @@ func TestIntegrationStacks(t *testing.T) {
 	if st := find(); st != nil {
 		t.Errorf("stack should be gone after remove: %+v", st)
 	}
+}
+
+// findStopped waits for the container list to agree that nothing is running,
+// bounded so a genuine failure to stop still fails the test promptly.
+func findStopped(t *testing.T, find func() *Stack) *Stack {
+	t.Helper()
+	var st *Stack
+	for i := 0; i < 40; i++ {
+		st = find()
+		if st == nil || st.Running == 0 {
+			return st
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return st
 }
