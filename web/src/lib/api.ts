@@ -334,10 +334,19 @@ export const api = {
     if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText);
     return data as { id: number; slug: string; files: number };
   },
-  renameProject: (id: number, name: string, hostId?: number) =>
-    req<{ ok: boolean }>("PATCH", `/api/projects/${id}`, { name, hostId }),
-  deleteProject: (id: number, force = false) =>
-    req<{ ok: boolean; error?: string; output?: string }>("DELETE", `/api/projects/${id}${force ? "?force=1" : ""}`),
+  renameProject: (id: number, name: string, hostId?: number, allowRemoteHostPaths?: boolean) =>
+    req<{ ok: boolean }>("PATCH", `/api/projects/${id}`, { name, hostId, allowRemoteHostPaths: !!allowRemoteHostPaths }),
+  // Volumes seeded on a remote host for this project's bind mounts. Used by the
+  // delete flow to say how many there are before offering to remove them.
+  projectSeedVolumes: (id: number) =>
+    req<{ volumes: string[]; error?: string }>("GET", `/api/projects/${id}/seed-volumes`),
+  // `volumes` also removes the project's seeded volumes on its host — that's
+  // data, so it is only ever passed after an explicit confirmation.
+  deleteProject: (id: number, force = false, volumes = false) =>
+    req<{ ok: boolean; error?: string; output?: string; removedVolumes?: string[]; volumeError?: string }>(
+      "DELETE",
+      `/api/projects/${id}?${new URLSearchParams({ ...(force ? { force: "1" } : {}), ...(volumes ? { volumes: "1" } : {}) })}`,
+    ),
   projectFiles: (id: number) => req<ProjectFile[]>("GET", `/api/projects/${id}/files`),
   makeProjectDir: (id: number, name: string) => req<{ ok: boolean }>("POST", `/api/projects/${id}/files/dir`, { name }),
   writeProjectFile: (id: number, name: string, content: string) =>

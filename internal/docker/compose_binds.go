@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/volume"
 )
 
@@ -267,6 +268,57 @@ func (m *Manager) SeedProjectBinds(ctx context.Context, hostID int64, projectDir
 		}
 	}
 	return nil
+}
+
+// ListSeedVolumes returns the names of the volumes seeded for a project on a
+// host, found by the label the seeding stamps on them.
+func (m *Manager) ListSeedVolumes(ctx context.Context, hostID int64, slug string) ([]string, error) {
+	cli, err := m.Client(ctx, hostID)
+	if err != nil {
+		return nil, err
+	}
+	list, err := cli.VolumeList(ctx, volume.ListOptions{
+		Filters: filters.NewArgs(filters.Arg("label", seedVolLabel+"="+slug)),
+	})
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(list.Volumes))
+	for _, v := range list.Volumes {
+		names = append(names, v.Name)
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// RemoveSeedVolumes deletes a project's seeded volumes on a host, returning the
+// names actually removed. Only volumes carrying this project's seed label are
+// touched — never a host-global prune. Errors for individual volumes are
+// collected rather than aborting, so one still-in-use volume doesn't strand the
+// rest.
+func (m *Manager) RemoveSeedVolumes(ctx context.Context, hostID int64, slug string) (removed []string, err error) {
+	cli, err := m.Client(ctx, hostID)
+	if err != nil {
+		return nil, err
+	}
+	names, err := m.ListSeedVolumes(ctx, hostID, slug)
+	if err != nil {
+		return nil, err
+	}
+	var failures []string
+	for _, name := range names {
+		// Drop any lingering browser helper first, or the volume reads as in-use.
+		m.CloseVolumeBrowser(ctx, hostID, name)
+		if rerr := cli.VolumeRemove(ctx, name, true); rerr != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", name, rerr))
+			continue
+		}
+		removed = append(removed, name)
+	}
+	if len(failures) > 0 {
+		return removed, fmt.Errorf("could not remove %d seeded volume(s): %s", len(failures), strings.Join(failures, "; "))
+	}
+	return removed, nil
 }
 
 // tarPath archives src for extraction at a volume's root. A single file is stored

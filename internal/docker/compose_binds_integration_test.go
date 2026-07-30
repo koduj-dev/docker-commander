@@ -135,6 +135,75 @@ func mustClient(t *testing.T, m *Manager, hostID int64) *client.Client {
 	return cli
 }
 
+// Seed volumes are found and removed by label, scoped to one project. Critically
+// this must never touch anything else on the daemon — no host-global prune — so
+// the test plants a decoy volume and a second project's seeds and checks both
+// survive.
+func TestListAndRemoveSeedVolumes_Integration(t *testing.T) {
+	m, ctx := newManager(t)
+	cli, err := m.Client(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "html"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "html", "index.html"), "hi")
+	binds := []ProjectBind{{Service: "web", Target: "/usr/share/nginx/html", Rel: "html"}}
+
+	const mine, other = "seedvol-mine", "seedvol-other"
+	const decoy = "dcseed-not-a-seed-volume-decoy"
+	t.Cleanup(func() {
+		removeSeedVolume(t, m, 0, SeedVolumeName(mine, "html"))
+		removeSeedVolume(t, m, 0, SeedVolumeName(other, "html"))
+		_ = cli.VolumeRemove(context.Background(), decoy, true)
+	})
+
+	if err := m.SeedProjectBinds(ctx, 0, dir, mine, binds); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SeedProjectBinds(ctx, 0, dir, other, binds); err != nil {
+		t.Fatal(err)
+	}
+	// A volume whose NAME looks like a seed but carries no seed label.
+	if _, err := cli.VolumeCreate(ctx, volume.CreateOptions{Name: decoy}); err != nil {
+		t.Fatal(err)
+	}
+
+	names, err := m.ListSeedVolumes(ctx, 0, mine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 1 || names[0] != SeedVolumeName(mine, "html") {
+		t.Fatalf("listing should return only this project's seeds, got %v", names)
+	}
+
+	removed, err := m.RemoveSeedVolumes(ctx, 0, mine)
+	if err != nil {
+		t.Fatalf("removing this project's seeds: %v", err)
+	}
+	if len(removed) != 1 {
+		t.Errorf("expected 1 volume removed, got %v", removed)
+	}
+	if _, err := cli.VolumeInspect(ctx, SeedVolumeName(mine, "html")); err == nil {
+		t.Error("the seed volume should be gone")
+	}
+	// The other project's seed and the unlabelled decoy must be untouched.
+	if _, err := cli.VolumeInspect(ctx, SeedVolumeName(other, "html")); err != nil {
+		t.Errorf("SECURITY/BUG: another project's seed volume was removed: %v", err)
+	}
+	if _, err := cli.VolumeInspect(ctx, decoy); err != nil {
+		t.Errorf("SECURITY/BUG: an unlabelled volume with a seed-like name was removed: %v", err)
+	}
+
+	// Removing again is a no-op, not an error — the delete flow may retry.
+	if removed, err := m.RemoveSeedVolumes(ctx, 0, mine); err != nil || len(removed) != 0 {
+		t.Errorf("second removal should be a quiet no-op, got %v (err %v)", removed, err)
+	}
+}
+
 // A project with no internal binds must not create any volume.
 func TestSeedProjectBinds_NoBindsIsNoop(t *testing.T) {
 	m, ctx := newManager(t)

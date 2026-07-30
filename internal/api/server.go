@@ -167,6 +167,7 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/projects/{id}/files/dir", s.handleMakeProjectDir)
 			r.Get("/projects/{id}/download", s.handleDownloadProject)
 			r.Get("/projects/{id}/profiles", s.handleProjectProfiles)
+			r.Get("/projects/{id}/seed-volumes", s.handleProjectSeedVolumes)
 			r.Post("/projects/{id}/validate", s.handleValidateProject)
 			r.Post("/projects/{id}/resolve", s.handleResolveProject)
 			r.Post("/projects/{id}/summary", s.handleProjectSummary)

@@ -37,7 +37,7 @@ func TestRemoteBindNote(t *testing.T) {
 	note := remoteBindNote([]docker.ProjectBind{
 		{Service: "web", Rel: "html", Target: "/usr/share/nginx/html"},
 		{Service: "web", Rel: "nginx.conf", Target: "/etc/nginx/nginx.conf"},
-	})
+	}, nil)
 	for _, want := range []string{"html", "nginx.conf", "snapshot", "redeploy"} {
 		if !strings.Contains(note, want) {
 			t.Errorf("note %q should mention %q", note, want)
@@ -53,12 +53,50 @@ func TestRemoteBindNote_DeduplicatesPaths(t *testing.T) {
 	note := remoteBindNote([]docker.ProjectBind{
 		{Service: "web", Rel: "shared", Target: "/a"},
 		{Service: "api", Rel: "shared", Target: "/b"},
-	})
+	}, nil)
 	if !strings.Contains(note, "1 bind") {
 		t.Errorf("a shared source should count once: %q", note)
 	}
 	if strings.Count(note, "shared") != 1 {
 		t.Errorf("path should be listed once: %q", note)
+	}
+}
+
+// When a project opted into host paths, the note must say so loudly and name the
+// mounts — this is the one case where a deploy mounts something we never saw.
+func TestRemoteBindNote_PassedThroughHostPaths(t *testing.T) {
+	note := remoteBindNote(nil, []docker.ProjectBind{
+		{Service: "web", Source: "/etc/localtime", Target: "/etc/localtime"},
+	})
+	for _, want := range []string{"WARNING", "/etc/localtime", "REMOTE", "nothing was copied"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("note %q should mention %q", note, want)
+		}
+	}
+}
+
+// Both kinds at once: copied paths and passed-through host paths.
+func TestRemoteBindNote_BothKinds(t *testing.T) {
+	note := remoteBindNote(
+		[]docker.ProjectBind{{Service: "web", Rel: "html", Target: "/usr/share/nginx/html"}},
+		[]docker.ProjectBind{{Service: "web", Source: "/var/run/docker.sock", Target: "/sock"}},
+	)
+	if !strings.Contains(note, "Copied 1 bind") {
+		t.Errorf("note should report the copied path: %q", note)
+	}
+	if !strings.Contains(note, "/var/run/docker.sock") {
+		t.Errorf("note should report the passed-through path: %q", note)
+	}
+	// The copied part leads; the warning follows, separated as its own paragraph.
+	if !strings.Contains(note, "\n\nWARNING") {
+		t.Errorf("the warning should be its own paragraph: %q", note)
+	}
+}
+
+// Nothing to report must be empty, not a note claiming zero paths.
+func TestRemoteBindNote_EmptyWhenNothingHappened(t *testing.T) {
+	if got := remoteBindNote(nil, nil); got != "" {
+		t.Errorf("expected no note, got %q", got)
 	}
 }
 
