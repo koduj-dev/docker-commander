@@ -63,7 +63,7 @@ level filters, regex search and structured parsing.
 **Security & administration**
 - **Argon2id** passwords + **TOTP 2FA** (optionally exempt for localhost), rate limiting, strict headers, signed `HttpOnly` cookies.
 - **Multi-user** with **roles**, **per-section permissions**, **read-only** mode, global **feature flags**, and an **audit log**. Per-user UI preferences (filters) follow the account across browsers.
-- Optional **LDAP / Active Directory** login with auto-provisioning and **group → section mapping** (directory-driven permissions). Registry / SMTP / LDAP secrets **and host TLS private keys** are **encrypted at rest** (AES-256-GCM).
+- Optional **LDAP / Active Directory** login with auto-provisioning and **group mapping** — a directory group grants **named roles** (or raw sections), re-derived on every login, so membership drives permissions. Registry / SMTP / LDAP secrets **and host TLS private keys** are **encrypted at rest** (AES-256-GCM).
 
 **Ops**
 - Single CGO-free binary, embedded UI, systemd unit, config file, **native HTTPS** (built-in `--make-certs` self-signed cert helper, or behind a proxy), `/healthz` probe, and structured alert logging to the journal/syslog. See [Deployment](docs/deployment.md).

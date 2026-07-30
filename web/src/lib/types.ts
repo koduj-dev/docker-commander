@@ -74,6 +74,8 @@ export interface UpdateStatus {
 export interface LdapGroupMapping {
   groupDn: string;
   sections: string[];
+  /** Named roles granted to members of the group. Absent in configs written before roles existed. */
+  roleIds?: number[];
 }
 
 export interface LdapConfig {

@@ -7,6 +7,24 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **LDAP groups can grant named roles**, not just raw sections. A group mapping now
+  carries roles, so directory membership drives access the same way it drives
+  everything else in an AD shop: put someone in `cn=deployers`, they hold
+  **Deployer** on their next login; take them out, they lose it. Roles are
+  re-derived on **every login**, so revocation doesn't wait for a session to
+  expire. This completes phase 1 of
+  [design/rbac-roles-and-host-scoping.md](design/rbac-roles-and-host-scoping.md).
+
+  Two limits are deliberate and tested: a mapping **can never grant admin** (only
+  the admin group DN does that, and role management isn't reachable through any
+  role), and a role id left behind by a **deleted role grants nothing** rather than
+  failing the login.
+
+  Upgrading changes nothing on its own — roles become directory-driven only once at
+  least one mapping actually grants a role, so a config written before this release
+  keeps whatever roles an admin assigned by hand. Sections keep their existing,
+  stricter rule: any mapping at all makes LDAP authoritative for them.
+
 - **A profile page** (person icon beside *Sign out*) with three tabs. **Account** —
   who the installation thinks you are (username, account type, whether you sign in
   locally or through LDAP, created and last-seen), and your **alert e-mail**.

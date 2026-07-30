@@ -8,12 +8,15 @@ import (
 
 const ldapSettingKey = "ldap_config"
 
-// LDAPGroupMapping grants a set of RBAC sections to members of an LDAP group,
-// matched on the group's full DN. A user's effective sections are the union over
-// every mapping whose group they belong to.
+// LDAPGroupMapping grants access to members of an LDAP group, matched on the
+// group's full DN. A mapping can hand out named roles, a raw list of sections,
+// or both; a user's effective access is the union over every mapping whose group
+// they belong to. Roles are the intended way to use this — Sections predates
+// them and stays for configs written before roles existed.
 type LDAPGroupMapping struct {
 	GroupDN  string   `json:"groupDn"`
 	Sections []string `json:"sections"`
+	RoleIDs  []int64  `json:"roleIds"`
 }
 
 // LDAPConfig configures optional LDAP / Active Directory authentication. The
@@ -32,8 +35,11 @@ type LDAPConfig struct {
 	GroupMappings []LDAPGroupMapping `json:"groupMappings"`
 }
 
-// cleanGroupMappings drops blank group DNs and any unknown section keys so a
-// mapping can only ever grant real sections (no escalation via a bogus name).
+// cleanGroupMappings drops blank group DNs, any unknown section keys and any
+// non-positive role id, so a mapping can only ever grant real sections and
+// plausible roles (no escalation via a bogus name). Role ids are not checked for
+// existence here — a role deleted later would leave a stale id behind, so the id
+// is re-checked when the mapping is applied at login.
 func cleanGroupMappings(in []LDAPGroupMapping) []LDAPGroupMapping {
 	out := make([]LDAPGroupMapping, 0, len(in))
 	for _, m := range in {
@@ -49,7 +55,15 @@ func cleanGroupMappings(in []LDAPGroupMapping) []LDAPGroupMapping {
 				secs = append(secs, s)
 			}
 		}
-		out = append(out, LDAPGroupMapping{GroupDN: dn, Sections: secs})
+		seenRole := map[int64]bool{}
+		roles := make([]int64, 0, len(m.RoleIDs))
+		for _, id := range m.RoleIDs {
+			if id > 0 && !seenRole[id] {
+				seenRole[id] = true
+				roles = append(roles, id)
+			}
+		}
+		out = append(out, LDAPGroupMapping{GroupDN: dn, Sections: secs, RoleIDs: roles})
 	}
 	return out
 }

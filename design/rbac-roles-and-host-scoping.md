@@ -201,9 +201,17 @@ this work is not done until pentests assert:
 
 ## 7. Suggested phasing
 
-1. **Phase 1 — roles only.** Tables, effective-section computation, built-in
-   Viewer/Operator, role management UI, LDAP group→role. No host dimension. Ships
-   independently; no change to how hosts are reached.
+1. **Phase 1 — roles only.** ✅ **Shipped.** Tables, effective-section computation,
+   built-in Viewer/Operator, role management UI, LDAP group→role. No host
+   dimension. Ships independently; no change to how hosts are reached.
+
+   One rule was decided while implementing group→role, refining D6: roles become
+   directory-driven only once **at least one mapping actually grants a role**.
+   Gating on "any mapping exists" (as sections do) would have stripped
+   hand-assigned roles from every install whose mappings predate this release —
+   exactly the silent access change invariant 6 forbids. The cost is that emptying
+   the roles from *every* mapping stops role sync rather than revoking; removing a
+   role from *one* mapping still revokes normally.
 2. **Phase 2 — host scoping enforcement.** Host-aware `checkAccess`, the
    `resolveHostID` chokepoint, WS, MCP, audit host column, plus the full pentest
    set above.

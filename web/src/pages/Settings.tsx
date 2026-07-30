@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Loader2, ShieldOff, LayoutGrid, Network, Send, Plus, Trash2, Mail } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
-import type { LdapConfig } from "../lib/types";
+import type { LdapConfig, Role } from "../lib/types";
 import { sectionLabel } from "../lib/sections";
 import { PageHeader } from "../layout/Shell";
 import { Spinner } from "../components/ui";
@@ -128,21 +128,31 @@ function LdapSettings({ allSections }: { allSections: string[] }) {
   const [busy, setBusy] = useState<"" | "save" | "test">("");
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
+  const [roles, setRoles] = useState<Role[]>([]);
+
   const load = useCallback(() => {
     api.ldap().then(setCfg).catch(() => setCfg({ enabled: false, url: "", startTls: false, bindDn: "", userBaseDn: "", userFilter: "(uid=%s)", adminGroupDn: "", groupMappings: [] }));
   }, []);
   useEffect(() => load(), [load]);
+  useEffect(() => { api.roles().then(setRoles).catch(() => setRoles([])); }, []);
   if (!cfg) return null;
   const patch = (p: Partial<LdapConfig>) => setCfg({ ...cfg, ...p });
   const mappings = cfg.groupMappings ?? [];
   const setMappings = (m: typeof mappings) => patch({ groupMappings: m });
-  const addMapping = () => setMappings([...mappings, { groupDn: "", sections: [] }]);
+  const addMapping = () => setMappings([...mappings, { groupDn: "", sections: [], roleIds: [] }]);
   const updateMapping = (i: number, p: Partial<(typeof mappings)[number]>) => setMappings(mappings.map((m, j) => (j === i ? { ...m, ...p } : m)));
   const removeMapping = (i: number) => setMappings(mappings.filter((_, j) => j !== i));
   const toggleSection = (i: number, sec: string) => {
     const cur = mappings[i].sections;
     updateMapping(i, { sections: cur.includes(sec) ? cur.filter((s) => s !== sec) : [...cur, sec] });
   };
+  const toggleRole = (i: number, id: number) => {
+    const cur = mappings[i].roleIds ?? [];
+    updateMapping(i, { roleIds: cur.includes(id) ? cur.filter((r) => r !== id) : [...cur, id] });
+  };
+  // Roles are only authoritative once at least one mapping hands one out, so the
+  // hint below has to say which of the two modes the current config is in.
+  const mapsRoles = mappings.some((m) => (m.roleIds ?? []).length > 0);
 
   const run = async (kind: "save" | "test") => {
     setBusy(kind); setMsg(null);
@@ -171,26 +181,56 @@ function LdapSettings({ allSections }: { allSections: string[] }) {
 
       <div className="space-y-2 border-t border-border pt-3">
         <div className="flex items-center justify-between">
-          <label className="label mb-0">Group → section mappings (optional)</label>
+          <label className="label mb-0">Group mappings (optional)</label>
           <button className="btn-ghost px-2 py-1 text-xs" onClick={addMapping}><Plus className="h-3.5 w-3.5" /> Add mapping</button>
         </div>
-        <p className="text-xs text-muted">Grant RBAC sections by LDAP group membership. When any mapping is set, group membership is authoritative for non-admin users' sections — re-synced on each login (manual section edits are overwritten). Admins (via the admin group) see everything regardless.</p>
+        <p className="text-xs text-muted">
+          Grant access by LDAP group membership. Prefer <b>roles</b> — the sections below predate them
+          and are still applied for configs that use them. When any mapping is set, group membership is
+          authoritative for non-admin users' sections, re-synced on each login (manual section edits are
+          overwritten). {mapsRoles
+            ? "Because a mapping grants a role, roles are re-synced from the directory too — roles assigned by hand on an account are replaced on the next login."
+            : "No mapping grants a role yet, so roles assigned by hand on an account are left alone."}{" "}
+          Admins (via the admin group) see everything regardless.
+        </p>
         {mappings.map((m, i) => (
           <div key={i} className="rounded-md border border-border p-3 space-y-2">
             <div className="flex items-center gap-2">
               <input className="input font-mono flex-1" value={m.groupDn} onChange={(e) => updateMapping(i, { groupDn: e.target.value })} placeholder="cn=devops,ou=groups,dc=example,dc=com" />
               <button className="btn-ghost px-2 py-1 text-danger" title="Remove mapping" onClick={() => removeMapping(i)}><Trash2 className="h-4 w-4" /></button>
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              {allSections.map((sec) => (
-                <button
-                  key={sec}
-                  onClick={() => toggleSection(i, sec)}
-                  className={clsx("text-xs px-2 py-0.5 rounded-md border capitalize", m.sections.includes(sec) ? "bg-accent/20 border-accent/40 text-text" : "border-border text-muted")}
-                >
-                  {sectionLabel(sec)}
-                </button>
-              ))}
+            <div className="space-y-1">
+              <div className="text-[11px] uppercase tracking-wide text-muted">Roles</div>
+              {roles.length === 0 ? (
+                <p className="text-xs text-muted">No roles defined yet — create one under <b>Users → Roles</b>.</p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {roles.map((r) => (
+                    <button
+                      key={r.id}
+                      onClick={() => toggleRole(i, r.id)}
+                      title={r.description}
+                      className={clsx("text-xs px-2 py-0.5 rounded-md border", (m.roleIds ?? []).includes(r.id) ? "bg-accent/20 border-accent/40 text-text" : "border-border text-muted")}
+                    >
+                      {r.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="space-y-1">
+              <div className="text-[11px] uppercase tracking-wide text-muted">Sections</div>
+              <div className="flex flex-wrap gap-1.5">
+                {allSections.map((sec) => (
+                  <button
+                    key={sec}
+                    onClick={() => toggleSection(i, sec)}
+                    className={clsx("text-xs px-2 py-0.5 rounded-md border capitalize", m.sections.includes(sec) ? "bg-accent/20 border-accent/40 text-text" : "border-border text-muted")}
+                  >
+                    {sectionLabel(sec)}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         ))}

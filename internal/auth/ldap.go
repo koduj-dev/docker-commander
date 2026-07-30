@@ -74,6 +74,48 @@ func SectionsForGroups(cfg store.LDAPConfig, groups []string) []string {
 	return out
 }
 
+// RolesForGroups returns the union of role ids granted to a user who belongs to
+// the given group DNs. Matching is identical to SectionsForGroups (exact full DN,
+// case-insensitive). Ids are not validated against the roles table here; a role
+// deleted after the mapping was written is skipped when the roles are applied,
+// so a stale id grants nothing rather than failing the login.
+func RolesForGroups(cfg store.LDAPConfig, groups []string) []int64 {
+	if len(cfg.GroupMappings) == 0 || len(groups) == 0 {
+		return nil
+	}
+	member := make(map[string]bool, len(groups))
+	for _, g := range groups {
+		member[strings.ToLower(strings.TrimSpace(g))] = true
+	}
+	seen := map[int64]bool{}
+	var out []int64
+	for _, m := range cfg.GroupMappings {
+		if !member[strings.ToLower(strings.TrimSpace(m.GroupDN))] {
+			continue
+		}
+		for _, id := range m.RoleIDs {
+			if id > 0 && !seen[id] {
+				seen[id] = true
+				out = append(out, id)
+			}
+		}
+	}
+	return out
+}
+
+// MapsRoles reports whether any mapping hands out roles. It gates whether LDAP
+// becomes authoritative for role membership: a config written before roles
+// existed grants only sections, and must not silently wipe roles an admin
+// assigned by hand.
+func MapsRoles(cfg store.LDAPConfig) bool {
+	for _, m := range cfg.GroupMappings {
+		if len(m.RoleIDs) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // LDAPAuthenticate verifies a username/password against an LDAP/AD directory:
 // bind with the service account, search for the user, then bind as that user to
 // validate the password. If an admin group is configured, group membership is

@@ -36,9 +36,10 @@ Optional external authentication.
 - **User base DN** and **User filter** (must contain `%s`, e.g. `(uid=%s)` or
   `(sAMAccountName=%s)`).
 - **Admin group DN** (optional) — members are provisioned as admins.
-- **Group → section mappings** (optional) — grant RBAC sections by LDAP group
-  membership: add a mapping (a group DN + the sections its members get). A user's
-  sections are the **union** across every mapping whose group they belong to.
+- **Group mappings** (optional) — grant access by LDAP group membership: add a
+  mapping (a group DN + the **roles** its members get, and/or raw sections). A
+  user's access is the **union** across every mapping whose group they belong to.
+  Prefer roles; the section pills predate them and remain for older configs.
 - **Test** verifies dial / bind / search.
 
 **How login works:** local accounts always use their local password. A username
@@ -55,7 +56,16 @@ are overwritten). Group DNs are matched on the full DN, case-insensitively;
 unknown section names are ignored. The DN must match the form your directory
 returns in `memberOf` (DNs aren't canonicalised, so avoid stray inter-RDN
 spaces); if a mapping never applies, check the exact DN with **Test** or your
-directory tooling. The match fails closed — a mismatch only ever denies. The admin role stays "sticky" once granted —
+directory tooling. The match fails closed — a mismatch only ever denies.
+
+**Roles** follow the same matching but a different switch: they're re-synced from
+the directory only once **at least one mapping actually grants a role**, so
+upgrading doesn't strip roles from installs whose mappings predate them. See
+[Roles from LDAP groups](users.md) for the full table. A mapping can never grant
+admin — only the admin group DN does that — and a role id left behind by a deleted
+role grants nothing rather than failing the login.
+
+The admin role stays "sticky" once granted —
 removing someone from the admin group does not auto-demote them (avoids lockout
 if the directory is unreachable); demote them in [Users](users.md).
 
