@@ -330,7 +330,18 @@ export const api = {
   stackAction: (project: string, action: string) =>
     req<{ ok: boolean; error?: string }>("POST", `/api/stacks/${encodeURIComponent(project)}/${action}${hostParam()}`),
   stackCompose: (project: string) =>
-    req<{ ok: boolean; path?: string; content?: string; error?: string }>("GET", `/api/stacks/${encodeURIComponent(project)}/compose${hostParam()}`),
+    req<{ ok: boolean; path?: string; content?: string; error?: string; editable?: boolean; readOnlyReason?: string }>(
+      "GET",
+      `/api/stacks/${encodeURIComponent(project)}/compose${hostParam()}`,
+    ),
+  // Writes the compose file back to the host WITHOUT applying it — saving and
+  // redeploying are separate so a half-finished edit doesn't restart anything.
+  writeStackCompose: (project: string, content: string) =>
+    req<{ ok: boolean; path?: string; error?: string }>("PUT", `/api/stacks/${encodeURIComponent(project)}/compose${hostParam()}`, {
+      content,
+    }),
+  redeployStack: (project: string) =>
+    req<{ ok: boolean; output?: string; error?: string }>("POST", `/api/stacks/${encodeURIComponent(project)}/redeploy${hostParam()}`),
 
   // Compose projects (managed folders; local host only — no hostParam)
   projects: () => req<{ projects: Project[]; composeAvailable: boolean }>("GET", "/api/projects"),

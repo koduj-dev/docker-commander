@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Blocks, Play, Square, RotateCw, Trash2, Loader2, FileText, X, ChevronRight, Search, Copy, Check, Download, FolderGit2 } from "lucide-react";
+import { Blocks, Play, Square, RotateCw, Trash2, Loader2, FileText, X, ChevronRight, Search, Copy, Check, Download, FolderGit2, Save } from "lucide-react";
+import clsx from "clsx";
 import { api } from "../lib/api";
 import type { Stack, StackContainer } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
@@ -10,7 +11,18 @@ import { useDockerEventTick } from "../lib/dockerEvents";
 import { getPref, setPref } from "../lib/prefs";
 import { shortId } from "../lib/format";
 
-type ComposeView = { project: string; loading: boolean; path?: string; content?: string; error?: string };
+type ComposeView = {
+  project: string;
+  loading: boolean;
+  path?: string;
+  content?: string;
+  error?: string;
+  // editable is false for a TCP host (no filesystem to reach) or a stack with no
+  // working_dir label; readOnlyReason says which, so the modal can explain itself
+  // instead of just hiding the editor.
+  editable?: boolean;
+  readOnlyReason?: string;
+};
 type Hover = { c: StackContainer; x: number; y: number };
 const TOOLTIP_W = 288; // matches w-72
 
@@ -51,6 +63,10 @@ export function Stacks() {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => getPref("stacks.collapsed", {}));
   const [hover, setHover] = useState<Hover | null>(null);
   const [copied, setCopied] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [deploying, setDeploying] = useState(false);
+  const [deployOut, setDeployOut] = useState<{ ok: boolean; text: string } | null>(null);
   const [managed, setManaged] = useState<Set<string>>(new Set());
   const tick = useDockerEventTick();
   const dialogs = useDialogs();
@@ -110,11 +126,104 @@ export function Stacks() {
 
   const viewCompose = async (project: string) => {
     setCompose({ project, loading: true });
+    setDraft("");
+    setDeployOut(null);
     try {
       const r = await api.stackCompose(project);
-      setCompose(r.ok ? { project, loading: false, path: r.path, content: r.content } : { project, loading: false, error: r.error });
+      if (r.ok) {
+        setCompose({ project, loading: false, path: r.path, content: r.content, editable: r.editable, readOnlyReason: r.readOnlyReason });
+        setDraft(r.content ?? "");
+      } else {
+        setCompose({ project, loading: false, error: r.error });
+      }
     } catch (e) {
       setCompose({ project, loading: false, error: e instanceof Error ? e.message : "failed to read compose file" });
+    }
+  };
+
+  const dirty = compose?.content !== undefined && draft !== compose.content;
+
+  // saveCompose writes the file back to the host but does NOT apply it, so an
+  // operator can save a work-in-progress edit without restarting containers.
+  const saveCompose = async () => {
+    if (!compose || !dirty) return;
+    if (
+      !(await dialogs.confirm({
+        title: "Overwrite the compose file on the host",
+        message: (
+          <>
+            This replaces <code className="font-mono text-text">{compose.path}</code> on the host. The previous version is kept beside it as{" "}
+            <code className="font-mono text-text">.dc-prev</code>. Running containers are <strong>not</strong> touched until you redeploy.
+          </>
+        ),
+        danger: true,
+        confirmLabel: "Overwrite",
+      }))
+    )
+      return;
+    setSaving(true);
+    setDeployOut(null);
+    try {
+      const r = await api.writeStackCompose(compose.project, draft);
+      if (!r.ok) {
+        setDeployOut({ ok: false, text: r.error ?? "could not write the compose file" });
+        return;
+      }
+      setCompose((c) => (c ? { ...c, content: draft, path: r.path ?? c.path } : c));
+      setDeployOut({ ok: true, text: `Saved to ${r.path}` });
+    } catch (e) {
+      setDeployOut({ ok: false, text: e instanceof Error ? e.message : "could not write the compose file" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // closeCompose guards the editor's unsaved state: the modal is dismissed by
+  // clicking the backdrop, which is far too easy to do by accident to silently
+  // discard an edit to a production compose file.
+  const closeCompose = async () => {
+    if (
+      dirty &&
+      !(await dialogs.confirm({
+        title: "Discard changes",
+        message: "Your edits to this compose file haven't been saved to the host. Close anyway?",
+        danger: true,
+        confirmLabel: "Discard",
+      }))
+    )
+      return;
+    setCompose(null);
+  };
+
+  const redeploy = async () => {
+    if (!compose) return;
+    if (
+      !(await dialogs.confirm({
+        title: "Redeploy stack",
+        message: (
+          <>
+            Runs <code className="font-mono text-text">docker compose up -d</code> for{" "}
+            <code className="font-mono text-text">{compose.project}</code> in its working directory on the host. Containers whose definition
+            changed are <strong>recreated</strong>, which means a brief interruption.
+            {dirty && <> Your unsaved edits are not included — save them first.</>}
+          </>
+        ),
+        danger: true,
+        confirmLabel: "Redeploy",
+      }))
+    )
+      return;
+    setDeploying(true);
+    setDeployOut(null);
+    try {
+      const r = await api.redeployStack(compose.project);
+      setDeployOut({ ok: r.ok, text: r.output?.trim() || (r.ok ? "Redeployed." : (r.error ?? "redeploy failed")) });
+      if (!r.ok && r.error && r.output) setDeployOut({ ok: false, text: `${r.error}\n\n${r.output.trim()}` });
+      load();
+    } catch (e) {
+      setDeployOut({ ok: false, text: e instanceof Error ? e.message : "redeploy failed" });
+    } finally {
+      setDeploying(false);
     }
   };
 
@@ -137,10 +246,12 @@ export function Stacks() {
     });
   };
 
+  // Copy/download take what's on screen (the draft), not the last saved bytes —
+  // otherwise "Download" after an edit hands back the wrong file.
   const copyCompose = async () => {
-    if (!compose?.content) return;
+    if (!draft) return;
     try {
-      await navigator.clipboard.writeText(compose.content);
+      await navigator.clipboard.writeText(draft);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
@@ -148,10 +259,10 @@ export function Stacks() {
     }
   };
   const downloadCompose = () => {
-    if (!compose?.content) return;
+    if (!compose || !draft) return;
     // Split on both separators: a Windows daemon reports backslash paths.
     const name = compose.path ? compose.path.split(/[/\\]/).pop() || "compose.yml" : `${compose.project}.compose.yml`;
-    const url = URL.createObjectURL(new Blob([compose.content], { type: "text/yaml" }));
+    const url = URL.createObjectURL(new Blob([draft], { type: "text/yaml" }));
     const a = document.createElement("a");
     a.href = url;
     a.download = name;
@@ -270,7 +381,7 @@ export function Stacks() {
       {hover && <HoverCard hover={hover} />}
 
       {compose && (
-        <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={() => setCompose(null)}>
+        <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={closeCompose}>
           <div className="card w-[75vw] max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-3 p-4 border-b border-border">
               <FileText className="h-4 w-4 text-accent shrink-0" />
@@ -287,18 +398,61 @@ export function Stacks() {
                     <button className="btn-ghost px-2 py-1.5" onClick={downloadCompose} title="Download"><Download className="h-4 w-4" /></button>
                   </>
                 )}
-                <button className="btn-ghost px-2 py-1.5" onClick={() => setCompose(null)} title="Close"><X className="h-4 w-4" /></button>
+                <button className="btn-ghost px-2 py-1.5" onClick={closeCompose} title="Close"><X className="h-4 w-4" /></button>
               </div>
             </div>
-            <div className="p-4 overflow-auto">
+            <div className="p-4 overflow-auto flex-1 min-h-0 space-y-3">
               {compose.loading ? (
                 <div className="flex items-center gap-2 text-muted text-sm"><Spinner /> Reading compose file…</div>
               ) : compose.error ? (
                 <p className="text-sm text-danger">{compose.error}</p>
+              ) : compose.editable ? (
+                <textarea
+                  className="input w-full font-mono text-xs h-[46vh] resize-none"
+                  spellCheck={false}
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                />
               ) : (
-                <pre className="text-xs font-mono whitespace-pre overflow-x-auto bg-panel2 rounded-lg p-3">{compose.content}</pre>
+                <>
+                  <pre className="text-xs font-mono whitespace-pre overflow-x-auto bg-panel2 rounded-lg p-3">{compose.content}</pre>
+                  {compose.readOnlyReason && <p className="text-xs text-muted">Read-only — {compose.readOnlyReason}</p>}
+                </>
+              )}
+              {deployOut && (
+                <pre
+                  className={clsx(
+                    "text-xs font-mono whitespace-pre-wrap rounded-lg p-3 max-h-48 overflow-auto",
+                    deployOut.ok ? "bg-panel2 text-text/90" : "bg-danger/10 text-danger",
+                  )}
+                >
+                  {deployOut.text}
+                </pre>
               )}
             </div>
+            {!compose.loading && !compose.error && compose.editable && (
+              <div className="flex items-center gap-2 p-4 border-t border-border">
+                <span className="text-xs text-muted">
+                  {dirty ? "Unsaved changes" : "Saved"}
+                  {" · edits apply to the file on the host"}
+                </span>
+                <div className="flex items-center gap-2 ml-auto">
+                  <button
+                    className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40"
+                    disabled={!dirty || saving}
+                    onClick={() => setDraft(compose.content ?? "")}
+                  >
+                    Revert
+                  </button>
+                  <button className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40" disabled={!dirty || saving} onClick={saveCompose}>
+                    {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save
+                  </button>
+                  <button className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40" disabled={deploying || saving} onClick={redeploy}>
+                    {deploying ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCw className="h-4 w-4" />} Redeploy
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
