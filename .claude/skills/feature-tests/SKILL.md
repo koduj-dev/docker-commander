@@ -48,6 +48,64 @@ For each: craft the malicious request/input and assert a rejection
 rejected, that's a real finding — **fix it before shipping**, then keep the test
 as a regression guard.
 
+## 3. Prove the test can fail — mutation-test every guard
+
+A green test is not evidence. **Delete or disable the guard, re-run, and confirm
+the test fails — and read the failure message to confirm it fails for the RIGHT
+reason.** Then restore. Do this for every security guard and every non-obvious
+behaviour, before calling it done.
+
+This is not paranoia; it has caught vacuous tests repeatedly in this repo:
+
+- **A guard that something else also enforces.** `TestPentest…NonYAMLPathIsRefused`
+  passed with the `.yml`-suffix rule deleted, because the *payload* was invalid
+  compose and `docker compose config` rejected it first. The test named one guard
+  and exercised another. **Fix:** make the payload valid in every respect except
+  the one under test, so the guard is the only thing that can refuse it.
+- **A guard whose value is the message, not the rejection.** The empty-compose
+  check is functionally redundant (compose rejects empty files anyway), so
+  asserting "an error came back" passed with the guard gone. What the guard
+  actually buys is telling the operator that clearing the editor is not how you
+  remove a stack. **Fix:** assert the message, and say in a comment *why* the
+  assertion is on a string.
+- **An assertion too weak to fail.** Asserting "not 200" passed even with a
+  permission check removed, because a permission denial and an unrelated failure
+  shared a status code. **Fix:** assert the specific status, and split the
+  responses so they're distinguishable.
+
+Corollary: if you cannot make a test fail by breaking the thing it tests, it is
+not testing that thing.
+
+## 4. Fixture hygiene — Docker-backed tests
+
+Real-daemon tests leave real state. Three traps, all of which have cost real
+debugging time here:
+
+- **`t.Context()` is cancelled just BEFORE `t.Cleanup` runs.** A cleanup closure
+  that captured it can never reach the daemon, so removal silently fails and
+  fixture containers survive every run. Pass the background context (the one
+  `newManager` returns) into helpers that register cleanups — never `t.Context()`.
+- **A pentest whose guard fails produces real side effects.** If the attack is
+  `compose up -d`, letting it through starts containers the fixture's own cleanup
+  never sees. They then poison the *next* run — `ListStacks` groups by label, so a
+  survivor contributes its stale `config_files` path and the test fails on a
+  missing file instead of on what it is about. Clean up **what the attack
+  produced**, not just what the fixture created (`freeStack` in
+  `stacks_edit_pentest_test.go`).
+- **A killed run poisons the next one.** `t.Cleanup` does not run on a
+  `-timeout` panic or Ctrl-C, so containers with fixed names survive and every
+  later run fails with *"name is already in use"* — which, against a throwaway
+  daemon, reads exactly like a version-specific incompatibility. Fixtures using
+  fixed names must free their own name first (`freeName` in `integration_test.go`).
+
+**Verify it:** run the package twice in a row and check nothing is left
+(`docker ps -aq --filter name=dctest | wc -l` → 0 before and after). A suite that
+only passes on a clean machine is not passing.
+
+Related: **`go test` caches results and an env-var change does NOT invalidate the
+cache** — always `-count=1` for anything driven by `DC_*` env vars, or you will
+read the previous run's verdict about a daemon you just replaced.
+
 ## Where the patterns live (copy the style)
 
 - **Unit / table-driven** — throughout `internal/*/_test.go`.
@@ -61,6 +119,9 @@ as a regression guard.
 ## Before you call a feature done
 
 - New behaviour has tests; security surface has pentests; **all green**.
+- **Every guard was mutation-tested** — broken on purpose, seen to fail, seen to
+  fail for the right reason, restored.
+- Docker-backed tests leave **nothing behind** across two consecutive runs.
 - `go build ./...`, `go vet ./...`, `gofmt -l` clean; `go test -short ./...`
   green; `tsc -b` + a `web/dist` rebuild if `web/src` changed.
 - Update `docs/` + `CHANGELOG.md` for user-facing changes.

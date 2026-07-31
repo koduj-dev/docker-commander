@@ -36,6 +36,51 @@ They live next to what they guard — e.g. `internal/mcp/pentest_test.go`,
 `internal/docker/compose_binds_test.go`. When one of these finds a real hole, the
 rule is to fix the hole and keep the test as a regression guard.
 
+### Every guard is mutation-tested
+
+A green test is not evidence that it tests anything. The rule here is to **break
+the guard on purpose, watch the test fail, read *why* it failed, then restore**.
+
+That has caught genuinely vacuous tests more than once, and the failure modes are
+worth naming because they all look fine in review:
+
+- **Something else was doing the rejecting.** A test for the compose editor's
+  `.yml`-suffix rule passed with that rule deleted — the payload happened to be
+  invalid YAML, so `docker compose config` refused it first. The test named one
+  guard and exercised another. The fix is to make the payload valid in every
+  respect *except* the one under test.
+- **The guard's value is the message, not the rejection.** The empty-compose check
+  is functionally redundant (compose rejects empty files anyway), so "an error came
+  back" passed without it. What it actually buys is telling the operator that
+  clearing the editor is not how you remove a stack — so the test asserts the
+  message, with a comment saying why it asserts on a string.
+- **The assertion was too weak to fail.** Asserting "not 200" survived removing a
+  permission check, because a denial and an unrelated failure shared a status code.
+  Fixed by making the responses distinguishable and asserting the specific one.
+
+If you cannot make a test fail by breaking the thing it names, it is not testing
+that thing.
+
+### Fixture hygiene for daemon-backed tests
+
+Real-daemon tests leave real state, and every one of these has cost debugging time:
+
+- **`t.Context()` is cancelled just *before* `t.Cleanup` runs.** A cleanup closure
+  that captured it can never reach the daemon, so removal fails silently and
+  fixture containers survive every run. Pass the background context that
+  `newManager` returns into helpers that register cleanups.
+- **A pentest whose guard fails has real side effects.** When the attack under
+  test is `compose up -d`, letting it through starts containers the fixture's own
+  cleanup never sees — and they poison the *next* run, since `ListStacks` groups by
+  label and a survivor contributes its stale `config_files` path. Clean up what the
+  *attack* produced, not only what the fixture created (`freeStack`).
+- **A killed run poisons the next one.** `t.Cleanup` doesn't run on a `-timeout`
+  panic or Ctrl-C, so fixed-name containers survive and later runs fail with "name
+  is already in use" (`freeName` frees the name first).
+
+Check it rather than assume it: run the package twice and confirm
+`docker ps -aq --filter name=dctest | wc -l` is 0 before and after.
+
 ### Tier 5 — the part that's hard to fake
 
 Some behaviour simply cannot be verified against the local daemon, because the
