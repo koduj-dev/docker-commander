@@ -44,26 +44,37 @@ func composeProbe(ctx context.Context, bin string) bool {
 	return exec.CommandContext(cctx, bin, "compose", "version").Run() == nil
 }
 
-// ComposeUp runs `docker compose -p <slug> [--profile p…] up -d` in dir and
-// returns the combined stdout+stderr (for display) alongside any error. env adds
-// to the process environment (e.g. DOCKER_HOST to target a remote daemon); nil
-// runs against the local daemon.
-func ComposeUp(ctx context.Context, dir, slug string, profiles []string, env []string) (string, error) {
-	return ComposeUpFiles(ctx, dir, slug, profiles, env, nil)
+// ComposeUp runs `docker compose -p <slug> [--profile p…] up -d [--build]` in
+// dir and returns the combined stdout+stderr (for display) alongside any error.
+// env adds to the process environment (e.g. DOCKER_HOST to target a remote
+// daemon); nil runs against the local daemon.
+func ComposeUp(ctx context.Context, dir, slug string, profiles []string, env []string, build bool) (string, error) {
+	return ComposeUpFiles(ctx, dir, slug, profiles, env, nil, build)
 }
 
 // ComposeUpFiles is ComposeUp with an explicit compose file list, passed as
 // `-f` in order so later files override earlier ones. It's used by a remote
 // deploy, which layers an override repointing bind mounts at seeded volumes.
 // Empty files keeps the CLI's own file discovery.
-func ComposeUpFiles(ctx context.Context, dir, slug string, profiles, env, files []string) (string, error) {
-	args := make([]string, 0, len(profiles)*2+2)
+//
+// build adds `--build`. Without it, `up` only builds a service whose image is
+// MISSING — so the second deploy after editing a Dockerfile or a file in the
+// build context silently keeps running the old image, and the CLI reports
+// nothing more alarming than "Container Running". That is the opposite of what
+// the project editor promises, which is why callers deploying edited files pass
+// true. It is a no-op for services that declare no `build:`, so it costs nothing
+// on an image-only project.
+func ComposeUpFiles(ctx context.Context, dir, slug string, profiles, env, files []string, build bool) (string, error) {
+	args := make([]string, 0, len(profiles)*2+3)
 	for _, p := range profiles {
 		if p = strings.TrimSpace(p); p != "" {
 			args = append(args, "--profile", p)
 		}
 	}
 	args = append(args, "up", "-d")
+	if build {
+		args = append(args, "--build")
+	}
 	return runComposeFiles(ctx, dir, slug, env, files, args...)
 }
 

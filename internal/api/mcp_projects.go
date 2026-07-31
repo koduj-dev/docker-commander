@@ -62,7 +62,12 @@ func (s *Server) mcpDeployProject(ctx context.Context, id int64, profiles []stri
 		return "", err
 	}
 	defer cleanup()
-	return docker.ComposeUp(ctx, dir, p.Slug, profiles, env)
+	// Rebuild, matching the web UI. Not a widening of the MCP surface: `up`
+	// already builds a service whose image is missing, so deploying a project
+	// with a `build:` section could always run its Dockerfile. What this fixes is
+	// the inconsistency where the same project deployed through MCP would keep
+	// running a stale image while the UI refreshed it.
+	return docker.ComposeUp(ctx, dir, p.Slug, profiles, env, true)
 }
 
 // mcpDownProject runs `docker compose down` for a managed project.

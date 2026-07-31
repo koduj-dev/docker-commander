@@ -803,8 +803,15 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Profiles []string `json:"profiles"`
+		// Build is a pointer so "absent" is distinguishable from "false". Absent
+		// means REBUILD: a project's whole point is that the files in the editor
+		// are what runs, and plain `up -d` reuses an existing image no matter how
+		// the Dockerfile or its context changed. Sending false opts out for the
+		// rare case where re-sending a large context matters more than freshness.
+		Build *bool `json:"build"`
 	}
-	_ = decodeJSON(r, &body) // body is optional (empty → no profiles)
+	_ = decodeJSON(r, &body) // body is optional (empty → no profiles, rebuild)
+	build := body.Build == nil || *body.Build
 	dir := s.projectRoot(p.ID)
 	env, files, note, cleanup, err := s.projectDeployEnv(r.Context(), p, dir)
 	if err != nil {
@@ -812,7 +819,7 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer cleanup()
-	out, err := docker.ComposeUpFiles(r.Context(), dir, p.Slug, body.Profiles, env, files)
+	out, err := docker.ComposeUpFiles(r.Context(), dir, p.Slug, body.Profiles, env, files, build)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "output": out})
 		return

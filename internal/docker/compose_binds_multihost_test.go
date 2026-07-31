@@ -154,7 +154,7 @@ func deployTo(t *testing.T, m *Manager, h *store.Host, hostID int64, dir, slug s
 			removeSeedVolume(t, m, hostID, SeedVolumeName(slug, b.Rel))
 		}
 	})
-	out, err := ComposeUpFiles(ctx, dir, slug, nil, env, []string{"compose.yml", ovPath})
+	out, err := ComposeUpFiles(ctx, dir, slug, nil, env, []string{"compose.yml", ovPath}, false)
 	if err != nil {
 		t.Fatalf("deploy to %s failed: %v\n%s", h.Name, err, out)
 	}

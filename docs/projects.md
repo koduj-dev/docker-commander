@@ -128,9 +128,18 @@ On the compose file, two extra actions sit in the editor toolbar:
   **duplicate-host-port** check.
 
 ## Lifecycle
-- **Deploy / Redeploy** — runs `docker compose up -d` (with the selected
+- **Deploy / Redeploy** — runs `docker compose up -d --build` (with the selected
   profiles) **on the project's target host**. Redeploy re-applies after edits.
   The combined output is shown.
+
+  `--build` is what makes *"what's in the editor is what runs"* true for a
+  project with a `build:` section. Plain `up -d` builds a service only when its
+  image is **missing**, so without it the second deploy after editing a
+  Dockerfile — or any file in its build context — would silently keep running the
+  old image and report nothing worse than `Container Running`. It is a no-op for
+  services that only pull an image, so an image-only project pays nothing for it.
+  Callers that would rather not re-send a large context can `POST` the deploy
+  with `{"build": false}`.
 - **Down** — `docker compose down` on the target host (available once deployed).
 - **Settings** — changes the display name and the **target host**; the slug /
   compose project name stays fixed, so deployments remain stable.
@@ -187,7 +196,27 @@ longer what happens by accident.
 > moved. Leaving a running stack on a host the app no longer points at is the same
 > problem, only invisible.
 
-Remote deploy also works for **images, named volumes and builds**.
+### `build:` contexts on a remote host
+
+A project that builds its own image works against a remote daemon without any
+extra setup, and it's worth knowing *why*, because it is not the same mechanism as
+bind mounts:
+
+- A **build context is uploaded by Docker itself.** The build API takes the
+  context as a tar stream from the machine running the CLI, so the remote daemon
+  receives your local `./app` folder even though it can't see your filesystem. The
+  image is built **on the remote host** and exists only there.
+- A **bind mount is not uploaded by anything**, which is why Docker Commander
+  seeds it into a volume on the target host and repoints it with a generated
+  override (above).
+
+The two combine in one deploy — a project can build an image *and* mount sidecar
+configs — and a redeploy refreshes both: the image is rebuilt from the edited
+context, and the seeded files are re-copied.
+
+One consequence worth remembering: the build runs on the **target host's**
+architecture and daemon. A project that builds fine on your amd64 laptop can fail
+on an arm64 host, and the error comes back in the deploy output.
 
 ## Tips
 - Sidecar files are referenced from the compose file relative to the project
