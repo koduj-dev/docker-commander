@@ -72,20 +72,17 @@ export function ResourceBreakdown({ tick = 0 }: { tick?: number }) {
   } else if (containers.length === 0) {
     body = <div className="card p-4 text-sm text-muted">No running containers to sample.</div>;
   } else {
-    // Unlike CPU and memory there is no host ceiling to divide by, so this pie
-    // is each container's share of what is CURRENTLY moving — "who is talking
-    // most", not "how full the pipe is". The title carries the absolute figure so
-    // a big slice of nothing isn't mistaken for a problem.
+    // Network is NOT drawn as a pie. A pie claims "parts of a whole", and the only
+    // whole available here is the sum of what happens to be moving right now — so
+    // a container at 100% of 2 KB/s would look identical to one at 100% of
+    // 800 MB/s. Throughput is a magnitude, so it gets bars with the real numbers
+    // on them.
     const netTotal = containers.reduce((sum, c) => sum + c.netRxRate + c.netTxRate, 0);
     body = (
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <UsagePie title={`CPU · ${data.cpus} core${data.cpus === 1 ? "" : "s"}`} slices={build(containers, (c) => c.cpuPercent)} />
         <UsagePie title="Memory" slices={build(containers, (c) => c.memPercent)} />
-        <UsagePie
-          title={netTotal > 0 ? `Network · ${rate(netTotal)}` : "Network"}
-          slices={build(containers, (c) => c.netRxRate + c.netTxRate)}
-          empty={netTotal === 0 ? "No traffic right now" : undefined}
-        />
+        <TopTalkers containers={containers} total={netTotal} />
       </div>
     );
   }
@@ -93,9 +90,54 @@ export function ResourceBreakdown({ tick = 0 }: { tick?: number }) {
   return (
     <div>
       <h2 className="text-sm font-semibold text-muted mb-3">
-        Resource usage <span className="font-normal">· CPU and memory as a share of the host, network as a share of current throughput</span>
+        Resource usage <span className="font-normal">· CPU and memory as a share of the host; network as current throughput</span>
       </h2>
       {body}
+    </div>
+  );
+}
+
+// TopTalkers ranks containers by current throughput.
+//
+// Bars are scaled to the BUSIEST container, not to the total: the question is
+// "who is moving the most and how much", and the absolute rate is on every row so
+// the shape never has to carry the magnitude on its own. Single series, so no
+// legend — the title names it.
+function TopTalkers({ containers, total }: { containers: ResourceUsage[]; total: number }) {
+  const rows = containers
+    .map((c) => ({ name: c.name, value: c.netRxRate + c.netTxRate, rx: c.netRxRate, tx: c.netTxRate }))
+    .filter((r) => r.value > 0)
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 6);
+  const max = rows[0]?.value ?? 0;
+
+  return (
+    <div className="card p-4">
+      <div className="text-xs uppercase tracking-wide text-muted mb-2">
+        Network{total > 0 ? ` · ${rate(total)}` : ""}
+      </div>
+      {rows.length === 0 ? (
+        <div className="h-56 grid place-items-center text-sm text-muted">No traffic right now</div>
+      ) : (
+        <div className="h-56 flex flex-col justify-center gap-2.5">
+          {rows.map((r) => (
+            <div key={r.name}>
+              <div className="flex items-baseline justify-between gap-2 text-xs mb-1">
+                <span className="truncate font-mono">{r.name}</span>
+                <span className="text-muted shrink-0" title={`↓ ${rate(r.rx)} · ↑ ${rate(r.tx)}`}>
+                  {rate(r.value)}
+                </span>
+              </div>
+              <div className="h-1.5 rounded-full bg-panel2 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-accent"
+                  style={{ width: `${max > 0 ? Math.max(2, (r.value / max) * 100) : 0}%` }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -110,15 +152,7 @@ function PiePlaceholder({ loading }: { loading?: boolean }) {
   );
 }
 
-function UsagePie({ title, slices, empty }: { title: string; slices: Slice[]; empty?: string }) {
-  if (empty) {
-    return (
-      <div className="card p-4">
-        <div className="text-xs uppercase tracking-wide text-muted mb-2">{title}</div>
-        <div className="h-56 grid place-items-center text-sm text-muted">{empty}</div>
-      </div>
-    );
-  }
+function UsagePie({ title, slices }: { title: string; slices: Slice[] }) {
   return (
     <div className="card p-4">
       <div className="text-xs uppercase tracking-wide text-muted mb-2">{title}</div>

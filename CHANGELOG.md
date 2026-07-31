@@ -21,11 +21,12 @@ All notable changes to Docker Commander are documented here. The format follows
 - **Network counters are kept in metric history** (`netrx` / `nettx`, cumulative),
   so rates can be derived at read time whatever the sampling interval was.
 
-- **Network in the dashboard's resource breakdown**, beside CPU and memory. Unlike
-  those it has no host ceiling to divide by, so it is each container's share of what
-  is *currently moving* — "who is talking most" rather than "how full the pipe is" —
-  with the absolute figure in the title so a large slice of nothing isn't mistaken
-  for a problem, and an explicit "no traffic right now" instead of an empty circle.
+- **Network in the dashboard's resource breakdown**, beside CPU and memory — as a
+  ranked list of the busiest containers, **not** a pie. CPU and memory divide a real
+  whole (the host), so a pie is honest for them; network's only "whole" is the sum of
+  whatever happens to be moving, which would make a container at 100% of 2 KB/s look
+  identical to one at 100% of 800 MB/s. Bars are scaled to the busiest container and
+  every row carries its actual rate.
 
 - **Dropped packets and interface errors are kept in history**, as `netdrops` and
   `neterrors`. Stored RX+TX combined rather than as four series: they are near-zero
