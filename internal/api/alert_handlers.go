@@ -237,6 +237,14 @@ func (s *Server) handleListAlertEvents(w http.ResponseWriter, r *http.Request) {
 	unackQ.Unacked, unackQ.Limit, unackQ.Offset = true, 1, 0
 	unackQ.Severity, unackQ.Kind, unackQ.Container, unackQ.Rule, unackQ.Text = "", "", "", "", ""
 	unackQ.HostID = nil
+	// The badge means "something is wrong", so it counts only warnings and
+	// criticals. That is also why it needs no separate rule for resolved events:
+	// a condition ending is emitted as info, so good news can never make the
+	// number climb — which would train people to stop reading it.
+	unackQ.Severities = []string{"warning", "critical"}
+	// A resolved condition is good news, not an outstanding item. Counting it
+	// would make the badge climb as problems FIX themselves.
+	unackQ.ExcludeKind = store.KindResolved
 	_, unread, uerr := s.store.ListAlertEvents(r.Context(), unackQ)
 	if uerr != nil {
 		unread = 0
@@ -282,6 +290,9 @@ func (s *Server) handleAckAllAlertEvents(w http.ResponseWriter, r *http.Request)
 	if claims, ok := auth.ClaimsFrom(r.Context()); ok {
 		by = claims.Username
 	}
+	// Same rule as the badge: resolved events are never "outstanding", so bulk
+	// acknowledge leaves them alone rather than quietly marking them handled.
+	aq.ExcludeKind = store.KindResolved
 	n, err := s.store.AckMatchingAlertEvents(r.Context(), aq, by)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not acknowledge")

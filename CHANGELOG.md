@@ -26,6 +26,11 @@ All notable changes to Docker Commander are documented here. The format follows
   is truncated so a remote endpoint can't write unbounded data into the database.
   There is no automatic retry yet: failures are recorded, not re-attempted.
 
+  **The sidebar badge counts problems rather than events** — unacknowledged
+  warnings and criticals only. It previously counted every unacknowledged event,
+  including the `resolved` ones, so the number went *up* when a condition cleared.
+  A badge that grows as problems fix themselves is one people learn to ignore.
+
   **Acknowledging an alert records who did it** and when, and **Ack all** clears
   everything matching the current filters behind a confirm that names which of the
   two it will do. Filters include the **host**.

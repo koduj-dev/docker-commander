@@ -91,13 +91,21 @@ type AlertDelivery struct {
 
 // AlertQuery filters and pages the event feed. Zero values mean "no filter".
 type AlertQuery struct {
-	Severity  string
-	Kind      string
-	HostID    *int64
-	Container string // substring
-	Rule      string // substring
-	Text      string // substring of the message
-	Unacked   bool
+	Severity string
+	// Severities matches any of several, for callers that mean "the ones that
+	// indicate something is wrong" rather than one specific level.
+	Severities []string
+	Kind       string
+	HostID     *int64
+	Container  string // substring
+	Rule       string // substring
+	Text       string // substring of the message
+	Unacked    bool
+	// ExcludeKind drops one lifecycle kind from the result. Used to keep
+	// "resolved" out of anything that means "needs attention": a condition that
+	// ended is a record, not a task, and counting it trains people to ignore the
+	// badge.
+	ExcludeKind string
 	// HostIDs restricts the query to these hosts; nil means no restriction.
 	// Empty-but-non-nil means nothing is visible, which must return no rows
 	// rather than all of them — the difference is the whole point of the type.
@@ -271,6 +279,13 @@ func (q AlertQuery) where() (string, []any) {
 	if q.Severity != "" {
 		add("severity = ?", q.Severity)
 	}
+	if len(q.Severities) > 0 {
+		ph := strings.TrimSuffix(strings.Repeat("?,", len(q.Severities)), ",")
+		where = append(where, "severity IN ("+ph+")")
+		for _, sev := range q.Severities {
+			args = append(args, sev)
+		}
+	}
 	if q.Kind != "" {
 		add("kind = ?", q.Kind)
 	}
@@ -288,6 +303,9 @@ func (q AlertQuery) where() (string, []any) {
 	}
 	if q.Unacked {
 		where = append(where, "acknowledged = 0")
+	}
+	if q.ExcludeKind != "" {
+		add("kind <> ?", q.ExcludeKind)
 	}
 	if q.HostIDs != nil {
 		if len(q.HostIDs) == 0 {

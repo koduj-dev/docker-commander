@@ -71,6 +71,12 @@ the paging describe the whole result set, not the page you happen to be on.
 
 Filter by severity, lifecycle kind, **host**, rule, container and message text.
 
+The **sidebar badge counts problems**, not events: unacknowledged **warnings and
+criticals** only. A condition ending is recorded as `info`, so the number never
+climbs because something got *better* — a badge that grows as problems fix
+themselves is a badge people stop reading. Informational alerts still appear in
+the feed and still count in its totals; they just don't raise the alarm.
+
 **Acknowledging records who did it**, and when. "Someone dealt with this" is only
 useful if you can go and ask them. **Ack all** acknowledges everything matching
 the *current filters* — not the whole table — behind a confirm that says which of

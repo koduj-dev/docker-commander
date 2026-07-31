@@ -313,3 +313,68 @@ func TestAckAllHonoursNarrowerFilters(t *testing.T) {
 		t.Errorf("%d events left unacknowledged, want 4 — the filter was ignored", unacked)
 	}
 }
+
+// TestAlertBadgeCountsOnlyProblems pins what the sidebar number means.
+//
+// It is the count of things that are wrong, so it must not climb when a
+// condition RESOLVES — a badge that grows as problems fix themselves is a badge
+// people stop reading. Resolved events are emitted as info, so filtering by
+// severity covers it without a second rule about lifecycle kinds.
+func TestAlertBadgeCountsOnlyProblems(t *testing.T) {
+	s, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	seedEvents(t, s, ctx)
+
+	badge := AlertQuery{Unacked: true, Severities: []string{"warning", "critical"}}
+	_, n, err := s.ListAlertEvents(ctx, badge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Seed has: 1 critical, 3 warning, 1 info — and the resolved one is a warning
+	// in this fixture, so assert against the severity rule rather than a guess.
+	_, warncrit, _ := s.ListAlertEvents(ctx, AlertQuery{Severities: []string{"warning", "critical"}})
+	if n != warncrit {
+		t.Fatalf("badge counted %d, want %d (all unacknowledged warnings + criticals)", n, warncrit)
+	}
+
+	// The decisive case: adding a resolved/info event must not move the badge.
+	before := n
+	if _, err := s.InsertAlertEvent(ctx, &AlertEvent{
+		RuleName: "Memory", Severity: "info", Kind: KindResolved, HostID: 1,
+		ContainerName: "db-postgres", Message: "MEM back to normal after 2m",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, after, _ := s.ListAlertEvents(ctx, badge)
+	if after != before {
+		t.Errorf("a resolved condition moved the badge from %d to %d; good news must not read as an outstanding problem", before, after)
+	}
+
+	// An info event that is NOT a resolution is equally not a problem.
+	if _, err := s.InsertAlertEvent(ctx, &AlertEvent{
+		RuleName: "Note", Severity: "info", Kind: KindFiring, HostID: 1,
+		ContainerName: "web-nginx", Message: "informational",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, afterInfo, _ := s.ListAlertEvents(ctx, badge)
+	if afterInfo != before {
+		t.Errorf("an info alert moved the badge from %d to %d", before, afterInfo)
+	}
+
+	// But a new warning must, or the badge would be useless.
+	if _, err := s.InsertAlertEvent(ctx, &AlertEvent{
+		RuleName: "CPU", Severity: "warning", Kind: KindFiring, HostID: 1,
+		ContainerName: "queue-worker", Message: "CPU high",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, afterWarn, _ := s.ListAlertEvents(ctx, badge)
+	if afterWarn != before+1 {
+		t.Errorf("a new warning left the badge at %d, want %d", afterWarn, before+1)
+	}
+}
