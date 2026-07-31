@@ -36,6 +36,11 @@ All notable changes to Docker Commander are documented here. The format follows
   outstanding list waiting for a click that means nothing. One rule at the point of
   writing, rather than a special case in the badge, the filter and bulk acknowledge.
 
+  **Clicking an alert opens its detail** — full message, measured value, how long
+  the condition lasted, a link through to the container, acknowledgement, and every
+  delivery attempt with the endpoint's own response. The feed row can only ever show
+  a truncated view of any of that.
+
   **Acknowledging an alert records who did it** and when, and **Ack all** clears
   everything matching the current filters behind a confirm that names which of the
   two it will do. Filters include the **host**.

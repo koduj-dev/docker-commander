@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Plus, Trash2, Webhook as WebhookIcon, Check, CheckCheck, Pencil, Download, Upload } from "lucide-react";
+import { Plus, Trash2, Webhook as WebhookIcon, Check, CheckCheck, Pencil, Download, Upload, X } from "lucide-react";
+import { Link } from "react-router-dom";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import { triggerDownload } from "../components/LoadModal";
@@ -64,7 +65,7 @@ function Feed() {
   const [events, setEvents] = useState<AlertEvent[] | null>(null);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
-  const [expanded, setExpanded] = useState<number | null>(null);
+  const [detail, setDetail] = useState<AlertEvent | null>(null);
   const dialogs = useDialogs();
 
   // Filters. `text` is debounced into `q` so typing doesn't fire a request per
@@ -232,13 +233,7 @@ function Feed() {
               </thead>
               <tbody>
                 {events.map((e) => (
-                  <FeedRow
-                    key={e.id}
-                    e={e}
-                    expanded={expanded === e.id}
-                    onToggle={() => setExpanded(expanded === e.id ? null : e.id)}
-                    onAck={() => ack(e.id)}
-                  />
+                  <FeedRow key={e.id} e={e} onOpen={() => setDetail(e)} onAck={() => ack(e.id)} />
                 ))}
               </tbody>
             </table>
@@ -267,82 +262,184 @@ function Feed() {
           </div>
         </>
       )}
+      {detail && <AlertDetailModal e={detail} onClose={() => setDetail(null)} onAck={() => { void ack(detail.id); setDetail(null); }} />}
     </div>
   );
 }
 
-// FeedRow renders one event, expandable to its delivery attempts.
-function FeedRow({ e, expanded, onToggle, onAck }: { e: AlertEvent; expanded: boolean; onToggle: () => void; onAck: () => void }) {
+// FeedRow renders one event. The whole row opens the detail — the table can only
+// ever show a truncated view, and the message is often the least of it.
+function FeedRow({ e, onOpen, onAck }: { e: AlertEvent; onOpen: () => void; onAck: () => void }) {
   const deliveries = e.deliveries ?? [];
   return (
-    <>
-      <tr className={clsx("border-b border-border/50", e.acknowledged && "opacity-50")}>
-        <td className="px-4 py-2.5 text-muted whitespace-nowrap">{e.createdAt.slice(0, 19).replace("T", " ")}</td>
-        <td className="px-4 py-2.5 whitespace-nowrap">
+    <tr
+      className={clsx("border-b border-border/50 cursor-pointer hover:bg-panel2/40", e.acknowledged && "opacity-50")}
+      onClick={onOpen}
+    >
+      <td className="px-4 py-2.5 text-muted whitespace-nowrap">{e.createdAt.slice(0, 19).replace("T", " ")}</td>
+      <td className="px-4 py-2.5 whitespace-nowrap">
+        <span className={clsx("text-xs px-2 py-0.5 rounded-md font-medium capitalize", kindBadge(e))}>
+          {e.kind === "resolved" ? "resolved" : e.severity}
+        </span>
+        {e.kind && e.kind !== "firing" && e.kind !== "resolved" && (
+          <span className="ml-1 text-[10px] uppercase tracking-wide text-muted">{e.kind}</span>
+        )}
+      </td>
+      <td className="px-4 py-2.5">{e.ruleName}</td>
+      <td className="px-4 py-2.5 hidden lg:table-cell text-xs text-muted">{e.hostName || "—"}</td>
+      <td className="px-4 py-2.5 font-mono text-xs">{e.containerName}</td>
+      <td className="px-4 py-2.5 text-muted max-w-md truncate" title={e.message}>{e.message}</td>
+      <td className="px-4 py-2.5 hidden md:table-cell">
+        {deliveries.length === 0 ? (
+          <span className="text-xs text-muted">—</span>
+        ) : (
+          <span className="text-xs">
+            {deliveries.every((d) => d.ok) ? (
+              <span className="text-ok">delivered</span>
+            ) : deliveries.some((d) => d.ok) ? (
+              <span className="text-warn">partial</span>
+            ) : (
+              <span className="text-danger">failed</span>
+            )}
+            <span className="text-muted"> ({deliveries.length})</span>
+          </span>
+        )}
+      </td>
+      <td className="px-4 py-2.5 text-right whitespace-nowrap">
+        {e.acknowledged ? (
+          // No name means no person did it — a resolution is stored already
+          // settled, because there is nothing to act on once a condition has
+          // ended. Saying "ack" there would claim someone looked at it.
+          <span className="text-xs text-muted" title={e.acknowledgedAt ? `at ${e.acknowledgedAt.slice(0, 19).replace("T", " ")}` : undefined}>
+            {e.acknowledgedBy ? `ack by ${e.acknowledgedBy}` : "—"}
+          </span>
+        ) : (
+          <button
+            className="btn-ghost px-2 py-1"
+            title="Acknowledge"
+            onClick={(ev) => {
+              ev.stopPropagation(); // acknowledging is not "open the detail"
+              onAck();
+            }}
+          >
+            <Check className="h-4 w-4" />
+          </button>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+// AlertDetailModal is where an alert is actually readable: the full message, what
+// the number was, how long the condition lasted, who acknowledged it, and every
+// attempt made to deliver it — with a way through to the container it is about.
+function AlertDetailModal({ e, onClose, onAck }: { e: AlertEvent; onClose: () => void; onAck: () => void }) {
+  const deliveries = e.deliveries ?? [];
+  const row = (label: string, value: React.ReactNode) => (
+    <div className="grid grid-cols-[10rem_1fr] gap-3 py-1.5 border-b border-border/40 last:border-0">
+      <div className="text-xs uppercase tracking-wide text-muted pt-0.5">{label}</div>
+      <div className="text-sm break-words">{value}</div>
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+      <div className="card w-[70vw] max-w-[60rem] max-h-[80vh] flex flex-col" onClick={(ev) => ev.stopPropagation()}>
+        <div className="flex items-center gap-3 p-4 border-b border-border">
           <span className={clsx("text-xs px-2 py-0.5 rounded-md font-medium capitalize", kindBadge(e))}>
             {e.kind === "resolved" ? "resolved" : e.severity}
           </span>
-          {e.kind && e.kind !== "firing" && e.kind !== "resolved" && (
-            <span className="ml-1 text-[10px] uppercase tracking-wide text-muted">{e.kind}</span>
-          )}
-        </td>
-        <td className="px-4 py-2.5">{e.ruleName}</td>
-        <td className="px-4 py-2.5 hidden lg:table-cell text-xs text-muted">{e.hostName || "—"}</td>
-        <td className="px-4 py-2.5 font-mono text-xs">{e.containerName}</td>
-        <td className="px-4 py-2.5 text-muted">{e.message}</td>
-        <td className="px-4 py-2.5 hidden md:table-cell">
-          {deliveries.length === 0 ? (
-            <span className="text-xs text-muted">—</span>
-          ) : (
-            <button className="text-xs underline decoration-dotted" onClick={onToggle} title="Show delivery attempts">
-              {deliveries.every((d) => d.ok) ? (
-                <span className="text-ok">delivered</span>
-              ) : deliveries.some((d) => d.ok) ? (
-                <span className="text-warn">partial</span>
+          <div className="font-medium truncate">{e.ruleName}</div>
+          <button type="button" className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose} title="Close">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="p-4 overflow-y-auto space-y-4">
+          <div>
+            {row("Message", <span className="font-mono text-xs">{e.message}</span>)}
+            {row("Fired at", e.createdAt.slice(0, 19).replace("T", " "))}
+            {row("Lifecycle", <span className="capitalize">{e.kind || "firing"}</span>)}
+            {e.durationSec > 0 && row("Condition lasted", formatDuration(e.durationSec))}
+            {e.value !== null && e.value !== undefined && row("Measured value", e.value.toFixed(1))}
+            {row("Host", e.hostName || "local")}
+            {row(
+              "Container",
+              e.containerId ? (
+                <Link to={`/containers/${e.containerId}`} className="text-accent hover:underline font-mono text-xs" onClick={onClose}>
+                  {e.containerName || e.containerId.slice(0, 12)}
+                </Link>
               ) : (
-                <span className="text-danger">failed</span>
-              )}
-              <span className="text-muted"> ({deliveries.length})</span>
+                <span className="text-muted">—</span>
+              ),
+            )}
+            {row("Rule type", e.type || "—")}
+            {row(
+              "Acknowledged",
+              e.acknowledged ? (
+                e.acknowledgedBy ? (
+                  <>
+                    by <strong>{e.acknowledgedBy}</strong>
+                    {e.acknowledgedAt ? ` at ${e.acknowledgedAt.slice(0, 19).replace("T", " ")}` : ""}
+                  </>
+                ) : (
+                  // Settled without a person: a resolution needs no action.
+                  <span className="text-muted">not required — the condition ended</span>
+                )
+              ) : (
+                <span className="text-muted">no</span>
+              ),
+            )}
+          </div>
+
+          <div>
+            <div className="text-xs uppercase tracking-wide text-muted mb-2">Delivery</div>
+            {deliveries.length === 0 ? (
+              <p className="text-sm text-muted">
+                No webhook or e-mail delivery was attempted — the rule has neither enabled.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {deliveries.map((d) => (
+                  <div key={d.id} className="rounded-lg border border-border p-2.5 text-xs space-y-1">
+                    <div className="flex flex-wrap items-baseline gap-2">
+                      <span className={clsx("font-medium", d.ok ? "text-ok" : "text-danger")}>
+                        {d.ok ? "delivered" : "failed"}
+                      </span>
+                      <span className="uppercase tracking-wide text-muted">{d.channel}</span>
+                      <span className="font-mono">{d.target}</span>
+                      {d.status ? <span className="text-muted">HTTP {d.status}</span> : null}
+                      <span className="text-muted ml-auto">{d.attemptedAt.slice(0, 19).replace("T", " ")}</span>
+                    </div>
+                    {d.detail && <pre className="whitespace-pre-wrap break-all text-muted">{d.detail}</pre>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {!e.acknowledged && (
+          <div className="flex justify-end gap-2 p-4 border-t border-border">
+            <button className="btn-ghost px-3 py-1.5 text-sm" onClick={onClose}>
+              Close
             </button>
-          )}
-        </td>
-        <td className="px-4 py-2.5 text-right whitespace-nowrap">
-          {e.acknowledged ? (
-            // No name means no person did it — a resolution is stored already
-            // settled, because there is nothing to act on once a condition has
-            // ended. Saying "ack" there would claim someone looked at it.
-            <span className="text-xs text-muted" title={e.acknowledgedAt ? `at ${e.acknowledgedAt.slice(0, 19).replace("T", " ")}` : undefined}>
-              {e.acknowledgedBy ? `ack by ${e.acknowledgedBy}` : "—"}
-            </span>
-          ) : (
-            <button className="btn-ghost px-2 py-1" title="Acknowledge" onClick={onAck}>
-              <Check className="h-4 w-4" />
+            <button className="btn-primary px-3 py-1.5 text-sm" onClick={onAck}>
+              <Check className="h-4 w-4" /> Acknowledge
             </button>
-          )}
-        </td>
-      </tr>
-      {expanded && deliveries.length > 0 && (
-        <tr className="border-b border-border/50 bg-panel2/40">
-          <td colSpan={8} className="px-4 py-3">
-            <div className="space-y-1.5">
-              {deliveries.map((d) => (
-                <div key={d.id} className="text-xs flex flex-wrap items-baseline gap-2">
-                  <span className={clsx("font-medium", d.ok ? "text-ok" : "text-danger")}>
-                    {d.ok ? "delivered" : "failed"}
-                  </span>
-                  <span className="uppercase tracking-wide text-muted">{d.channel}</span>
-                  <span className="font-mono">{d.target}</span>
-                  {d.status ? <span className="text-muted">HTTP {d.status}</span> : null}
-                  <span className="text-muted">{d.attemptedAt.slice(0, 19).replace("T", " ")}</span>
-                  {d.detail && <span className="text-muted break-all">— {d.detail}</span>}
-                </div>
-              ))}
-            </div>
-          </td>
-        </tr>
-      )}
-    </>
+          </div>
+        )}
+      </div>
+    </div>
   );
+}
+
+// formatDuration renders how long a condition held, matching the engine's own
+// wording in resolved messages.
+function formatDuration(sec: number): string {
+  if (sec < 60) return `${sec}s`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s`;
+  return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
 }
 
 // ---- Rules ------------------------------------------------------------------

@@ -99,6 +99,17 @@ The feed, the badge and the toasts share **one** poll. They used to have separat
 timers, which meant a row could appear in the table seconds before the toast
 announcing it — the same event telling you about itself twice, out of order.
 
+## Alert detail
+
+**Click any row** to open it. A table can only ever show a truncated view, and
+the message is often the least of what matters. The detail has the full message,
+the measured value, how long the condition lasted, the host, a link straight to
+the **container** it is about, whether it was acknowledged and by whom, and every
+delivery attempt with the endpoint's own response.
+
+You can acknowledge from there too, so reading it and dealing with it aren't two
+separate trips.
+
 ## Was it actually delivered?
 
 Every webhook call and e-mail send is recorded against the alert, with the
