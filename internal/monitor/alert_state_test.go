@@ -248,6 +248,65 @@ func TestAlertRepeatsOnlyAfterTheInterval(t *testing.T) {
 	}
 }
 
+// TestAlertQuietCyclesDoNotResetTheRepeatClock catches a bug the first version of
+// TestAlertRepeatsOnlyAfterTheInterval could not: that test backdated the notify
+// time and then evaluated ONCE, so it never exercised what happens across many
+// quiet cycles. In production the silent branch ran every minute and wrote
+// notified_at = now each time, which meant the re-notify interval was never
+// reached and a persistent condition would have gone quiet forever.
+//
+// Asserting on the stored clock rather than on an emitted event is deliberate:
+// it pins the mechanism directly, without a test that has to sleep out a real
+// interval to observe it.
+func TestAlertQuietCyclesDoNotResetTheRepeatClock(t *testing.T) {
+	m, st, ctx := newAlertMonitor(t)
+	// A re-notify interval far longer than the ageing below, so these cycles take
+	// the quiet path rather than legitimately repeating.
+	id := addRule(t, st, ctx, "Memory", "warning", 5, "mem", 3600)
+	cs := busyContainer()
+
+	m.ready(id, cs.ID)
+	m.evalResourceRules(ctx, snapOf(cs))
+
+	first, _ := st.ListAlertStates(ctx)
+	if len(first) != 1 {
+		t.Fatalf("expected one condition, got %d", len(first))
+	}
+
+	// Age the clocks by a visible amount before the quiet cycles. Comparing
+	// timestamps taken moments apart would prove nothing: they are stored at
+	// RFC3339's one-second resolution, so a bumped clock and an untouched one
+	// look identical inside the same second — which is exactly how the first
+	// version of this test passed while the bug was present.
+	aged := first[0]
+	old := time.Now().Add(-5 * time.Minute).Truncate(time.Second)
+	if err := st.DeleteAlertState(ctx, aged.HostID, aged.ContainerID, aged.Metric); err != nil {
+		t.Fatal(err)
+	}
+	aged.StartedAt, aged.NotifiedAt = old, old
+	if err := st.UpsertAlertState(ctx, &aged); err != nil {
+		t.Fatal(err)
+	}
+
+	// Several evaluations with nothing changed — the quiet path.
+	for i := 0; i < 3; i++ {
+		m.ready(id, cs.ID)
+		m.evalResourceRules(ctx, snapOf(cs))
+	}
+
+	after, _ := st.ListAlertStates(ctx)
+	if len(after) != 1 {
+		t.Fatalf("expected one condition, got %d", len(after))
+	}
+	if !after[0].NotifiedAt.Equal(old) {
+		t.Fatalf("quiet evaluations moved the re-notify clock (%v -> %v); a persistent condition would never reach its repeat interval",
+			old, after[0].NotifiedAt)
+	}
+	if !after[0].StartedAt.Equal(old) {
+		t.Errorf("quiet evaluations moved the incident start (%v -> %v)", old, after[0].StartedAt)
+	}
+}
+
 // TestCPUTotalNormalisesByCoreCount: the reason a "> 80%" CPU rule fired forever
 // on multi-core hosts.
 func TestCPUTotalNormalisesByCoreCount(t *testing.T) {

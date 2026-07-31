@@ -373,10 +373,14 @@ func (m *Monitor) evalResourceRules(ctx context.Context, snap map[string]Contain
 		default:
 			// Still true, nothing changed, not yet time to repeat: say nothing.
 			// This is the whole point — silence here is the feature.
-			m.saveState(ctx, ck, c.stat, c.cfg, c.rule, &v, st.StartedAt, st.NotifiedAt, now)
+			// Carry the previous notify time forward. Writing `now` here would
+			// reset the re-notify clock on every evaluation, so a condition that
+			// stayed quiet could never reach its repeat interval — the silence
+			// would be permanent instead of bounded.
+			m.saveState(ctx, c.stat, c.cfg, c.rule, &v, st.StartedAt, st.NotifiedAt)
 			continue
 		}
-		m.saveState(ctx, ck, c.stat, c.cfg, c.rule, &v, orNow(st.StartedAt, now), now, now)
+		m.saveState(ctx, c.stat, c.cfg, c.rule, &v, orNow(st.StartedAt, now), now)
 	}
 
 	// Anything that was firing and no longer wins its condition has ended.
@@ -395,15 +399,14 @@ func (m *Monitor) evalResourceRules(ctx context.Context, snap map[string]Contain
 }
 
 // saveState persists a condition, preserving when it started.
-func (m *Monitor) saveState(ctx context.Context, ck string, cs ContainerStat, cfg resourceConfig,
-	r store.AlertRule, value *float64, startedAt, prevNotified, notifiedAt time.Time,
+func (m *Monitor) saveState(ctx context.Context, cs ContainerStat, cfg resourceConfig,
+	r store.AlertRule, value *float64, startedAt, notifiedAt time.Time,
 ) {
-	_ = ck
 	if startedAt.IsZero() {
-		startedAt = notifiedAt
+		startedAt = time.Now()
 	}
-	if prevNotified.IsZero() {
-		prevNotified = notifiedAt
+	if notifiedAt.IsZero() {
+		notifiedAt = time.Now()
 	}
 	_ = m.store.UpsertAlertState(ctx, &store.AlertState{
 		HostID: cs.HostID, HostName: cs.HostName,
