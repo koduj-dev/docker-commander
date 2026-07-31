@@ -250,8 +250,17 @@ func (s *Server) handleListAlertEvents(w http.ResponseWriter, r *http.Request) {
 	if uerr != nil {
 		unread = 0
 	}
+	// How many of the FILTERED set are still outstanding. The confirm dialog for
+	// "acknowledge all" quotes this: quoting `total` instead would promise to act
+	// on rows that are already acknowledged, and overstate what the button does.
+	outQ := aq
+	outQ.Unacked, outQ.Limit, outQ.Offset = true, 1, 0
+	_, outstanding, oerr := s.store.ListAlertEvents(r.Context(), outQ)
+	if oerr != nil {
+		outstanding = 0
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"events": events, "unread": unread, "total": total,
+		"events": events, "unread": unread, "total": total, "outstanding": outstanding,
 		"limit": aq.Limit, "offset": aq.Offset,
 	})
 }

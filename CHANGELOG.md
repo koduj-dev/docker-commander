@@ -102,6 +102,16 @@ All notable changes to Docker Commander are documented here. The format follows
   their basis and the core count.
 
 ### Security
+- **A failed webhook could write its own URL — and any token in it — into the
+  alert delivery record.** The record deliberately stores a webhook's *name and
+  host* rather than its URL, because webhook URLs routinely carry a secret in the
+  path or query and the record is readable by anyone holding the `alerts` section.
+  Transport failures slipped past that: `net/http` wraps them in a `*url.Error`
+  whose message embeds the full request URL, so a refused connection stored the
+  secret verbatim. The cause is now recorded without the URL, which keeps the
+  diagnostic value ("connection refused") and drops the credential. Found in review
+  before the feature was ever released.
+
 - **Removing an MCP OAuth client now revokes its access immediately.** Deleting a
   client purged its authorization codes and refresh tokens, which stopped it
   obtaining a *new* access token — but an access token is a **signed** credential,

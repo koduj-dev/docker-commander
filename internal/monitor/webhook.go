@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -83,7 +84,7 @@ func (d *dispatcher) dispatch(webhookID int64, ev *store.AlertEvent) {
 		req, err := http.NewRequestWithContext(ctx, method, wh.URL, bytes.NewReader(body))
 		if err != nil {
 			log.Printf("monitor: webhook request build: %v", err)
-			d.record(ctx, ev.ID, target, false, 0, "bad request: "+err.Error())
+			d.record(ctx, ev.ID, target, false, 0, "bad request: "+redactURL(err))
 			return
 		}
 		req.Header.Set("Content-Type", contentType)
@@ -94,7 +95,7 @@ func (d *dispatcher) dispatch(webhookID int64, ev *store.AlertEvent) {
 		resp, err := d.client.Do(req)
 		if err != nil {
 			log.Printf("monitor: webhook %q POST failed: %v", wh.Name, err)
-			d.record(ctx, ev.ID, target, false, 0, err.Error())
+			d.record(ctx, ev.ID, target, false, 0, redactURL(err))
 			return
 		}
 		defer resp.Body.Close()
@@ -143,4 +144,21 @@ func hostOf(raw string) string {
 		return "unknown host"
 	}
 	return u.Host
+}
+
+// redactURL returns a transport error's cause WITHOUT the URL it was reaching.
+//
+// net/http wraps failures in *url.Error, whose message embeds the full request
+// URL — and webhook URLs routinely carry a token in the path or query. Storing
+// err.Error() would therefore write that secret into alert_deliveries, which is
+// readable by anyone holding the alerts section, undoing the care taken to keep
+// the target field to a name and a host. The underlying cause ("dial tcp:
+// connection refused", "context deadline exceeded") is the diagnostic part, and
+// it carries no URL.
+func redactURL(err error) string {
+	var ue *url.Error
+	if errors.As(err, &ue) && ue.Err != nil {
+		return ue.Err.Error()
+	}
+	return err.Error()
 }

@@ -276,8 +276,7 @@ func (s *Store) DeleteAlertRule(ctx context.Context, id int64) error {
 
 // ---- Alert events -----------------------------------------------------------
 
-// InsertAlertEvent records a fired alert event and returns its ID.
-// InsertAlertEvent records an alert.
+// InsertAlertEvent records an alert and returns its ID.
 //
 // A resolution is stored ALREADY ACKNOWLEDGED. It is not a task — there is
 // nothing for anyone to do about a condition that ended — so it must never sit

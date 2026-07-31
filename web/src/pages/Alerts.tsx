@@ -76,6 +76,7 @@ const PAGE = 50;
 function Feed({ onAckAllReady }: { onAckAllReady: (fn: (() => void) | null) => void }) {
   const [events, setEvents] = useState<AlertEvent[] | null>(null);
   const [total, setTotal] = useState(0);
+  const [outstanding, setOutstanding] = useState(0);
   const [offset, setOffset] = useState(0);
   const [detail, setDetail] = useState<AlertEvent | null>(null);
   const [sort, setSort] = useState("time");
@@ -111,6 +112,7 @@ function Feed({ onAckAllReady }: { onAckAllReady: (fn: (() => void) | null) => v
       .then((r) => {
         setEvents(r.events);
         setTotal(r.total);
+        setOutstanding(r.outstanding);
       })
       .catch(() => setEvents([]));
   }, [severity, kind, container, rule, q, unacked, host, sort, desc, offset]);
@@ -146,13 +148,13 @@ function Feed({ onAckAllReady }: { onAckAllReady: (fn: (() => void) | null) => v
         title: "Acknowledge all",
         message: filtered ? (
           <>
-            Acknowledge every unacknowledged alert <strong>matching the current filters</strong> ({total} shown)? This
-            cannot be undone, and they will be attributed to you.
+            Acknowledge the <strong>{outstanding}</strong> outstanding alert{outstanding === 1 ? "" : "s"} matching the
+            current filters? This cannot be undone, and they will be attributed to you.
           </>
         ) : (
           <>
-            Acknowledge <strong>every</strong> unacknowledged alert ({total} in the feed)? This cannot be undone, and
-            they will be attributed to you.
+            Acknowledge <strong>all {outstanding}</strong> outstanding alert{outstanding === 1 ? "" : "s"}? This cannot
+            be undone, and they will be attributed to you.
           </>
         ),
         danger: true,

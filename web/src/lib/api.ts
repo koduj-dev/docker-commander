@@ -667,7 +667,7 @@ export const api = {
     if (params?.limit !== undefined) p.set("limit", String(params.limit));
     if (params?.offset !== undefined) p.set("offset", String(params.offset));
     const qs = p.toString();
-    return req<{ events: AlertEvent[]; unread: number; total: number; limit: number; offset: number }>(
+    return req<{ events: AlertEvent[]; unread: number; total: number; outstanding: number; limit: number; offset: number }>(
       "GET",
       `/api/alerts${qs ? `?${qs}` : ""}`,
     );
