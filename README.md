@@ -90,6 +90,44 @@ origin, so the production artifact is a single executable.
 | Auth     | Argon2id, TOTP ([pquerna/otp](https://github.com/pquerna/otp)), JWT, optional LDAP |
 | Frontend | React, TypeScript, Vite, Tailwind CSS, Recharts, React Flow, xterm.js |
 
+## 🐳 Docker versions
+
+The app talks to Docker two ways: the **Engine API** through the official Go SDK,
+and the **`docker compose` CLI** as a subprocess for project deploys. Both move,
+and you run whatever your distro ships — so here is what is actually tested, not
+what is hoped for.
+
+| | Version |
+|---|---|
+| **Minimum Engine API** | **1.43** (Docker Engine 24) |
+| **Tested Engine majors** | 24, 25, 26, 27, 28 (nightly; see the workflow runs for the current result) |
+| **Compose** | the `docker compose` plugin, v2 or newer (legacy `docker-compose` v1 is not supported) |
+| **Client SDK** | pinned in `go.mod`, negotiated **down** to the daemon at connect time |
+
+The SDK calls `WithAPIVersionNegotiation()`, so a newer client speaks whatever the
+daemon understands — you do not need to match versions. Below API 1.43 the app is
+neither tested nor claimed to work.
+
+These numbers are **measured, not remembered**: the
+[compatibility workflow](.github/workflows/compat.yml) runs the app's whole Docker
+integration suite against a pinned `docker:NN-dind` for each major, nightly and on
+demand, and prints the negotiated API version — plus the Compose version it ran
+with — for every run. Note that the Engine major is what gets pinned; the Compose
+plugin is whichever one the runner ships, so the matrix answers "which daemons
+work", not "which Compose releases work". Reproduce any row locally:
+
+```bash
+docker run -d --name dc-compat --privileged -e DOCKER_TLS_CERTDIR="" \
+  -p 127.0.0.1:12375:2375 docker:24-dind --host=tcp://0.0.0.0:2375 --tls=false
+DC_COMPAT_DOCKER=tcp://127.0.0.1:12375 DOCKER_HOST=tcp://127.0.0.1:12375 \
+  go test -count=1 -run 'TestIntegration|TestCompat' ./internal/docker/
+```
+
+> Both variables matter: `DC_COMPAT_DOCKER` points the app at the daemon,
+> `DOCKER_HOST` points the Compose CLI at the *same* one. Set only the first and
+> the Compose tests deploy to your own daemon and hang waiting for containers
+> that started somewhere else.
+
 ## 🚀 Quick start
 
 ### Option A — download a release binary

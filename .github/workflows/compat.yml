@@ -1,0 +1,94 @@
+name: Docker compatibility matrix
+
+# Which Docker Engine versions does Docker Commander actually work against?
+#
+# The main CI runs `go test -short`, which skips every Docker-backed test — they
+# need a live daemon and are subject to Docker Hub rate limits on shared runners.
+# That keeps PRs fast, but it means nothing in CI proves the app works on the
+# Engine your distro ships.
+#
+# This workflow closes that gap. Each job starts a pinned docker:NN-dind, points
+# the app's whole Docker integration suite at it, and reports the negotiated API
+# version. It runs nightly and on demand rather than per PR, so the cost lands
+# once a day instead of on every push.
+#
+# A red job here is a real compatibility break, not flakiness: the same suite is
+# green against the other versions in the same run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      versions:
+        description: 'JSON array of docker:NN-dind majors, e.g. ["24","28"]'
+        required: false
+        default: ''
+  schedule:
+    # 04:20 UTC — off the hour, so it isn't queued behind everyone's midnight cron.
+    - cron: '20 4 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      # One version failing must not cancel the others: the whole value here is
+      # seeing WHICH versions broke.
+      fail-fast: false
+      matrix:
+        docker: ["24", "25", "26", "27", "28"]
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v6
+        with:
+          go-version: "1.25"
+          cache: true
+
+      # A privileged dind sidecar, not the runner's own daemon: the point is to
+      # pin the Engine version, and the runner's is whatever GitHub ships.
+      # Loopback-only, TLS off — it is torn down with the job.
+      - name: Start docker:${{ matrix.docker }}-dind
+        run: |
+          docker run -d --name dc-compat --privileged \
+            -e DOCKER_TLS_CERTDIR="" \
+            -p 127.0.0.1:12375:2375 \
+            docker:${{ matrix.docker }}-dind \
+            --host=tcp://0.0.0.0:2375 --tls=false
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:12375/_ping >/dev/null && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:12375/version | tee /tmp/version.json
+
+      - name: Run the Docker suite against it
+        env:
+          # DC_COMPAT_DOCKER points the app's Manager at the pinned daemon.
+          DC_COMPAT_DOCKER: tcp://127.0.0.1:12375
+          # DOCKER_HOST points the `docker compose` CLI at the SAME daemon. Both
+          # are needed: the app uses the SDK for the Engine API and shells out to
+          # the Compose plugin, and letting them target different daemons makes
+          # the Compose tests hang waiting for containers that started elsewhere.
+          DOCKER_HOST: tcp://127.0.0.1:12375
+        run: go test -count=1 -timeout 20m -v -run 'TestIntegration|TestCompat' ./internal/docker/ 2>&1 | tee /tmp/test.log
+
+      - name: Summarise
+        if: always()
+        run: |
+          {
+            echo "### docker:${{ matrix.docker }}-dind"
+            echo
+            echo '```'
+            python3 -c "import json;d=json.load(open('/tmp/version.json'));print('engine', d['Version'], 'api', d['ApiVersion'], 'min-api', d['MinAPIVersion'])" || true
+            grep -h 'COMPAT=' /tmp/test.log || echo 'no COMPAT= line (the suite did not reach it)'
+            echo '```'
+            echo
+            grep -cE '^\s*--- FAIL' /tmp/test.log | sed 's/^/failed tests: /' || true
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Tear down
+        if: always()
+        run: docker rm -f dc-compat || true
