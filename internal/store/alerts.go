@@ -69,6 +69,41 @@ type AlertEvent struct {
 	Kind string `json:"kind"`
 	// DurationSec is how long the condition held, set on resolved events.
 	DurationSec int `json:"durationSec"`
+	// AcknowledgedBy names the user who acknowledged it — "someone dealt with
+	// this" is only useful if you can ask them about it.
+	AcknowledgedBy string     `json:"acknowledgedBy,omitempty"`
+	AcknowledgedAt *time.Time `json:"acknowledgedAt,omitempty"`
+	// Deliveries is filled in on request, not on every list.
+	Deliveries []AlertDelivery `json:"deliveries,omitempty"`
+}
+
+// AlertDelivery is one attempt to get an alert out of the building.
+type AlertDelivery struct {
+	ID        int64     `json:"id"`
+	EventID   int64     `json:"eventId"`
+	Channel   string    `json:"channel"` // webhook | email
+	Target    string    `json:"target"`  // webhook name + host, or recipients
+	OK        bool      `json:"ok"`
+	Status    int       `json:"status,omitempty"` // HTTP status, webhooks only
+	Detail    string    `json:"detail,omitempty"` // response excerpt or the error
+	Attempted time.Time `json:"attemptedAt"`
+}
+
+// AlertQuery filters and pages the event feed. Zero values mean "no filter".
+type AlertQuery struct {
+	Severity  string
+	Kind      string
+	HostID    *int64
+	Container string // substring
+	Rule      string // substring
+	Text      string // substring of the message
+	Unacked   bool
+	// HostIDs restricts the query to these hosts; nil means no restriction.
+	// Empty-but-non-nil means nothing is visible, which must return no rows
+	// rather than all of them — the difference is the whole point of the type.
+	HostIDs []int64
+	Limit   int
+	Offset  int
 }
 
 // AlertKind values. Anything level-triggered moves between these; anything
@@ -220,41 +255,164 @@ func (s *Store) InsertAlertEvent(ctx context.Context, e *AlertEvent) (int64, err
 	return res.LastInsertId()
 }
 
-// ListAlertEvents returns recent alert events (newest first), up to limit.
-func (s *Store) ListAlertEvents(ctx context.Context, limit int) ([]AlertEvent, error) {
-	if limit <= 0 || limit > 1000 {
-		limit = 200
+// ListAlertEvents returns a page of the event feed, newest first, plus the
+// total number of events matching the filter so a caller can page through it.
+//
+// The filter is built as parameterised fragments rather than string-concatenated
+// values: every one of these comes from a query string.
+func (s *Store) ListAlertEvents(ctx context.Context, q AlertQuery) ([]AlertEvent, int, error) {
+	if q.Limit <= 0 || q.Limit > 500 {
+		q.Limit = 50
 	}
+	if q.Offset < 0 {
+		q.Offset = 0
+	}
+
+	where := []string{"1=1"}
+	args := []any{}
+	add := func(frag string, v any) {
+		where = append(where, frag)
+		args = append(args, v)
+	}
+	if q.Severity != "" {
+		add("severity = ?", q.Severity)
+	}
+	if q.Kind != "" {
+		add("kind = ?", q.Kind)
+	}
+	if q.HostID != nil {
+		add("host_id = ?", *q.HostID)
+	}
+	if q.Container != "" {
+		add("container_name LIKE ? ESCAPE '\\'", "%"+escapeLike(q.Container)+"%")
+	}
+	if q.Rule != "" {
+		add("rule_name LIKE ? ESCAPE '\\'", "%"+escapeLike(q.Rule)+"%")
+	}
+	if q.Text != "" {
+		add("message LIKE ? ESCAPE '\\'", "%"+escapeLike(q.Text)+"%")
+	}
+	if q.Unacked {
+		where = append(where, "acknowledged = 0")
+	}
+	if q.HostIDs != nil {
+		if len(q.HostIDs) == 0 {
+			where = append(where, "0=1") // scoped to nothing: fail closed
+		} else {
+			ph := strings.TrimSuffix(strings.Repeat("?,", len(q.HostIDs)), ",")
+			where = append(where, "host_id IN ("+ph+")")
+			for _, id := range q.HostIDs {
+				args = append(args, id)
+			}
+		}
+	}
+	cond := strings.Join(where, " AND ")
+
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alert_events WHERE `+cond, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name, message, value, acknowledged, kind, duration_sec, created_at
-		FROM alert_events ORDER BY id DESC LIMIT ?`, limit)
+		SELECT id, rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name,
+		       message, value, acknowledged, kind, duration_sec, acknowledged_by, acknowledged_at, created_at
+		FROM alert_events WHERE `+cond+`
+		ORDER BY id DESC LIMIT ? OFFSET ?`, append(args, q.Limit, q.Offset)...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
-	var out []AlertEvent
+	out := []AlertEvent{}
 	for rows.Next() {
 		var e AlertEvent
-		var created string
+		var created, ackAt string
 		var value sql.NullFloat64
 		var ack int
 		if err := rows.Scan(&e.ID, &e.RuleID, &e.RuleName, &e.Type, &e.Severity, &e.HostID, &e.HostName, &e.ContainerID,
-			&e.ContainerName, &e.Message, &value, &ack, &e.Kind, &e.DurationSec, &created); err != nil {
-			return nil, err
+			&e.ContainerName, &e.Message, &value, &ack, &e.Kind, &e.DurationSec, &e.AcknowledgedBy, &ackAt, &created); err != nil {
+			return nil, 0, err
 		}
 		if value.Valid {
 			e.Value = &value.Float64
 		}
 		e.Acknowledged = ack != 0
 		e.CreatedAt, _ = time.Parse(time.RFC3339, created)
+		if t, err := time.Parse(time.RFC3339, ackAt); err == nil {
+			e.AcknowledgedAt = &t
+		}
 		out = append(out, e)
+	}
+	return out, total, rows.Err()
+}
+
+// escapeLike neutralises LIKE wildcards in user input, so searching for "100%"
+// looks for that text instead of matching every row, and "_" matches an
+// underscore rather than any character.
+//
+// Only meaningful together with the ESCAPE '\' clause on each LIKE: SQLite has
+// no default escape character, so without it these backslashes would be matched
+// literally and the filter would silently look for the wrong string.
+func escapeLike(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+}
+
+// RecordAlertDelivery stores the outcome of one delivery attempt.
+func (s *Store) RecordAlertDelivery(ctx context.Context, d *AlertDelivery) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO alert_deliveries (event_id, channel, target, ok, status, detail, attempted_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		d.EventID, d.Channel, d.Target, boolToInt(d.OK), d.Status, truncateDetail(d.Detail),
+		time.Now().UTC().Format(time.RFC3339))
+	return err
+}
+
+// truncateDetail caps what a remote endpoint can write into our database.
+func truncateDetail(s string) string {
+	const max = 500
+	s = strings.TrimSpace(s)
+	if len(s) > max {
+		return s[:max] + "…"
+	}
+	return s
+}
+
+// AlertDeliveriesFor returns the delivery attempts for the given events.
+func (s *Store) AlertDeliveriesFor(ctx context.Context, eventIDs []int64) (map[int64][]AlertDelivery, error) {
+	out := map[int64][]AlertDelivery{}
+	if len(eventIDs) == 0 {
+		return out, nil
+	}
+	ph := strings.TrimSuffix(strings.Repeat("?,", len(eventIDs)), ",")
+	args := make([]any, len(eventIDs))
+	for i, id := range eventIDs {
+		args[i] = id
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, event_id, channel, target, ok, status, detail, attempted_at
+		FROM alert_deliveries WHERE event_id IN (`+ph+`) ORDER BY id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var d AlertDelivery
+		var ok int
+		var at string
+		if err := rows.Scan(&d.ID, &d.EventID, &d.Channel, &d.Target, &ok, &d.Status, &d.Detail, &at); err != nil {
+			return nil, err
+		}
+		d.OK = ok != 0
+		d.Attempted, _ = time.Parse(time.RFC3339, at)
+		out[d.EventID] = append(out[d.EventID], d)
 	}
 	return out, rows.Err()
 }
 
-// AckAlertEvent marks an alert event acknowledged.
-func (s *Store) AckAlertEvent(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE alert_events SET acknowledged = 1 WHERE id = ?`, id)
+// AckAlertEvent marks an alert event acknowledged, recording who did it.
+func (s *Store) AckAlertEvent(ctx context.Context, id int64, by string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE alert_events SET acknowledged = 1, acknowledged_by = ?, acknowledged_at = ? WHERE id = ?`,
+		by, time.Now().UTC().Format(time.RFC3339), id)
 	return err
 }
 

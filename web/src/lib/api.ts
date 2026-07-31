@@ -635,7 +635,33 @@ export const api = {
   importAlertRules: (bundle: unknown) =>
     req<{ imported: number; warnings: string[] }>("POST", "/api/alert-rules/import", bundle),
 
-  alerts: () => req<{ events: AlertEvent[]; unread: number }>("GET", "/api/alerts"),
+  alerts: (params?: {
+    severity?: string;
+    kind?: string;
+    host?: number;
+    container?: string;
+    rule?: string;
+    q?: string;
+    unacked?: boolean;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const p = new URLSearchParams();
+    if (params?.severity) p.set("severity", params.severity);
+    if (params?.kind) p.set("kind", params.kind);
+    if (params?.host !== undefined) p.set("host", String(params.host));
+    if (params?.container) p.set("container", params.container);
+    if (params?.rule) p.set("rule", params.rule);
+    if (params?.q) p.set("q", params.q);
+    if (params?.unacked) p.set("unacked", "1");
+    if (params?.limit !== undefined) p.set("limit", String(params.limit));
+    if (params?.offset !== undefined) p.set("offset", String(params.offset));
+    const qs = p.toString();
+    return req<{ events: AlertEvent[]; unread: number; total: number; limit: number; offset: number }>(
+      "GET",
+      `/api/alerts${qs ? `?${qs}` : ""}`,
+    );
+  },
   ackAlert: (id: number) => req<{ ok: boolean }>("POST", `/api/alerts/${id}/ack`),
 
   // Saved log parsing rules (applied client-side in the Logs view)

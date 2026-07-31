@@ -62,6 +62,46 @@ Two consequences worth knowing, because they are the point:
 or a log line that matched has no later moment at which it stops being true, so
 those still use the plain cooldown and never resolve.
 
+## The feed
+
+The event feed is **paged** (50 at a time) and filterable by severity, lifecycle
+kind, rule, container and message text, plus an *unacknowledged only* toggle.
+Filtering happens in the database rather than in the browser, so the counts and
+the paging describe the whole result set, not the page you happen to be on.
+
+**Acknowledging records who did it**, and when. "Someone dealt with this" is only
+useful if you can go and ask them.
+
+**A toast appears when an alert arrives while the app is open**, so you learn
+about it without sitting on the Alerts page. It is a nudge, not a record — the
+feed is the record. Resolved conditions toast in green.
+
+## Was it actually delivered?
+
+Every webhook call and e-mail send is recorded against the alert, with the
+outcome. Click the **Delivery** cell to see the attempts:
+
+```text
+delivered  EMAIL    ops@example.com            2026-07-31 13:02:11
+failed     WEBHOOK  ops (hooks.example.com)    HTTP 500  — upstream unavailable
+```
+
+This closes a real gap: a webhook returning 500, an SMTP server refusing the
+connection, or a rule with *e-mail* ticked while **no recipient is configured
+anywhere** all used to fail silently. The alert appeared in the feed and looked
+handled, while nothing had left the building.
+
+Two deliberate limits:
+
+- **The webhook's name and host are stored, never its full URL.** Webhook URLs
+  routinely carry a token in the path or query, and this record is readable by
+  anyone with the alerts section.
+- **Response bodies are truncated** (~500 characters). The endpoint's own words
+  usually say why it refused, but a remote server must not be able to write
+  unbounded text into the database.
+
+There is no automatic retry yet — a failed delivery is recorded, not re-attempted.
+
 ## What the CPU threshold is a percentage *of*
 
 This trips people up, so the rule editor now asks explicitly:

@@ -6,6 +6,30 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **The alert feed is paged, filterable, and says whether alerts were actually
+  delivered.** It previously rendered every event on one page with no filters, which
+  stops being usable at the point alerting starts being useful. It now pages 50 at a
+  time and filters by severity, lifecycle kind, rule, container and message text,
+  with an *unacknowledged only* toggle — **in the database**, so the totals and paging
+  describe the whole result set rather than the page in front of you. Host scoping
+  moved into the query for the same reason: filtering a page after fetching it yields
+  short pages and a total that counts events the viewer isn't allowed to see.
+
+  **Every webhook call and e-mail send is now recorded against its alert** with the
+  outcome, HTTP status and an excerpt of the response. A webhook returning 500, an
+  SMTP server refusing the connection, or a rule with *e-mail* ticked while no
+  recipient is configured anywhere all used to fail silently — the alert appeared in
+  the feed and looked handled while nothing had left the building. The webhook's
+  **name and host** are stored rather than its URL, because those routinely carry a
+  token and this record is readable by anyone with the alerts section; response text
+  is truncated so a remote endpoint can't write unbounded data into the database.
+  There is no automatic retry yet: failures are recorded, not re-attempted.
+
+  **Acknowledging an alert records who did it** and when, and **a toast appears when
+  an alert arrives while the app is open**, so it reaches you without sitting on the
+  Alerts page.
+
 ### Changed
 - **Threshold alerts are conditions with a lifetime, not lines reprinted every
   minute.** Testing the engine against a real stack produced an alert log that was

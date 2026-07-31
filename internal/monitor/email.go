@@ -32,6 +32,7 @@ func (m *Monitor) emailNotify(ev *store.AlertEvent, ruleEmails []string) {
 			if err != nil {
 				log.Printf("monitor: smtp config: %v", err)
 			}
+			m.recordDelivery(ctx, ev.ID, "", false, "SMTP is not configured, so this alert was not e-mailed")
 			return
 		}
 		if len(ruleEmails) > 0 {
@@ -43,7 +44,8 @@ func (m *Monitor) emailNotify(ev *store.AlertEvent, ruleEmails []string) {
 			}
 		}
 		if cfg.To == "" {
-			return // no rule, host or instance recipient
+			m.recordDelivery(ctx, ev.ID, "", false, "no recipient: the rule, the host and the SMTP settings all leave it empty")
+			return
 		}
 		subject := fmt.Sprintf("[%s] %s — %s", strings.ToUpper(ev.Severity), ev.RuleName, ev.ContainerName)
 		body := fmt.Sprintf("Rule: %s\nType: %s\nSeverity: %s\nContainer: %s (%s)\nMessage: %s\nTime: %s\n",
@@ -51,8 +53,32 @@ func (m *Monitor) emailNotify(ev *store.AlertEvent, ruleEmails []string) {
 			time.Now().UTC().Format(time.RFC3339))
 		if err := SendMail(cfg, subject, body); err != nil {
 			log.Printf("monitor: email send failed: %v", err)
+			m.recordDelivery(ctx, ev.ID, cfg.To, false, err.Error())
+			return
 		}
+		m.recordDelivery(ctx, ev.ID, cfg.To, true, "")
 	}()
+}
+
+// recordDelivery notes whether an alert actually left by e-mail.
+//
+// The failure cases matter more than the success one: an unconfigured SMTP
+// server or an empty recipient list used to make emailNotify return silently, so
+// a rule with "email" ticked looked like it was delivering when nothing was ever
+// sent. Now that shows up against the alert.
+func (m *Monitor) recordDelivery(ctx context.Context, eventID int64, to string, ok bool, detail string) {
+	if eventID == 0 {
+		return
+	}
+	target := to
+	if target == "" {
+		target = "(no recipient)"
+	}
+	if err := m.store.RecordAlertDelivery(ctx, &store.AlertDelivery{
+		EventID: eventID, Channel: "email", Target: target, OK: ok, Detail: detail,
+	}); err != nil {
+		log.Printf("monitor: record email delivery: %v", err)
+	}
 }
 
 // SendMail delivers one message via the configured SMTP server. It supports

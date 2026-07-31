@@ -57,12 +57,42 @@ function kindBadge(e: AlertEvent): string {
 
 // ---- Feed -------------------------------------------------------------------
 
+const PAGE = 50;
+
 function Feed() {
   const [events, setEvents] = useState<AlertEvent[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
+  const [expanded, setExpanded] = useState<number | null>(null);
+
+  // Filters. `text` is debounced into `q` so typing doesn't fire a request per
+  // keystroke against a table that can hold a lot of rows.
+  const [severity, setSeverity] = useState("");
+  const [kind, setKind] = useState("");
+  const [container, setContainer] = useState("");
+  const [rule, setRule] = useState("");
+  const [text, setText] = useState("");
+  const [q, setQ] = useState("");
+  const [unacked, setUnacked] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setQ(text), 350);
+    return () => clearTimeout(t);
+  }, [text]);
+
+  // Any filter change restarts paging: staying on page 4 of a result set that
+  // just shrank to one page shows an empty table and looks like a bug.
+  useEffect(() => setOffset(0), [severity, kind, container, rule, q, unacked]);
 
   const load = useCallback(() => {
-    api.alerts().then((r) => setEvents(r.events)).catch(() => setEvents([]));
-  }, []);
+    api
+      .alerts({ severity, kind, container, rule, q, unacked, limit: PAGE, offset })
+      .then((r) => {
+        setEvents(r.events);
+        setTotal(r.total);
+      })
+      .catch(() => setEvents([]));
+  }, [severity, kind, container, rule, q, unacked, offset]);
+
   useEffect(() => {
     load();
     const t = setInterval(load, 5000);
@@ -74,51 +104,195 @@ function Feed() {
     load();
   };
 
-  if (!events) return <Loading />;
-  if (events.length === 0) return <EmptyState title="No alerts yet" hint="Fired alerts will appear here." />;
+  const filtered = severity || kind || container || rule || q || unacked;
+  const clear = () => {
+    setSeverity("");
+    setKind("");
+    setContainer("");
+    setRule("");
+    setText("");
+    setQ("");
+    setUnacked(false);
+  };
 
   return (
-    <div className="card overflow-hidden">
-      <table className="w-full text-sm">
-        <thead className="text-muted text-xs uppercase tracking-wide">
-          <tr className="border-b border-border">
-            <th className="text-left font-medium px-4 py-3">Time</th>
-            <th className="text-left font-medium px-4 py-3">Severity</th>
-            <th className="text-left font-medium px-4 py-3">Rule</th>
-            <th className="text-left font-medium px-4 py-3 hidden lg:table-cell">Host</th>
-            <th className="text-left font-medium px-4 py-3">Container</th>
-            <th className="text-left font-medium px-4 py-3">Message</th>
-            <th className="px-4 py-3"></th>
-          </tr>
-        </thead>
-        <tbody>
-          {events.map((e) => (
-            <tr key={e.id} className={clsx("border-b border-border/50", e.acknowledged && "opacity-50")}>
-              <td className="px-4 py-2.5 text-muted whitespace-nowrap">{e.createdAt.slice(0, 19).replace("T", " ")}</td>
-              <td className="px-4 py-2.5 whitespace-nowrap">
-                <span className={clsx("text-xs px-2 py-0.5 rounded-md font-medium capitalize", kindBadge(e))}>
-                  {e.kind === "resolved" ? "resolved" : e.severity}
-                </span>
-                {e.kind && e.kind !== "firing" && e.kind !== "resolved" && (
-                  <span className="ml-1 text-[10px] uppercase tracking-wide text-muted">{e.kind}</span>
-                )}
-              </td>
-              <td className="px-4 py-2.5">{e.ruleName}</td>
-              <td className="px-4 py-2.5 hidden lg:table-cell text-xs text-muted">{e.hostName || "—"}</td>
-              <td className="px-4 py-2.5 font-mono text-xs">{e.containerName}</td>
-              <td className="px-4 py-2.5 text-muted">{e.message}</td>
-              <td className="px-4 py-2.5 text-right">
-                {!e.acknowledged && (
-                  <button className="btn-ghost px-2 py-1" title="Acknowledge" onClick={() => ack(e.id)}>
-                    <Check className="h-4 w-4" />
-                  </button>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="space-y-3">
+      <div className="card p-3 flex flex-wrap items-end gap-3">
+        <label className="block">
+          <span className="label">Severity</span>
+          <select className="input py-1.5" value={severity} onChange={(e) => setSeverity(e.target.value)}>
+            <option value="">Any</option>
+            <option value="critical">Critical</option>
+            <option value="warning">Warning</option>
+            <option value="info">Info</option>
+          </select>
+        </label>
+        <label className="block">
+          <span className="label">Lifecycle</span>
+          <select className="input py-1.5" value={kind} onChange={(e) => setKind(e.target.value)}>
+            <option value="">Any</option>
+            <option value="firing">Firing</option>
+            <option value="escalated">Escalated</option>
+            <option value="eased">Eased</option>
+            <option value="repeat">Repeat</option>
+            <option value="resolved">Resolved</option>
+          </select>
+        </label>
+        <label className="block">
+          <span className="label">Rule</span>
+          <input className="input py-1.5" value={rule} onChange={(e) => setRule(e.target.value)} placeholder="name contains…" />
+        </label>
+        <label className="block">
+          <span className="label">Container</span>
+          <input className="input py-1.5" value={container} onChange={(e) => setContainer(e.target.value)} placeholder="name contains…" />
+        </label>
+        <label className="block flex-1 min-w-[12rem]">
+          <span className="label">Message</span>
+          <input className="input py-1.5 w-full" value={text} onChange={(e) => setText(e.target.value)} placeholder="search text…" />
+        </label>
+        <label className="flex items-center gap-2 text-sm pb-1.5">
+          <input type="checkbox" checked={unacked} onChange={(e) => setUnacked(e.target.checked)} />
+          Unacknowledged only
+        </label>
+        {filtered && (
+          <button className="btn-ghost px-3 py-1.5 text-sm" onClick={clear}>
+            Clear
+          </button>
+        )}
+      </div>
+
+      {!events ? (
+        <Loading />
+      ) : events.length === 0 ? (
+        <EmptyState
+          title={filtered ? "No alerts match those filters" : "No alerts yet"}
+          hint={filtered ? "Widen or clear the filters to see more." : "Fired alerts will appear here."}
+        />
+      ) : (
+        <>
+          <div className="card overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="text-muted text-xs uppercase tracking-wide">
+                <tr className="border-b border-border">
+                  <th className="text-left font-medium px-4 py-3">Time</th>
+                  <th className="text-left font-medium px-4 py-3">Severity</th>
+                  <th className="text-left font-medium px-4 py-3">Rule</th>
+                  <th className="text-left font-medium px-4 py-3 hidden lg:table-cell">Host</th>
+                  <th className="text-left font-medium px-4 py-3">Container</th>
+                  <th className="text-left font-medium px-4 py-3">Message</th>
+                  <th className="text-left font-medium px-4 py-3 hidden md:table-cell">Delivery</th>
+                  <th className="px-4 py-3"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {events.map((e) => (
+                  <FeedRow
+                    key={e.id}
+                    e={e}
+                    expanded={expanded === e.id}
+                    onToggle={() => setExpanded(expanded === e.id ? null : e.id)}
+                    onAck={() => ack(e.id)}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex items-center gap-3 text-sm">
+            <span className="text-muted">
+              {offset + 1}–{Math.min(offset + events.length, total)} of {total}
+            </span>
+            <div className="ml-auto flex gap-2">
+              <button
+                className="btn-ghost px-3 py-1.5 disabled:opacity-40"
+                disabled={offset === 0}
+                onClick={() => setOffset(Math.max(0, offset - PAGE))}
+              >
+                Previous
+              </button>
+              <button
+                className="btn-ghost px-3 py-1.5 disabled:opacity-40"
+                disabled={offset + PAGE >= total}
+                onClick={() => setOffset(offset + PAGE)}
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
+  );
+}
+
+// FeedRow renders one event, expandable to its delivery attempts.
+function FeedRow({ e, expanded, onToggle, onAck }: { e: AlertEvent; expanded: boolean; onToggle: () => void; onAck: () => void }) {
+  const deliveries = e.deliveries ?? [];
+  return (
+    <>
+      <tr className={clsx("border-b border-border/50", e.acknowledged && "opacity-50")}>
+        <td className="px-4 py-2.5 text-muted whitespace-nowrap">{e.createdAt.slice(0, 19).replace("T", " ")}</td>
+        <td className="px-4 py-2.5 whitespace-nowrap">
+          <span className={clsx("text-xs px-2 py-0.5 rounded-md font-medium capitalize", kindBadge(e))}>
+            {e.kind === "resolved" ? "resolved" : e.severity}
+          </span>
+          {e.kind && e.kind !== "firing" && e.kind !== "resolved" && (
+            <span className="ml-1 text-[10px] uppercase tracking-wide text-muted">{e.kind}</span>
+          )}
+        </td>
+        <td className="px-4 py-2.5">{e.ruleName}</td>
+        <td className="px-4 py-2.5 hidden lg:table-cell text-xs text-muted">{e.hostName || "—"}</td>
+        <td className="px-4 py-2.5 font-mono text-xs">{e.containerName}</td>
+        <td className="px-4 py-2.5 text-muted">{e.message}</td>
+        <td className="px-4 py-2.5 hidden md:table-cell">
+          {deliveries.length === 0 ? (
+            <span className="text-xs text-muted">—</span>
+          ) : (
+            <button className="text-xs underline decoration-dotted" onClick={onToggle} title="Show delivery attempts">
+              {deliveries.every((d) => d.ok) ? (
+                <span className="text-ok">delivered</span>
+              ) : deliveries.some((d) => d.ok) ? (
+                <span className="text-warn">partial</span>
+              ) : (
+                <span className="text-danger">failed</span>
+              )}
+              <span className="text-muted"> ({deliveries.length})</span>
+            </button>
+          )}
+        </td>
+        <td className="px-4 py-2.5 text-right whitespace-nowrap">
+          {e.acknowledged ? (
+            <span className="text-xs text-muted" title={e.acknowledgedAt ? `at ${e.acknowledgedAt.slice(0, 19).replace("T", " ")}` : undefined}>
+              ack{e.acknowledgedBy ? ` by ${e.acknowledgedBy}` : ""}
+            </span>
+          ) : (
+            <button className="btn-ghost px-2 py-1" title="Acknowledge" onClick={onAck}>
+              <Check className="h-4 w-4" />
+            </button>
+          )}
+        </td>
+      </tr>
+      {expanded && deliveries.length > 0 && (
+        <tr className="border-b border-border/50 bg-panel2/40">
+          <td colSpan={8} className="px-4 py-3">
+            <div className="space-y-1.5">
+              {deliveries.map((d) => (
+                <div key={d.id} className="text-xs flex flex-wrap items-baseline gap-2">
+                  <span className={clsx("font-medium", d.ok ? "text-ok" : "text-danger")}>
+                    {d.ok ? "delivered" : "failed"}
+                  </span>
+                  <span className="uppercase tracking-wide text-muted">{d.channel}</span>
+                  <span className="font-mono">{d.target}</span>
+                  {d.status ? <span className="text-muted">HTTP {d.status}</span> : null}
+                  <span className="text-muted">{d.attemptedAt.slice(0, 19).replace("T", " ")}</span>
+                  {d.detail && <span className="text-muted break-all">— {d.detail}</span>}
+                </div>
+              ))}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 

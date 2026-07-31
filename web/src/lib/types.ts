@@ -616,7 +616,23 @@ export interface AlertEvent {
   // that died has no later moment at which it stops having died.
   kind: "firing" | "escalated" | "eased" | "repeat" | "resolved";
   durationSec: number;
+  acknowledgedBy?: string;
+  acknowledgedAt?: string;
+  deliveries?: AlertDelivery[];
   createdAt: string;
+}
+
+// One attempt to get an alert out of the building. Target is the webhook's name
+// and host (never its full URL — those carry tokens) or the mail recipients.
+export interface AlertDelivery {
+  id: number;
+  eventId: number;
+  channel: "webhook" | "email";
+  target: string;
+  ok: boolean;
+  status?: number;
+  detail?: string;
+  attemptedAt: string;
 }
 
 export interface AuditEntry {

@@ -58,7 +58,7 @@ func snapOf(cs ContainerStat) map[string]ContainerStat {
 
 func events(t *testing.T, st *store.Store, ctx context.Context) []store.AlertEvent {
 	t.Helper()
-	evs, err := st.ListAlertEvents(ctx, 100)
+	evs, _, err := st.ListAlertEvents(ctx, store.AlertQuery{Limit: 100})
 	if err != nil {
 		t.Fatal(err)
 	}

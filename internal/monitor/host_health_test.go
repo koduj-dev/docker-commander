@@ -40,7 +40,7 @@ func TestRecordHealthTransitions(t *testing.T) {
 
 	// First observation (reachable) — no alert, just seeds state.
 	m.recordHealth(1, "prod", nil, t0)
-	if evs, _ := st.ListAlertEvents(ctx, 10); len(evs) != 0 {
+	if evs, _, _ := st.ListAlertEvents(ctx, store.AlertQuery{Limit: 10}); len(evs) != 0 {
 		t.Fatalf("first observation should not alert, got %d events", len(evs))
 	}
 	if h := m.HostHealth()[1]; !h.Reachable || !h.Since.Equal(t0) {
@@ -49,7 +49,7 @@ func TestRecordHealthTransitions(t *testing.T) {
 
 	// Goes offline → one critical alert.
 	m.recordHealth(1, "prod", down, t0.Add(30*time.Second))
-	evs, _ := st.ListAlertEvents(ctx, 10)
+	evs, _, _ := st.ListAlertEvents(ctx, store.AlertQuery{Limit: 10})
 	if len(evs) != 1 {
 		t.Fatalf("offline transition should alert once, got %d", len(evs))
 	}
@@ -63,7 +63,7 @@ func TestRecordHealthTransitions(t *testing.T) {
 	// Still offline → no new alert (steady state), Since unchanged.
 	offlineSince := m.HostHealth()[1].Since
 	m.recordHealth(1, "prod", down, t0.Add(60*time.Second))
-	if evs, _ := st.ListAlertEvents(ctx, 10); len(evs) != 1 {
+	if evs, _, _ := st.ListAlertEvents(ctx, store.AlertQuery{Limit: 10}); len(evs) != 1 {
 		t.Errorf("steady offline should not re-alert, got %d", len(evs))
 	}
 	if !m.HostHealth()[1].Since.Equal(offlineSince) {
@@ -72,7 +72,7 @@ func TestRecordHealthTransitions(t *testing.T) {
 
 	// Recovers → one info alert mentioning it recovered.
 	m.recordHealth(1, "prod", nil, t0.Add(90*time.Second))
-	evs, _ = st.ListAlertEvents(ctx, 10)
+	evs, _, _ = st.ListAlertEvents(ctx, store.AlertQuery{Limit: 10})
 	if len(evs) != 2 {
 		t.Fatalf("recover transition should add an alert, got %d", len(evs))
 	}
@@ -90,7 +90,7 @@ func TestRecordHealthTransitions(t *testing.T) {
 func TestRecordHealthInitialDownIsSilent(t *testing.T) {
 	m, st, ctx := newHealthMonitor(t)
 	m.recordHealth(2, "laptop", errors.New("no route to host"), time.Now())
-	if evs, _ := st.ListAlertEvents(ctx, 10); len(evs) != 0 {
+	if evs, _, _ := st.ListAlertEvents(ctx, store.AlertQuery{Limit: 10}); len(evs) != 0 {
 		t.Errorf("a host down on first probe must not alert, got %d", len(evs))
 	}
 	if m.HostHealth()[2].Reachable {
