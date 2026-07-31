@@ -34,14 +34,10 @@ func (s *Server) handleStackCompose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	project := chi.URLParam(r, "project")
-	path, content, err := s.docker.StackComposeFile(r.Context(), hostID, project)
+	path, content, editable, reason, err := s.docker.StackCompose(r.Context(), hostID, project)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
-	}
-	editable, reason, err := s.docker.StackEditable(r.Context(), hostID, project)
-	if err != nil {
-		editable, reason = false, err.Error()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "path": path, "content": content,

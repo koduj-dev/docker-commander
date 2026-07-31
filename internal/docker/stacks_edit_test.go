@@ -61,29 +61,56 @@ func TestComposeCandidates(t *testing.T) {
 	}
 }
 
+// TestStackEditableReason covers the single question every entry point asks
+// before touching a stack: may we act on this compose file at all?
+//
+// It deliberately includes the containment rule. StackEditable feeds the UI's
+// decision to show an editor, so a target the write path would refuse must not
+// report itself as editable — otherwise the app offers an editor whose Save can
+// only ever fail.
 func TestStackEditableReason(t *testing.T) {
+	work := t.TempDir()
+	inside := filepath.Join(work, "compose.yml")
+	if err := os.WriteFile(inside, []byte("services: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outsideDir := t.TempDir()
+	outside := filepath.Join(outsideDir, "compose.yml")
+	if err := os.WriteFile(outside, []byte("services: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	cases := []struct {
 		name       string
 		kind       string
 		workDir    string
+		path       string
 		wantEdit   bool
 		wantSubstr string
 	}{
-		{name: "local host with a working dir is editable", kind: "local", workDir: "/srv/app", wantEdit: true},
-		{name: "empty kind is treated as local", kind: "", workDir: "/srv/app", wantEdit: true},
-		{name: "ssh host is editable", kind: "ssh", workDir: "/srv/app", wantEdit: true},
+		{name: "local host with a contained compose file", kind: "local", workDir: work, path: inside, wantEdit: true},
+		{name: "empty kind is treated as local", kind: "", workDir: work, path: inside, wantEdit: true},
+		{name: "ssh host, contained lexically", kind: "ssh", workDir: "/srv/app", path: "/srv/app/compose.yml", wantEdit: true},
 		{
-			name: "tcp host exposes no filesystem", kind: "tcp", workDir: "/srv/app",
+			name: "tcp host exposes no filesystem", kind: "tcp", workDir: work, path: inside,
 			wantSubstr: "exposes no filesystem",
 		},
 		{
-			name: "no working dir means nothing to scope the edit to", kind: "local",
+			name: "no working dir means nothing to scope the edit to", kind: "local", path: inside,
 			wantSubstr: "no working directory",
+		},
+		{
+			name: "compose file outside the working dir", kind: "local", workDir: work, path: outside,
+			wantSubstr: "outside the stack's working directory",
+		},
+		{
+			name: "ssh host with a path outside the working dir", kind: "ssh", workDir: "/srv/app", path: "/etc/evil.yml",
+			wantSubstr: "outside the stack's working directory",
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			tgt := &stackTarget{host: &store.Host{Kind: c.kind}, workDir: c.workDir}
+			tgt := &stackTarget{host: &store.Host{Kind: c.kind}, workDir: c.workDir, path: c.path}
 			got := tgt.editableReason()
 			if c.wantEdit {
 				if got != "" {
@@ -98,6 +125,55 @@ func TestStackEditableReason(t *testing.T) {
 				t.Errorf("reason %q does not mention %q", got, c.wantSubstr)
 			}
 		})
+	}
+}
+
+// TestWriteSiblingAtomicReplacesASymlink is the regression guard for the backup
+// write. os.WriteFile follows a symlink at the destination; anyone able to create
+// files in the stack's directory could pre-place one and have this process —
+// often root — write through it, with content they also control.
+func TestWriteSiblingAtomicReplacesASymlink(t *testing.T) {
+	dir := t.TempDir()
+	victimDir := t.TempDir()
+	victim := filepath.Join(victimDir, "victim")
+	const original = "DO NOT TOUCH\n"
+	if err := os.WriteFile(victim, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	link := filepath.Join(dir, "compose.yml.dc-prev")
+	if err := os.Symlink(victim, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if err := writeSiblingAtomic(link, "backup contents\n", 0o600); err != nil {
+		t.Fatalf("writeSiblingAtomic: %v", err)
+	}
+
+	got, err := os.ReadFile(victim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != original {
+		t.Fatalf("SECURITY: the write followed the symlink and landed in %s:\n%s", victim, got)
+	}
+	// The link itself must have been replaced by a regular file with our content.
+	fi, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		t.Error("the destination is still a symlink — the write did not replace it")
+	}
+	if b, _ := os.ReadFile(link); string(b) != "backup contents\n" {
+		t.Errorf("backup content = %q", b)
+	}
+	// No temp files left behind in the directory.
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".dc-tmp-") {
+			t.Errorf("temp file %q was left behind", e.Name())
+		}
 	}
 }
 

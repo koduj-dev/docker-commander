@@ -6,6 +6,28 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+- **The stack editor's backup could be redirected through a symlink.** Saving a
+  CLI-discovered stack's compose file keeps the previous version beside it as
+  `<name>.dc-prev`, and that backup was written with a plain write — which follows
+  a symlink already sitting at the destination. Anyone able to create files in the
+  stack's directory (a deploy or CI account, *not* necessarily one with Docker
+  access) could pre-place `compose.yml.dc-prev` as a link to, say, `/etc/cron.d/`
+  and have Docker Commander — commonly root — write through it, with content they
+  also controlled, since the backup is the previous compose file. Backups are now
+  written with a temporary file plus a rename, which replaces a symlink instead of
+  following it; the SSH path does the same with `mktemp`, where `cat >` and `cp`
+  had the same weakness. Found in a review of the release, before any tagged build
+  shipped it.
+- **Redeploying a stack skipped the containment check that saving enforced.** A
+  compose path outside the stack's working directory was refused for writes but
+  still handed to `docker compose up -d`, which would deploy whatever definition
+  sat there. Both operations now answer the same question in one place, which also
+  means the UI stops offering an editor whose Save could only ever fail. Exploiting
+  it required direct Docker API access (to set the labels), which is already
+  root-equivalent — so this hardens a boundary rather than closing a path into the
+  app.
+
 ### Fixed
 - **A role scoped to only-invalid hosts became unscoped instead of being refused.**
   Sending `hostIds: [0]` was sanitised down to an empty list, which means *every

@@ -68,11 +68,19 @@ Safety rails, so an edit can't become an incident:
 - The new file is moved into place with a rename, so an interrupted write can't
   leave a half-file where a stack's definition used to be, and the original file's
   permissions are preserved.
-- The compose file must sit **inside the stack's working directory**. The path
-  comes from a container label — which is set by whoever started the container —
-  so without this rule, anyone able to run a container could point the editor at
-  any file on the host. Writes outside the project directory are refused, as are
-  paths that aren't `.yml` / `.yaml`.
+- The compose file must sit **inside the stack's working directory** — for saving
+  *and* for redeploying. The path comes from a container label, i.e. from whoever
+  started the container rather than from you, so this bounds what that label can
+  steer. Paths that aren't `.yml` / `.yaml` are refused too. To be precise about
+  what this does and doesn't buy: setting those labels needs direct Docker API
+  access, which is already root-equivalent on that host, so the rule is defence in
+  depth rather than a barrier against anything reachable through Docker Commander
+  itself.
+- The previous version is written with a **rename, never a plain write**. A plain
+  write follows a symlink sitting at the destination, so anyone who could create
+  files in the stack's directory could have pointed `compose.yml.dc-prev` at, say,
+  `/etc/cron.d/` and had the app write through it. The same applies on SSH hosts,
+  where the temporary files come from `mktemp`.
 
 ## Tips
 - A stack you created from a [Project](projects.md) shows a folder icon linking

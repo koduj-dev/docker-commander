@@ -35,21 +35,29 @@ import (
 // worse than making none.
 const dcBackupSuffix = ".dc-prev"
 
-// StackEditable reports whether the app can write this stack's compose file back
-// to its host, and why not when it can't. The UI asks before offering an editor,
-// so the answer has to explain itself rather than just being false.
-func (m *Manager) StackEditable(ctx context.Context, hostID int64, project string) (bool, string, error) {
+// StackCompose reads a stack's compose file and reports whether the app can write
+// it back, with the reason when it can't — the UI needs the reason to explain why
+// an editor isn't on offer rather than silently omitting it.
+//
+// Read and editability come from one call because resolving a stack costs a
+// container list plus a file read, and over SSH that is a network round trip
+// each. Answering both from a single resolution keeps opening the viewer to one.
+func (m *Manager) StackCompose(ctx context.Context, hostID int64, project string) (path, content string, editable bool, reason string, err error) {
 	t, err := m.resolveStack(ctx, hostID, project)
 	if err != nil {
-		return false, "", err
+		return "", "", false, "", err
 	}
-	if reason := t.editableReason(); reason != "" {
-		return false, reason, nil
-	}
-	return true, "", nil
+	reason = t.editableReason()
+	return t.path, t.content, reason == "", reason, nil
 }
 
 // editableReason returns why this stack can't be edited in place, or "".
+//
+// It answers for the transport (can we reach the host's filesystem at all?) AND
+// for the destination (is the compose file somewhere we are willing to act on?).
+// Keeping both here is deliberate: every entry point calls this, so the
+// containment rule can't be enforced on one operation and forgotten on another,
+// and StackEditable can't advertise an editor whose save would be refused.
 func (t *stackTarget) editableReason() string {
 	switch t.host.Kind {
 	case "local", "", "ssh":
@@ -58,6 +66,9 @@ func (t *stackTarget) editableReason() string {
 	}
 	if t.workDir == "" {
 		return "this stack records no working directory (no com.docker.compose.project.working_dir label), so there is nothing to scope an edit to"
+	}
+	if err := t.checkContained(); err != nil {
+		return err.Error()
 	}
 	return ""
 }
@@ -84,9 +95,6 @@ func (m *Manager) StackWriteComposeFile(ctx context.Context, hostID int64, proje
 	if len(content) > maxComposeBytes {
 		return "", fmt.Errorf("compose file is too large (%d bytes, limit %d)", len(content), maxComposeBytes)
 	}
-	if err := t.checkContained(); err != nil {
-		return "", err
-	}
 
 	switch t.host.Kind {
 	case "local", "":
@@ -100,12 +108,18 @@ func (m *Manager) StackWriteComposeFile(ctx context.Context, hostID int64, proje
 // checkContained refuses a compose path that isn't inside the stack's working
 // directory.
 //
-// The path comes from a container LABEL, which is set by whoever started the
-// container. Without this, anyone able to run a container could name
-// /etc/cron.d/anything.yml as their stack's compose file and then use the editor
-// to write attacker-chosen bytes there as the app's user — turning a "stacks"
-// grant into arbitrary file write. Requiring the file to sit under the project's
-// own working directory keeps an edit inside the project it belongs to.
+// The path comes from a container LABEL, so it is chosen by whoever started the
+// container rather than by the caller. Without this rule, a label naming
+// /etc/cron.d/anything.yml would let the editor write there, and a redeploy would
+// `compose up` whatever it found — both as the account the app runs under.
+//
+// Scope it honestly: setting those labels needs direct Docker API access, since
+// the app's own container-create surface exposes no Labels field, and Docker API
+// access is already root-equivalent on that host. So this is defence in depth
+// bounding what a label can steer, not a barrier against a privilege escalation
+// reachable through Docker Commander itself. It is cheap, it makes the blast
+// radius of a compromised daemon smaller, and it keeps an edit inside the project
+// it belongs to — which is worth having on its own.
 func (t *stackTarget) checkContained() error {
 	switch t.host.Kind {
 	case "local", "":
@@ -170,41 +184,92 @@ func (t *stackTarget) writeLocal(ctx context.Context, content string) error {
 	}
 	// Match the file we're replacing rather than the temp file's 0600, so an
 	// edit doesn't quietly change who can read the stack's definition.
+	mode := os.FileMode(0o600)
 	if fi, err := os.Stat(t.path); err == nil {
-		_ = os.Chmod(tmpName, fi.Mode().Perm())
+		mode = fi.Mode().Perm()
+		_ = os.Chmod(tmpName, mode)
 	}
 
 	if out, err := runComposeFiles(ctx, t.workDir, t.stack.Project, nil, []string{tmpName}, "config", "--quiet"); err != nil {
 		return fmt.Errorf("compose rejected the edited file, so nothing was changed:\n%s", strings.TrimSpace(out))
 	}
-	if err := os.WriteFile(t.path+dcBackupSuffix, []byte(t.content), 0o600); err != nil {
+	if err := writeSiblingAtomic(t.path+dcBackupSuffix, t.content, mode); err != nil {
 		return fmt.Errorf("could not save the previous version, so the edit was not applied: %w", err)
 	}
+	// Rename rather than write: it replaces a symlink instead of following it,
+	// and it is atomic, so a reader never sees a half-written definition.
 	return os.Rename(tmpName, t.path)
 }
 
-// writeOverSSH does the same on an ssh host, using a shell one-liner per step so
-// each failure can be reported on its own.
-func (m *Manager) writeOverSSH(ctx context.Context, t *stackTarget, content string) error {
-	tmp := t.path + ".dc-new"
-	q := shellQuote
+// writeSiblingAtomic writes content to path via a temp file in the same
+// directory plus a rename.
+//
+// The rename is the security-relevant part. os.WriteFile opens the destination
+// with O_CREAT|O_WRONLY|O_TRUNC and therefore FOLLOWS a symlink sitting at that
+// path: anyone who can create files in the stack's directory could pre-place
+// `compose.yml.dc-prev` as a link to, say, /etc/cron.d/x and have this process —
+// often root — write through it. They control the content too, since the backup
+// is the previous compose file and they can write that as well. Rename replaces
+// the link itself, so the write lands where we intended and nowhere else.
+func writeSiblingAtomic(path, content string, mode os.FileMode) error {
+	dir := filepath.Dir(path)
+	f, err := os.CreateTemp(dir, ".dc-tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp) // no-op once renamed away
 
-	// Write via stdin rather than embedding the content in the command line:
-	// compose files are far larger than ARG_MAX-safe and contain arbitrary bytes.
-	if out, err := m.sshRunStdin(ctx, t, fmt.Sprintf("cat > %s", q(tmp)), content); err != nil {
-		return fmt.Errorf("could not write to %s on the host: %w\n%s", tmp, err, strings.TrimSpace(out))
+	if _, err := f.WriteString(content); err != nil {
+		f.Close()
+		return err
 	}
-	if out, err := m.sshRun(ctx, t, fmt.Sprintf(
-		"cd %s && docker compose -p %s -f %s config --quiet",
-		q(t.workDir), q(t.stack.Project), q(tmp))); err != nil {
-		_, _ = m.sshRun(ctx, t, fmt.Sprintf("rm -f %s", q(tmp)))
-		return fmt.Errorf("compose on the host rejected the edited file, so nothing was changed:\n%s", strings.TrimSpace(out))
+	if err := f.Close(); err != nil {
+		return err
 	}
-	if out, err := m.sshRun(ctx, t, fmt.Sprintf(
-		"cp -p %s %s && mv %s %s",
-		q(t.path), q(t.path+dcBackupSuffix), q(tmp), q(t.path))); err != nil {
-		_, _ = m.sshRun(ctx, t, fmt.Sprintf("rm -f %s", q(tmp)))
-		return fmt.Errorf("could not replace the compose file on the host: %w\n%s", err, strings.TrimSpace(out))
+	if err := os.Chmod(tmp, mode); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// writeOverSSH does the same on an ssh host, in a single shell script fed the new
+// contents on stdin.
+//
+// One script rather than a command per step, because the safe version needs state
+// (the temp file names) to survive between steps, and each SSH session is
+// independent. It also cuts three round trips to one.
+//
+// The shape mirrors writeLocal for the same reason: `cat > file` and `cp src dst`
+// both FOLLOW a symlink at the destination, so writing straight to a predictable
+// name like `compose.yml.dc-new` would let anyone who can create files in that
+// directory redirect the write. `mktemp` creates with O_EXCL — it cannot open a
+// pre-placed link — and `mv` replaces a symlink instead of following it.
+//
+// `cp -p` onto the temp file before `cat` is a portable way to carry the
+// original's permissions across: the copy brings the mode, then stdin replaces
+// the contents without touching it. Avoids `chmod --reference`, which busybox
+// hosts don't have.
+func (m *Manager) writeOverSSH(ctx context.Context, t *stackTarget, content string) error {
+	q := shellQuote
+	dir := path.Dir(t.path)
+
+	script := strings.Join([]string{
+		"set -e",
+		fmt.Sprintf("tmp=$(mktemp %s)", q(dir+"/.dc-compose-XXXXXX")),
+		fmt.Sprintf("bak=$(mktemp %s)", q(dir+"/.dc-prev-XXXXXX")),
+		`trap 'rm -f "$tmp" "$bak"' EXIT`,
+		fmt.Sprintf("cp -p %s \"$tmp\"", q(t.path)),
+		fmt.Sprintf("cp -p %s \"$bak\"", q(t.path)),
+		`cat > "$tmp"`,
+		fmt.Sprintf("cd %s", q(t.workDir)),
+		fmt.Sprintf("docker compose -p %s -f \"$tmp\" config --quiet", q(t.stack.Project)),
+		fmt.Sprintf("mv \"$bak\" %s", q(t.path+dcBackupSuffix)),
+		fmt.Sprintf("mv \"$tmp\" %s", q(t.path)),
+	}, "\n")
+
+	if out, err := m.sshRunStdin(ctx, t, script, content); err != nil {
+		return fmt.Errorf("the edit was not applied on the host: %w\n%s", err, strings.TrimSpace(out))
 	}
 	return nil
 }

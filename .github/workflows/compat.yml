@@ -30,7 +30,25 @@ permissions:
   contents: read
 
 jobs:
+  # Resolve the matrix once, so the `versions` dispatch input actually selects
+  # what runs. Declaring the input and then hard-coding the list would silently
+  # run all five whatever you asked for — worse than not offering the input.
+  choose:
+    runs-on: ubuntu-latest
+    outputs:
+      versions: ${{ steps.pick.outputs.versions }}
+    steps:
+      - id: pick
+        run: |
+          want='${{ inputs.versions }}'
+          if [ -z "$want" ]; then
+            want='["24","25","26","27","28"]'
+          fi
+          echo "versions=$want" >> "$GITHUB_OUTPUT"
+          echo "running against: $want"
+
   matrix:
+    needs: choose
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -38,7 +56,7 @@ jobs:
       # seeing WHICH versions broke.
       fail-fast: false
       matrix:
-        docker: ["24", "25", "26", "27", "28"]
+        docker: ${{ fromJSON(needs.choose.outputs.versions) }}
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
