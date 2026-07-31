@@ -114,12 +114,29 @@ refresh tokens). No external identity provider is required.
 - host **system info**, a resource **stats** snapshot and per-container **metrics
   history**, recent Docker **events**, and recent **audit** entries
 
+**Diagnostics** — the questions that otherwise create pressure to open a shell:
+
+- **container_processes** — what is actually running inside a container (`docker top`)
+- **container_changes** — files added, modified or deleted since it started
+  (`docker diff`); paths only, never contents
+- **search_logs** — find a string or regex **across** the containers on a host,
+  for when you don't yet know which one to look at
+
+All three are read-only and bounded. They exist so an assistant can answer
+"what's it doing?" and "what changed?" without `exec` — a shell would answer the
+same questions and a great many others nobody intended to allow.
+
 **Alerting:**
 
 - **list_alerts** — the history, with the same filters the UI has (severity,
   lifecycle kind, container, rule, message text)
 - **active_alert_conditions** — what is over threshold *right now*, and for how long
 - **acknowledge_alert** — record that a human has seen one
+- **list_alert_rules** — the rules and their thresholds. `MEM 61% of limit > 5%`
+  cannot be judged without the rule behind it: this is how an assistant tells a
+  real problem from a badly chosen threshold. It reports which channels a rule
+  notifies through, but never the recipients or the webhook URL — those are
+  delivery configuration, and a webhook URL routinely carries a token.
 
 The split between the first two is deliberate. Since alerts became conditions
 with a lifetime, "what happened" and "what is wrong now" are different questions,

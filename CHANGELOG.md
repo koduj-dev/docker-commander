@@ -7,6 +7,15 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **MCP diagnostic tools that don't need a shell.** `container_processes` (what is
+  running inside), `container_changes` (what has been written since it started) and
+  `search_logs` (find a string or regex across a host's containers, for when you
+  don't yet know which one to look at). These are the questions that create pressure
+  to open `exec`; answering them read-only is how that pressure goes away.
+  `list_alert_rules` joins them, because an alert message cannot be judged without
+  the threshold behind it — it names the channels a rule notifies through but never
+  the recipients or the webhook URL.
+
 - **MCP can see the alerting engine.** Three tools: `list_alerts` (the history,
   with the same filters as the UI), `active_alert_conditions` (what is over
   threshold right now, and for how long) and `acknowledge_alert`. The first two are
