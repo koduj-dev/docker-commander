@@ -47,6 +47,23 @@ Tabs:
   / deleted).
 - **Env** — environment variables.
 
+## Network
+
+The **Network** chart plots throughput — the derived rate, not the raw counter,
+since a chart of a number that only ever goes up says nothing. Beneath it, the
+totals since the container started, with packets, **dropped** and **errors**
+called out: those are usually zero, and on the day they are not they are often
+the only visible sign of the problem.
+
+With more than one interface you also get the per-interface breakdown. Docker
+reports interface names (`eth0`, `eth1`…) and **does not say which Docker network
+each belongs to** — mapping that reliably needs MAC/namespace inspection, which is
+Linux-only and awkward on remote hosts, so the app reports what Docker gives
+rather than guessing.
+
+> A **counter reset** (the container was recreated) shows as a gap at zero rather
+> than a negative rate or a phantom spike.
+
 ## Tips
 - **Commit** is handy to capture a debugged container as an image you can then
   [push](registries.md) or [save](images.md).

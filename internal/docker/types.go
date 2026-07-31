@@ -86,11 +86,40 @@ type StatsSample struct {
 	MemUsage   uint64  `json:"memUsage"`
 	MemLimit   uint64  `json:"memLimit"`
 	MemPercent float64 `json:"memPercent"`
-	NetRx      uint64  `json:"netRx"`
-	NetTx      uint64  `json:"netTx"`
-	BlkRead    uint64  `json:"blkRead"`
-	BlkWrite   uint64  `json:"blkWrite"`
-	PIDs       uint64  `json:"pids"`
+	// Network counters are CUMULATIVE totals since the container started, summed
+	// across its interfaces. Rates are deliberately not computed here: a rate is
+	// a function of the sampling interval, so deriving it at read time from two
+	// stored counters keeps history honest whatever the interval was — and makes
+	// a counter reset (container recreated) visible instead of baked in.
+	NetRx        uint64 `json:"netRx"`
+	NetTx        uint64 `json:"netTx"`
+	NetRxPackets uint64 `json:"netRxPackets"`
+	NetTxPackets uint64 `json:"netTxPackets"`
+	NetRxDropped uint64 `json:"netRxDropped"`
+	NetTxDropped uint64 `json:"netTxDropped"`
+	NetRxErrors  uint64 `json:"netRxErrors"`
+	NetTxErrors  uint64 `json:"netTxErrors"`
+	// Interfaces is the per-interface breakdown. Docker names them eth0, eth1…
+	// and does NOT say which Docker network each belongs to — mapping that needs
+	// MAC/namespace inspection, which is Linux-only and hostile to remote hosts.
+	// So this is reported as-is rather than attributed to a network.
+	Interfaces []NetInterfaceStats `json:"interfaces,omitempty"`
+	BlkRead    uint64              `json:"blkRead"`
+	BlkWrite   uint64              `json:"blkWrite"`
+	PIDs       uint64              `json:"pids"`
+}
+
+// NetInterfaceStats is one container interface's cumulative counters.
+type NetInterfaceStats struct {
+	Name      string `json:"name"`
+	RxBytes   uint64 `json:"rxBytes"`
+	TxBytes   uint64 `json:"txBytes"`
+	RxPackets uint64 `json:"rxPackets"`
+	TxPackets uint64 `json:"txPackets"`
+	RxDropped uint64 `json:"rxDropped"`
+	TxDropped uint64 `json:"txDropped"`
+	RxErrors  uint64 `json:"rxErrors"`
+	TxErrors  uint64 `json:"txErrors"`
 }
 
 // HostPortProbe is one published port on the host, tagged with the container

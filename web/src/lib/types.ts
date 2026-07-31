@@ -539,8 +539,17 @@ export interface StatsSample {
   memUsage: number;
   memLimit: number;
   memPercent: number;
+  // Cumulative since the container started, summed across interfaces. Rates are
+  // derived from the delta between samples — see netRates().
   netRx: number;
   netTx: number;
+  netRxPackets: number;
+  netTxPackets: number;
+  netRxDropped: number;
+  netTxDropped: number;
+  netRxErrors: number;
+  netTxErrors: number;
+  interfaces?: NetInterfaceStats[];
   blkRead: number;
   blkWrite: number;
   pids: number;
@@ -624,6 +633,20 @@ export interface AlertEvent {
 
 // One attempt to get an alert out of the building. Target is the webhook's name
 // and host (never its full URL — those carry tokens) or the mail recipients.
+// One container interface's cumulative counters. Docker names these eth0, eth1…
+// and does not say which Docker network each belongs to.
+export interface NetInterfaceStats {
+  name: string;
+  rxBytes: number;
+  txBytes: number;
+  rxPackets: number;
+  txPackets: number;
+  rxDropped: number;
+  txDropped: number;
+  rxErrors: number;
+  txErrors: number;
+}
+
 export interface AlertDelivery {
   id: number;
   eventId: number;

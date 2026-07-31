@@ -7,6 +7,24 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Network throughput on the container detail page.** RX/TX were already sampled
+  and sent to the browser, and displayed nowhere. There is now a live throughput
+  chart alongside CPU and memory, plus totals since the container started with
+  packets, **dropped** and **errors** — the last two usually zero, and on the day
+  they are not, frequently the only visible sign of the problem. Multi-interface
+  containers get a per-interface breakdown.
+
+  The chart plots the **derived rate**, because Docker reports cumulative counters
+  and a chart of a number that only ever rises says nothing. Rates are computed
+  from the elapsed time between samples rather than an assumed interval, and a
+  counter reset — the container was recreated — reads as zero rather than a
+  negative rate or a phantom spike. Counters stay raw end to end so history can
+  derive rates at read time whatever the sampling interval was.
+
+  Docker names interfaces (`eth0`, `eth1`…) without saying which Docker network
+  each belongs to; the UI says so rather than guessing, since exact mapping needs
+  Linux-only namespace inspection.
+
 - **The alert feed is paged, filterable, and says whether alerts were actually
   delivered.** It previously rendered every event on one page with no filters, which
   stops being usable at the point alerting starts being useful. It now pages 50 at a
