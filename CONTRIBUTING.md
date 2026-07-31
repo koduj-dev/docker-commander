@@ -74,6 +74,11 @@ scripts/remote-test-daemon.sh down
 > and an env-var change doesn't invalidate the cache, so a re-provisioned daemon
 > will otherwise replay the previous verdict.
 
+Before changing behaviour, skim [docs/gotchas.md](docs/gotchas.md) — it lists the
+things in this codebase that have already caught someone out. Local setup and the
+throwaway services the tests expect are in
+[docs/dev-environment.md](docs/dev-environment.md).
+
 **Adding a test? Prove it can fail.** Break the thing it tests, watch it fail,
 check it failed for the *right* reason, then restore. Tests in this repo have
 passed while guarding nothing — usually because something else (compose's own

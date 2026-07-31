@@ -1,90 +1,174 @@
-# Docker Commander — roadmap & project notes
+# What's next
 
-_Working/roadmap doc. The user-facing feature list lives in
-[README.md](./README.md); this file is the **intent, what's shipped, what's
-next**, plus dev/test notes._
+**This file is only about work that has not been done.** What already exists is
+described where it belongs and nowhere else:
+
+- **What shipped, and when** → [CHANGELOG.md](CHANGELOG.md)
+- **What the app does today** → [README](README.md#-features) and [docs/](docs/)
+- **Things that bit us** → [docs/gotchas.md](docs/gotchas.md)
+- **How this machine is set up** → [docs/dev-environment.md](docs/dev-environment.md)
+
+Keeping shipped features here made the roadmap grow instead of shrink, and made
+it hard to see what was actually left. If an item below ships, delete it — the
+changelog is the record.
 
 ## 🎯 What we want from it
 
-A **single self-hosted binary** that lets a team **monitor and fully operate
-Docker** across one or many hosts — from a clean enterprise UI — without
-standing up a database or agents. Safe to expose on a server (auth, 2FA, RBAC,
-encrypted secrets), useful locally out of the box, and friendly to ops
-(Prometheus, webhooks, email, systemd).
+A self-hosted Docker control panel that an operator can trust with production:
+one binary, no external database, safe by default, and honest about what it does
+and doesn't know.
 
-## ✅ Shipped (v1)
+The next step change is moving from *"I can perform an operation on Docker"* to
+*"I know what changed, why it broke, who it affected, and how to put it back."*
 
-- **Monitoring** — live CPU/mem graphs, historical charts (Redis/in-memory), aggregated logs (level detection, regex, structured parse rules), events feed, diff/top/df, raw inspect.
-- **Control** — full container lifecycle (create/run, rename, update, commit, exec shell), in-container file browser (`docker cp`), images (pull/build/push/tag/save/load/import/history/prune), volumes & networks CRUD.
-- **Compose** _(v1.2)_ — discover & manage **stacks** by label (incl. CLI-created): start/stop/restart/remove, view compose file _(since **unreleased**: also **edit it in place on the host and redeploy** — see the Compose entry under Next/ideas)_. **Projects**: managed compose *folders* (compose + sidecar configs/scripts) edited in a built-in tree editor and deployed via the `docker compose` CLI (profiles, `.zip` import/export, redeploy/down); deployed projects surface as stacks.
-- **Multi-host** — local / TCP+TLS / SSH (verified host keys); the alert engine watches every host; a host can be **disabled** to skip it (offline laptop, maintenance).
-- **Alerting** — state / resource / log / restart rules (editable) → webhooks, email (SMTP, per-host recipient), in-app feed, Prometheus `/metrics`.
-- **Security & admin** — Argon2id + TOTP 2FA (localhost-exempt option), multi-user with roles / per-section permissions / read-only, feature flags, audit log, optional **LDAP**; secrets encrypted at rest.
-- **Ops** — single CGO-free binary, embedded UI, systemd unit + env example, cross-compiled releases.
-- **Files & projects** _(v1.3)_ — **volume file browser** (browse/upload/download/delete/mkdir via a helper container) + **upload & extract** archives into volumes/containers; the project editor gained a **CodeMirror** editor with **live, inline validation** (compose via `docker compose config` — anchor/merge/`${VAR}`-aware; YAML/JSON/`.env` lint; **Dockerfile** via `docker build --check`), compose **warnings / Resolved preview / Summary** (port-conflict check), **binary files**, and **project templates**.
-- **Self-update** _(v1.3)_ — admin "update available" banner + `dockercmd --self-upgrade` (SHA-256-verified, atomic binary replace). _Phase 3 (in-app one-click + auto-restart) still open._
-- **Networks & Topology** _(v1.3)_ — full network management (create / connect / disconnect / prune); topology gained search, stack filter, a force-directed 2D layout, and a compact list view (with ports).
-- **Remote MCP server** _(v1.4)_ — an off-by-default **Model Context Protocol** server (`DC_MCP_ENABLED`, `internal/mcp`, official `go-sdk`) so AI tools (Claude Code/Desktop, Cursor) can monitor and *safely* operate Docker over the existing RBAC. ~20 read + safe-control tools, MCP **resources** & **prompts**, mounted only when enabled (bare 404 otherwise). Two auth paths: **bearer API tokens** (self-service *MCP Access* page; SHA-256 at rest) and a self-contained **OAuth 2.1** AS (`internal/api/oauth_handlers.go` — RFC 8414/7591/8707, PKCE S256, session-bound CSRF, audience-bound JWTs, rotating refresh) for Claude Desktop/Cursor (`DC_MCP_PUBLIC_URL`). Tokens **narrow only** (section subset + read-only); env/audit-detail/event-attrs kept out; no exec/export/file-read/prune/remove. Tested with unit + runtime-smoke (real SDK client over HTTP) + adversarial **pen tests** (alg=none, code/refresh replay, redirect smuggling, CSRF, IDOR…).
+---
 
-- **Features round** _(v1.5)_ — **built-in self-signed TLS** (`dockercmd --make-certs`); **alert-rule import/export** (portable JSON bundle, webhooks by name, validated import); **in-app one-tap update & restart** (verified download → atomic swap → re-exec, admin-gated, `DC_SELF_UPDATE`); **schema-aware Compose autocomplete** (keys + enum values; introduced the Vitest frontend test setup); **LDAP group → section mapping** (membership-driven sections, admin role stays sticky); **private-registry tag autocomplete** (Registry v2 token handshake, SSRF-guarded dialer); **Remote Projects** (deploy a managed project to a TCP/SSH host — named-volumes-only first cut, host-path bind mounts refused with a clear message; host TLS certs materialised 0600 only for the command); **image vulnerability scanning** (Trivy, severity summary + CVE table, ref-validated, write-gated, concurrency-bounded); **host TLS private keys encrypted at rest** (`hosts.tls_key` via the AES-256-GCM cipher, plaintext rows migrated on startup; CA/cert are public so stored as-is). Shared `Tabs` component unified the tab bars (Alerts / container detail / Templates).
+## 🔭 Open work
 
-- **Remote Projects — bind mounts** _(unreleased)_ — lifts the v1.5 "named-volumes-only" limit. On a remote deploy every bind whose source sits **inside the project folder** is copied into a `dcseed-<project>-<hash>` named volume on the target host (reusing the v1.3 volume-browser helper-container + TAR path, so it works over the Docker API against TCP/SSH alike) and repointed by a generated **JSON compose override** — JSON because it's valid YAML and needs no new dependency. Rests on three verified compose behaviours: service volumes merge **by container target** (so the override *replaces* the bind), `external: true` keeps the volume name **unprefixed**, and `volume.subpath` handles **single-file** mounts (`./nginx.conf:/etc/nginx/nginx.conf`); a runtime smoke test drives the real CLI so a change in those semantics fails loudly instead of deploying binds that still point at local paths. Binds pointing **outside** the project folder stay refused (they name remote-host paths) — the containment check canonicalises symlinks, including in parent components, and is covered by pentests for relative traversal, symlink escape, symlinked parents and sibling name-prefix. Copies are **snapshots**, surfaced in the deploy output. Verified end to end against a *second* daemon (`scripts/remote-test-daemon.sh` provisions a dind sidecar) over **both** remote transports — TCP and SSH, the latter with real sshd + key auth and the host key pinned through the trust flow. Without seeding the remote daemon materialises each missing bind source as a **directory**, so a single-file config mount makes the container fail to start outright ("Is a directory"), not merely serve empty files.
+### Alerting and incidents
 
-  Three harness gotchas worth not rediscovering: **`go test` caches results** and the `DC_REMOTE_DOCKER` env var alone doesn't invalidate the cache, so a re-provisioned sidecar silently replays the previous verdict (always `-count=1`); **OpenSSH ignores `$HOME`**, taking `~` from the passwd database, so scratch keys/known_hosts must be injected via an `ssh` shim on PATH rather than a redirected HOME (which also relocates Go's module cache); and a developer **ssh-agent with several keys** gets them all offered and rejected, exhausting sshd's `MaxAuthTries` — hence the dedicated single-key agent.
+The alert engine now tracks conditions with a lifetime (firing → escalated →
+resolved), which is the foundation the next two items assume. Building them on
+the old repeat-every-cooldown engine would have produced a timeline of noise.
 
-## 🔭 Next / ideas (not yet built)
+- **Maintenance windows and silences.** Suppress notifications during planned work
+  without turning monitoring off. Scope by host, project/stack, container, rule or
+  severity; one-off and recurring; a reason and an author; audited. An incident
+  should still be *recorded* while silenced — the point is to stop the paging, not
+  the observing. Also: automatic silence during a deploy, with a configurable grace
+  period afterwards. This is distinct from a **disabled host**, which is not
+  monitored at all.
+- **Incident timeline / correlation.** Join alerts, Docker events, deploys, log
+  matches and metrics into one explainable incident: what changed, what broke, what
+  it affected, and a link to the revision to roll back to. Feeds MCP tools
+  (`diagnose_container`, `get_incident`, `list_active_incidents`).
+- **Alert delivery retry.** Failures are now *recorded* but never re-attempted.
+  Retry needs a queue and a backoff policy, and silently retrying a webhook that
+  returns 500 for a good reason is its own hazard — worth doing deliberately.
+- **Per-session MCP token revocation.** Revoking is currently per OAuth *client*:
+  there is no "sign this one tool out", and a stolen token can't be killed
+  individually short of removing its client. A `jti` denylist would buy that, at
+  the cost of a lookup and a table to prune.
 
-- **Compose — in-process deploy engine (drop the `docker compose` CLI dependency)** — _design-first; the cost is the issue, not the mechanism._ Today Projects need the `docker compose` CLI **on the machine running Docker Commander** (`ComposeAvailable()` false ⇒ Deploy/Down disabled — see the `ProtectHome` gotcha below); an in-process engine would remove that runtime dependency. **Correction to the old framing of this item:** `compose-go` **cannot** do this — it is strictly a parser/loader (compose files → Go model) and never creates containers, networks or volumes. The only library that deploys is `github.com/docker/compose` (now **v5**, not v2; `compose.NewComposeService`), and it is heavy: importing it took the module graph from **114 → 409** modules (containerd, buildx/buildkit, OpenTelemetry, go-openapi) and a hello-world that merely constructs the service is **24.9 MB** — about the size of the entire current binary (26.8 MB). It does build CGO-free, so the single-binary property survives, but expect roughly **2× binary size**. Weigh that against the fact that the CLI-discovery pain is already fixed via `DOCKER_CONFIG` in the systemd unit. _(Note: remote **bind mounts** were never blocked by the CLI — a bind resolves on the daemon's filesystem regardless of client. That is shipped separately, below.)_
-- **Compose — remaining gaps** — _none outstanding._ The long-standing entry here, "upload `build:` contexts to a remote host", **rested on a wrong premise and was retired rather than built**: Docker's build API sends the context as a tar from the client, so a remote daemon has always received the local folder and built the image there. That is a different mechanism from a bind mount, which nothing uploads and which is why the seeding exists. What investigating it *did* find was a real bug — `up -d` builds only a **missing** image, so every deploy after the first silently reused a stale one; deploy now passes `--build`. Both mechanisms are covered together by an end-to-end test against a second daemon (`DC_REMOTE_DOCKER`). _(Shipped since: the **Allow host paths** opt-in for explicitly confirmed remote host paths; reclaiming `dcseed-*` volumes on project delete; and **edit & redeploy for CLI-discovered stacks** — edited in place on the host rather than adopted into a project, so relative bind/`env_file`/`build.context` paths keep resolving against the original working directory. Consequences worth remembering: SSH hosts run `docker compose` **on the host** (needs the plugin there), plain-TCP hosts stay read-only, and both saving *and* redeploying are confined to the stack's own working directory, since the compose path comes from a container label rather than from the caller. That containment is defence in depth, not a barrier against anything reachable through the app — setting those labels needs Docker API access, which is already root-equivalent. Backups are written with a rename rather than a plain write, because a plain write follows a symlink at the destination.)_
-- **Projects — retargeting a deployed project** ✅ _shipped:_ the settings dialog
-  offers to bring the stack down on the host being left (default on, danger
-  confirm, seeded volumes go with it, named volumes stay). The teardown runs before
-  the record moves and a failure aborts the change, so a stack can't be orphaned on
-  a host the app no longer points at. `TestMultiHostRetarget` still asserts the
-  decline path — two live copies — because that remains a legitimate choice.
-- **Security — RBAC roles & per-host scoping** — ✅ **done, all three phases.** Decided in [design/rbac-roles-and-host-scoping.md](design/rbac-roles-and-host-scoping.md) §9. **Phase 1:** named roles with per-section write, the management UI, and **LDAP group→role** mapping with a fallback role for mappings that no longer resolve. **Phase 2:** **per-host scoping** on the role, enforced on REST, the WebSocket subscribe frame, MCP tools and tokens, and a managed project's own target host. **Phase 3:** aggregate reads filtered — host list, project list, alert feed (including the unread count), audit log and metrics history — plus the three sectionless dashboard routes that took `?host=` and never checked it. An empty host scope means all hosts, so upgrading changed nobody's reach. _Only the alert engine stays global, by design: it is background work with no user context, so a rule's e-mail recipients are an ops decision (a company reporting address), not something the app can filter per viewer._
+### Safe changes
 
-  The note's key finding: these are **two separate projects**, and per-host scoping is not a matter of tightening an existing check — there **is no per-host authorization today** outside Projects. `resolveHostID` is a plain parse of `?host=N` with **61 call sites across 11 files**, so a non-admin holding `containers` can currently act on *any* host, including ones they can't see on the Hosts page. `requireHostAccess` covers only Projects (5 sites) and is coarse (any non-local host ⇒ needs `hosts`). WebSocket subscribes carry `hostId` that is never checked, MCP tools take `host_id` gated by section only, and the audit log has no host column. The one piece of luck is that all 61 REST sites funnel through a single function, so enforcement can be centralised there. Roles alone (phase 1) is small and additive; host scoping (phases 2–3) is the real work, and aggregate reads (dashboard/topology/events/alerts) are the leak-prone part. _(Host TLS-key encryption at rest shipped in v1.5.)_
-- **Built-in TLS — ACME / Let's Encrypt** — self-signed `dockercmd --make-certs` shipped in v1.5; still open is an ACME flow for **public** hosts (auto-obtain + renew), so HTTPS needs no external tooling even with a real cert.
-- **Self-install service — Windows** — `dockercmd --install-service` installs the systemd unit (Linux) / launchd LaunchAgent (macOS) directly from the binary (`internal/service`, hardened unit embedded + kept in sync with `deploy/dockercmd.service` by a test). Windows is **not** wired into the subcommand yet — a console exe isn't a native service (SCM error 1053), so it would need `golang.org/x/sys/windows/svc` to run a real service dispatcher (or keep the Task-Scheduler `deploy/install-windows.ps1` as the supported path). _Why deferred: the Windows SCM handshake is the one non-trivial piece; Linux/macOS cover the server case._
-- **Project templates & builder** — _shipped:_ a server-side catalog (`internal/templates`, embedded presets **and** builder service blocks), `GET /api/project-templates` + `GET /api/service-blocks`, server-side seeding (`POST /api/projects` takes `template` or `blocks` + `variables`), **Save as template** and user-defined blocks (`project_templates` / `service_blocks` in the store), and parameterized presets/blocks (`{{.Var}}` with generated secrets). Also shipped: a dedicated **Templates** management page (edit user presets' files via the same multi-file editor, rename presets, create/edit/delete service blocks, view built-ins read-only — `PUT /api/project-templates/{id}` + `/files/*`, `GET`/`PUT /api/service-blocks/{id}`) and a **live compose preview** in the New project dialog (`POST /api/project-templates/preview` — assembles without creating a project). The builder also supports **service instances** (add a block multiple times with distinct keys + auto-de-duplicated volumes → clusters), **shared definitions** (reusable top-level YAML anchors, `compose_fragments` in the store + embedded built-ins) with a per-instance **merge** (`<<: *anchor` injected, even into read-only built-in services), and **live preview validation** via `docker compose config`. _Still open:_ a **remote catalog source** (the `source: builtin|user|remote` field is in place — add a provider that fetches presets/blocks from an external API); **parameterizing user-saved** templates (today they're literal snapshots — no variables); `build:` context capture in saved templates; uploading `build:` contexts. Also: clustered instances of the **same** block de-duplicate **named volumes** per instance but **share** the block's sidecar files / bind-mount paths (e.g. two nginx instances both mount `./html`), so file-backed mounts aren't per-instance isolated yet; and the New-project preview re-runs `docker compose config` per debounced change (could be cached by payload).
-- **Sidebar navigation rework** — _the near-term split shipped in v1.4: **Compute** became **Workloads** (Containers, Stacks, Projects, Templates) and **Storage** (Images, Volumes)._ _Longer-term:_ possibly rework the whole nav into collapsible groups / **dropdown menus** instead of one flat list. _Why: keep the nav scannable and the taxonomy honest as the feature set grows._
-- **OIDC / SSO** — Google/Azure/Okta login. _Why: enterprises standardise on SSO; LDAP (incl. group→section, v1.5) is step one._
-- **MCP — next** — the tool surface is deliberately **read + safe-control**; deferred by design (would need explicit, audited opt-in): `exec`/shell, image export, `prune`/`remove`, volume-content reads. **Early revocation of in-flight OAuth access JWTs** — _shipped:_ access tokens carry a `dc_cid` claim naming their OAuth client, and verification requires that client to still be registered, so removing a connector cuts its access at once instead of within the 15-minute TTL. No denylist table was needed: the client row *is* the revocation record. _Still open on that axis:_ revocation is per **client**, not per session — there is no "sign this one tool out" — and a stolen token can't be killed individually short of removing its client. A `jti` denylist would buy that, at the cost of a lookup and a table to prune. Other ideas: a delegated **external IdP** option for the OAuth side (today the AS is self-contained). _Why: keep the default surface safe and let operators widen it consciously._
+- **Deployment revisions and rollback.** An immutable history of every project and
+  edited-stack deploy — compose file, sidecar files, resolved config, profiles,
+  target host, image references *and resolved digests*, validation result, output,
+  author, reason — with diff, preview and restore. Notes that matter: roll back a
+  mutable tag using the stored **digest**; a revision must identify its remote bind
+  snapshots; rollback must not delete persistent named volumes; it should re-run
+  validation before applying; and a CLI-discovered stack must keep its original
+  working directory. **The highest-value item on this list.**
+- **Policy checks before deploy.** Refuse or warn on privileged containers, host
+  network/PID, docker-socket mounts, `:latest` in production, missing resource
+  limits, missing healthchecks. Some pieces exist already — compose validation,
+  the duplicate-host-port check, Dockerfile linting, Trivy scanning — but there is
+  no policy engine tying them to a decision.
+- **Controlled image updates.** Detect that a newer image exists for a running
+  workload, show what would change, and update deliberately. (Distinct from
+  self-update, which is about the Docker Commander binary and already ships.)
 
-- **Version matrix** — _shipped:_ the whole Docker suite re-runs against a pinned
-  `docker:NN-dind` per Engine major, nightly and on demand
-  ([compat.yml](.github/workflows/compat.yml)), with the floor (API 1.43) asserted
-  by a test rather than written down. Verified across all five, locally **and** in
-  CI (dispatch run, 5/5 green): Engine 24.0.9 (API 1.43), 25.0.5 (1.44), 26.1.4
-  (1.45), 27.5.1 (1.47), 28.5.2 (1.51). The `versions` dispatch input selects a
-  subset; it was dead on the first cut (declared, then ignored by a hard-coded
-  matrix) and now resolves through a `choose` job.
-  _Still open:_ it pins Engine **majors**, so `docker:24-dind` resolves to the
-  newest 24.x at pull time and a regression in a specific patch isn't caught the
-  moment it ships. Also unpinned: the **Compose** plugin version, which comes from
-  the runner rather than the matrix — worth its own axis if a Compose-shaped break
-  ever shows up, and the more likely one to bite, since Compose has since moved to
-  v5 while the matrix only ever varies the daemon.
+### Network statistics
 
-## ⚠️ Gotchas worth remembering
+Docker returns per-interface RX/TX, packets, errors and drops from
+`/containers/{id}/stats`. **What we actually have today:** `StatsSample.NetRx` and
+`NetTx` are sampled and sent to the browser — but summed across interfaces, not
+displayed anywhere, not stored in history, and packets/errors/drops are not
+captured at all.
 
-- `internal/api/respond.go` `decodeJSON` uses `DisallowUnknownFields()` — request bodies must contain **only** struct-declared fields (read-only fields like `hasPassword` must be stripped client-side; see `smtpPayload`/`ldapPayload`).
-- Image/object refs contain `:` and `/`, so pass them as **query params**, not chi path segments (chi won't decode `%3A`).
-- Alert-rule cooldown: `docker stop` emits several events (kill→die→stop); a 1s cooldown can double-fire — defaults are 60s.
-- **Go `nil` slices marshal to JSON `null`, not `[]`** — the SPA then crashes on `x.length`/`.map`. Initialise API-returned slices (`make`/`[]T{}`) so empty means `[]`, and still guard with `?? []` on the TS side. (Bit us with `ResourceOverview.Containers` when no containers were running.)
-- **systemd `ProtectHome=true` breaks `docker compose` plugin discovery.** The shipped unit runs as a dedicated user with `ProtectHome=true`, which mounts that user's home inaccessible (`EACCES`, not `ENOENT`). The docker CLI bases CLI-plugin discovery on its config dir (`~/.docker`) and treats `EACCES` there as fatal, so `docker compose` reads as an *unknown command* — `ComposeAvailable()` returns false and Projects' Deploy/Down are disabled. It works in a shell (home accessible) but not under the service. Fix shipped: `Environment=DOCKER_CONFIG=/var/lib/dockercmd/.docker` in `deploy/dockercmd.service` (writable config dir outside the protected home). The `install-*` scripts in `deploy/` cover the install paths per OS.
-- **NEVER call a host-global prune (`Prune{Networks,Images,Volumes}`) from an integration test.** The integration tests run against the developer's *real* local daemon, and a global prune removes EVERY unused network/image/volume — not just the test's — wiping real data. (This is exactly how a network lifecycle test once nuked a dev's networks.) Test create/connect/remove on test-owned resources only; exercise prune by hand on a throwaway host.
+- **Phase 1 — container.** Surface what is already collected: current RX/TX rate
+  (from the delta between samples), totals, packets/s, drops and errors, and a
+  history graph. Requires capturing the fields we currently discard, and handling
+  a **counter reset** on recreate/restart rather than rendering a negative rate.
+- **Phase 2 — network detail.** Aggregate the containers attached to a network.
+  Label it **Endpoint RX/TX total**, not "network traffic": container-to-container
+  traffic is counted twice, once as each side's TX and RX, and claiming otherwise
+  would be a number that looks authoritative and is wrong.
+- **Phase 3 — history, top talkers, alerts.** Store *raw cumulative counters* and
+  derive rates at read time. Alert on throughput, and on the **increase** in drops
+  and errors rather than their absolute value.
+- **Phase 4 (optional) — a Linux collector** via netlink/eBPF for flows, protocols,
+  connections and retransmits. Keep it an optional capability, never a condition of
+  running Docker Commander: it is Linux-only, awkward under Docker Desktop and
+  rootless, and needs host namespaces.
 
-## 🛠️ Dev / test notes (this machine)
+_Interface-to-network mapping:_ `ContainerStats` gives `eth0`, `eth1`… without
+saying which Docker network each belongs to. Exact mapping needs MAC/namespace
+inspection via netlink — Linux-only and hostile to remote hosts. The first version
+should sum across interfaces and say so.
 
-- **Go** is at `~/.local/go` — not on default PATH: `export PATH="$HOME/.local/go/bin:$PATH"` (`GOTOOLCHAIN=local`).
-- **Don't use `pkill`** in this sandbox (exits 144 and aborts the rest of the command); stop background servers explicitly (`lsof -ti tcp:PORT | xargs kill`).
-- **Build:** `make build` (UI then binary). The committed `web/dist` lets `go build ./...` work without Node.
-- **Headless UI verification:** puppeteer-core driving the system `google-chrome`, with a Node TOTP helper to pass mandatory 2FA (controlled inputs need the native value-setter + `input` event; checkboxes nested in `<label>` double-fire on click — use focus+Space).
-- **Local test services:**
-  - Redis: `docker run -d --rm -p 6399:6379 redis:7-alpine` → `DC_REDIS_ADDR=127.0.0.1:6399`.
-  - Auth registry: `registry:2` with an htpasswd file (no `htpasswd` here → generate the bcrypt line via Go `x/crypto/bcrypt`). localhost is insecure-by-default for the daemon.
-  - sshd: `osixia`-free alpine `apk add openssh` one-liner; host key is exchanged before auth (`DC_SSH_INTEGRATION` runs `TestSSHHostKeyEndToEnd`).
-  - SMTP sink: `docker run -d -p 1025:1025 -p 8025:8025 axllent/mailpit` (HTTP API on :8025 to read mail).
-  - LDAP: `osixia/openldap:1.5.0` (`LDAP_DOMAIN=example.org`, admin `cn=admin,dc=example,dc=org`); `ldapadd` a user.
+### Identity and access
+
+- **OIDC / SSO** — Google/Azure/Okta login. LDAP (including group→role) is step
+  one. **Testable without any provider account**: run Dex or Keycloak in a
+  container, the way LDAP is already tested against OpenLDAP. Only provider-specific
+  quirks — Azure's `iss` shape, Google not returning `groups` without Directory API
+  — need a real tenant, and those are the last mile rather than the blocker.
+- **Passkeys / WebAuthn**, and an **active sessions** view with revocation.
+
+### Configuration and secrets
+
+- **Secrets references** in compose — pull values from an internal store or an
+  external provider rather than inlining them, with resolved previews that stay
+  redacted.
+- **Parameterized user templates.** Built-in presets support `{{.Var}}`;
+  user-saved ones are literal snapshots. Add variables, validation and safe
+  handling of generated secrets.
+- **Per-instance isolation of file-backed mounts.** Two instances of the same
+  service block de-duplicate *named volumes* but still share the block's sidecar
+  paths (both nginx instances mount `./html`).
+- **Remote template catalog.** The `source: builtin|user|remote` field exists; a
+  provider needs catalog signing, item versions, a local cache, a trust policy and
+  a preview before import.
+
+### Smaller, well-scoped
+
+- **Bulk operations** (restart/start/stop/pull across a selection) with preview,
+  confirmation, bounded parallelism, per-host RBAC and a clear success/failure
+  summary.
+- **Log bookmarks** — save a time range plus filters, link it to an incident, share
+  it with users who have the rights, export a small diagnostic bundle without
+  secrets.
+- **Native Slack / Teams / Discord notifications** as a UX layer over the generic
+  webhook, which stays the base mechanism.
+- **Host maintenance mode**, as distinct from `disabled`: monitoring continues,
+  events are still recorded, notifications are suppressed or tagged, and write
+  operations can optionally be blocked. Overlaps with silences above — design them
+  together.
+- **ACME / Let's Encrypt** for public hosts. Self-signed `--make-certs` ships;
+  lower priority because production usually sits behind a reverse proxy. Testable
+  locally against Pebble.
+- **Windows native service.** `--install-service` covers systemd and launchd. A
+  console exe is not a native service (SCM error 1053), so this needs
+  `golang.org/x/sys/windows/svc`; the Task Scheduler script remains the supported
+  path meanwhile.
+- **Sidebar navigation rework** into collapsible groups, if the flat list stops
+  scaling.
+- **Version matrix — narrower axes.** It pins Engine **majors**, so a regression in
+  a specific patch isn't caught the moment it ships; and it does not pin the
+  **Compose plugin**, which comes from the runner. Compose is the more likely one
+  to bite, since the README claims "v2 or newer" while CI only ever exercises
+  whatever it happens to have (v5 today).
+
+---
+
+## 🧭 Deliberately not doing
+
+Recorded so they don't get re-proposed.
+
+- **In-process Compose deploy engine.** `compose-go` cannot do this — it is a
+  parser/loader that never creates anything. The only library that deploys is
+  `github.com/docker/compose` (now v5), and importing it took the module graph from
+  **114 → 409** modules; a hello-world that merely constructs the service is
+  **24.9 MB**, against a 26.8 MB binary today. It builds CGO-free, so the
+  single-binary property survives, but expect roughly **2× the size** to remove one
+  runtime dependency whose real pain (`ProtectHome` plugin discovery) is already
+  fixed.
+- **Arbitrary MCP `exec` / file access / prune / remove / image export.** The tool
+  surface is deliberately read + safe-control. If any of these ever appear they
+  must be explicitly opt-in, in a separate risky toolset, audited, and constrained
+  by both token and role.
+- **More plain Docker API CRUD wrappers.** The everyday management surface is
+  covered. New work should aggregate, explain, protect a change, or make recovery
+  possible.
