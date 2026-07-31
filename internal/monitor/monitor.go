@@ -58,6 +58,10 @@ type ContainerStat struct {
 	MemBytes   uint64
 	MemLimit   uint64
 	MemPercent float64 // of the container's limit, not of host RAM
+	// Cumulative network counters, summed across the container's interfaces.
+	// Kept raw so history can derive rates at read time.
+	NetRx uint64
+	NetTx uint64
 }
 
 // metric returns the value a rule's metric names, and whether it is available.
@@ -238,6 +242,8 @@ func (m *Monitor) pollStats(ctx context.Context) {
 					cs.MemBytes = s.MemUsage
 					cs.MemLimit = s.MemLimit
 					cs.MemPercent = s.MemPercent
+					cs.NetRx = s.NetRx
+					cs.NetTx = s.NetTx
 				}
 				mu.Lock()
 				next[cs.ID] = cs
@@ -269,6 +275,7 @@ func (m *Monitor) recordHistory(ctx context.Context, snap map[string]ContainerSt
 		samples = append(samples, history.Sample{
 			ContainerID: cs.ID, HostID: cs.HostID, Time: now,
 			CPU: cs.CPUPercent, MemPercent: cs.MemPercent, MemBytes: float64(cs.MemBytes),
+			NetRx: float64(cs.NetRx), NetTx: float64(cs.NetTx),
 		})
 	}
 	if len(samples) > 0 {

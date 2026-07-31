@@ -30,38 +30,15 @@ export function NetworkStats({ latest }: { latest?: StatsSample }) {
       </div>
 
       {ifaces.length > 1 && (
-        <div className="pt-1">
-          <div className="text-xs uppercase tracking-wide text-muted mb-1.5">Per interface</div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead className="text-muted">
-                <tr className="border-b border-border">
-                  <th className="text-left font-medium py-1.5 pr-3">Interface</th>
-                  <th className="text-right font-medium py-1.5 px-3">RX</th>
-                  <th className="text-right font-medium py-1.5 px-3">TX</th>
-                  <th className="text-right font-medium py-1.5 px-3">Dropped</th>
-                  <th className="text-right font-medium py-1.5 pl-3">Errors</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ifaces.map((i) => (
-                  <tr key={i.name} className="border-b border-border/40 last:border-0">
-                    <td className="py-1.5 pr-3 font-mono">{i.name}</td>
-                    <td className="py-1.5 px-3 text-right">{bytes(i.rxBytes)}</td>
-                    <td className="py-1.5 px-3 text-right">{bytes(i.txBytes)}</td>
-                    <td className="py-1.5 px-3 text-right">{(i.rxDropped + i.txDropped).toLocaleString()}</td>
-                    <td className="py-1.5 pl-3 text-right">{(i.rxErrors + i.txErrors).toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {/* Stated rather than implied: Docker gives interface names, not the
-              network each belongs to, and guessing would be worse than saying so. */}
-          <p className="text-xs text-muted mt-1.5">
-            Docker reports interface names only — it does not say which Docker network each one is attached to.
-          </p>
-        </div>
+        // Only the count, not a table. Docker names interfaces without saying
+        // which network each belongs to, so a per-interface breakdown invites a
+        // question it cannot answer. The aggregate is the honest unit here; the
+        // per-network split belongs on the network detail, where the attachment
+        // is known.
+        <p className="text-xs text-muted">
+          Across {ifaces.length} interfaces. Docker reports interface names only — it does not say which Docker network
+          each is attached to.
+        </p>
       )}
     </div>
   );

@@ -647,6 +647,26 @@ export interface NetInterfaceStats {
   txErrors: number;
 }
 
+// Endpoint traffic for a Docker network. Docker reports no per-network counters,
+// so these are the attached containers' own totals — and only those attached to
+// exactly one network can be attributed to it.
+export interface NetworkEndpointStats {
+  containerId: string;
+  containerName: string;
+  rxBytes: number;
+  txBytes: number;
+  attributable: boolean;
+}
+
+export interface NetworkStats {
+  networkId: string;
+  rxBytes: number;
+  txBytes: number;
+  endpoints: number;
+  unattributed: number;
+  containers: NetworkEndpointStats[];
+}
+
 export interface AlertDelivery {
   id: number;
   eventId: number;

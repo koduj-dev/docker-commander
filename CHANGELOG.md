@@ -7,6 +7,20 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Endpoint traffic on the network detail.** Docker reports no per-network
+  counters — its stats are per *interface* with no network identity on Linux, which
+  is why `docker stats` itself only shows one aggregate column. The network detail
+  therefore sums the attached containers, and is explicit about the two things that
+  would otherwise make it a confident wrong number: it is **endpoint** traffic, so
+  container-to-container traffic counts twice (once as each side's RX and TX); and a
+  container on several networks cannot have its counters split between them, so
+  those are listed but excluded from the totals, with the exclusion shown rather
+  than hidden. A container on exactly one network is unambiguous, which is the
+  common case.
+
+- **Network counters are kept in metric history** (`netrx` / `nettx`, cumulative),
+  so rates can be derived at read time whatever the sampling interval was.
+
 - **Network throughput on the container detail page.** RX/TX were already sampled
   and sent to the browser, and displayed nowhere. There is now a live throughput
   chart alongside CPU and memory, plus totals since the container started with
@@ -22,8 +36,8 @@ All notable changes to Docker Commander are documented here. The format follows
   derive rates at read time whatever the sampling interval was.
 
   Docker names interfaces (`eth0`, `eth1`…) without saying which Docker network
-  each belongs to; the UI says so rather than guessing, since exact mapping needs
-  Linux-only namespace inspection.
+  each belongs to, so the container view reports the aggregate and says so instead
+  of showing a per-interface split that invites a question it cannot answer.
 
 - **The alert feed is paged, filterable, and says whether alerts were actually
   delivered.** It previously rendered every event on one page with no filters, which

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"github.com/koduj-dev/docker-commander/internal/monitor"
 	"io"
 	"net/http"
 	"sort"
@@ -456,4 +457,66 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, shown)
+}
+
+// handleNetworkStats reports endpoint traffic for one network.
+//
+// Docker has no per-network counters, so this aggregates the attached
+// containers' own totals — and only those attached to exactly ONE network, whose
+// traffic is therefore unambiguously this network's. Multiply-attached
+// containers are listed but not summed; see docker.NetworkEndpointTraffic.
+func (s *Server) handleNetworkStats(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	id := chi.URLParam(r, "id")
+
+	// Container attachments are recorded by network NAME, so resolve it.
+	nets, err := s.docker.ListNetworks(r.Context(), hostID)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "docker error: "+err.Error())
+		return
+	}
+	name := ""
+	for _, n := range nets {
+		if n.ID == id || n.Name == id {
+			name = n.Name
+			break
+		}
+	}
+	if name == "" {
+		writeErr(w, http.StatusNotFound, "network not found")
+		return
+	}
+
+	// Counters come from the monitor's latest snapshot rather than a fresh stats
+	// call per container: a network with twenty containers would otherwise mean
+	// twenty round trips to the daemon on every poll.
+	var lookup func(string) (uint64, uint64, uint64, uint64, uint64, uint64, bool)
+	if s.monitor != nil {
+		snap := map[string]monitor.ContainerStat{}
+		for _, cs := range s.monitor.Snapshot() {
+			snap[cs.ID] = cs
+		}
+		lookup = func(cid string) (uint64, uint64, uint64, uint64, uint64, uint64, bool) {
+			cs, ok := snap[cid]
+			if !ok {
+				return 0, 0, 0, 0, 0, 0, false
+			}
+			// The monitor keeps byte totals only; drops and errors are not in the
+			// cached snapshot, so they are reported as zero here rather than
+			// triggering a per-container stats call.
+			return cs.NetRx, cs.NetTx, 0, 0, 0, 0, true
+		}
+	}
+
+	out, err := s.docker.NetworkEndpointTraffic(r.Context(), hostID, name, lookup)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "docker error: "+err.Error())
+		return
+	}
+	out.NetworkID = id
+	writeJSON(w, http.StatusOK, out)
 }

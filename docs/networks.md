@@ -51,6 +51,27 @@ whole graph spreads across the width (rather than one tall column).
 - **List view** (toggle, top-right) — a dense, filterable table of containers
   (state, image, stack, ports, networks) as a legible fallback at scale.
 
+## Endpoint traffic
+
+Docker does **not** report per-network counters. `/containers/{id}/stats` is keyed
+by *interface* name (`eth0`, `eth1`…) and carries no network identity on Linux —
+the API has an `endpoint_id` field, but the daemon only fills it on Windows.
+`docker stats` itself shows a single aggregate `NET I/O` column for the same
+reason.
+
+So the network detail sums the attached containers' own totals, and says two
+things plainly rather than presenting a confident wrong number:
+
+- It is **endpoint** traffic, not network traffic. Container-to-container traffic
+  inside the network is counted **twice** — once as one side's TX and once as the
+  other's RX.
+- A container attached to **several** networks has counters covering all of them,
+  and Docker gives no way to split them. Those containers are listed but excluded
+  from the totals, and the count of excluded ones is shown.
+
+A container attached to exactly **one** network is unambiguous, which is the common
+case and what makes the number useful at all.
+
 ## Tips
 - On a busy host, use the search / stack filter or the list view; empty networks
   are hidden automatically while a filter is active.

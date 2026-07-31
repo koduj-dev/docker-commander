@@ -26,6 +26,8 @@ type Sample struct {
 	CPU        float64 // percent
 	MemPercent float64 // percent of limit
 	MemBytes   float64 // bytes
+	NetRx      float64 // cumulative bytes received, summed across interfaces
+	NetTx      float64 // cumulative bytes sent
 }
 
 // Point is a single (timestamp-ms, value) datapoint in a series.
@@ -39,6 +41,13 @@ const (
 	MetricCPU      = "cpu"
 	MetricMem      = "mem"      // percent
 	MetricMemBytes = "membytes" // bytes
+	// Network series are CUMULATIVE byte counters, not rates. A rate depends on
+	// the sampling interval, so storing one would bake that interval into the
+	// history and make every stored point wrong the day the interval changes.
+	// Readers derive rates from consecutive points instead — and can see a
+	// counter reset for what it is, which a stored rate would have hidden.
+	MetricNetRx = "netrx" // cumulative bytes received
+	MetricNetTx = "nettx" // cumulative bytes sent
 )
 
 // Store persists and queries metric history.
@@ -88,10 +97,14 @@ func metricValue(s Sample, metric string) (float64, bool) {
 		return s.MemPercent, true
 	case MetricMemBytes:
 		return s.MemBytes, true
+	case MetricNetRx:
+		return s.NetRx, true
+	case MetricNetTx:
+		return s.NetTx, true
 	default:
 		return 0, false
 	}
 }
 
 // allMetrics is the set of series stored per sample.
-var allMetrics = []string{MetricCPU, MetricMem, MetricMemBytes}
+var allMetrics = []string{MetricCPU, MetricMem, MetricMemBytes, MetricNetRx, MetricNetTx}
