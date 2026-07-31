@@ -202,9 +202,10 @@ export function Stacks() {
         title: "Redeploy stack",
         message: (
           <>
-            Runs <code className="font-mono text-text">docker compose up -d</code> for{" "}
+            Runs <code className="font-mono text-text">docker compose up -d --build</code> for{" "}
             <code className="font-mono text-text">{compose.project}</code> in its working directory on the host. Containers whose definition
-            changed are <strong>recreated</strong>, which means a brief interruption.
+            changed are <strong>recreated</strong>, which means a brief interruption, and any service with a{" "}
+            <code className="font-mono text-text">build:</code> section is rebuilt from its current context.
             {dirty && <> Your unsaved edits are not included — save them first.</>}
           </>
         ),

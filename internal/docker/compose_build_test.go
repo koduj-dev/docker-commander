@@ -53,6 +53,54 @@ func imageMarker(ctx context.Context, t *testing.T, slug string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// TestIntegrationStackRedeployRebuildsChangedContext is the same guarantee for a
+// stack the app did NOT create.
+//
+// It matters separately because the two paths are different code: a project
+// deploys through the API handler, a CLI-discovered stack through StackRedeploy,
+// and the latter shipped with a plain `up -d` after the former was fixed. The
+// stack here is created with the real compose CLI so its labels — which is all
+// StackRedeploy has to work from — are genuine rather than hand-written.
+func TestIntegrationStackRedeployRebuildsChangedContext(t *testing.T) {
+	requireLocalDaemon(t)
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	m, ctx := newManager(t)
+	if !composeProbe(ctx, "docker") {
+		t.Skip("docker compose CLI not available")
+	}
+	ensureImage(ctx, t, m)
+
+	const slug = "dctest-stackredeploy"
+	dir := t.TempDir()
+	buildProject(t, dir, "v1")
+	freeStack(ctx, m, slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = ComposeDown(bg, dir, slug, nil)
+		freeStack(bg, m, slug)
+		_ = exec.Command("docker", "image", "rm", "-f", slug+"-web").Run()
+	})
+
+	if out, err := ComposeUpFiles(ctx, dir, slug, nil, nil, nil, true); err != nil {
+		t.Fatalf("could not create the stack with the compose CLI: %v\n%s", err, out)
+	}
+	if got := imageMarker(ctx, t, slug); got != "v1" {
+		t.Fatalf("stack did not build from its context: %q", got)
+	}
+
+	// Edit the build context on the host, then redeploy the way the app does.
+	buildProject(t, dir, "v2")
+	out, err := m.StackRedeploy(ctx, 0, slug)
+	if err != nil {
+		t.Fatalf("StackRedeploy: %v\n%s", err, out)
+	}
+	if got := imageMarker(ctx, t, slug); got != "v2" {
+		t.Fatalf("redeploying a stack must rebuild an edited build context: marker is %q, expected \"v2\"\n%s", got, out)
+	}
+}
+
 func TestIntegrationComposeUpRebuildsChangedContext(t *testing.T) {
 	if testing.Short() {
 		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
