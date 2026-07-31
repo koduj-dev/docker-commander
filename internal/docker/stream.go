@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"sort"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -99,9 +100,30 @@ func computeSample(id string, s *container.StatsResponse) StatsSample {
 		sample.MemPercent = float64(usage) / float64(s.MemoryStats.Limit) * 100.0
 	}
 
-	for _, n := range s.Networks {
+	// Sum across interfaces AND keep the breakdown. Errors and dropped packets
+	// are worth carrying even though they are usually zero: when they are not,
+	// they are often the only sign of the problem.
+	names := make([]string, 0, len(s.Networks))
+	for name := range s.Networks {
+		names = append(names, name)
+	}
+	sort.Strings(names) // map order would make the UI list jump between frames
+	for _, name := range names {
+		n := s.Networks[name]
 		sample.NetRx += n.RxBytes
 		sample.NetTx += n.TxBytes
+		sample.NetRxPackets += n.RxPackets
+		sample.NetTxPackets += n.TxPackets
+		sample.NetRxDropped += n.RxDropped
+		sample.NetTxDropped += n.TxDropped
+		sample.NetRxErrors += n.RxErrors
+		sample.NetTxErrors += n.TxErrors
+		sample.Interfaces = append(sample.Interfaces, NetInterfaceStats{
+			Name: name, RxBytes: n.RxBytes, TxBytes: n.TxBytes,
+			RxPackets: n.RxPackets, TxPackets: n.TxPackets,
+			RxDropped: n.RxDropped, TxDropped: n.TxDropped,
+			RxErrors: n.RxErrors, TxErrors: n.TxErrors,
+		})
 	}
 	for _, b := range s.BlkioStats.IoServiceBytesRecursive {
 		switch b.Op {

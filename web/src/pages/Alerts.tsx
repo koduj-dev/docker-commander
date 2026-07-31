@@ -167,10 +167,22 @@ function Feed({ onAckAllReady }: { onAckAllReady: (fn: (() => void) | null) => v
   };
   // Hand the action to the page header, and take it back on unmount so it can't
   // outlive the tab it belongs to.
+  //
+  // Published through a ref on purpose. Depending on `ackAll` directly is an
+  // infinite render loop: it is a new closure every render, so the effect re-runs
+  // every render, which sets state in the parent, which re-renders this, which
+  // makes a new closure. The page then stops responding entirely — navigation
+  // changes the URL while React never gets far enough to paint. Only the setter
+  // is a dependency here, and it is stable, so this publishes exactly once.
+  const ackAllRef = useRef(ackAll);
+  ackAllRef.current = ackAll;
   useEffect(() => {
-    onAckAllReady(() => ackAll);
+    const stable = () => {
+      void ackAllRef.current();
+    };
+    onAckAllReady(() => stable);
     return () => onAckAllReady(null);
-  }, [onAckAllReady, ackAll]);
+  }, [onAckAllReady]);
 
   const clear = () => {
     setSeverity("");

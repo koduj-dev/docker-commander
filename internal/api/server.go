@@ -250,6 +250,7 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/networks", s.handleListNetworks)
 			r.Post("/networks", s.handleCreateNetwork)
 			r.Post("/networks/prune", s.handlePruneNetworks)
+			r.Get("/networks/{id}/stats", s.handleNetworkStats)
 			r.Delete("/networks/{id}", s.handleRemoveNetwork)
 			r.Post("/networks/{id}/connect", s.handleConnectNetwork)
 			r.Post("/networks/{id}/disconnect", s.handleDisconnectNetwork)

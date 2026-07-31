@@ -8,6 +8,7 @@ import { shortId } from "../lib/format";
 import { StateBadge, Spinner } from "../components/ui";
 import { Tabs } from "../components/Tabs";
 import { StatsCharts } from "../components/StatsChart";
+import { NetworkStats } from "../components/NetworkStats";
 import { MetricsHistory } from "../components/MetricsHistory";
 import { LogViewer } from "../components/LogViewer";
 import { Terminal } from "../components/Terminal";
@@ -111,6 +112,7 @@ export function ContainerDetail() {
 
       <div className="p-6 space-y-6">
         <StatsCharts data={samples} />
+        <NetworkStats latest={samples[samples.length - 1]} />
         <MetricsHistory containerId={id} />
 
         <Tabs

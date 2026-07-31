@@ -7,6 +7,60 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Endpoint traffic on the network detail.** Docker reports no per-network
+  counters — its stats are per *interface* with no network identity on Linux, which
+  is why `docker stats` itself only shows one aggregate column. The network detail
+  therefore sums the attached containers, and is explicit about the two things that
+  would otherwise make it a confident wrong number: it is **endpoint** traffic, so
+  container-to-container traffic counts twice (once as each side's RX and TX); and a
+  container on several networks cannot have its counters split between them, so
+  those are listed but excluded from the totals, with the exclusion shown rather
+  than hidden. A container on exactly one network is unambiguous, which is the
+  common case.
+
+- **Network counters are kept in metric history** (`netrx` / `nettx`, cumulative),
+  so rates can be derived at read time whatever the sampling interval was.
+
+- **Network in the dashboard's resource breakdown**, beside CPU and memory — as a
+  host-wide **summary over time**, not a pie and not a live ranking. CPU and memory
+  divide a real whole (the host), so a pie is honest for them; network's only
+  "whole" is whatever happens to be moving, which would make a container at 100% of
+  2 KB/s look identical to one at 100% of 800 MB/s. A live ranking is no better:
+  throughput is bursty, so the order changes on every poll. It is a time series —
+  which is how Portainer's stats view and the standard cAdvisor/Grafana panels
+  present it — so the per-container series lives on the container page and the
+  dashboard shows current RX/TX with a short trend. Summed across containers, so
+  traffic between two of them counts twice; the card says so.
+
+- **Dropped packets and interface errors are kept in history**, as `netdrops` and
+  `neterrors`. Stored RX+TX combined rather than as four series: they are near-zero
+  almost always, so four would double the write volume to store zeros, and what an
+  operator acts on is "this container started losing packets", not the direction.
+  The live view keeps the split.
+
+- **Network history on the container detail** — a second view in the History card,
+  since throughput and percentages cannot share an axis. It derives rates with the
+  same helper the live chart uses, so a counter reset and an uneven sampling
+  interval behave identically in both rather than through two rules that can drift.
+
+- **Network throughput on the container detail page.** RX/TX were already sampled
+  and sent to the browser, and displayed nowhere. There is now a live throughput
+  chart alongside CPU and memory, plus totals since the container started with
+  packets, **dropped** and **errors** — the last two usually zero, and on the day
+  they are not, frequently the only visible sign of the problem. Multi-interface
+  containers get a per-interface breakdown.
+
+  The chart plots the **derived rate**, because Docker reports cumulative counters
+  and a chart of a number that only ever rises says nothing. Rates are computed
+  from the elapsed time between samples rather than an assumed interval, and a
+  counter reset — the container was recreated — reads as zero rather than a
+  negative rate or a phantom spike. Counters stay raw end to end so history can
+  derive rates at read time whatever the sampling interval was.
+
+  Docker names interfaces (`eth0`, `eth1`…) without saying which Docker network
+  each belongs to, so the container view reports the aggregate and says so instead
+  of showing a per-interface split that invites a question it cannot answer.
+
 - **The alert feed is paged, filterable, and says whether alerts were actually
   delivered.** It previously rendered every event on one page with no filters, which
   stops being usable at the point alerting starts being useful. It now pages 50 at a
@@ -147,6 +201,14 @@ All notable changes to Docker Commander are documented here. The format follows
   app.
 
 ### Fixed
+- **Opening the Alerts page made the app stop responding to navigation.** The URL
+  changed and the screen did not. Moving *Ack all* into the page header published
+  the handler through an effect that depended on the handler itself — a new closure
+  every render, so the effect re-ran every render, set state in the parent, and
+  re-rendered the page. An infinite render loop, which React does not report as an
+  error: it simply never gets far enough to paint. Published through a ref now, so
+  the only dependency is the stable setter.
+
 - **A role scoped to only-invalid hosts became unscoped instead of being refused.**
   Sending `hostIds: [0]` was sanitised down to an empty list, which means *every
   host* — so a request to narrow a role quietly produced an unrestricted one, with

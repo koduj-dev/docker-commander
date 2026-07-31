@@ -53,6 +53,7 @@ import type {
   Topology,
   User,
   Webhook,
+  NetworkStats,
 } from "./types";
 import { getHostId, hostParam } from "./host";
 
@@ -587,6 +588,8 @@ export const api = {
   mcpAdminDeleteOAuthClient: (id: string) =>
     req<{ ok: boolean }>("DELETE", `/api/mcp-admin/oauth-clients/${encodeURIComponent(id)}`),
 
+  networkStats: (id: string) =>
+    req<NetworkStats>("GET", `/api/networks/${encodeURIComponent(id)}/stats${hostParam()}`),
   networks: () => req<NetworkSummary[]>("GET", `/api/networks${hostParam()}`),
   createNetwork: (b: { name: string; driver?: string; subnet?: string; gateway?: string; internal?: boolean; attachable?: boolean }) =>
     req<{ ok: boolean; id?: string; error?: string }>("POST", `/api/networks${hostParam()}`, b),

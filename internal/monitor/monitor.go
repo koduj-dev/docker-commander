@@ -58,6 +58,17 @@ type ContainerStat struct {
 	MemBytes   uint64
 	MemLimit   uint64
 	MemPercent float64 // of the container's limit, not of host RAM
+	// Cumulative network counters, summed across the container's interfaces.
+	// Kept raw so history can derive rates at read time.
+	NetRx     uint64
+	NetTx     uint64
+	NetDrops  uint64 // rx+tx dropped packets
+	NetErrors uint64 // rx+tx interface errors
+	// Rates derived from the previous poll. Zero until a second sample exists,
+	// and after a counter reset — a container that was just recreated has no
+	// meaningful rate yet, and inventing one would be worse than showing none.
+	NetRxRate float64 // bytes/s
+	NetTxRate float64 // bytes/s
 }
 
 // metric returns the value a rule's metric names, and whether it is available.
@@ -101,8 +112,9 @@ type Monitor struct {
 	docker  *docker.Manager
 	history history.Store
 
-	mu       sync.RWMutex
-	snapshot map[string]ContainerStat
+	mu         sync.RWMutex
+	snapshot   map[string]ContainerStat
+	snapshotAt time.Time
 
 	cooldowns sync.Map // "ruleID:cid" -> time.Time (last fired)
 	overSince sync.Map // "ruleID:cid" -> time.Time (resource threshold first crossed)
@@ -238,6 +250,10 @@ func (m *Monitor) pollStats(ctx context.Context) {
 					cs.MemBytes = s.MemUsage
 					cs.MemLimit = s.MemLimit
 					cs.MemPercent = s.MemPercent
+					cs.NetRx = s.NetRx
+					cs.NetTx = s.NetTx
+					cs.NetDrops = s.NetRxDropped + s.NetTxDropped
+					cs.NetErrors = s.NetRxErrors + s.NetTxErrors
 				}
 				mu.Lock()
 				next[cs.ID] = cs
@@ -247,12 +263,47 @@ func (m *Monitor) pollStats(ctx context.Context) {
 	}
 	wg.Wait()
 
+	// Derive per-container throughput from the previous poll. Docker only gives
+	// cumulative counters, so a rate needs two samples; it is computed here, once,
+	// rather than by every caller that wants it.
+	now := time.Now()
 	m.mu.Lock()
+	if !m.snapshotAt.IsZero() {
+		applyNetRates(next, m.snapshot, now.Sub(m.snapshotAt).Seconds())
+	}
 	m.snapshot = next
+	m.snapshotAt = now
 	m.mu.Unlock()
 
 	m.recordHistory(ctx, next)
 	m.evalResourceRules(ctx, next)
+}
+
+// applyNetRates fills in per-container throughput from the previous poll.
+//
+// Split out so the three cases that matter can be tested without a daemon: a
+// normal delta, a counter reset (the container was recreated, so the counter
+// restarted and the subtraction would go negative), and a container seen for the
+// first time — which has no rate at all, and whose cumulative total would
+// otherwise be reported as one, making every new container look like the busiest
+// thing on the host.
+func applyNetRates(next, prev map[string]ContainerStat, elapsed float64) {
+	if elapsed <= 0 {
+		return
+	}
+	for id, cs := range next {
+		p, ok := prev[id]
+		if !ok {
+			continue
+		}
+		if cs.NetRx >= p.NetRx {
+			cs.NetRxRate = float64(cs.NetRx-p.NetRx) / elapsed
+		}
+		if cs.NetTx >= p.NetTx {
+			cs.NetTxRate = float64(cs.NetTx-p.NetTx) / elapsed
+		}
+		next[id] = cs
+	}
 }
 
 // recordHistory persists the running containers' samples for charting.
@@ -269,6 +320,8 @@ func (m *Monitor) recordHistory(ctx context.Context, snap map[string]ContainerSt
 		samples = append(samples, history.Sample{
 			ContainerID: cs.ID, HostID: cs.HostID, Time: now,
 			CPU: cs.CPUPercent, MemPercent: cs.MemPercent, MemBytes: float64(cs.MemBytes),
+			NetRx: float64(cs.NetRx), NetTx: float64(cs.NetTx),
+			NetDrops: float64(cs.NetDrops), NetErrors: float64(cs.NetErrors),
 		})
 	}
 	if len(samples) > 0 {

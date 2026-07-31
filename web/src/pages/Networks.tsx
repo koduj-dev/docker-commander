@@ -3,7 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { FileSearch, Network as NetworkIcon, Trash2, X, Plus, Eraser, Loader2, Share2, List, Plug } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
-import type { NetworkSummary, Topology } from "../lib/types";
+import { bytes } from "../lib/format";
+import type { NetworkSummary, Topology , NetworkStats} from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
 import { useDialogs } from "../components/Dialog";
@@ -254,6 +255,7 @@ function NetworkModal({ net, topo, onClose, onChanged, onReload }: { net: Networ
         {inspecting && <InspectModal kind="network" id={net.id} title={net.name} onClose={() => setInspecting(false)} />}
 
         <div className="p-4">
+          <NetworkTraffic networkId={net.id} />
           {!topo ? (
             <div className="flex items-center gap-2 text-muted py-10 justify-center"><Spinner /> Loading…</div>
           ) : members.length === 0 ? (
@@ -267,6 +269,68 @@ function NetworkModal({ net, topo, onClose, onChanged, onReload }: { net: Networ
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// NetworkTraffic shows endpoint throughput for a network.
+//
+// Docker has no per-network counters, so this is the sum of the attached
+// containers' own totals. Two things are stated rather than glossed over,
+// because both would otherwise produce a confident wrong number:
+//
+//   - It is labelled ENDPOINT traffic. Container-to-container traffic inside the
+//     network is counted twice — once as one side's TX and once as the other's
+//     RX — so this is not the volume on the wire.
+//   - A container attached to several networks cannot have its counters split
+//     between them (Docker's stats are per interface, with no network identity on
+//     Linux). Those are listed but excluded from the total, and the exclusion is
+//     shown rather than hidden.
+function NetworkTraffic({ networkId }: { networkId: string }) {
+  const [stats, setStats] = useState<NetworkStats | null>(null);
+  useEffect(() => {
+    let live = true;
+    const load = () => {
+      api
+        .networkStats(networkId)
+        .then((r) => live && setStats(r))
+        .catch(() => live && setStats(null));
+    };
+    load();
+    const t = setInterval(load, 5000);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, [networkId]);
+
+  if (!stats || stats.endpoints === 0) return null;
+
+  return (
+    <div className="card p-3 mb-4">
+      <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2">
+        <span className="text-xs uppercase tracking-wide text-muted">Endpoint traffic</span>
+        <span className="text-sm">
+          <span className="text-muted">RX total</span> <strong>{bytes(stats.rxBytes)}</strong>
+        </span>
+        <span className="text-sm">
+          <span className="text-muted">TX total</span> <strong>{bytes(stats.txBytes)}</strong>
+        </span>
+        <span className="text-sm">
+          <span className="text-muted">Endpoints</span> <strong>{stats.endpoints}</strong>
+        </span>
+      </div>
+      <p className="text-xs text-muted mt-1.5">
+        Summed from the attached containers, so container-to-container traffic counts twice — once as each side&rsquo;s
+        RX and TX. It is not the volume of traffic on the network.
+        {stats.unattributed > 0 && (
+          <>
+            {" "}
+            <strong>{stats.unattributed}</strong> container{stats.unattributed === 1 ? " is" : "s are"} attached to more
+            than one network, so their counters cover all of them and are excluded from these totals.
+          </>
+        )}
+      </p>
     </div>
   );
 }

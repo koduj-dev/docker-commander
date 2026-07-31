@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import { Area, AreaChart, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, YAxis } from "recharts";
 import { api } from "../lib/api";
 import type { ResourceOverview, ResourceUsage } from "../lib/types";
+import { rate } from "../lib/format";
 import { Spinner } from "./ui";
 
 type Slice = { name: string; value: number };
@@ -36,6 +37,12 @@ function colorFor(name: string, i: number): string {
 export function ResourceBreakdown({ tick = 0 }: { tick?: number }) {
   const [data, setData] = useState<ResourceOverview | null>(null);
   const [error, setError] = useState("");
+  // A short rolling window of host-wide throughput, so the dashboard can show a
+  // trend rather than a single flickering number. Throughput is bursty: a
+  // point-in-time ranking of containers reorders itself on every poll and is
+  // unreadable, which is why the detail page carries the per-container series and
+  // this is only a summary.
+  const [netWindow, setNetWindow] = useState<{ t: number; rx: number; tx: number }[]>([]);
 
   // Refresh on Docker lifecycle events (`tick`) plus a slow poll for CPU/mem
   // drift. Refreshes update in place (no flicker); a transient error keeps the
@@ -47,6 +54,9 @@ export function ResourceBreakdown({ tick = 0 }: { tick?: number }) {
         .then((d) => {
           setData(d);
           setError("");
+          const rx = (d.containers ?? []).reduce((n, c) => n + c.netRxRate, 0);
+          const tx = (d.containers ?? []).reduce((n, c) => n + c.netTxRate, 0);
+          setNetWindow((w) => [...w, { t: Date.now(), rx, tx }].slice(-30));
         })
         .catch((e) => setError(e instanceof Error ? e.message : "could not sample container resources"));
     load();
@@ -71,18 +81,88 @@ export function ResourceBreakdown({ tick = 0 }: { tick?: number }) {
   } else if (containers.length === 0) {
     body = <div className="card p-4 text-sm text-muted">No running containers to sample.</div>;
   } else {
+    // Network gets neither a pie nor a ranking here. A pie claims "parts of a
+    // whole" and the only whole available is whatever happens to be moving, so a
+    // container at 100% of 2 KB/s would look identical to one at 100% of 800 MB/s.
+    // A live ranking is no better: throughput is bursty, so the order changes on
+    // every poll. It is a time series — which is how Portainer and the standard
+    // cAdvisor/Grafana panels present it — so the per-container series lives on
+    // the container detail and the dashboard shows the host-wide summary.
+    const netRx = containers.reduce((sum, c) => sum + c.netRxRate, 0);
+    const netTx = containers.reduce((sum, c) => sum + c.netTxRate, 0);
     body = (
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <UsagePie title={`CPU · ${data.cpus} core${data.cpus === 1 ? "" : "s"}`} slices={build(containers, (c) => c.cpuPercent)} />
         <UsagePie title="Memory" slices={build(containers, (c) => c.memPercent)} />
+        <NetworkSummary window={netWindow} rx={netRx} tx={netTx} />
       </div>
     );
   }
 
   return (
     <div>
-      <h2 className="text-sm font-semibold text-muted mb-3">Resource usage · share of host</h2>
+      <h2 className="text-sm font-semibold text-muted mb-3">
+        Resource usage <span className="font-normal">· CPU and memory as a share of the host; network as current throughput</span>
+      </h2>
       {body}
+    </div>
+  );
+}
+
+// NetworkSummary is the dashboard's whole network story: what the host is moving
+// right now, and how that has been trending over the last few minutes.
+//
+// Summed across the running containers, so container-to-container traffic counts
+// twice — once as one side's TX and once as the other's RX. Said out loud rather
+// than left for someone to discover when the numbers don't add up against an
+// external measurement.
+function NetworkSummary({ window: w, rx, tx }: { window: { t: number; rx: number; tx: number }[]; rx: number; tx: number }) {
+  const max = Math.max(1, ...w.map((p) => Math.max(p.rx, p.tx)));
+  return (
+    <div className="card p-4">
+      <div className="text-xs uppercase tracking-wide text-muted mb-2">Network · all containers</div>
+      <div className="h-56 flex flex-col">
+        <div className="flex gap-6 mb-3">
+          <div>
+            <div className="text-xs text-muted">Received</div>
+            <div className="text-lg font-semibold">{rate(rx)}</div>
+          </div>
+          <div>
+            <div className="text-xs text-muted">Sent</div>
+            <div className="text-lg font-semibold">{rate(tx)}</div>
+          </div>
+        </div>
+        {w.length < 2 ? (
+          <div className="flex-1 grid place-items-center text-sm text-muted">
+            Collecting — a rate needs two samples.
+          </div>
+        ) : (
+          <div className="flex-1">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={w} margin={{ top: 4, right: 0, bottom: 0, left: 0 }}>
+                <defs>
+                  <linearGradient id="g-net-rx" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#a78bfa" stopOpacity={0.35} />
+                    <stop offset="100%" stopColor="#a78bfa" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <YAxis domain={[0, max]} hide />
+                <Tooltip
+                  contentStyle={{ background: "#1a2233", border: "1px solid #243047", borderRadius: 8, fontSize: 12 }}
+                  labelFormatter={(t) => new Date(t as number).toLocaleTimeString()}
+                  formatter={(v, n) => [rate(Number(v)), n === "rx" ? "Received" : "Sent"]}
+                />
+                <Area type="monotone" dataKey="rx" stroke="#a78bfa" strokeWidth={2} fill="url(#g-net-rx)" dot={false} isAnimationActive={false} />
+                <Area type="monotone" dataKey="tx" stroke="#f5b14c" strokeWidth={2} fill="none" dot={false} isAnimationActive={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+        <p className="text-xs text-muted mt-1">
+          Summed across containers, so traffic between two of them counts twice. Per-container history is on the
+          container page.
+        </p>
+      </div>
     </div>
   );
 }
