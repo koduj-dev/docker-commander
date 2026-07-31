@@ -36,6 +36,8 @@ two cover installation and configuration.
 - [Getting started](getting-started.md) — first run, 2FA, the basics
 - [Deployment](deployment.md) — running on a server (systemd, HTTPS, config, logs, health, self-update)
 - [How it's tested](testing.md) — the test tiers, incl. real multi-daemon runs over TCP/SSH, and what isn't covered
+- [Gotchas](gotchas.md) — behaviours of this codebase that cost real debugging time once
+- [Dev environment](dev-environment.md) — local setup, and the throwaway services the tests expect
 - [Changelog](../CHANGELOG.md) — what changed in each release
 
 ---
