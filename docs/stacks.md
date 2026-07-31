@@ -30,6 +30,50 @@ DC-managed projects) a link back to the [Project](projects.md).
   for the local daemon, over **SSH** for SSH hosts. Plain-TCP hosts can't reach
   the host filesystem. **Copy** or **download** it from the viewer.
 
+## Editing and redeploying a CLI stack
+
+For a stack the app didn't create, the viewer doubles as an **editor**: change the
+YAML, **Save** it back to the host, then **Redeploy** to apply it. Saving and
+redeploying are separate steps, so you can leave a half-finished edit on disk
+without restarting anything.
+
+**The file is edited where it already lives** — it is *not* copied into a managed
+[Project](projects.md). That is deliberate: a compose file's relative paths (bind
+mounts, `env_file`, `build.context`, `include`) resolve against the project's
+working directory, so moving the file would silently repoint every one of them.
+`./nginx.conf` would stop meaning your config and start meaning whatever sits
+beside the copy — usually nothing, which deploys an *empty* file rather than
+failing loudly. Redeploy therefore runs `docker compose up -d` in the stack's
+original working directory, exactly where it ran the first time.
+
+What that costs, stated plainly:
+
+- **Requires the `containers` section with write.** Read-only grants can view the
+  file but not save or redeploy.
+- **SSH hosts run `docker compose` on the host itself**, unlike managed Projects
+  (where the CLI runs on the Docker Commander machine and only tunnels the API).
+  The host therefore needs the Compose plugin installed, and the SSH user needs
+  write access to the compose file.
+- **Plain-TCP hosts stay read-only** — there is no filesystem to reach. So does a
+  stack whose containers carry no `working_dir` label. The viewer says which.
+- **`--remove-orphans` is not passed.** Delete a service from the file and its
+  container keeps running; Compose warns about it in the output. Removing one
+  stays an explicit act.
+
+Safety rails, so an edit can't become an incident:
+
+- The replacement is **validated with `docker compose config` before** anything is
+  replaced. A file Compose rejects never reaches the running stack's definition.
+- The previous version is kept beside the file as **`<name>.dc-prev`**.
+- The new file is moved into place with a rename, so an interrupted write can't
+  leave a half-file where a stack's definition used to be, and the original file's
+  permissions are preserved.
+- The compose file must sit **inside the stack's working directory**. The path
+  comes from a container label — which is set by whoever started the container —
+  so without this rule, anyone able to run a container could point the editor at
+  any file on the host. Writes outside the project directory are refused, as are
+  paths that aren't `.yml` / `.yaml`.
+
 ## Tips
 - A stack you created from a [Project](projects.md) shows a folder icon linking
   straight to its editor; conversely, a Project links to **Open in Stacks**

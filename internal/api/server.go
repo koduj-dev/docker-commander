@@ -162,6 +162,10 @@ func (s *Server) Handler() http.Handler {
 			// Compose stacks (grouped by the compose project label).
 			r.Get("/stacks", s.handleListStacks)
 			r.Get("/stacks/{project}/compose", s.handleStackCompose)
+			r.Put("/stacks/{project}/compose", s.handleWriteStackCompose)
+			// Static sub-route before the {action} catch-all, which would
+			// otherwise swallow "redeploy" and lose the CLI output.
+			r.Post("/stacks/{project}/redeploy", s.handleRedeployStack)
 			r.Post("/stacks/{project}/{action}", s.handleStackAction)
 
 			// Compose projects: managed folders deployed via the docker compose

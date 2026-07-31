@@ -150,14 +150,41 @@ func (m *Manager) StackAction(ctx context.Context, hostID int64, project, action
 	}
 }
 
+// stackTarget is a CLI-discovered stack resolved down to something actionable:
+// which host it lives on, the compose file it was deployed from, that file's
+// current contents, and the directory compose ran in. Reading, editing and
+// redeploying all need the same resolution, so it happens once here.
+type stackTarget struct {
+	stack   *Stack
+	host    *store.Host
+	hostID  int64  // concrete id (never 0)
+	path    string // absolute path of the compose file, on the host
+	workDir string // the project's working directory, on the host
+	content string
+}
+
 // StackComposeFile best-effort reads and returns the stack's compose file. The
 // file lives on the host (its path comes from the compose labels), so we read
 // it directly for the local daemon or over SSH for ssh hosts. TCP hosts give us
 // no filesystem access. Returns the resolved path and contents.
 func (m *Manager) StackComposeFile(ctx context.Context, hostID int64, project string) (path, content string, err error) {
-	stacks, err := m.ListStacks(ctx, hostID)
+	t, err := m.resolveStack(ctx, hostID, project)
 	if err != nil {
 		return "", "", err
+	}
+	return t.path, t.content, nil
+}
+
+// resolveStack locates the stack's compose file on its host and reads it.
+//
+// It deliberately returns only a path it managed to READ. Everything downstream
+// (editing, redeploying) then acts on a file that demonstrably exists where the
+// labels said it would, rather than on a guess — so a bad label can't steer a
+// write at a path nobody has ever seen.
+func (m *Manager) resolveStack(ctx context.Context, hostID int64, project string) (*stackTarget, error) {
+	stacks, err := m.ListStacks(ctx, hostID)
+	if err != nil {
+		return nil, err
 	}
 	var st *Stack
 	for i := range stacks {
@@ -167,17 +194,50 @@ func (m *Manager) StackComposeFile(ctx context.Context, hostID int64, project st
 		}
 	}
 	if st == nil {
-		return "", "", fmt.Errorf("stack %q not found", project)
+		return nil, fmt.Errorf("stack %q not found", project)
 	}
 	if st.ConfigFile == "" {
-		return "", "", fmt.Errorf("this stack has no compose file recorded (its containers carry no config_files label)")
+		return nil, fmt.Errorf("this stack has no compose file recorded (its containers carry no config_files label)")
 	}
 
+	id, err := m.ResolveHostID(ctx, hostID)
+	if err != nil {
+		return nil, err
+	}
+	h, err := m.store.HostByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	var lastErr error
+	for _, p := range composeCandidates(st) {
+		base := strings.ToLower(filepath.Base(p))
+		if !strings.HasSuffix(base, ".yml") && !strings.HasSuffix(base, ".yaml") {
+			lastErr = fmt.Errorf("refusing to read non-YAML path %q", p)
+			continue
+		}
+		data, err := m.readHostFile(ctx, id, h, p)
+		if err == nil {
+			return &stackTarget{
+				stack: st, host: h, hostID: id,
+				path: p, workDir: st.WorkingDir, content: data,
+			}, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("could not resolve the compose file path")
+	}
+	return nil, lastErr
+}
+
+// composeCandidates lists the host paths a stack's compose file might be at:
+// the label's path (absolute as-is, else joined with the working dir), plus a
+// working-dir + basename fallback for older compose label quirks.
+func composeCandidates(st *Stack) []string {
 	// The label may list several files (comma-separated); use the first.
 	cf := strings.TrimSpace(strings.SplitN(st.ConfigFile, ",", 2)[0])
 
-	// Candidate paths: absolute as-is, else joined with the working dir; plus a
-	// working-dir + basename fallback for older compose label quirks.
 	var candidates []string
 	if filepath.IsAbs(cf) {
 		candidates = append(candidates, cf)
@@ -189,33 +249,7 @@ func (m *Manager) StackComposeFile(ctx context.Context, hostID int64, project st
 	if st.WorkingDir != "" {
 		candidates = append(candidates, filepath.Join(st.WorkingDir, filepath.Base(cf)))
 	}
-
-	id, err := m.ResolveHostID(ctx, hostID)
-	if err != nil {
-		return "", "", err
-	}
-	h, err := m.store.HostByID(ctx, id)
-	if err != nil {
-		return "", "", err
-	}
-
-	var lastErr error
-	for _, p := range candidates {
-		base := strings.ToLower(filepath.Base(p))
-		if !strings.HasSuffix(base, ".yml") && !strings.HasSuffix(base, ".yaml") {
-			lastErr = fmt.Errorf("refusing to read non-YAML path %q", p)
-			continue
-		}
-		data, err := m.readHostFile(ctx, id, h, p)
-		if err == nil {
-			return p, data, nil
-		}
-		lastErr = err
-	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("could not resolve the compose file path")
-	}
-	return "", "", lastErr
+	return candidates
 }
 
 // ResolveHostID maps hostID <= 0 to the default local host's ID.

@@ -26,6 +26,35 @@ All notable changes to Docker Commander are documented here. The format follows
   and "failed" were the same state. It now says what went wrong and offers a retry.
 
 ### Added
+- **Edit and redeploy a stack that wasn't created here.** Stacks started with the
+  host's `docker compose` CLI have always been visible and their compose file
+  readable; now it can be changed. The viewer became an editor with **Save** (write
+  the file back to the host) and **Redeploy** (`docker compose up -d`) as separate
+  steps, so a half-finished edit doesn't restart anything.
+
+  **The file is edited in place, not adopted into a managed project.** That is the
+  whole design rather than an implementation detail: relative paths in a compose
+  file — bind mounts, `env_file`, `build.context`, `include` — resolve against the
+  project's working directory, so copying the file elsewhere silently repoints
+  every one of them. `./nginx.conf` would stop meaning the operator's config and
+  start meaning whatever sits beside the copy, which is usually nothing — and a
+  missing bind source deploys as an *empty* file instead of failing. Redeploy
+  therefore runs in the stack's original working directory. For SSH hosts that
+  means compose runs **on the host**, so the host needs the plugin; plain-TCP hosts
+  expose no filesystem and stay read-only, and the editor says so instead of
+  silently not appearing.
+
+  Guarded, because the compose path comes from a container **label** and labels are
+  set by whoever started the container: a write must land **inside the stack's own
+  working directory** (symlink-resolved locally) and on a `.yml`/`.yaml` path, or
+  it is refused — otherwise a `containers` grant would have become an arbitrary
+  file write as the account the app runs under. The replacement is validated with
+  `docker compose config` **before** anything is replaced, the previous version is
+  kept as `<name>.dc-prev`, the swap is a rename so an interruption can't leave a
+  half-file, and the original file's permissions are preserved. `--remove-orphans`
+  is deliberately not passed, so deleting a service never silently deletes a
+  container.
+
 - **A Docker version compatibility matrix, and a README that says which versions
   are tested.** The app talks to Docker two ways — the Engine API through the Go
   SDK and the `docker compose` CLI as a subprocess — and both move, while users run
