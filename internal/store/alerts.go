@@ -107,6 +107,38 @@ type AlertQuery struct {
 	HostIDs []int64
 	Limit   int
 	Offset  int
+	// Sort names a column to order by; Desc reverses it. The value is mapped
+	// through a fixed whitelist before it reaches SQL — an ORDER BY cannot be a
+	// bound parameter, so anything else would be string-building a query out of
+	// a query-string value.
+	Sort string
+	Desc bool
+}
+
+// orderBy maps a sort key to a SQL clause. Unknown keys fall back to newest
+// first, which is both the sane default and the safe one.
+func (q AlertQuery) orderBy() string {
+	dir := "ASC"
+	if q.Desc {
+		dir = "DESC"
+	}
+	switch q.Sort {
+	case "time":
+		return "id " + dir
+	case "severity":
+		// Ordered by how much it matters, not alphabetically: "critical" sorting
+		// before "info" and "warning" by accident of the alphabet would look
+		// almost right and be wrong.
+		return "CASE severity WHEN 'critical' THEN 3 WHEN 'warning' THEN 2 WHEN 'info' THEN 1 ELSE 0 END " + dir + ", id DESC"
+	case "rule":
+		return "rule_name COLLATE NOCASE " + dir + ", id DESC"
+	case "host":
+		return "host_name COLLATE NOCASE " + dir + ", id DESC"
+	case "container":
+		return "container_name COLLATE NOCASE " + dir + ", id DESC"
+	default:
+		return "id DESC"
+	}
 }
 
 // AlertKind values. Anything level-triggered moves between these; anything
@@ -347,7 +379,7 @@ func (s *Store) ListAlertEvents(ctx context.Context, q AlertQuery) ([]AlertEvent
 		SELECT id, rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name,
 		       message, value, acknowledged, kind, duration_sec, acknowledged_by, acknowledged_at, created_at
 		FROM alert_events WHERE `+cond+`
-		ORDER BY id DESC LIMIT ? OFFSET ?`, append(args, q.Limit, q.Offset)...)
+		ORDER BY `+q.orderBy()+` LIMIT ? OFFSET ?`, append(args, q.Limit, q.Offset)...)
 	if err != nil {
 		return nil, 0, err
 	}

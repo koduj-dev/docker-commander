@@ -187,6 +187,8 @@ func (s *Server) alertQueryFrom(w http.ResponseWriter, r *http.Request) (store.A
 		Rule:      q.Get("rule"),
 		Text:      q.Get("q"),
 		Unacked:   q.Get("unacked") == "1",
+		Sort:      q.Get("sort"),
+		Desc:      q.Get("desc") == "1",
 		Limit:     atoiDefault(q.Get("limit"), 50),
 		Offset:    atoiDefault(q.Get("offset"), 0),
 	}

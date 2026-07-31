@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Plus, Trash2, Webhook as WebhookIcon, Check, CheckCheck, Pencil, Download, Upload, X } from "lucide-react";
+import { Plus, Trash2, Webhook as WebhookIcon, Check, CheckCheck, Pencil, Download, Upload, X , ChevronDown, ChevronUp, ChevronsUpDown} from "lucide-react";
 import { Link } from "react-router-dom";
 import clsx from "clsx";
 import { api } from "../lib/api";
@@ -20,9 +20,21 @@ type Tab = "feed" | "rules" | "webhooks";
 
 export function Alerts() {
   const [tab, setTab] = useState<Tab>("feed");
+  // The feed publishes its "acknowledge all" here so the page's primary action
+  // sits in the header with the others, not buried in the filter row.
+  const [ackAll, setAckAll] = useState<(() => void) | null>(null);
   return (
     <>
-      <PageHeader title="Alerts" />
+      <PageHeader
+        title="Alerts"
+        actions={
+          tab === "feed" && ackAll ? (
+            <button className="btn-ghost px-3 py-1.5 text-sm" onClick={ackAll} title="Acknowledge everything matching the current filters">
+              <CheckCheck className="h-4 w-4" /> Ack all
+            </button>
+          ) : undefined
+        }
+      />
       <div className="p-6 space-y-4">
         <Tabs
           active={tab}
@@ -33,7 +45,7 @@ export function Alerts() {
             { key: "webhooks", label: "Webhooks" },
           ]}
         />
-        {tab === "feed" && <Feed />}
+        {tab === "feed" && <Feed onAckAllReady={setAckAll} />}
         {tab === "rules" && <Rules />}
         {tab === "webhooks" && <Webhooks />}
       </div>
@@ -61,11 +73,13 @@ function kindBadge(e: AlertEvent): string {
 
 const PAGE = 50;
 
-function Feed() {
+function Feed({ onAckAllReady }: { onAckAllReady: (fn: (() => void) | null) => void }) {
   const [events, setEvents] = useState<AlertEvent[] | null>(null);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
   const [detail, setDetail] = useState<AlertEvent | null>(null);
+  const [sort, setSort] = useState("time");
+  const [desc, setDesc] = useState(true);
   const dialogs = useDialogs();
 
   // Filters. `text` is debounced into `q` so typing doesn't fire a request per
@@ -93,13 +107,13 @@ function Feed() {
 
   const load = useCallback(() => {
     api
-      .alerts({ severity, kind, container, rule, q, unacked, host: host === "" ? undefined : Number(host), limit: PAGE, offset })
+      .alerts({ severity, kind, container, rule, q, unacked, host: host === "" ? undefined : Number(host), sort, desc, limit: PAGE, offset })
       .then((r) => {
         setEvents(r.events);
         setTotal(r.total);
       })
       .catch(() => setEvents([]));
-  }, [severity, kind, container, rule, q, unacked, host, offset]);
+  }, [severity, kind, container, rule, q, unacked, host, sort, desc, offset]);
 
   // Refresh on the shared alert poll rather than a timer of its own: a second
   // interval is what made a toast arrive seconds after its row appeared.
@@ -111,6 +125,18 @@ function Feed() {
   const ack = async (id: number) => {
     await api.ackAlert(id);
     load();
+  };
+
+  // Clicking a column sorts by it; clicking the active one flips direction.
+  // Sorting restarts paging for the same reason filtering does.
+  const applySort = (col: string) => {
+    if (col === sort) {
+      setDesc(!desc);
+    } else {
+      setSort(col);
+      setDesc(col === "time"); // newest-first reads right for time, A-Z for names
+    }
+    setOffset(0);
   };
 
   const filtered = !!(severity || kind || container || rule || q || unacked || host);
@@ -137,6 +163,13 @@ function Feed() {
     await api.ackAllAlerts({ severity, kind, container, rule, q, host: host === "" ? undefined : Number(host) });
     load();
   };
+  // Hand the action to the page header, and take it back on unmount so it can't
+  // outlive the tab it belongs to.
+  useEffect(() => {
+    onAckAllReady(() => ackAll);
+    return () => onAckAllReady(null);
+  }, [onAckAllReady, ackAll]);
+
   const clear = () => {
     setSeverity("");
     setKind("");
@@ -198,9 +231,6 @@ function Feed() {
           <input type="checkbox" checked={unacked} onChange={(e) => setUnacked(e.target.checked)} />
           Unacknowledged only
         </label>
-        <button className="btn-ghost px-3 py-1.5 text-sm" onClick={ackAll} title="Acknowledge everything matching the filters">
-          <CheckCheck className="h-4 w-4" /> Ack all
-        </button>
         {filtered && (
           <button className="btn-ghost px-3 py-1.5 text-sm" onClick={clear}>
             Clear
@@ -221,11 +251,11 @@ function Feed() {
             <table className="w-full text-sm">
               <thead className="text-muted text-xs uppercase tracking-wide">
                 <tr className="border-b border-border">
-                  <th className="text-left font-medium px-4 py-3">Time</th>
-                  <th className="text-left font-medium px-4 py-3">Severity</th>
-                  <th className="text-left font-medium px-4 py-3">Rule</th>
-                  <th className="text-left font-medium px-4 py-3 hidden lg:table-cell">Host</th>
-                  <th className="text-left font-medium px-4 py-3">Container</th>
+                  <SortTh label="Time" col="time" sort={sort} desc={desc} onSort={applySort} />
+                  <SortTh label="Severity" col="severity" sort={sort} desc={desc} onSort={applySort} />
+                  <SortTh label="Rule" col="rule" sort={sort} desc={desc} onSort={applySort} />
+                  <SortTh label="Host" col="host" sort={sort} desc={desc} onSort={applySort} className="hidden lg:table-cell" />
+                  <SortTh label="Container" col="container" sort={sort} desc={desc} onSort={applySort} />
                   <th className="text-left font-medium px-4 py-3">Message</th>
                   <th className="text-left font-medium px-4 py-3 hidden md:table-cell">Delivery</th>
                   <th className="px-4 py-3"></th>
@@ -264,6 +294,39 @@ function Feed() {
       )}
       {detail && <AlertDetailModal e={detail} onClose={() => setDetail(null)} onAck={() => { void ack(detail.id); setDetail(null); }} />}
     </div>
+  );
+}
+
+// SortTh is a sortable column header. Sorting happens server-side, so it orders
+// the whole result set rather than just the page on screen — the alternative
+// looks identical and is wrong the moment there is more than one page.
+function SortTh({
+  label,
+  col,
+  sort,
+  desc,
+  onSort,
+  className,
+}: {
+  label: string;
+  col: string;
+  sort: string;
+  desc: boolean;
+  onSort: (col: string) => void;
+  className?: string;
+}) {
+  const active = sort === col;
+  return (
+    <th className={clsx("text-left font-medium px-4 py-3", className)}>
+      <button className={clsx("inline-flex items-center gap-1", active ? "text-text" : "hover:text-text")} onClick={() => onSort(col)}>
+        {label}
+        {active ? (
+          desc ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />
+        ) : (
+          <ChevronsUpDown className="h-3 w-3 opacity-40" />
+        )}
+      </button>
+    </th>
   );
 }
 

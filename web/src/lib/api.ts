@@ -136,6 +136,8 @@ export interface AlertListParams {
   rule?: string;
   q?: string;
   unacked?: boolean;
+  sort?: string;
+  desc?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -660,6 +662,8 @@ export const api = {
     if (params?.rule) p.set("rule", params.rule);
     if (params?.q) p.set("q", params.q);
     if (params?.unacked) p.set("unacked", "1");
+    if (params?.sort) p.set("sort", params.sort);
+    if (params?.desc) p.set("desc", "1");
     if (params?.limit !== undefined) p.set("limit", String(params.limit));
     if (params?.offset !== undefined) p.set("offset", String(params.offset));
     const qs = p.toString();

@@ -439,3 +439,61 @@ func TestResolvedEventsAreBornSettled(t *testing.T) {
 		t.Errorf("ack-all touched %d events (err=%v), want only the 1 outstanding", got, err)
 	}
 }
+
+// TestAlertQuerySortIsWhitelisted covers the ordering, including the part that
+// cannot be a bound parameter.
+//
+// ORDER BY can't be parameterised, so the sort key is mapped through a fixed
+// switch rather than interpolated. An unknown or hostile key must fall back to
+// the default, not reach SQL.
+func TestAlertQuerySortIsWhitelisted(t *testing.T) {
+	s, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	seedEvents(t, s, ctx)
+
+	t.Run("severity sorts by importance, not alphabetically", func(t *testing.T) {
+		evs, _, err := s.ListAlertEvents(ctx, AlertQuery{Sort: "severity", Desc: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if evs[0].Severity != "critical" {
+			t.Fatalf("first row is %q; critical must lead, and alphabetically it would too — check the tail", evs[0].Severity)
+		}
+		// Alphabetically "info" < "warning", so a naive ORDER BY severity DESC
+		// would put warning before info. Importance order puts info last.
+		if evs[len(evs)-1].Severity != "info" {
+			t.Errorf("last row is %q, want info — severity is being ordered alphabetically", evs[len(evs)-1].Severity)
+		}
+	})
+
+	t.Run("container sorts by name", func(t *testing.T) {
+		evs, _, _ := s.ListAlertEvents(ctx, AlertQuery{Sort: "container", Desc: false})
+		for i := 1; i < len(evs); i++ {
+			if strings.ToLower(evs[i-1].ContainerName) > strings.ToLower(evs[i].ContainerName) {
+				t.Fatalf("not sorted: %q before %q", evs[i-1].ContainerName, evs[i].ContainerName)
+			}
+		}
+	})
+
+	t.Run("an unknown sort key falls back instead of reaching SQL", func(t *testing.T) {
+		evs, _, err := s.ListAlertEvents(ctx, AlertQuery{Sort: "container_name; DROP TABLE alert_events--"})
+		if err != nil {
+			t.Fatalf("a hostile sort key must be ignored, not error: %v", err)
+		}
+		if len(evs) == 0 {
+			t.Fatal("no rows back")
+		}
+		// Default is newest first.
+		if evs[0].ID < evs[len(evs)-1].ID {
+			t.Error("fallback should be newest-first")
+		}
+		// And the table must still be there.
+		if _, total, err := s.ListAlertEvents(ctx, AlertQuery{}); err != nil || total == 0 {
+			t.Fatalf("SECURITY: the events table did not survive a hostile sort key (total=%d err=%v)", total, err)
+		}
+	})
+}

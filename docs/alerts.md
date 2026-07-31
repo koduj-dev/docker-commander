@@ -69,7 +69,13 @@ kind, rule, container and message text, plus an *unacknowledged only* toggle.
 Filtering happens in the database rather than in the browser, so the counts and
 the paging describe the whole result set, not the page you happen to be on.
 
-Filter by severity, lifecycle kind, **host**, rule, container and message text.
+Filter by severity, lifecycle kind, **host**, rule, container and message text,
+and **sort by any of the first five columns** — server-side, so it orders the
+whole result set rather than just the page you can see. Severity sorts by how
+much it matters, not alphabetically (which would put *warning* above *info* and
+look almost right).
+
+**Ack all** sits in the page header with the other actions.
 
 The **sidebar badge counts problems**, not events: unacknowledged **warnings and
 criticals** only. A condition ending is recorded as `info`, so the number never
@@ -180,9 +186,36 @@ a host's *alert email* (set on the [Hosts](hosts.md) page) overrides the global
 recipient for alerts from that host.
 
 ## Prometheus
-Scrape `/metrics` for `dockercmd_container_cpu_percent`, `_mem_bytes`,
-`_mem_percent` and `_container_running`, labelled by `id`, `name` and `host`.
-Protect it with `DC_METRICS_TOKEN` if exposed.
+
+Scrape `/metrics`. Per container, labelled by `id`, `name` and `host`:
+
+| Metric | Meaning |
+|---|---|
+| `dockercmd_container_running` | 1 if running |
+| `dockercmd_container_cpu_percent` | **docker-stats convention: 100 = one core**, so a container busy on four reads ~400 |
+| `dockercmd_container_cpu_cores` | cores the daemon reports — divide the above by this for a share of the machine |
+| `dockercmd_container_mem_bytes` | memory in use |
+| `dockercmd_container_mem_percent` | share of the container's limit |
+
+And, from the alert engine:
+
+| Metric | Meaning |
+|---|---|
+| `dockercmd_alert_firing` | 1 per condition currently over threshold, labelled `host`, `container`, `metric`, `severity`, `rule` |
+| `dockercmd_alerts_firing_count` | how many conditions are firing |
+| `dockercmd_alerts_outstanding` | unacknowledged warnings and criticals — the same number as the sidebar badge |
+
+`dockercmd_alert_firing` is the one to page on: it is the live state of the
+condition, so it disappears when the condition resolves rather than needing a
+`for:` window to guess.
+
+> The `cpu_percent` help text used to say *host-relative*, which it never was.
+> A dashboard built on that description would have read four times high on a
+> four-core host.
+
+`/metrics` is a machine endpoint guarded by `DC_METRICS_TOKEN`, not by a user
+session, so it is **not** filtered by per-host RBAC — a scrape has no user. That
+was already true of the container metrics; it is worth knowing before exposing it.
 
 ## System log
 Beyond these channels, every fired alert is also written to the process log

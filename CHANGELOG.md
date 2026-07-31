@@ -36,6 +36,21 @@ All notable changes to Docker Commander are documented here. The format follows
   outstanding list waiting for a click that means nothing. One rule at the point of
   writing, rather than a special case in the badge, the filter and bulk acknowledge.
 
+  **`/metrics` gained the alert engine's state**: `dockercmd_alert_firing` (one per
+  live condition, labelled by host, container, metric, severity and rule),
+  `dockercmd_alerts_firing_count` and `dockercmd_alerts_outstanding`. The firing
+  gauge is the one to page on — it disappears when the condition resolves, so
+  Alertmanager needs no `for:` window to guess. Also **corrects the
+  `dockercmd_container_cpu_percent` help text**, which claimed *host-relative*: it
+  is the docker-stats per-core figure, so any dashboard built on that description
+  read four times high on a four-core host. A new `dockercmd_container_cpu_cores`
+  makes normalising possible.
+
+  **Columns are sortable** (time, severity, rule, host, container), server-side so
+  it orders the whole result set rather than the visible page. Severity sorts by
+  importance rather than alphabetically. The sort key is mapped through a fixed
+  whitelist, because `ORDER BY` cannot be a bound parameter.
+
   **Clicking an alert opens its detail** — full message, measured value, how long
   the condition lasted, a link through to the container, acknowledgement, and every
   delivery attempt with the endpoint's own response. The feed row can only ever show
