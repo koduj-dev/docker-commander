@@ -29,8 +29,53 @@ Create or edit a rule (rules are fully editable, not just create/delete):
 | `restart`  | a container restarts too often within a window (crash loop) |
 
 Each rule has a **target** (container-name substring; blank/`*` = all), a
-**severity**, a **cooldown** (suppresses repeats — keep it generous, e.g. 60s),
-and optional **webhook** and **email** delivery.
+**severity**, a **re-notify interval** (the *cooldown* field — how long a
+condition stays quiet while it is still true), and optional **webhook** and
+**email** delivery.
+
+## Threshold alerts are conditions, not lines
+
+A `resource` rule describes a state of the world that is either true or not, so
+it is tracked as a **condition** with a lifetime rather than re-announced on
+every evaluation. A condition is one per **container + metric** — not per rule —
+and you see it exactly at the moments something changes:
+
+| Event | Meaning |
+|---|---|
+| `firing` | the threshold was crossed and held for the rule's duration |
+| `escalated` | still on, and a more severe rule now applies |
+| `eased` | still on, but only a less severe rule still applies |
+| `repeat` | still on, and the re-notify interval elapsed |
+| `resolved` | it stopped; the event says how long it lasted |
+
+Two consequences worth knowing, because they are the point:
+
+- **Overlapping rules produce one alert, not one each.** If a container is over
+  both a *warning >5%* and a *critical >10%* memory rule, that is one fact, and
+  the most severe rule speaks for it. Crossing into critical later **escalates
+  the existing condition** — the incident clock keeps running rather than
+  restarting.
+- **A condition that is still true says nothing.** Silence between `firing` and
+  `resolved` means "unchanged", not "not checked".
+
+`state`, `log` and `restart` rules stay **edge-triggered**: a container that died
+or a log line that matched has no later moment at which it stops being true, so
+those still use the plain cooldown and never resolve.
+
+## What the CPU threshold is a percentage *of*
+
+This trips people up, so the rule editor now asks explicitly:
+
+- **CPU % (of one core)** — Docker's own figure, the one `docker stats` prints.
+  100% is a single core, so a container busy on four cores reads ~400%. A fixed
+  `> 80%` rule here is over threshold essentially always on a multi-core host.
+- **CPU % (of all cores)** — the same usage divided by the host's core count, so
+  it is 0–100% whatever the machine. Usually what people mean.
+- **Memory %** — share of the **container's limit**, not of host RAM.
+
+Existing rules keep the *of one core* meaning, so nothing changes underneath a
+rule you already wrote. Alert messages now state their basis and carry absolute
+values — `MEM 3.0 GB / 5.0 GB (61.9% of limit) > 5%` rather than `MEM 61.9% > 5%`.
 
 > **Host reachability is watched automatically** — no rule needed. When a host's
 > Docker daemon goes **unreachable** you get a *critical* `host` alert, and a

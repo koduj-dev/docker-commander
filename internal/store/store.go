@@ -162,6 +162,30 @@ CREATE TABLE IF NOT EXISTS alert_events (
 );
 CREATE INDEX IF NOT EXISTS idx_alert_events_created ON alert_events(id DESC);
 
+-- Live state of level-triggered (resource) alerts, so an alert is a condition
+-- with a lifetime rather than a line reprinted every evaluation. Keyed by what
+-- the condition is ABOUT — a container's metric — not by the rule that noticed
+-- it, so two rules with different severities over the same metric are one
+-- incident that escalates, not two competing alerts.
+--
+-- Persisted rather than kept in memory: without it a restart forgets every
+-- firing condition, so nothing would ever resolve across one, and "currently
+-- firing" could not be answered at all.
+CREATE TABLE IF NOT EXISTS alert_states (
+	host_id      INTEGER NOT NULL DEFAULT 0,
+	container_id TEXT    NOT NULL DEFAULT '',
+	metric       TEXT    NOT NULL DEFAULT '',
+	rule_id      INTEGER NOT NULL DEFAULT 0,
+	rule_name    TEXT    NOT NULL DEFAULT '',
+	severity     TEXT    NOT NULL DEFAULT '',
+	container_name TEXT  NOT NULL DEFAULT '',
+	host_name    TEXT    NOT NULL DEFAULT '',
+	last_value   REAL,
+	started_at   TEXT    NOT NULL,
+	notified_at  TEXT    NOT NULL,
+	PRIMARY KEY (host_id, container_id, metric)
+);
+
 CREATE TABLE IF NOT EXISTS parse_rules (
 	id         INTEGER PRIMARY KEY AUTOINCREMENT,
 	name       TEXT NOT NULL,
@@ -326,6 +350,10 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
 		`ALTER TABLE hosts ADD COLUMN alert_email TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE alert_events ADD COLUMN host_id INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE alert_events ADD COLUMN host_name TEXT NOT NULL DEFAULT ''`,
+		// 'firing' is the default so every event recorded before alerts had a
+		// lifecycle reads as what it was: the moment a condition was noticed.
+		`ALTER TABLE alert_events ADD COLUMN kind TEXT NOT NULL DEFAULT 'firing'`,
+		`ALTER TABLE alert_events ADD COLUMN duration_sec INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN auth_source TEXT NOT NULL DEFAULT 'local'`,
 		`ALTER TABLE users ADD COLUMN ui_prefs TEXT NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE hosts ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`,

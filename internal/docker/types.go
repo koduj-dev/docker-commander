@@ -74,17 +74,23 @@ type NetworkSummary struct {
 
 // StatsSample is one point in a container's real-time resource time series.
 type StatsSample struct {
-	ContainerID string  `json:"containerId"`
-	Timestamp   int64   `json:"timestamp"` // unix millis
-	CPUPercent  float64 `json:"cpuPercent"`
-	MemUsage    uint64  `json:"memUsage"`
-	MemLimit    uint64  `json:"memLimit"`
-	MemPercent  float64 `json:"memPercent"`
-	NetRx       uint64  `json:"netRx"`
-	NetTx       uint64  `json:"netTx"`
-	BlkRead     uint64  `json:"blkRead"`
-	BlkWrite    uint64  `json:"blkWrite"`
-	PIDs        uint64  `json:"pids"`
+	ContainerID string `json:"containerId"`
+	Timestamp   int64  `json:"timestamp"` // unix millis
+	// CPUPercent uses the `docker stats` convention: 100% is ONE core, so a
+	// container busy on four cores reads ~400%. CPUCores carries how many the
+	// daemon reported, which is the only way a reader can turn that figure into
+	// "how much of this machine" — a distinction that otherwise makes any fixed
+	// threshold meaningless on multi-core hosts.
+	CPUPercent float64 `json:"cpuPercent"`
+	CPUCores   float64 `json:"cpuCores"`
+	MemUsage   uint64  `json:"memUsage"`
+	MemLimit   uint64  `json:"memLimit"`
+	MemPercent float64 `json:"memPercent"`
+	NetRx      uint64  `json:"netRx"`
+	NetTx      uint64  `json:"netTx"`
+	BlkRead    uint64  `json:"blkRead"`
+	BlkWrite   uint64  `json:"blkWrite"`
+	PIDs       uint64  `json:"pids"`
 }
 
 // HostPortProbe is one published port on the host, tagged with the container

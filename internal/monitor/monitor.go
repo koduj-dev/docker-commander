@@ -53,9 +53,28 @@ type ContainerStat struct {
 	ID         string
 	Name       string
 	State      string
-	CPUPercent float64
+	CPUPercent float64 // `docker stats` convention: 100% == one core
+	CPUCores   float64 // cores the daemon reports, so CPUPercent can be normalised
 	MemBytes   uint64
-	MemPercent float64
+	MemLimit   uint64
+	MemPercent float64 // of the container's limit, not of host RAM
+}
+
+// metric returns the value a rule's metric names, and whether it is available.
+// cpu_total divides by the core count so a threshold means the same thing on a
+// 2-core box and a 64-core one.
+func (cs ContainerStat) metric(name string) (float64, bool) {
+	switch name {
+	case "mem":
+		return cs.MemPercent, true
+	case "cpu_total":
+		if cs.CPUCores <= 0 {
+			return 0, false // without a core count the figure would be a guess
+		}
+		return cs.CPUPercent / cs.CPUCores, true
+	default:
+		return cs.CPUPercent, true
+	}
 }
 
 // monitoredHosts returns the hosts the engine should watch (all configured
@@ -215,7 +234,9 @@ func (m *Monitor) pollStats(ctx context.Context) {
 				defer cancel()
 				if s, err := m.docker.SampleStats(sctx, cs.HostID, cs.ID); err == nil {
 					cs.CPUPercent = s.CPUPercent
+					cs.CPUCores = s.CPUCores
 					cs.MemBytes = s.MemUsage
+					cs.MemLimit = s.MemLimit
 					cs.MemPercent = s.MemPercent
 				}
 				mu.Lock()
@@ -257,11 +278,42 @@ func (m *Monitor) recordHistory(ctx context.Context, snap map[string]ContainerSt
 	}
 }
 
+// evalResourceRules turns threshold rules into conditions with a lifetime.
+//
+// The old shape evaluated every rule against every container independently and
+// notified whenever the cooldown allowed, which produced three problems in
+// practice: two rules over one metric emitted two alerts for one fact, the same
+// alert reappeared every cooldown with nothing having changed, and nothing was
+// ever emitted when the problem went away.
+//
+// So the unit here is a CONDITION — one per (host, container, metric) — not a
+// rule. Of the rules currently over threshold for a condition, only the most
+// severe speaks; the rest are its context, not separate news. A condition is
+// announced when it starts, again only if it changes severity or the re-notify
+// interval elapses, and once more when it ends, carrying how long it lasted.
 func (m *Monitor) evalResourceRules(ctx context.Context, snap map[string]ContainerStat) {
 	rules, err := m.store.ListAlertRules(ctx)
 	if err != nil {
 		return
 	}
+	states, err := m.store.ListAlertStates(ctx)
+	if err != nil {
+		return
+	}
+	prev := make(map[string]store.AlertState, len(states))
+	for _, st := range states {
+		prev[stateKey(st.HostID, st.ContainerID, st.Metric)] = st
+	}
+
+	// Winners: the most severe rule currently over threshold per condition.
+	type candidate struct {
+		rule  store.AlertRule
+		cfg   resourceConfig
+		stat  ContainerStat
+		value float64
+	}
+	winners := map[string]candidate{}
+
 	for _, r := range rules {
 		if !r.Enabled || r.Type != "resource" {
 			continue
@@ -274,22 +326,172 @@ func (m *Monitor) evalResourceRules(ctx context.Context, snap map[string]Contain
 			if cs.State != "running" || !matchTarget(r.Target, cs.Name) {
 				continue
 			}
-			val := cs.CPUPercent
-			if cfg.Metric == "mem" {
-				val = cs.MemPercent
+			val, ok := cs.metric(cfg.Metric)
+			if !ok {
+				continue
 			}
 			key := ruleKey(r.ID, cs.ID)
-			if cfg.exceeds(val) {
-				since, _ := m.overSince.LoadOrStore(key, time.Now())
-				if time.Since(since.(time.Time)) >= time.Duration(cfg.DurationSec)*time.Second {
-					v := val
-					m.fire(ctx, r, cs.HostID, cs.HostName, cs.ID, cs.Name,
-						sprintf("%s %.1f%% %s %.0f%% for %ds", strings.ToUpper(cfg.Metric), val, cfg.Op, cfg.Threshold, cfg.DurationSec), &v)
-				}
-			} else {
+			if !cfg.exceeds(val) {
 				m.overSince.Delete(key)
+				continue
 			}
+			// The dwell time stays per RULE: two rules over one metric can have
+			// different durationSec, and each has to serve its own before it
+			// gets a say in who wins.
+			since, _ := m.overSince.LoadOrStore(key, time.Now())
+			if time.Since(since.(time.Time)) < time.Duration(cfg.DurationSec)*time.Second {
+				continue
+			}
+			ck := stateKey(cs.HostID, cs.ID, cfg.metricKey())
+			if cur, ok := winners[ck]; ok && severityRank(cur.rule.Severity) >= severityRank(r.Severity) {
+				continue
+			}
+			winners[ck] = candidate{rule: r, cfg: cfg, stat: cs, value: val}
 		}
+	}
+
+	now := time.Now()
+	for ck, c := range winners {
+		msg := resourceMessage(c.cfg, c.stat, c.value)
+		v := c.value
+		st, existed := prev[ck]
+
+		switch {
+		case !existed:
+			m.emit(ctx, c.rule, c.stat.HostID, c.stat.HostName, c.stat.ID, c.stat.Name,
+				msg, &v, store.KindFiring, 0)
+			st = store.AlertState{StartedAt: now}
+		case severityRank(c.rule.Severity) > severityRank(st.Severity):
+			m.emit(ctx, c.rule, c.stat.HostID, c.stat.HostName, c.stat.ID, c.stat.Name,
+				msg, &v, store.KindEscalated, int(now.Sub(st.StartedAt).Seconds()))
+		case severityRank(c.rule.Severity) < severityRank(st.Severity):
+			m.emit(ctx, c.rule, c.stat.HostID, c.stat.HostName, c.stat.ID, c.stat.Name,
+				msg, &v, store.KindEased, int(now.Sub(st.StartedAt).Seconds()))
+		case c.rule.CooldownSec > 0 && now.Sub(st.NotifiedAt) >= time.Duration(c.rule.CooldownSec)*time.Second:
+			m.emit(ctx, c.rule, c.stat.HostID, c.stat.HostName, c.stat.ID, c.stat.Name,
+				msg, &v, store.KindRepeat, int(now.Sub(st.StartedAt).Seconds()))
+		default:
+			// Still true, nothing changed, not yet time to repeat: say nothing.
+			// This is the whole point — silence here is the feature.
+			// Carry the previous notify time forward. Writing `now` here would
+			// reset the re-notify clock on every evaluation, so a condition that
+			// stayed quiet could never reach its repeat interval — the silence
+			// would be permanent instead of bounded.
+			m.saveState(ctx, c.stat, c.cfg, c.rule, &v, st.StartedAt, st.NotifiedAt)
+			continue
+		}
+		m.saveState(ctx, c.stat, c.cfg, c.rule, &v, orNow(st.StartedAt, now), now)
+	}
+
+	// Anything that was firing and no longer wins its condition has ended.
+	for ck, st := range prev {
+		if _, still := winners[ck]; still {
+			continue
+		}
+		dur := int(now.Sub(st.StartedAt).Seconds())
+		m.emit(ctx, store.AlertRule{
+			ID: st.RuleID, Name: st.RuleName, Type: "resource", Severity: "info",
+		}, st.HostID, st.HostName, st.ContainerID, st.ContainerName,
+			sprintf("%s back to normal after %s", strings.ToUpper(st.Metric), humanDuration(dur)),
+			nil, store.KindResolved, dur)
+		_ = m.store.DeleteAlertState(ctx, st.HostID, st.ContainerID, st.Metric)
+	}
+}
+
+// saveState persists a condition, preserving when it started.
+func (m *Monitor) saveState(ctx context.Context, cs ContainerStat, cfg resourceConfig,
+	r store.AlertRule, value *float64, startedAt, notifiedAt time.Time,
+) {
+	if startedAt.IsZero() {
+		startedAt = time.Now()
+	}
+	if notifiedAt.IsZero() {
+		notifiedAt = time.Now()
+	}
+	_ = m.store.UpsertAlertState(ctx, &store.AlertState{
+		HostID: cs.HostID, HostName: cs.HostName,
+		ContainerID: cs.ID, ContainerName: cs.Name,
+		Metric: cfg.metricKey(), RuleID: r.ID, RuleName: r.Name, Severity: r.Severity,
+		LastValue: value, StartedAt: startedAt, NotifiedAt: notifiedAt,
+	})
+}
+
+// orNow returns t, or fallback when t is the zero time.
+func orNow(t, fallback time.Time) time.Time {
+	if t.IsZero() {
+		return fallback
+	}
+	return t
+}
+
+// severityRank orders severities so the loudest rule over a metric wins.
+func severityRank(s string) int {
+	switch s {
+	case "critical":
+		return 3
+	case "warning":
+		return 2
+	case "info":
+		return 1
+	}
+	return 0
+}
+
+// stateKey identifies a condition: a metric on a container on a host.
+func stateKey(hostID int64, cid, metric string) string {
+	return itoa(hostID) + ":" + cid + ":" + metric
+}
+
+// resourceMessage says what the number actually measures.
+//
+// "MEM 61.9% > 5%" left a reader guessing whether the percentage was of host RAM
+// or of the container's limit, and a CPU figure above 100% looked like a bug
+// rather than the `docker stats` convention. Both now state their basis and
+// carry absolute values where they exist.
+func resourceMessage(cfg resourceConfig, cs ContainerStat, val float64) string {
+	switch cfg.Metric {
+	case "mem":
+		if cs.MemLimit > 0 {
+			return sprintf("MEM %s / %s (%.1f%% of limit) %s %.0f%% for %ds",
+				humanBytes(cs.MemBytes), humanBytes(cs.MemLimit), val, cfg.Op, cfg.Threshold, cfg.DurationSec)
+		}
+		return sprintf("MEM %s (%.1f%%) %s %.0f%% for %ds",
+			humanBytes(cs.MemBytes), val, cfg.Op, cfg.Threshold, cfg.DurationSec)
+	case "cpu_total":
+		return sprintf("CPU %.1f%% of %.0f cores %s %.0f%% for %ds",
+			val, cs.CPUCores, cfg.Op, cfg.Threshold, cfg.DurationSec)
+	default:
+		return sprintf("CPU %.1f%% of one core (%.0f cores available) %s %.0f%% for %ds",
+			val, cs.CPUCores, cfg.Op, cfg.Threshold, cfg.DurationSec)
+	}
+}
+
+// humanBytes renders a byte count for a human reading an alert.
+func humanBytes(b uint64) string {
+	const unit = 1024.0
+	f := float64(b)
+	if f < unit {
+		return sprintf("%d B", b)
+	}
+	units := []string{"KB", "MB", "GB", "TB", "PB"}
+	for _, u := range units {
+		f /= unit
+		if f < unit {
+			return sprintf("%.1f %s", f, u)
+		}
+	}
+	return sprintf("%.1f EB", f)
+}
+
+// humanDuration renders how long a condition held.
+func humanDuration(sec int) string {
+	switch {
+	case sec < 60:
+		return sprintf("%ds", sec)
+	case sec < 3600:
+		return sprintf("%dm %ds", sec/60, sec%60)
+	default:
+		return sprintf("%dh %dm", sec/3600, (sec%3600)/60)
 	}
 }
 
@@ -528,6 +730,14 @@ func (m *Monitor) stopAllFollowers() {
 
 // ---- firing -----------------------------------------------------------------
 
+// fire is the edge-triggered path: a container died, a log line matched, a
+// restart loop tripped. Those have no "still true" and no "stopped being true",
+// so they keep the plain cooldown — it is the only thing standing between a
+// flapping container and one notification per event.
+//
+// Level-triggered threshold rules go through evalResourceRules and emit
+// directly, because a cooldown is the wrong tool for a condition that persists:
+// it turns "still broken" into a fresh alarm every interval.
 func (m *Monitor) fire(ctx context.Context, r store.AlertRule, hostID int64, hostName, cid, name, message string, value *float64) {
 	key := ruleKey(r.ID, cid)
 	cooldown := time.Duration(r.CooldownSec) * time.Second
@@ -537,7 +747,14 @@ func (m *Monitor) fire(ctx context.Context, r store.AlertRule, hostID int64, hos
 		}
 	}
 	m.cooldowns.Store(key, time.Now())
+	m.emit(ctx, r, hostID, hostName, cid, name, message, value, store.KindFiring, 0)
+}
 
+// emit records an alert event and delivers it. kind says where in a condition's
+// life this is; durationSec is how long it had been going.
+func (m *Monitor) emit(ctx context.Context, r store.AlertRule, hostID int64, hostName, cid, name, message string,
+	value *float64, kind string, durationSec int,
+) {
 	// Emit every fired alert to the process log (stderr) as a structured line.
 	// Under systemd this lands in the journal — and from there into syslog / any
 	// central log collector — so failures are visible beyond the in-app feed.
@@ -545,13 +762,14 @@ func (m *Monitor) fire(ctx context.Context, r store.AlertRule, hostID int64, hos
 	if severity == "" {
 		severity = "info"
 	}
-	log.Printf("alert severity=%s rule=%q host=%q container=%q message=%q",
-		severity, r.Name, hostName, name, message)
+	log.Printf("alert kind=%s severity=%s rule=%q host=%q container=%q message=%q",
+		kind, severity, r.Name, hostName, name, message)
 
 	ev := &store.AlertEvent{
 		RuleID: r.ID, RuleName: r.Name, Type: r.Type, Severity: r.Severity,
 		HostID: hostID, HostName: hostName,
 		ContainerID: cid, ContainerName: name, Message: message, Value: value,
+		Kind: kind, DurationSec: durationSec,
 	}
 	wctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

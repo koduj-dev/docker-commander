@@ -55,6 +55,46 @@ type AlertEvent struct {
 	Value         *float64  `json:"value"`
 	Acknowledged  bool      `json:"acknowledged"`
 	CreatedAt     time.Time `json:"createdAt"`
+	// Kind is the point in a condition's life this event marks:
+	//
+	//	firing    the condition started
+	//	escalated it is still on, at a higher severity than before
+	//	eased     it is still on, at a lower severity
+	//	repeat    it is still on and the re-notify interval elapsed
+	//	resolved  it stopped; DurationSec says how long it lasted
+	//
+	// Edge-triggered rules (state, log, restart) only ever emit "firing" —
+	// a container that died or a log line that matched has no later moment at
+	// which it stops being true.
+	Kind string `json:"kind"`
+	// DurationSec is how long the condition held, set on resolved events.
+	DurationSec int `json:"durationSec"`
+}
+
+// AlertKind values. Anything level-triggered moves between these; anything
+// edge-triggered stays at KindFiring.
+const (
+	KindFiring    = "firing"
+	KindEscalated = "escalated"
+	KindEased     = "eased"
+	KindRepeat    = "repeat"
+	KindResolved  = "resolved"
+)
+
+// AlertState is a condition currently held to be true — one row per
+// (host, container, metric), regardless of how many rules noticed it.
+type AlertState struct {
+	HostID        int64
+	HostName      string
+	ContainerID   string
+	ContainerName string
+	Metric        string
+	RuleID        int64
+	RuleName      string
+	Severity      string
+	LastValue     *float64
+	StartedAt     time.Time
+	NotifiedAt    time.Time
 }
 
 // ---- Webhooks ---------------------------------------------------------------
@@ -169,9 +209,10 @@ func (s *Store) DeleteAlertRule(ctx context.Context, id int64) error {
 // InsertAlertEvent records a fired alert event and returns its ID.
 func (s *Store) InsertAlertEvent(ctx context.Context, e *AlertEvent) (int64, error) {
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO alert_events (rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name, message, value, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO alert_events (rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name, message, value, kind, duration_sec, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.RuleID, e.RuleName, e.Type, e.Severity, e.HostID, e.HostName, e.ContainerID, e.ContainerName, e.Message, e.Value,
+		orDefault(e.Kind, KindFiring), e.DurationSec,
 		time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		return 0, err
@@ -185,7 +226,7 @@ func (s *Store) ListAlertEvents(ctx context.Context, limit int) ([]AlertEvent, e
 		limit = 200
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name, message, value, acknowledged, created_at
+		SELECT id, rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name, message, value, acknowledged, kind, duration_sec, created_at
 		FROM alert_events ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -198,7 +239,7 @@ func (s *Store) ListAlertEvents(ctx context.Context, limit int) ([]AlertEvent, e
 		var value sql.NullFloat64
 		var ack int
 		if err := rows.Scan(&e.ID, &e.RuleID, &e.RuleName, &e.Type, &e.Severity, &e.HostID, &e.HostName, &e.ContainerID,
-			&e.ContainerName, &e.Message, &value, &ack, &created); err != nil {
+			&e.ContainerName, &e.Message, &value, &ack, &e.Kind, &e.DurationSec, &created); err != nil {
 			return nil, err
 		}
 		if value.Valid {
@@ -303,4 +344,64 @@ func unmarshalEmails(raw string) []string {
 	var out []string
 	_ = json.Unmarshal([]byte(raw), &out)
 	return out
+}
+
+// ---- alert states (level-triggered conditions) --------------------------------
+
+// ListAlertStates returns every condition currently held to be firing.
+func (s *Store) ListAlertStates(ctx context.Context) ([]AlertState, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT host_id, host_name, container_id, container_name, metric, rule_id, rule_name, severity,
+		       last_value, started_at, notified_at
+		FROM alert_states`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AlertState
+	for rows.Next() {
+		var a AlertState
+		var value sql.NullFloat64
+		var started, notified string
+		if err := rows.Scan(&a.HostID, &a.HostName, &a.ContainerID, &a.ContainerName, &a.Metric,
+			&a.RuleID, &a.RuleName, &a.Severity, &value, &started, &notified); err != nil {
+			return nil, err
+		}
+		if value.Valid {
+			a.LastValue = &value.Float64
+		}
+		a.StartedAt, _ = time.Parse(time.RFC3339, started)
+		a.NotifiedAt, _ = time.Parse(time.RFC3339, notified)
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// UpsertAlertState records or updates a firing condition. StartedAt is written
+// only on insert, so the age of an incident survives escalation and re-notify.
+func (s *Store) UpsertAlertState(ctx context.Context, a *AlertState) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO alert_states (host_id, host_name, container_id, container_name, metric,
+		                          rule_id, rule_name, severity, last_value, started_at, notified_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(host_id, container_id, metric) DO UPDATE SET
+			host_name = excluded.host_name,
+			container_name = excluded.container_name,
+			rule_id = excluded.rule_id,
+			rule_name = excluded.rule_name,
+			severity = excluded.severity,
+			last_value = excluded.last_value,
+			notified_at = excluded.notified_at`,
+		a.HostID, a.HostName, a.ContainerID, a.ContainerName, a.Metric,
+		a.RuleID, a.RuleName, a.Severity, a.LastValue,
+		a.StartedAt.UTC().Format(time.RFC3339), a.NotifiedAt.UTC().Format(time.RFC3339))
+	return err
+}
+
+// DeleteAlertState clears a condition that no longer holds.
+func (s *Store) DeleteAlertState(ctx context.Context, hostID int64, containerID, metric string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM alert_states WHERE host_id = ? AND container_id = ? AND metric = ?`,
+		hostID, containerID, metric)
+	return err
 }

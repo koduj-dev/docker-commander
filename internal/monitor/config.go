@@ -10,11 +10,35 @@ import (
 // Rule config shapes. Each alert rule stores type-specific JSON in its Config
 // column; these decode it.
 
+// resourceConfig is a level-triggered threshold rule.
+//
+// Metric picks what the threshold is compared against, and the choice matters
+// more than it looks:
+//
+//	cpu       percent of ONE core, the `docker stats` convention. A container
+//	          busy on four cores reads ~400%, so a "> 80%" rule on a multi-core
+//	          host is over threshold essentially always.
+//	cpu_total percent of ALL the host's cores — 0–100% whatever the core count,
+//	          which is what most people mean when they write "> 80%".
+//	mem       percent of the container's memory LIMIT (not of host RAM).
+//
+// "cpu" stays the default so rules written before cpu_total existed keep the
+// exact meaning they had.
 type resourceConfig struct {
-	Metric      string  `json:"metric"` // "cpu" | "mem"
+	Metric      string  `json:"metric"` // "cpu" | "cpu_total" | "mem"
 	Op          string  `json:"op"`     // ">" | "<"
 	Threshold   float64 `json:"threshold"`
 	DurationSec int     `json:"durationSec"`
+}
+
+// metricKey groups rules that talk about the same thing, so overlapping rules
+// over one metric are one condition rather than competing alerts. Both CPU
+// flavours describe the same underlying usage, so they share a key.
+func (c resourceConfig) metricKey() string {
+	if c.Metric == "cpu_total" {
+		return "cpu"
+	}
+	return c.Metric
 }
 
 func (c resourceConfig) exceeds(v float64) bool {
