@@ -304,3 +304,51 @@ func (s *Server) visibleHosts(r *http.Request) func(hostID int64) bool {
 		return s.store.NormalizeHostID(r.Context(), hostID) == 0 || hosts[hostID]
 	}
 }
+
+// visibleHostIDs is visibleHosts as a set rather than a predicate, for callers
+// that must push the scope into a SQL query instead of filtering afterwards.
+// The second return is true when every host is allowed, in which case the slice
+// is meaningless.
+//
+// Paging is why this exists: filtering a page after fetching it silently
+// produces short pages and a total that counts rows the caller may not see.
+func (s *Server) visibleHostIDs(r *http.Request) ([]int64, bool) {
+	ctx := r.Context()
+	// The local daemon is always in scope, and events record its real row id
+	// rather than 0, so resolve that id and include it explicitly.
+	localOnly := func() []int64 {
+		ids := []int64{0}
+		if hosts, err := s.store.ListHosts(ctx); err == nil {
+			for _, h := range hosts {
+				if h.Kind == "local" {
+					ids = append(ids, h.ID)
+				}
+			}
+		}
+		return ids
+	}
+
+	claims, ok := auth.ClaimsFrom(ctx)
+	if !ok {
+		return localOnly(), false
+	}
+	u, err := s.store.UserByID(ctx, claims.UserID)
+	if err != nil {
+		return localOnly(), false
+	}
+	if u.IsAdmin() {
+		return nil, true
+	}
+	hosts, all, err := s.store.ReachableHosts(ctx, u)
+	if err != nil {
+		return localOnly(), false
+	}
+	if all {
+		return nil, true
+	}
+	ids := localOnly()
+	for id := range hosts {
+		ids = append(ids, id)
+	}
+	return ids, false
+}

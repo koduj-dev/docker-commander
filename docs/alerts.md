@@ -62,6 +62,86 @@ Two consequences worth knowing, because they are the point:
 or a log line that matched has no later moment at which it stops being true, so
 those still use the plain cooldown and never resolve.
 
+## The feed
+
+The event feed is **paged** (50 at a time) and filterable by severity, lifecycle
+kind, rule, container and message text, plus an *unacknowledged only* toggle.
+Filtering happens in the database rather than in the browser, so the counts and
+the paging describe the whole result set, not the page you happen to be on.
+
+Filter by severity, lifecycle kind, **host**, rule, container and message text,
+and **sort by any of the first five columns** — server-side, so it orders the
+whole result set rather than just the page you can see. Severity sorts by how
+much it matters, not alphabetically (which would put *warning* above *info* and
+look almost right).
+
+**Ack all** sits in the page header with the other actions.
+
+The **sidebar badge counts problems**, not events: unacknowledged **warnings and
+criticals** only. A condition ending is recorded as `info`, so the number never
+climbs because something got *better* — a badge that grows as problems fix
+themselves is a badge people stop reading. Informational alerts still appear in
+the feed and still count in its totals; they just don't raise the alarm.
+
+**Acknowledging records who did it**, and when. "Someone dealt with this" is only
+useful if you can go and ask them. **Ack all** acknowledges everything matching
+the *current filters* — not the whole table — behind a confirm that says which of
+the two it is about to do.
+
+**A `resolved` event is stored already settled** and shows no Acknowledge action.
+There is nothing to do about a condition that has ended, so it never appears in
+the outstanding list, never counts toward the badge, and never waits for someone
+to click it. That single rule at the point of writing is why nothing downstream
+needs a special case for resolutions.
+
+**A toast appears when an alert arrives while the app is open**, so you learn
+about it without sitting on the Alerts page. It is a nudge, not a record — the
+feed is the record. Resolved conditions toast in green, a countdown bar shows how
+long is left, and hovering pauses it. Turn them off per account under
+**Profile → Preferences**; the alerts themselves are unaffected — still recorded,
+still counted in the sidebar badge, still delivered by webhook and e-mail.
+
+The feed, the badge and the toasts share **one** poll. They used to have separate
+timers, which meant a row could appear in the table seconds before the toast
+announcing it — the same event telling you about itself twice, out of order.
+
+## Alert detail
+
+**Click any row** to open it. A table can only ever show a truncated view, and
+the message is often the least of what matters. The detail has the full message,
+the measured value, how long the condition lasted, the host, a link straight to
+the **container** it is about, whether it was acknowledged and by whom, and every
+delivery attempt with the endpoint's own response.
+
+You can acknowledge from there too, so reading it and dealing with it aren't two
+separate trips.
+
+## Was it actually delivered?
+
+Every webhook call and e-mail send is recorded against the alert, with the
+outcome. Click the **Delivery** cell to see the attempts:
+
+```text
+delivered  EMAIL    ops@example.com            2026-07-31 13:02:11
+failed     WEBHOOK  ops (hooks.example.com)    HTTP 500  — upstream unavailable
+```
+
+This closes a real gap: a webhook returning 500, an SMTP server refusing the
+connection, or a rule with *e-mail* ticked while **no recipient is configured
+anywhere** all used to fail silently. The alert appeared in the feed and looked
+handled, while nothing had left the building.
+
+Two deliberate limits:
+
+- **The webhook's name and host are stored, never its full URL.** Webhook URLs
+  routinely carry a token in the path or query, and this record is readable by
+  anyone with the alerts section.
+- **Response bodies are truncated** (~500 characters). The endpoint's own words
+  usually say why it refused, but a remote server must not be able to write
+  unbounded text into the database.
+
+There is no automatic retry yet — a failed delivery is recorded, not re-attempted.
+
 ## What the CPU threshold is a percentage *of*
 
 This trips people up, so the rule editor now asks explicitly:
@@ -106,9 +186,36 @@ a host's *alert email* (set on the [Hosts](hosts.md) page) overrides the global
 recipient for alerts from that host.
 
 ## Prometheus
-Scrape `/metrics` for `dockercmd_container_cpu_percent`, `_mem_bytes`,
-`_mem_percent` and `_container_running`, labelled by `id`, `name` and `host`.
-Protect it with `DC_METRICS_TOKEN` if exposed.
+
+Scrape `/metrics`. Per container, labelled by `id`, `name` and `host`:
+
+| Metric | Meaning |
+|---|---|
+| `dockercmd_container_running` | 1 if running |
+| `dockercmd_container_cpu_percent` | **docker-stats convention: 100 = one core**, so a container busy on four reads ~400 |
+| `dockercmd_container_cpu_cores` | cores the daemon reports — divide the above by this for a share of the machine |
+| `dockercmd_container_mem_bytes` | memory in use |
+| `dockercmd_container_mem_percent` | share of the container's limit |
+
+And, from the alert engine:
+
+| Metric | Meaning |
+|---|---|
+| `dockercmd_alert_firing` | 1 per condition currently over threshold, labelled `host`, `container`, `metric`, `severity`, `rule` |
+| `dockercmd_alerts_firing_count` | how many conditions are firing |
+| `dockercmd_alerts_outstanding` | unacknowledged warnings and criticals — the same number as the sidebar badge |
+
+`dockercmd_alert_firing` is the one to page on: it is the live state of the
+condition, so it disappears when the condition resolves rather than needing a
+`for:` window to guess.
+
+> The `cpu_percent` help text used to say *host-relative*, which it never was.
+> A dashboard built on that description would have read four times high on a
+> four-core host.
+
+`/metrics` is a machine endpoint guarded by `DC_METRICS_TOKEN`, not by a user
+session, so it is **not** filtered by per-host RBAC — a scrape has no user. That
+was already true of the container metrics; it is worth knowing before exposing it.
 
 ## System log
 Beyond these channels, every fired alert is also written to the process log

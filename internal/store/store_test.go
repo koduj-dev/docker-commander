@@ -251,14 +251,14 @@ func TestAlertsCRUD(t *testing.T) {
 	if _, err := s.InsertAlertEvent(ctx, &AlertEvent{RuleID: rid, RuleName: "cpu2", HostName: "local", ContainerName: "web", Message: "hot", Value: &v}); err != nil {
 		t.Fatal(err)
 	}
-	evs, _ := s.ListAlertEvents(ctx, 10)
+	evs, _, _ := s.ListAlertEvents(ctx, AlertQuery{Limit: 10})
 	if len(evs) != 1 || evs[0].HostName != "local" || evs[0].Value == nil {
 		t.Errorf("alert event: %+v", evs)
 	}
 	if n, _ := s.CountUnacknowledged(ctx); n != 1 {
 		t.Errorf("expected 1 unacked, got %d", n)
 	}
-	_ = s.AckAlertEvent(ctx, evs[0].ID)
+	_ = s.AckAlertEvent(ctx, evs[0].ID, "tester")
 	if n, _ := s.CountUnacknowledged(ctx); n != 0 {
 		t.Errorf("expected 0 unacked after ack, got %d", n)
 	}

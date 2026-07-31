@@ -171,6 +171,26 @@ CREATE INDEX IF NOT EXISTS idx_alert_events_created ON alert_events(id DESC);
 -- Persisted rather than kept in memory: without it a restart forgets every
 -- firing condition, so nothing would ever resolve across one, and "currently
 -- firing" could not be answered at all.
+-- One row per delivery attempt of an alert, so "we notified you" is a checkable
+-- claim rather than an assumption. A webhook that 500s or an SMTP server that
+-- refuses the connection is otherwise invisible: the alert shows in the feed and
+-- nobody learns it never left the building.
+--
+-- NOTE: target deliberately holds the webhook's NAME and host, never its full
+-- URL. Webhook URLs routinely carry a token in the path or query, and this table
+-- is readable by anyone with the alerts section.
+CREATE TABLE IF NOT EXISTS alert_deliveries (
+	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	event_id     INTEGER NOT NULL,
+	channel      TEXT    NOT NULL DEFAULT '',
+	target       TEXT    NOT NULL DEFAULT '',
+	ok           INTEGER NOT NULL DEFAULT 0,
+	status       INTEGER NOT NULL DEFAULT 0,
+	detail       TEXT    NOT NULL DEFAULT '',
+	attempted_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_alert_deliveries_event ON alert_deliveries(event_id);
+
 CREATE TABLE IF NOT EXISTS alert_states (
 	host_id      INTEGER NOT NULL DEFAULT 0,
 	container_id TEXT    NOT NULL DEFAULT '',
@@ -354,6 +374,10 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
 		// lifecycle reads as what it was: the moment a condition was noticed.
 		`ALTER TABLE alert_events ADD COLUMN kind TEXT NOT NULL DEFAULT 'firing'`,
 		`ALTER TABLE alert_events ADD COLUMN duration_sec INTEGER NOT NULL DEFAULT 0`,
+		// Who acknowledged, and when. Events acknowledged before this existed keep
+		// an empty name rather than being attributed to whoever looks next.
+		`ALTER TABLE alert_events ADD COLUMN acknowledged_by TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE alert_events ADD COLUMN acknowledged_at TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN auth_source TEXT NOT NULL DEFAULT 'local'`,
 		`ALTER TABLE users ADD COLUMN ui_prefs TEXT NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE hosts ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`,

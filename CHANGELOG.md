@@ -6,6 +6,66 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **The alert feed is paged, filterable, and says whether alerts were actually
+  delivered.** It previously rendered every event on one page with no filters, which
+  stops being usable at the point alerting starts being useful. It now pages 50 at a
+  time and filters by severity, lifecycle kind, rule, container and message text,
+  with an *unacknowledged only* toggle — **in the database**, so the totals and paging
+  describe the whole result set rather than the page in front of you. Host scoping
+  moved into the query for the same reason: filtering a page after fetching it yields
+  short pages and a total that counts events the viewer isn't allowed to see.
+
+  **Every webhook call and e-mail send is now recorded against its alert** with the
+  outcome, HTTP status and an excerpt of the response. A webhook returning 500, an
+  SMTP server refusing the connection, or a rule with *e-mail* ticked while no
+  recipient is configured anywhere all used to fail silently — the alert appeared in
+  the feed and looked handled while nothing had left the building. The webhook's
+  **name and host** are stored rather than its URL, because those routinely carry a
+  token and this record is readable by anyone with the alerts section; response text
+  is truncated so a remote endpoint can't write unbounded data into the database.
+  There is no automatic retry yet: failures are recorded, not re-attempted.
+
+  **The sidebar badge counts problems rather than events** — unacknowledged
+  warnings and criticals only. It previously counted every unacknowledged event,
+  including the `resolved` ones, so the number went *up* when a condition cleared.
+  A badge that grows as problems fix themselves is one people learn to ignore.
+
+  **Resolved alerts are stored already settled**, with no Acknowledge action: there
+  is nothing to do about a condition that has ended, so it never sits in the
+  outstanding list waiting for a click that means nothing. One rule at the point of
+  writing, rather than a special case in the badge, the filter and bulk acknowledge.
+
+  **`/metrics` gained the alert engine's state**: `dockercmd_alert_firing` (one per
+  live condition, labelled by host, container, metric, severity and rule),
+  `dockercmd_alerts_firing_count` and `dockercmd_alerts_outstanding`. The firing
+  gauge is the one to page on — it disappears when the condition resolves, so
+  Alertmanager needs no `for:` window to guess. Also **corrects the
+  `dockercmd_container_cpu_percent` help text**, which claimed *host-relative*: it
+  is the docker-stats per-core figure, so any dashboard built on that description
+  read four times high on a four-core host. A new `dockercmd_container_cpu_cores`
+  makes normalising possible.
+
+  **Columns are sortable** (time, severity, rule, host, container), server-side so
+  it orders the whole result set rather than the visible page. Severity sorts by
+  importance rather than alphabetically. The sort key is mapped through a fixed
+  whitelist, because `ORDER BY` cannot be a bound parameter.
+
+  **Clicking an alert opens its detail** — full message, measured value, how long
+  the condition lasted, a link through to the container, acknowledgement, and every
+  delivery attempt with the endpoint's own response. The feed row can only ever show
+  a truncated view of any of that.
+
+  **Acknowledging an alert records who did it** and when, and **Ack all** clears
+  everything matching the current filters behind a confirm that names which of the
+  two it will do. Filters include the **host**.
+
+  **A toast appears when an alert arrives while the app is open**, with a countdown
+  bar that pauses on hover, and can be turned off per account under
+  *Profile → Preferences*. The feed, the sidebar badge and the toasts share a single
+  poll: they had separate timers at first, so a row could appear in the table
+  seconds before the toast announcing it.
+
 ### Changed
 - **Threshold alerts are conditions with a lifetime, not lines reprinted every
   minute.** Testing the engine against a real stack produced an alert log that was
@@ -42,6 +102,16 @@ All notable changes to Docker Commander are documented here. The format follows
   their basis and the core count.
 
 ### Security
+- **A failed webhook could write its own URL — and any token in it — into the
+  alert delivery record.** The record deliberately stores a webhook's *name and
+  host* rather than its URL, because webhook URLs routinely carry a secret in the
+  path or query and the record is readable by anyone holding the `alerts` section.
+  Transport failures slipped past that: `net/http` wraps them in a `*url.Error`
+  whose message embeds the full request URL, so a refused connection stored the
+  secret verbatim. The cause is now recorded without the URL, which keeps the
+  diagnostic value ("connection refused") and drops the credential. Found in review
+  before the feature was ever released.
+
 - **Removing an MCP OAuth client now revokes its access immediately.** Deleting a
   client purged its authorization codes and refresh tokens, which stopped it
   obtaining a *new* access token — but an access token is a **signed** credential,

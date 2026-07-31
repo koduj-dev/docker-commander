@@ -124,6 +124,24 @@ export interface LoginResult {
   expiresAt?: string;
 }
 
+// Filters for the alert feed. Declared as a named type rather than inline:
+// referring to it as Parameters<typeof api.alerts> from inside the same object
+// literal is circular, and TypeScript quietly degrades the whole `api` object to
+// any — which shows up as dozens of implicit-any errors in unrelated files.
+export interface AlertListParams {
+  severity?: string;
+  kind?: string;
+  host?: number;
+  container?: string;
+  rule?: string;
+  q?: string;
+  unacked?: boolean;
+  sort?: string;
+  desc?: boolean;
+  limit?: number;
+  offset?: number;
+}
+
 export const api = {
   authStatus: () => req<{ needsSetup: boolean }>("GET", "/api/auth/status"),
   setup: (username: string, password: string, enable2fa: boolean) =>
@@ -635,7 +653,36 @@ export const api = {
   importAlertRules: (bundle: unknown) =>
     req<{ imported: number; warnings: string[] }>("POST", "/api/alert-rules/import", bundle),
 
-  alerts: () => req<{ events: AlertEvent[]; unread: number }>("GET", "/api/alerts"),
+  alerts: (params?: AlertListParams) => {
+    const p = new URLSearchParams();
+    if (params?.severity) p.set("severity", params.severity);
+    if (params?.kind) p.set("kind", params.kind);
+    if (params?.host !== undefined) p.set("host", String(params.host));
+    if (params?.container) p.set("container", params.container);
+    if (params?.rule) p.set("rule", params.rule);
+    if (params?.q) p.set("q", params.q);
+    if (params?.unacked) p.set("unacked", "1");
+    if (params?.sort) p.set("sort", params.sort);
+    if (params?.desc) p.set("desc", "1");
+    if (params?.limit !== undefined) p.set("limit", String(params.limit));
+    if (params?.offset !== undefined) p.set("offset", String(params.offset));
+    const qs = p.toString();
+    return req<{ events: AlertEvent[]; unread: number; total: number; outstanding: number; limit: number; offset: number }>(
+      "GET",
+      `/api/alerts${qs ? `?${qs}` : ""}`,
+    );
+  },
+  ackAllAlerts: (params?: AlertListParams) => {
+    const p = new URLSearchParams();
+    if (params?.severity) p.set("severity", params.severity);
+    if (params?.kind) p.set("kind", params.kind);
+    if (params?.host !== undefined) p.set("host", String(params.host));
+    if (params?.container) p.set("container", params.container);
+    if (params?.rule) p.set("rule", params.rule);
+    if (params?.q) p.set("q", params.q);
+    const qs = p.toString();
+    return req<{ ok: boolean; acknowledged: number }>("POST", `/api/alerts/ack-all${qs ? `?${qs}` : ""}`);
+  },
   ackAlert: (id: number) => req<{ ok: boolean }>("POST", `/api/alerts/${id}/ack`),
 
   // Saved log parsing rules (applied client-side in the Logs view)

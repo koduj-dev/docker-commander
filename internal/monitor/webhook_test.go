@@ -3,9 +3,12 @@ package monitor
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,5 +73,40 @@ func TestDispatchPostsToWebhook(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Error("webhook was not called")
+	}
+}
+
+// TestRedactURLKeepsSecretsOutOfDeliveryRecords.
+//
+// net/http wraps transport failures in *url.Error, whose message embeds the full
+// request URL — and a webhook URL routinely carries a token in its path or query
+// (Slack's /services/T00/B00/xxxx is the everyday example). The delivery record
+// is readable by anyone holding the alerts section, so storing the raw error
+// would leak that token to every such reader, while the target field next to it
+// was carefully limited to a name and a host.
+func TestRedactURLKeepsSecretsOutOfDeliveryRecords(t *testing.T) {
+	const secret = "T00000/B11111/SuperSecretToken"
+	wrapped := &url.Error{
+		Op:  "Post",
+		URL: "https://hooks.example.com/services/" + secret,
+		Err: errors.New("dial tcp 10.0.0.1:443: connect: connection refused"),
+	}
+
+	got := redactURL(wrapped)
+	if strings.Contains(got, secret) {
+		t.Fatalf("SECURITY: the webhook URL (and its token) reached the delivery record: %q", got)
+	}
+	if strings.Contains(got, "hooks.example.com") {
+		t.Errorf("the URL should not be in the stored detail at all: %q", got)
+	}
+	// It still has to be useful — a redaction that throws away the cause turns a
+	// diagnosable failure into "it didn't work".
+	if !strings.Contains(got, "connection refused") {
+		t.Errorf("the cause was lost, leaving nothing to diagnose: %q", got)
+	}
+
+	// A plain error passes through unchanged.
+	if got := redactURL(errors.New("boom")); got != "boom" {
+		t.Errorf("non-URL error = %q, want %q", got, "boom")
 	}
 }

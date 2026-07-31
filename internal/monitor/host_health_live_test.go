@@ -39,7 +39,7 @@ func TestHostHealthAgainstFakeDaemon(t *testing.T) {
 	if h := m.HostHealth()[hid]; !h.Reachable {
 		t.Fatalf("host should be reachable while the fake daemon is up: %+v (err=%q)", h, h.Err)
 	}
-	if evs, _ := st.ListAlertEvents(ctx, 10); len(evs) != 0 {
+	if evs, _, _ := st.ListAlertEvents(ctx, store.AlertQuery{Limit: 10}); len(evs) != 0 {
 		t.Fatalf("first reachable observation must not alert, got %d", len(evs))
 	}
 
@@ -49,7 +49,7 @@ func TestHostHealthAgainstFakeDaemon(t *testing.T) {
 	if h := m.HostHealth()[hid]; h.Reachable {
 		t.Fatalf("host should be unreachable after the fake daemon is closed: %+v", h)
 	}
-	evs, _ := st.ListAlertEvents(ctx, 10)
+	evs, _, _ := st.ListAlertEvents(ctx, store.AlertQuery{Limit: 10})
 	if len(evs) != 1 {
 		t.Fatalf("offline transition should fire exactly one alert, got %d", len(evs))
 	}

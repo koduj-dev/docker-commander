@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, Mail, ShieldCheck, IdCard, KeyRound, Check, RefreshCw, X } from "lucide-react";
+import { Loader2, Mail, ShieldCheck, IdCard, KeyRound, Check, RefreshCw, X , SlidersHorizontal} from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import type { Enrollment } from "../lib/api";
@@ -7,10 +7,11 @@ import type { MyAccess } from "../lib/types";
 import { sectionLabel } from "../lib/sections";
 import { PageHeader } from "../layout/Shell";
 import { Tabs } from "../components/Tabs";
+import { getPref, setPref } from "../lib/prefs";
 import { EmptyState, Spinner } from "../components/ui";
 import { useAuth } from "../auth/AuthContext";
 
-type Tab = "account" | "security" | "access";
+type Tab = "account" | "security" | "access" | "prefs";
 
 /**
  * The signed-in user's own page: who we think they are, where their alerts go,
@@ -54,12 +55,14 @@ export function Profile() {
             { key: "account", label: "Account", icon: <IdCard className="h-4 w-4" /> },
             { key: "security", label: "Security", icon: <ShieldCheck className="h-4 w-4" /> },
             { key: "access", label: "Access", icon: <KeyRound className="h-4 w-4" />, count: grantCount },
+            { key: "prefs", label: "Preferences", icon: <SlidersHorizontal className="h-4 w-4" /> },
           ]}
         />
 
         {tab === "account" && <AccountTab onSaved={refresh} />}
         {tab === "security" && <SecurityTab onChanged={refresh} />}
         {tab === "access" && <AccessTab access={access} error={accessErr} onRetry={load} />}
+        {tab === "prefs" && <PrefsTab />}
       </div>
     </>
   );
@@ -361,6 +364,43 @@ function AccessTab({ access, error, onRetry }: { access: MyAccess | null; error:
           <b> Where</b> is the set of Docker hosts a grant reaches; the local daemon is always included.
         </p>
       </div>
+    </div>
+  );
+}
+
+// PrefsTab holds per-account UI preferences. They are stored server-side, so a
+// choice made here follows the account to another browser rather than being lost
+// with local storage.
+function PrefsTab() {
+  const [toasts, setToasts] = useState(() => getPref("alerts.toasts", true));
+
+  const change = (v: boolean) => {
+    setToasts(v);
+    setPref("alerts.toasts", v);
+  };
+
+  return (
+    <div className="card p-4 space-y-4 max-w-2xl">
+      <div>
+        <div className="font-medium">Notifications</div>
+        <p className="text-xs text-muted mt-1">Only affects this account.</p>
+      </div>
+      <label className="flex items-start gap-3">
+        <input
+          type="checkbox"
+          className="mt-1"
+          checked={toasts}
+          onChange={(e) => change(e.target.checked)}
+        />
+        <span>
+          <span className="block text-sm">Pop up alerts while I have Docker Commander open</span>
+          <span className="block text-xs text-muted mt-0.5">
+            A short notification in the corner when an alert fires, with a countdown you can pause by hovering.
+            Turning this off changes nothing about the alerts themselves — they are still recorded, still counted in
+            the sidebar badge, and still delivered by webhook and e-mail.
+          </span>
+        </span>
+      </label>
     </div>
   );
 }

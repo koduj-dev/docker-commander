@@ -773,8 +773,11 @@ func (m *Monitor) emit(ctx context.Context, r store.AlertRule, hostID int64, hos
 	}
 	wctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := m.store.InsertAlertEvent(wctx, ev); err != nil {
+	// The id is what delivery records attach to, so capture it before notifying.
+	if id, err := m.store.InsertAlertEvent(wctx, ev); err != nil {
 		log.Printf("monitor: insert alert event: %v", err)
+	} else {
+		ev.ID = id
 	}
 	if r.WebhookID != nil {
 		m.dispatcher.dispatch(*r.WebhookID, ev)
@@ -857,8 +860,10 @@ func (m *Monitor) fireHostAlert(hostID int64, hostName string, online bool, down
 	}
 	wctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := m.store.InsertAlertEvent(wctx, ev); err != nil {
+	if id, err := m.store.InsertAlertEvent(wctx, ev); err != nil {
 		log.Printf("monitor: insert host alert event: %v", err)
+	} else {
+		ev.ID = id
 	}
 	// Host reachability isn't tied to a rule, so it uses the host/instance
 	// recipients.

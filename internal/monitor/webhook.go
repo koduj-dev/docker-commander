@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"text/template"
 	"time"
 
@@ -38,6 +40,20 @@ type payload struct {
 
 // dispatch loads the webhook and POSTs the rendered payload. Runs in its own
 // goroutine so a slow endpoint never blocks the engine.
+// record stores the outcome so "we notified you" can be checked rather than
+// assumed. Best-effort: a delivery that happened must not be lost because the
+// bookkeeping failed, and a delivery that failed is already the bad news.
+func (d *dispatcher) record(ctx context.Context, eventID int64, target string, ok bool, status int, detail string) {
+	if eventID == 0 {
+		return // the event itself failed to store; nothing to attach to
+	}
+	if err := d.store.RecordAlertDelivery(ctx, &store.AlertDelivery{
+		EventID: eventID, Channel: "webhook", Target: target, OK: ok, Status: status, Detail: detail,
+	}); err != nil {
+		log.Printf("monitor: record webhook delivery: %v", err)
+	}
+}
+
 func (d *dispatcher) dispatch(webhookID int64, ev *store.AlertEvent) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
@@ -46,8 +62,12 @@ func (d *dispatcher) dispatch(webhookID int64, ev *store.AlertEvent) {
 		wh, err := d.store.WebhookByID(ctx, webhookID)
 		if err != nil {
 			log.Printf("monitor: webhook %d not found: %v", webhookID, err)
+			d.record(ctx, ev.ID, sprintf("webhook #%d", webhookID), false, 0, "webhook not found: "+err.Error())
 			return
 		}
+		// Name plus host only. A webhook URL routinely carries a token in its
+		// path or query, and this lands in a table any alerts reader can see.
+		target := wh.Name + " (" + hostOf(wh.URL) + ")"
 
 		p := payload{
 			RuleName: ev.RuleName, Type: ev.Type, Severity: ev.Severity,
@@ -64,6 +84,7 @@ func (d *dispatcher) dispatch(webhookID int64, ev *store.AlertEvent) {
 		req, err := http.NewRequestWithContext(ctx, method, wh.URL, bytes.NewReader(body))
 		if err != nil {
 			log.Printf("monitor: webhook request build: %v", err)
+			d.record(ctx, ev.ID, target, false, 0, "bad request: "+redactURL(err))
 			return
 		}
 		req.Header.Set("Content-Type", contentType)
@@ -74,13 +95,20 @@ func (d *dispatcher) dispatch(webhookID int64, ev *store.AlertEvent) {
 		resp, err := d.client.Do(req)
 		if err != nil {
 			log.Printf("monitor: webhook %q POST failed: %v", wh.Name, err)
+			d.record(ctx, ev.ID, target, false, 0, redactURL(err))
 			return
 		}
 		defer resp.Body.Close()
+		// Keep a short excerpt: the endpoint's own words are usually what tells
+		// an operator why it refused. Capped so a chatty endpoint can't write a
+		// megabyte into our database.
+		excerpt, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		io.Copy(io.Discard, resp.Body)
-		if resp.StatusCode >= 300 {
+		ok := resp.StatusCode < 300
+		if !ok {
 			log.Printf("monitor: webhook %q returned %d", wh.Name, resp.StatusCode)
 		}
+		d.record(ctx, ev.ID, target, ok, resp.StatusCode, string(excerpt))
 	}()
 }
 
@@ -106,4 +134,31 @@ func renderBody(tmpl string, p payload) ([]byte, string) {
 		return out, "application/json"
 	}
 	return out, "text/plain"
+}
+
+// hostOf returns just the host of a URL, for showing which endpoint was called
+// without echoing any credential the URL might carry.
+func hostOf(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "unknown host"
+	}
+	return u.Host
+}
+
+// redactURL returns a transport error's cause WITHOUT the URL it was reaching.
+//
+// net/http wraps failures in *url.Error, whose message embeds the full request
+// URL — and webhook URLs routinely carry a token in the path or query. Storing
+// err.Error() would therefore write that secret into alert_deliveries, which is
+// readable by anyone holding the alerts section, undoing the care taken to keep
+// the target field to a name and a host. The underlying cause ("dial tcp:
+// connection refused", "context deadline exceeded") is the diagnostic part, and
+// it carries no URL.
+func redactURL(err error) string {
+	var ue *url.Error
+	if errors.As(err, &ue) && ue.Err != nil {
+		return ue.Err.Error()
+	}
+	return err.Error()
 }

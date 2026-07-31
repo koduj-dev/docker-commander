@@ -4,6 +4,8 @@ import { Activity, Bell, Blocks, Boxes, Container, Database, FolderGit2, KeyRoun
 import clsx from "clsx";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../lib/api";
+import { useAlertPulse } from "../lib/alertStream";
+import { useToasts, type ToastTone } from "../components/Toasts";
 import type { Host, UpdateStatus } from "../lib/types";
 import { getHostId, setHostId } from "../lib/host";
 import { getPref, setPref } from "../lib/prefs";
@@ -186,16 +188,25 @@ export function Shell({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [unread, setUnread] = useState(0);
+  const toasts = useToasts();
   const mainRef = useRef<HTMLElement>(null);
   useScrollRestoration(mainRef);
 
-  // Poll the unread alert count to badge the Alerts nav item.
+  // One shared poll drives the badge, the toasts and the Alerts table, so a
+  // toast can never lag behind the row it is announcing.
+  const pulse = useAlertPulse();
+  useEffect(() => setUnread(pulse.unread), [pulse.unread]);
   useEffect(() => {
-    const load = () => api.alerts().then((r) => setUnread(r.unread)).catch(() => {});
-    load();
-    const t = setInterval(load, 8000);
-    return () => clearInterval(t);
-  }, []);
+    if (!getPref("alerts.toasts", true)) return;
+    for (const e of pulse.fresh) {
+      toasts.push({
+        tone: e.kind === "resolved" ? "ok" : (e.severity as ToastTone),
+        title: `${e.ruleName}${e.containerName ? ` — ${e.containerName}` : ""}`,
+        body: e.message,
+        to: "/alerts",
+      });
+    }
+  }, [pulse, toasts]);
 
   return (
     <div className="h-full grid grid-cols-[240px_1fr]">

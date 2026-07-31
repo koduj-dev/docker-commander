@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/koduj-dev/docker-commander/internal/monitor"
+	"github.com/koduj-dev/docker-commander/internal/store"
 )
 
 // handleMetrics serves a Prometheus text exposition of the latest container
@@ -31,9 +32,18 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(&b, "dockercmd_container_running{id=%q,name=%q,host=%q}  %d\n", short(c.ID), c.Name, c.HostName, running)
 	}
 
-	writeMetricHeader(&b, "dockercmd_container_cpu_percent", "gauge", "Container CPU usage percent (host-relative)")
+	// The help text used to say "host-relative", which it is not: this is the
+	// `docker stats` figure where 100% is ONE core, so a container busy on four
+	// reads ~400%. Anyone building a dashboard on the old description would have
+	// drawn the wrong conclusion on every multi-core host.
+	writeMetricHeader(&b, "dockercmd_container_cpu_percent", "gauge", "Container CPU usage percent, docker-stats convention (100 = one core; divide by dockercmd_container_cpu_cores for a share of the machine)")
 	forRunning(s.monitor, func(c monitor.ContainerStat) {
 		fmt.Fprintf(&b, "dockercmd_container_cpu_percent{id=%q,name=%q,host=%q}  %g\n", short(c.ID), c.Name, c.HostName, c.CPUPercent)
+	})
+
+	writeMetricHeader(&b, "dockercmd_container_cpu_cores", "gauge", "Cores the daemon reports for this container's host, so cpu_percent can be normalised")
+	forRunning(s.monitor, func(c monitor.ContainerStat) {
+		fmt.Fprintf(&b, "dockercmd_container_cpu_cores{id=%q,name=%q,host=%q}  %g\n", short(c.ID), c.Name, c.HostName, c.CPUCores)
 	})
 
 	writeMetricHeader(&b, "dockercmd_container_mem_bytes", "gauge", "Container memory usage in bytes")
@@ -45,6 +55,11 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	forRunning(s.monitor, func(c monitor.ContainerStat) {
 		fmt.Fprintf(&b, "dockercmd_container_mem_percent{id=%q,name=%q,host=%q}  %g\n", short(c.ID), c.Name, c.HostName, c.MemPercent)
 	})
+
+	// Alerting state. Now that a threshold alert is a condition with a lifetime
+	// rather than a repeated line, "what is wrong right now" is a real number the
+	// engine already holds — and it is the thing you would actually page on.
+	s.writeAlertMetrics(r, &b)
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	_, _ = w.Write([]byte(b.String()))
@@ -74,4 +89,37 @@ func short(id string) string {
 		return id[:12]
 	}
 	return id
+}
+
+// writeAlertMetrics exposes live alert conditions and the outstanding count.
+//
+// Deliberately NOT scoped to a user: /metrics is a machine endpoint guarded by
+// its own token, and a scrape has no session. That is the existing contract for
+// this endpoint — container stats are already unscoped — but it is worth stating,
+// because everything else in the app filters by host.
+func (s *Server) writeAlertMetrics(r *http.Request, b *strings.Builder) {
+	ctx := r.Context()
+
+	states, err := s.store.ListAlertStates(ctx)
+	if err == nil {
+		writeMetricHeader(b, "dockercmd_alert_firing", "gauge",
+			"1 for each condition currently over its threshold, labelled by what it is about")
+		for _, st := range states {
+			fmt.Fprintf(b, "dockercmd_alert_firing{host=%q,container=%q,metric=%q,severity=%q,rule=%q}  1\n",
+				st.HostName, st.ContainerName, st.Metric, st.Severity, st.RuleName)
+		}
+		writeMetricHeader(b, "dockercmd_alerts_firing_count", "gauge", "Number of conditions currently firing")
+		fmt.Fprintf(b, "dockercmd_alerts_firing_count  %d\n", len(states))
+	}
+
+	// Matches the sidebar badge: unacknowledged warnings and criticals. A
+	// resolution is stored already settled, so this never climbs because
+	// something got better.
+	if _, n, err := s.store.ListAlertEvents(ctx, store.AlertQuery{
+		Unacked: true, Severities: []string{"warning", "critical"}, Limit: 1,
+	}); err == nil {
+		writeMetricHeader(b, "dockercmd_alerts_outstanding", "gauge",
+			"Unacknowledged warning and critical alerts")
+		fmt.Fprintf(b, "dockercmd_alerts_outstanding  %d\n", n)
+	}
 }

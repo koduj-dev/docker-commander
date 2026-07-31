@@ -91,7 +91,7 @@ func TestMonitorPollAndFire(t *testing.T) {
 	// handleEvent on a "die" should fire the state rule and record an event.
 	m.handleEvent(ctx, 0, "local", docker.Event{Action: "die", ContainerID: id, ContainerName: name})
 	time.Sleep(200 * time.Millisecond) // fire writes async-ish via store
-	evs, _ := st.ListAlertEvents(ctx, 10)
+	evs, _, _ := st.ListAlertEvents(ctx, store.AlertQuery{Limit: 10})
 	if len(evs) == 0 {
 		t.Error("expected a fired state alert event")
 	} else if evs[0].HostName != "local" {
