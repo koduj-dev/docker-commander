@@ -7,6 +7,17 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **MCP can see the alerting engine.** Three tools: `list_alerts` (the history,
+  with the same filters as the UI), `active_alert_conditions` (what is over
+  threshold right now, and for how long) and `acknowledge_alert`. The first two are
+  separate on purpose — now that an alert is a condition with a lifetime, "what
+  happened" and "what is wrong now" are different questions, and an assistant asking
+  the first when it meant the second reports problems that resolved an hour ago.
+
+  Host scoping goes into the query rather than filtering afterwards, so omitting
+  `host_id` cannot widen the answer past what the caller may reach; a token narrows
+  it further still.
+
 - **Endpoint traffic on the network detail.** Docker reports no per-network
   counters — its stats are per *interface* with no network identity on Linux, which
   is why `docker stats` itself only shows one aggregate column. The network detail
