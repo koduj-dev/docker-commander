@@ -274,9 +274,15 @@ func (m *Manager) writeOverSSH(ctx context.Context, t *stackTarget, content stri
 	return nil
 }
 
-// StackRedeploy runs `docker compose up -d` for a CLI-discovered stack, in the
-// working directory it was originally deployed from, so relative paths in the
-// file resolve exactly as they did the first time. It returns the CLI output.
+// StackRedeploy runs `docker compose up -d --build` for a CLI-discovered stack,
+// in the working directory it was originally deployed from, so relative paths in
+// the file resolve exactly as they did the first time. It returns the CLI output.
+//
+// `--build` for the same reason project deploys pass it: `up` builds a service
+// only when its image is MISSING, so a stack declaring `build:` would keep
+// running the image from its first deploy no matter what changed in the
+// Dockerfile or its context, while the CLI reported "Container Running". It is a
+// no-op for services that only pull an image.
 //
 // `--remove-orphans` is deliberately NOT passed: a redeploy after an edit should
 // not silently delete containers, and compose warns about orphans in the output
@@ -293,12 +299,12 @@ func (m *Manager) StackRedeploy(ctx context.Context, hostID int64, project strin
 	switch t.host.Kind {
 	case "local", "":
 		out, err := runComposeFiles(ctx, t.workDir, t.stack.Project, nil,
-			[]string{t.path}, "up", "-d")
+			[]string{t.path}, "up", "-d", "--build")
 		return out, err
 	case "ssh":
 		q := shellQuote
 		return m.sshRun(ctx, t, fmt.Sprintf(
-			"cd %s && docker compose -p %s -f %s up -d",
+			"cd %s && docker compose -p %s -f %s up -d --build",
 			q(t.workDir), q(t.stack.Project), q(t.path)))
 	}
 	return "", fmt.Errorf("unsupported host kind %q", t.host.Kind)
