@@ -48,6 +48,14 @@ All notable changes to Docker Commander are documented here. The format follows
   and "failed" were the same state. It now says what went wrong and offers a retry.
 
 ### Fixed
+- **Redeploying a stack rebuilds its image too.** The same staleness bug as the
+  project deploy below, on the other code path: `StackRedeploy` ran a plain
+  `docker compose up -d`, so a CLI-discovered stack declaring `build:` kept running
+  the image from its first deploy however much its Dockerfile or context changed on
+  the host. Found while auditing the docs against the merged code, right after the
+  project half was fixed — the two deploy paths are separate code and only one of
+  them had been corrected.
+
 - **Deploying a project no longer runs a stale image.** A project with a `build:`
   section was built on its first deploy and then never again: `docker compose up -d`
   builds a service only when its image is **missing**, so every later deploy reused

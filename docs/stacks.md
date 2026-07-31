@@ -43,8 +43,14 @@ mounts, `env_file`, `build.context`, `include`) resolve against the project's
 working directory, so moving the file would silently repoint every one of them.
 `./nginx.conf` would stop meaning your config and start meaning whatever sits
 beside the copy — usually nothing, which deploys an *empty* file rather than
-failing loudly. Redeploy therefore runs `docker compose up -d` in the stack's
-original working directory, exactly where it ran the first time.
+failing loudly. Redeploy therefore runs `docker compose up -d --build` in the
+stack's original working directory, exactly where it ran the first time.
+
+`--build` is there because `up` builds a service only when its image is
+**missing**: a stack with a `build:` section would otherwise keep running the
+image from its first deploy however much its Dockerfile or context changed on the
+host, while reporting nothing worse than `Container Running`. It is a no-op for
+services that only pull an image.
 
 What that costs, stated plainly:
 
