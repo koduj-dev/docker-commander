@@ -244,7 +244,6 @@ func (s *Server) handleListAlertEvents(w http.ResponseWriter, r *http.Request) {
 	unackQ.Severities = []string{"warning", "critical"}
 	// A resolved condition is good news, not an outstanding item. Counting it
 	// would make the badge climb as problems FIX themselves.
-	unackQ.ExcludeKind = store.KindResolved
 	_, unread, uerr := s.store.ListAlertEvents(r.Context(), unackQ)
 	if uerr != nil {
 		unread = 0
@@ -290,9 +289,6 @@ func (s *Server) handleAckAllAlertEvents(w http.ResponseWriter, r *http.Request)
 	if claims, ok := auth.ClaimsFrom(r.Context()); ok {
 		by = claims.Username
 	}
-	// Same rule as the badge: resolved events are never "outstanding", so bulk
-	// acknowledge leaves them alone rather than quietly marking them handled.
-	aq.ExcludeKind = store.KindResolved
 	n, err := s.store.AckMatchingAlertEvents(r.Context(), aq, by)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not acknowledge")

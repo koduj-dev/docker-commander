@@ -101,11 +101,6 @@ type AlertQuery struct {
 	Rule       string // substring
 	Text       string // substring of the message
 	Unacked    bool
-	// ExcludeKind drops one lifecycle kind from the result. Used to keep
-	// "resolved" out of anything that means "needs attention": a condition that
-	// ended is a record, not a task, and counting it trains people to ignore the
-	// badge.
-	ExcludeKind string
 	// HostIDs restricts the query to these hosts; nil means no restriction.
 	// Empty-but-non-nil means nothing is visible, which must return no rows
 	// rather than all of them — the difference is the whole point of the type.
@@ -250,12 +245,22 @@ func (s *Store) DeleteAlertRule(ctx context.Context, id int64) error {
 // ---- Alert events -----------------------------------------------------------
 
 // InsertAlertEvent records a fired alert event and returns its ID.
+// InsertAlertEvent records an alert.
+//
+// A resolution is stored ALREADY ACKNOWLEDGED. It is not a task — there is
+// nothing for anyone to do about a condition that ended — so it must never sit
+// in an outstanding-work list or push up the sidebar count. Settling it here,
+// once, is why nothing downstream needs a special case for it; and if the UI
+// ever offers an Acknowledge action on resolutions again, the data still means
+// what it says. AcknowledgedBy stays empty, because no person did it.
 func (s *Store) InsertAlertEvent(ctx context.Context, e *AlertEvent) (int64, error) {
+	kind := orDefault(e.Kind, KindFiring)
+	settled := e.Acknowledged || kind == KindResolved
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO alert_events (rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name, message, value, kind, duration_sec, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO alert_events (rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name, message, value, kind, duration_sec, acknowledged, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.RuleID, e.RuleName, e.Type, e.Severity, e.HostID, e.HostName, e.ContainerID, e.ContainerName, e.Message, e.Value,
-		orDefault(e.Kind, KindFiring), e.DurationSec,
+		kind, e.DurationSec, boolToInt(settled),
 		time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		return 0, err
@@ -303,9 +308,6 @@ func (q AlertQuery) where() (string, []any) {
 	}
 	if q.Unacked {
 		where = append(where, "acknowledged = 0")
-	}
-	if q.ExcludeKind != "" {
-		add("kind <> ?", q.ExcludeKind)
 	}
 	if q.HostIDs != nil {
 		if len(q.HostIDs) == 0 {

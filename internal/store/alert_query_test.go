@@ -266,15 +266,17 @@ func TestAckAllRespectsTheFilterAndScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 4 {
-		t.Fatalf("acknowledged %d events, want the 4 in scope", n)
+	// 4 events are in scope, but one of them is a resolution — stored already
+	// settled — so bulk acknowledge has 3 to do.
+	if n != 3 {
+		t.Fatalf("acknowledged %d events, want the 3 outstanding ones in scope", n)
 	}
 	evs, _, _ := s.ListAlertEvents(ctx, AlertQuery{})
 	for _, e := range evs {
 		if e.HostID == 2 && e.Acknowledged {
 			t.Errorf("SECURITY: acknowledged an event on an out-of-scope host: %+v", e)
 		}
-		if e.HostID != 2 {
+		if e.HostID != 2 && e.Kind != KindResolved {
 			if !e.Acknowledged || e.AcknowledgedBy != "filip" {
 				t.Errorf("in-scope event not acknowledged by the caller: %+v", e)
 			}
@@ -309,8 +311,10 @@ func TestAckAllHonoursNarrowerFilters(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("acknowledged %d, want only the 1 critical event", n)
 	}
-	if _, unacked, _ := s.ListAlertEvents(ctx, AlertQuery{Unacked: true}); unacked != 4 {
-		t.Errorf("%d events left unacknowledged, want 4 — the filter was ignored", unacked)
+	// 5 seeded, minus the resolution (born settled) and the critical just
+	// acknowledged, leaves 3 outstanding.
+	if _, unacked, _ := s.ListAlertEvents(ctx, AlertQuery{Unacked: true}); unacked != 3 {
+		t.Errorf("%d events left outstanding, want 3 — the filter was ignored", unacked)
 	}
 }
 
@@ -334,14 +338,17 @@ func TestAlertBadgeCountsOnlyProblems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Seed has: 1 critical, 3 warning, 1 info — and the resolved one is a warning
-	// in this fixture, so assert against the severity rule rather than a guess.
-	_, warncrit, _ := s.ListAlertEvents(ctx, AlertQuery{Severities: []string{"warning", "critical"}})
-	if n != warncrit {
-		t.Fatalf("badge counted %d, want %d (all unacknowledged warnings + criticals)", n, warncrit)
+	// Derived rather than hard-coded, so the fixture can grow without this
+	// becoming a puzzle: the badge is exactly the OUTSTANDING warnings and
+	// criticals.
+	_, want, _ := s.ListAlertEvents(ctx, AlertQuery{Unacked: true, Severities: []string{"warning", "critical"}})
+	if n != want {
+		t.Fatalf("badge counted %d, want %d (outstanding warnings + criticals)", n, want)
 	}
 
-	// The decisive case: adding a resolved/info event must not move the badge.
+	// The decisive case: adding a resolution must not move the badge. It is
+	// stored already settled, so it is excluded twice over — but the assertion is
+	// about the outcome, not the mechanism.
 	before := n
 	if _, err := s.InsertAlertEvent(ctx, &AlertEvent{
 		RuleName: "Memory", Severity: "info", Kind: KindResolved, HostID: 1,
@@ -376,5 +383,59 @@ func TestAlertBadgeCountsOnlyProblems(t *testing.T) {
 	_, afterWarn, _ := s.ListAlertEvents(ctx, badge)
 	if afterWarn != before+1 {
 		t.Errorf("a new warning left the badge at %d, want %d", afterWarn, before+1)
+	}
+}
+
+// TestResolvedEventsAreBornSettled pins the rule at its source: a resolution is
+// stored acknowledged, because there is nothing for anyone to do about a
+// condition that ended. Everything downstream — the badge, the outstanding
+// filter, bulk acknowledge — then needs no special case for it.
+func TestResolvedEventsAreBornSettled(t *testing.T) {
+	s, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+
+	if _, err := s.InsertAlertEvent(ctx, &AlertEvent{
+		RuleName: "Memory", Severity: "info", Kind: KindResolved,
+		ContainerName: "db-postgres", Message: "MEM back to normal after 2m",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.InsertAlertEvent(ctx, &AlertEvent{
+		RuleName: "Memory", Severity: "warning", Kind: KindFiring,
+		ContainerName: "db-postgres", Message: "MEM 90% of limit",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	all, _, _ := s.ListAlertEvents(ctx, AlertQuery{})
+	for _, e := range all {
+		switch e.Kind {
+		case KindResolved:
+			if !e.Acknowledged {
+				t.Error("a resolution must be stored acknowledged; otherwise it sits in the outstanding list for ever, with no action to clear it")
+			}
+			if e.AcknowledgedBy != "" {
+				t.Errorf("acknowledgedBy = %q; no person settled this, and claiming one would be a lie in the audit trail", e.AcknowledgedBy)
+			}
+		case KindFiring:
+			if e.Acknowledged {
+				t.Error("a firing alert must NOT be pre-acknowledged")
+			}
+		}
+	}
+
+	// The outstanding list therefore holds only the live problem.
+	out, n, _ := s.ListAlertEvents(ctx, AlertQuery{Unacked: true})
+	if n != 1 || len(out) != 1 || out[0].Kind != KindFiring {
+		t.Fatalf("outstanding list holds %d events, want just the firing one: %+v", n, out)
+	}
+
+	// And bulk acknowledge has nothing to say about resolutions.
+	if got, err := s.AckMatchingAlertEvents(ctx, AlertQuery{}, "filip"); err != nil || got != 1 {
+		t.Errorf("ack-all touched %d events (err=%v), want only the 1 outstanding", got, err)
 	}
 }

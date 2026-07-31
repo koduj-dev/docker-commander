@@ -82,6 +82,12 @@ useful if you can go and ask them. **Ack all** acknowledges everything matching
 the *current filters* — not the whole table — behind a confirm that says which of
 the two it is about to do.
 
+**A `resolved` event is stored already settled** and shows no Acknowledge action.
+There is nothing to do about a condition that has ended, so it never appears in
+the outstanding list, never counts toward the badge, and never waits for someone
+to click it. That single rule at the point of writing is why nothing downstream
+needs a special case for resolutions.
+
 **A toast appears when an alert arrives while the app is open**, so you learn
 about it without sitting on the Alerts page. It is a nudge, not a record — the
 feed is the record. Resolved conditions toast in green, a countdown bar shows how

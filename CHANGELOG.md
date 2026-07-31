@@ -31,6 +31,11 @@ All notable changes to Docker Commander are documented here. The format follows
   including the `resolved` ones, so the number went *up* when a condition cleared.
   A badge that grows as problems fix themselves is one people learn to ignore.
 
+  **Resolved alerts are stored already settled**, with no Acknowledge action: there
+  is nothing to do about a condition that has ended, so it never sits in the
+  outstanding list waiting for a click that means nothing. One rule at the point of
+  writing, rather than a special case in the badge, the filter and bulk acknowledge.
+
   **Acknowledging an alert records who did it** and when, and **Ack all** clears
   everything matching the current filters behind a confirm that names which of the
   two it will do. Filters include the **host**.

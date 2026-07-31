@@ -308,8 +308,11 @@ function FeedRow({ e, expanded, onToggle, onAck }: { e: AlertEvent; expanded: bo
         </td>
         <td className="px-4 py-2.5 text-right whitespace-nowrap">
           {e.acknowledged ? (
+            // No name means no person did it — a resolution is stored already
+            // settled, because there is nothing to act on once a condition has
+            // ended. Saying "ack" there would claim someone looked at it.
             <span className="text-xs text-muted" title={e.acknowledgedAt ? `at ${e.acknowledgedAt.slice(0, 19).replace("T", " ")}` : undefined}>
-              ack{e.acknowledgedBy ? ` by ${e.acknowledgedBy}` : ""}
+              {e.acknowledgedBy ? `ack by ${e.acknowledgedBy}` : "—"}
             </span>
           ) : (
             <button className="btn-ghost px-2 py-1" title="Acknowledge" onClick={onAck}>
