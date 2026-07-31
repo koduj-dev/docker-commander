@@ -3,8 +3,11 @@ package mcp
 import (
 	"context"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/koduj-dev/docker-commander/internal/store"
 )
@@ -17,7 +20,7 @@ const (
 func TestAccessTokenRoundTrip(t *testing.T) {
 	key := []byte("0123456789abcdef0123456789abcdef")
 
-	tok, exp, err := MintAccessToken(key, testIssuer, testResource, 42, true, time.Hour)
+	tok, exp, err := MintAccessToken(key, testIssuer, testResource, 42, "cli-test", true, time.Hour)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -25,12 +28,17 @@ func TestAccessTokenRoundTrip(t *testing.T) {
 		t.Fatal("expiry should be in the future")
 	}
 
-	uid, ro, gotExp, err := parseAccessToken(key, testResource, tok)
+	uid, gotCID, ro, gotExp, err := parseAccessToken(key, testResource, tok)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	if uid != 42 || !ro {
 		t.Fatalf("round-trip mismatch: uid=%d ro=%v", uid, ro)
+	}
+	// The client binding has to survive the round trip, or revocation-by-removing
+	// -the-client silently degrades to "not revocable".
+	if gotCID != "cli-test" {
+		t.Fatalf("client id did not survive the round trip: %q", gotCID)
 	}
 	if gotExp.Unix() != exp.Unix() {
 		t.Fatalf("expiry mismatch: %v vs %v", gotExp, exp)
@@ -41,26 +49,26 @@ func TestAccessTokenRejections(t *testing.T) {
 	key := []byte("0123456789abcdef0123456789abcdef")
 	other := []byte("ffffffffffffffffffffffffffffffff")
 
-	tok, _, _ := MintAccessToken(key, testIssuer, testResource, 7, false, time.Hour)
+	tok, _, _ := MintAccessToken(key, testIssuer, testResource, 7, "cli-test", false, time.Hour)
 
 	t.Run("wrong audience rejected (RFC 8707 binding)", func(t *testing.T) {
-		if _, _, _, err := parseAccessToken(key, "https://evil.example.com/mcp", tok); err == nil {
+		if _, _, _, _, err := parseAccessToken(key, "https://evil.example.com/mcp", tok); err == nil {
 			t.Fatal("token for a different resource must be rejected")
 		}
 	})
 	t.Run("wrong signing key rejected", func(t *testing.T) {
-		if _, _, _, err := parseAccessToken(other, testResource, tok); err == nil {
+		if _, _, _, _, err := parseAccessToken(other, testResource, tok); err == nil {
 			t.Fatal("token signed with another key must be rejected")
 		}
 	})
 	t.Run("expired token rejected", func(t *testing.T) {
-		expired, _, _ := MintAccessToken(key, testIssuer, testResource, 7, false, -time.Minute)
-		if _, _, _, err := parseAccessToken(key, testResource, expired); err == nil {
+		expired, _, _ := MintAccessToken(key, testIssuer, testResource, 7, "cli-test", false, -time.Minute)
+		if _, _, _, _, err := parseAccessToken(key, testResource, expired); err == nil {
 			t.Fatal("expired token must be rejected")
 		}
 	})
 	t.Run("garbage rejected", func(t *testing.T) {
-		if _, _, _, err := parseAccessToken(key, testResource, "not.a.jwt"); err == nil {
+		if _, _, _, _, err := parseAccessToken(key, testResource, "not.a.jwt"); err == nil {
 			t.Fatal("malformed token must be rejected")
 		}
 	})
@@ -80,12 +88,19 @@ func TestVerifyTokenOAuthPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("user: %v", err)
 	}
+	// The token is bound to a client, and verification requires that client to
+	// still be registered — so the fixture has to register it.
+	if err := st.CreateOAuthClient(context.Background(), &store.OAuthClient{
+		ID: "cli-test", Name: "test connector", RedirectURIs: []string{"http://127.0.0.1/cb"},
+	}); err != nil {
+		t.Fatalf("client: %v", err)
+	}
 	h := &handler{deps: Deps{
 		Store: st, SigningKey: key, ResourceURL: testResource, IssuerURL: testIssuer,
 		CheckAccess: func(context.Context, *store.User, string, bool, int64) error { return nil },
 	}}
 
-	tok, _, _ := MintAccessToken(key, testIssuer, testResource, uid, true, time.Hour)
+	tok, _, _ := MintAccessToken(key, testIssuer, testResource, uid, "cli-test", true, time.Hour)
 	ti, err := h.verifyToken(context.Background(), tok, httptest.NewRequest("POST", "/mcp", nil))
 	if err != nil {
 		t.Fatalf("verify oauth token: %v", err)
@@ -98,5 +113,98 @@ func TestVerifyTokenOAuthPath(t *testing.T) {
 	// A bogus JWT-shaped token must be rejected, not silently accepted.
 	if _, err := h.verifyToken(context.Background(), "aaa.bbb.ccc", httptest.NewRequest("POST", "/mcp", nil)); err == nil {
 		t.Fatal("bogus JWT-shaped token should be rejected")
+	}
+
+	// A token minted before dc_cid existed carries no client. It must still
+	// verify: rejecting it would force every connector to re-authorize on upgrade
+	// to buy at most one token lifetime.
+	//
+	// It is forged with the raw JWT library on purpose — MintAccessToken now
+	// refuses an empty client, so the only honest way to produce the old shape is
+	// to build it the way the old code did.
+	legacy := legacyAccessToken(t, key, uid)
+	if _, err := h.verifyToken(context.Background(), legacy, httptest.NewRequest("POST", "/mcp", nil)); err != nil {
+		t.Fatalf("a token without a client binding should still verify: %v", err)
+	}
+}
+
+// legacyAccessToken builds an access token in the pre-dc_cid shape.
+func legacyAccessToken(t *testing.T, key []byte, uid int64) string {
+	t.Helper()
+	now := time.Now()
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims{
+		ReadOnly: true,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    testIssuer,
+			Subject:   strconv.FormatInt(uid, 10),
+			Audience:  jwt.ClaimStrings{testResource},
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
+			ID:        "legacy",
+		},
+	})
+	s, err := tok.SignedString(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// TestMintAccessTokenRefusesAnUnboundToken pins the decision that a token with no
+// client can never be *minted*, only tolerated on parse. Without this, a future
+// caller passing "" would silently reintroduce an unrevocable token and every
+// existing test would still pass.
+func TestMintAccessTokenRefusesAnUnboundToken(t *testing.T) {
+	key := []byte("0123456789abcdef0123456789abcdef")
+	if _, _, err := MintAccessToken(key, testIssuer, testResource, 1, "", false, time.Hour); err == nil {
+		t.Fatal("minting an access token with no client id must fail — such a token could never be revoked")
+	}
+}
+
+// TestPentestRemovingAnOAuthClientRevokesItsAccessTokens is the point of the
+// client binding.
+//
+// An access token is a signed bearer credential: nothing about removing a
+// connector reaches the copy a tool already holds, so before this the admin
+// action purged codes and refresh tokens while the tool kept working until the
+// token expired — up to AccessTokenTTL of access after "revoke". The window was
+// bounded, which is why this is hardening rather than a hole, but "revoked" has
+// to mean now.
+func TestPentestRemovingAnOAuthClientRevokesItsAccessTokens(t *testing.T) {
+	ctx := context.Background()
+	key := []byte("0123456789abcdef0123456789abcdef")
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	uid, err := st.CreateUser(ctx, &store.User{Username: "mallory", PasswordHash: "x", Role: "user"})
+	if err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	if err := st.CreateOAuthClient(ctx, &store.OAuthClient{
+		ID: "cli-doomed", Name: "connector", RedirectURIs: []string{"http://127.0.0.1/cb"},
+	}); err != nil {
+		t.Fatalf("client: %v", err)
+	}
+	h := &handler{deps: Deps{
+		Store: st, SigningKey: key, ResourceURL: testResource, IssuerURL: testIssuer,
+		CheckAccess: func(context.Context, *store.User, string, bool, int64) error { return nil },
+	}}
+
+	// A long-lived token so the test can only pass because of revocation, never
+	// because the token happened to expire.
+	tok, _, _ := MintAccessToken(key, testIssuer, testResource, uid, "cli-doomed", false, time.Hour)
+	if _, err := h.verifyToken(ctx, tok, httptest.NewRequest("POST", "/mcp", nil)); err != nil {
+		t.Fatalf("token should work while its client is registered: %v", err)
+	}
+
+	if ok, err := st.DeleteOAuthClient(ctx, "cli-doomed"); err != nil || !ok {
+		t.Fatalf("delete client: ok=%v err=%v", ok, err)
+	}
+
+	if _, err := h.verifyToken(ctx, tok, httptest.NewRequest("POST", "/mcp", nil)); err == nil {
+		t.Fatal("SECURITY: an access token still works after its OAuth client was removed — revoking a connector does not revoke its in-flight access")
 	}
 }

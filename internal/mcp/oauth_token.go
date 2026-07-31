@@ -14,8 +14,14 @@ import (
 // read-only grant (the consent screen lets the user choose). Audience binding
 // (aud == the canonical /mcp resource URI) is enforced on parse, per the MCP
 // auth spec / RFC 8707 — a token issued for another resource is rejected.
+//
+// dc_cid names the OAuth client the token was issued to. It exists so a token
+// can be revoked before it expires: the verifier requires that client to still
+// be registered, which turns "remove this connector" into an immediate
+// revocation instead of a promise that comes true within AccessTokenTTL.
 type accessClaims struct {
-	ReadOnly bool `json:"dc_ro,omitempty"`
+	ReadOnly bool   `json:"dc_ro,omitempty"`
+	ClientID string `json:"dc_cid,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -23,10 +29,19 @@ type accessClaims struct {
 // refresh tokens (rotated) cover longer sessions.
 const AccessTokenTTL = 15 * time.Minute
 
-// MintAccessToken issues a signed, audience-bound access token for userID.
-func MintAccessToken(key []byte, issuer, resource string, userID int64, readOnly bool, ttl time.Duration) (string, time.Time, error) {
+// MintAccessToken issues a signed, audience-bound access token for userID,
+// bound to the OAuth client it was issued to.
+func MintAccessToken(key []byte, issuer, resource string, userID int64, clientID string, readOnly bool, ttl time.Duration) (string, time.Time, error) {
 	if len(key) == 0 {
 		return "", time.Time{}, errors.New("no signing key")
+	}
+	// Refuse rather than mint an unrevocable token. Verification tolerates a
+	// missing dc_cid so that tokens issued before the claim existed keep working
+	// until they expire — which means a future caller passing "" here would
+	// silently reproduce exactly the gap this claim closes, and nothing would
+	// fail. Making it an error keeps that impossible to do by accident.
+	if clientID == "" {
+		return "", time.Time{}, errors.New("access token needs a client id, or it could never be revoked")
 	}
 	now := time.Now()
 	exp := now.Add(ttl)
@@ -36,6 +51,7 @@ func MintAccessToken(key []byte, issuer, resource string, userID int64, readOnly
 	}
 	claims := accessClaims{
 		ReadOnly: readOnly,
+		ClientID: clientID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    issuer,
 			Subject:   strconv.FormatInt(userID, 10),
@@ -50,8 +66,16 @@ func MintAccessToken(key []byte, issuer, resource string, userID int64, readOnly
 }
 
 // parseAccessToken verifies an access token's signature, algorithm, expiry and
-// audience, returning the subject user ID, read-only flag and expiry.
-func parseAccessToken(key []byte, resource, tokenStr string) (userID int64, readOnly bool, exp time.Time, err error) {
+// audience, returning the subject user ID, the client it was issued to, the
+// read-only flag and the expiry.
+//
+// A token minted before dc_cid existed yields an empty clientID. That is
+// deliberately not an error: the claim is only ever written by us and a forged
+// or stripped one fails the signature, so the sole consequence is that such a
+// token isn't revocable by removing its client — and it expires within
+// AccessTokenTTL anyway. Rejecting them would force every connector to
+// re-authorize on upgrade to buy at most fifteen minutes.
+func parseAccessToken(key []byte, resource, tokenStr string) (userID int64, clientID string, readOnly bool, exp time.Time, err error) {
 	var c accessClaims
 	_, err = jwt.ParseWithClaims(tokenStr, &c, func(t *jwt.Token) (any, error) {
 		return key, nil
@@ -61,14 +85,14 @@ func parseAccessToken(key []byte, resource, tokenStr string) (userID int64, read
 		jwt.WithExpirationRequired(),
 	)
 	if err != nil {
-		return 0, false, time.Time{}, err
+		return 0, "", false, time.Time{}, err
 	}
 	uid, err := strconv.ParseInt(c.Subject, 10, 64)
 	if err != nil {
-		return 0, false, time.Time{}, errors.New("bad subject")
+		return 0, "", false, time.Time{}, errors.New("bad subject")
 	}
 	if c.ExpiresAt == nil {
-		return 0, false, time.Time{}, errors.New("missing expiry")
+		return 0, "", false, time.Time{}, errors.New("missing expiry")
 	}
-	return uid, c.ReadOnly, c.ExpiresAt.Time, nil
+	return uid, c.ClientID, c.ReadOnly, c.ExpiresAt.Time, nil
 }

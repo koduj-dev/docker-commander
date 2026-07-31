@@ -301,7 +301,7 @@ func (s *Server) tokenFromRefresh(w http.ResponseWriter, r *http.Request) {
 // the callers against the current MCP resource, so the binding is enforced.
 func (s *Server) issueTokens(w http.ResponseWriter, r *http.Request, clientID string, userID int64, scope, resource string) {
 	readOnly := scope == scopeReadOnly
-	access, _, err := mcp.MintAccessToken(s.mcpSigningKey, s.mcpBase(), resource, userID, readOnly, mcp.AccessTokenTTL)
+	access, _, err := mcp.MintAccessToken(s.mcpSigningKey, s.mcpBase(), resource, userID, clientID, readOnly, mcp.AccessTokenTTL)
 	if err != nil {
 		oauthErr(w, http.StatusInternalServerError, "server_error", "")
 		return

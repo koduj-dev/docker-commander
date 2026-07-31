@@ -39,7 +39,7 @@ export function MCPAdmin() {
   const deleteClient = async (c: AdminOAuthClient) => {
     if (!(await dialogs.confirm({
       title: "Remove OAuth client",
-      message: <>Remove client <code className="font-mono text-text">{c.name || c.id}</code>? Its codes and refresh tokens are purged, so any tool connected through it must re-authorize.</>,
+      message: <>Remove client <code className="font-mono text-text">{c.name || c.id}</code>? Its codes and refresh tokens are purged <strong>and any access token it already holds stops working immediately</strong>, so a tool connected through it loses access at once and must re-authorize.</>,
       danger: true,
       confirmLabel: "Remove",
     }))) return;
