@@ -7,6 +7,19 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Security
+- **Removing an MCP OAuth client now revokes its access immediately.** Deleting a
+  client purged its authorization codes and refresh tokens, which stopped it
+  obtaining a *new* access token — but an access token is a **signed** credential,
+  so nothing about deleting a database row reached the copy a connected tool
+  already held. It kept working until it expired: up to 15 minutes of access after
+  an admin pressed Revoke. Access tokens are now bound to the client that was
+  issued them (a `dc_cid` claim) and every call requires that client to still be
+  registered. The window was always bounded, so this is hardening rather than a
+  hole — but "revoked" should mean now, and the admin dialog said so while the
+  behaviour didn't. Tokens minted before this carry no binding and simply expire
+  within one lifetime; rejecting them would have forced every connector to
+  re-authorize on upgrade to buy at most fifteen minutes.
+
 - **The stack editor's backup could be redirected through a symlink.** Saving a
   CLI-discovered stack's compose file keeps the previous version beside it as
   `<name>.dc-prev`, and that backup was written with a plain write — which follows
