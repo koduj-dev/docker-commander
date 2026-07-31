@@ -22,11 +22,15 @@ All notable changes to Docker Commander are documented here. The format follows
   so rates can be derived at read time whatever the sampling interval was.
 
 - **Network in the dashboard's resource breakdown**, beside CPU and memory — as a
-  ranked list of the busiest containers, **not** a pie. CPU and memory divide a real
-  whole (the host), so a pie is honest for them; network's only "whole" is the sum of
-  whatever happens to be moving, which would make a container at 100% of 2 KB/s look
-  identical to one at 100% of 800 MB/s. Bars are scaled to the busiest container and
-  every row carries its actual rate.
+  host-wide **summary over time**, not a pie and not a live ranking. CPU and memory
+  divide a real whole (the host), so a pie is honest for them; network's only
+  "whole" is whatever happens to be moving, which would make a container at 100% of
+  2 KB/s look identical to one at 100% of 800 MB/s. A live ranking is no better:
+  throughput is bursty, so the order changes on every poll. It is a time series —
+  which is how Portainer's stats view and the standard cAdvisor/Grafana panels
+  present it — so the per-container series lives on the container page and the
+  dashboard shows current RX/TX with a short trend. Summed across containers, so
+  traffic between two of them counts twice; the card says so.
 
 - **Dropped packets and interface errors are kept in history**, as `netdrops` and
   `neterrors`. Stored RX+TX combined rather than as four series: they are near-zero
