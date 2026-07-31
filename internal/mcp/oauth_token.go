@@ -35,6 +35,14 @@ func MintAccessToken(key []byte, issuer, resource string, userID int64, clientID
 	if len(key) == 0 {
 		return "", time.Time{}, errors.New("no signing key")
 	}
+	// Refuse rather than mint an unrevocable token. Verification tolerates a
+	// missing dc_cid so that tokens issued before the claim existed keep working
+	// until they expire — which means a future caller passing "" here would
+	// silently reproduce exactly the gap this claim closes, and nothing would
+	// fail. Making it an error keeps that impossible to do by accident.
+	if clientID == "" {
+		return "", time.Time{}, errors.New("access token needs a client id, or it could never be revoked")
+	}
 	now := time.Now()
 	exp := now.Add(ttl)
 	jti := make([]byte, 16)

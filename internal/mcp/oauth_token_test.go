@@ -3,8 +3,11 @@ package mcp
 import (
 	"context"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/koduj-dev/docker-commander/internal/store"
 )
@@ -115,9 +118,46 @@ func TestVerifyTokenOAuthPath(t *testing.T) {
 	// A token minted before dc_cid existed carries no client. It must still
 	// verify: rejecting it would force every connector to re-authorize on upgrade
 	// to buy at most one token lifetime.
-	legacy, _, _ := MintAccessToken(key, testIssuer, testResource, uid, "", true, time.Hour)
+	//
+	// It is forged with the raw JWT library on purpose — MintAccessToken now
+	// refuses an empty client, so the only honest way to produce the old shape is
+	// to build it the way the old code did.
+	legacy := legacyAccessToken(t, key, uid)
 	if _, err := h.verifyToken(context.Background(), legacy, httptest.NewRequest("POST", "/mcp", nil)); err != nil {
 		t.Fatalf("a token without a client binding should still verify: %v", err)
+	}
+}
+
+// legacyAccessToken builds an access token in the pre-dc_cid shape.
+func legacyAccessToken(t *testing.T, key []byte, uid int64) string {
+	t.Helper()
+	now := time.Now()
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims{
+		ReadOnly: true,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    testIssuer,
+			Subject:   strconv.FormatInt(uid, 10),
+			Audience:  jwt.ClaimStrings{testResource},
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
+			ID:        "legacy",
+		},
+	})
+	s, err := tok.SignedString(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// TestMintAccessTokenRefusesAnUnboundToken pins the decision that a token with no
+// client can never be *minted*, only tolerated on parse. Without this, a future
+// caller passing "" would silently reintroduce an unrevocable token and every
+// existing test would still pass.
+func TestMintAccessTokenRefusesAnUnboundToken(t *testing.T) {
+	key := []byte("0123456789abcdef0123456789abcdef")
+	if _, _, err := MintAccessToken(key, testIssuer, testResource, 1, "", false, time.Hour); err == nil {
+		t.Fatal("minting an access token with no client id must fail — such a token could never be revoked")
 	}
 }
 
