@@ -74,6 +74,13 @@ scripts/remote-test-daemon.sh down
 > and an env-var change doesn't invalidate the cache, so a re-provisioned daemon
 > will otherwise replay the previous verdict.
 
+**Adding a test? Prove it can fail.** Break the thing it tests, watch it fail,
+check it failed for the *right* reason, then restore. Tests in this repo have
+passed while guarding nothing — usually because something else (compose's own
+validation, a shared status code) was doing the rejecting. `docs/testing.md`
+lists the specific failure modes and the fixture traps that go with real-daemon
+tests.
+
 > ⚠️ **The integration tests run against your *real local* Docker daemon.** They
 > create and clean up their own throwaway resources, but **never** add a
 > host-global operation (`docker {system,network,image,volume} prune`) to a

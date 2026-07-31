@@ -10,7 +10,7 @@ two cover installation and configuration.
 ## Compute
 - [Dashboard](dashboard.md) — host overview, disk usage, running containers
 - [Containers](containers.md) — create/run, lifecycle, console, files, logs, processes
-- [Stacks](stacks.md) — Compose stacks: discover, lifecycle, view compose file
+- [Stacks](stacks.md) — Compose stacks: discover, lifecycle, view / **edit & redeploy** the compose file on its host
 - [Projects](projects.md) — managed Compose folders: edit + live validation, deploy, profiles, templates, import/export
 - [Templates](projects.md#managing-templates) — reusable presets, builder service blocks, and shared definitions (built-in + your own)
 - [Images](images.md) — pull, build, push, tag, save/load/import, history, prune

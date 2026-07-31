@@ -103,7 +103,13 @@ refresh tokens). No external identity provider is required.
 **Safe control** (write — blocked for read-only tokens/users):
 
 - **start / stop / restart** a container
-- **deploy / down** a managed Compose project
+- **deploy / down** a managed Compose project. `deploy` runs
+  `docker compose up -d --build`, matching the web UI — a project with a `build:`
+  section is rebuilt from its current files rather than redeployed from a stale
+  image. This is not a wider surface than before: `up` has always built an image
+  that was missing, so deploying such a project could already run its Dockerfile.
+  Remote-host projects are still refused here (MCP tokens carry no per-host
+  authorization) and must be deployed from the web UI.
 
 It also exposes MCP **resources** (the container inventory and compose files as
 attachable context) and **prompts** (curated workflows like *diagnose an
