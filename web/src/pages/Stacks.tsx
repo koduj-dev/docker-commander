@@ -217,8 +217,15 @@ export function Stacks() {
     setDeployOut(null);
     try {
       const r = await api.redeployStack(compose.project);
-      setDeployOut({ ok: r.ok, text: r.output?.trim() || (r.ok ? "Redeployed." : (r.error ?? "redeploy failed")) });
-      if (!r.ok && r.error && r.output) setDeployOut({ ok: false, text: `${r.error}\n\n${r.output.trim()}` });
+      // On failure show the reason AND the CLI output when both exist — the
+      // error says what went wrong, the output usually says where.
+      const out = r.output?.trim();
+      setDeployOut({
+        ok: r.ok,
+        text: r.ok
+          ? out || "Redeployed."
+          : [r.error ?? "redeploy failed", out].filter(Boolean).join("\n\n"),
+      });
       load();
     } catch (e) {
       setDeployOut({ ok: false, text: e instanceof Error ? e.message : "redeploy failed" });
