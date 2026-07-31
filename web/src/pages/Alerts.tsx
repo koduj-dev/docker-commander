@@ -10,6 +10,10 @@ import { useAuth } from "../auth/AuthContext";
 import { Tabs } from "../components/Tabs";
 import { useDialogs } from "../components/Dialog";
 
+// Metric names understood by a resource rule. "cpu" is Docker's own
+// one-core-is-100% figure; "cpu_total" normalises it across the host's cores.
+type Metric = "cpu" | "cpu_total" | "mem";
+
 type Tab = "feed" | "rules" | "webhooks";
 
 export function Alerts() {
@@ -42,6 +46,14 @@ const sevBadge: Record<Severity, string> = {
   warning: "bg-warn/15 text-warn",
   info: "bg-accent/15 text-accent",
 };
+
+// kindBadge colours a feed row by what the event means. A resolved condition is
+// good news and must not be painted with the severity that raised it — an all-red
+// feed is what made the old log unreadable.
+function kindBadge(e: AlertEvent): string {
+  if (e.kind === "resolved") return "bg-ok/15 text-ok";
+  return sevBadge[e.severity];
+}
 
 // ---- Feed -------------------------------------------------------------------
 
@@ -83,8 +95,13 @@ function Feed() {
           {events.map((e) => (
             <tr key={e.id} className={clsx("border-b border-border/50", e.acknowledged && "opacity-50")}>
               <td className="px-4 py-2.5 text-muted whitespace-nowrap">{e.createdAt.slice(0, 19).replace("T", " ")}</td>
-              <td className="px-4 py-2.5">
-                <span className={clsx("text-xs px-2 py-0.5 rounded-md font-medium capitalize", sevBadge[e.severity])}>{e.severity}</span>
+              <td className="px-4 py-2.5 whitespace-nowrap">
+                <span className={clsx("text-xs px-2 py-0.5 rounded-md font-medium capitalize", kindBadge(e))}>
+                  {e.kind === "resolved" ? "resolved" : e.severity}
+                </span>
+                {e.kind && e.kind !== "firing" && e.kind !== "resolved" && (
+                  <span className="ml-1 text-[10px] uppercase tracking-wide text-muted">{e.kind}</span>
+                )}
               </td>
               <td className="px-4 py-2.5">{e.ruleName}</td>
               <td className="px-4 py-2.5 hidden lg:table-cell text-xs text-muted">{e.hostName || "—"}</td>
@@ -259,7 +276,7 @@ function RuleForm({ hooks, existing, onDone }: { hooks: Webhook[]; existing?: Al
 
   // type-specific
   const [events, setEvents] = useState<Set<string>>(new Set((cfg.events as string[]) ?? ["die"]));
-  const [metric, setMetric] = useState<"cpu" | "mem">((cfg.metric as "cpu" | "mem") ?? "cpu");
+  const [metric, setMetric] = useState<Metric>((cfg.metric as Metric) ?? "cpu");
   const [op, setOp] = useState<">" | "<">((cfg.op as ">" | "<") ?? ">");
   const [threshold, setThreshold] = useState((cfg.threshold as number) ?? 80);
   const [duration, setDuration] = useState((cfg.durationSec as number) ?? 30);
@@ -349,10 +366,18 @@ function RuleForm({ hooks, existing, onDone }: { hooks: Webhook[]; existing?: Al
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div>
             <label className="label">Metric</label>
-            <select className="input" value={metric} onChange={(e) => setMetric(e.target.value as "cpu" | "mem")}>
-              <option value="cpu">CPU %</option>
-              <option value="mem">Memory %</option>
+            <select className="input" value={metric} onChange={(e) => setMetric(e.target.value as Metric)}>
+              <option value="cpu">CPU % (of one core)</option>
+              <option value="cpu_total">CPU % (of all cores)</option>
+              <option value="mem">Memory % (of container limit)</option>
             </select>
+            <span className="block text-xs text-muted mt-1">
+              {metric === "cpu"
+                ? "Docker's own figure: 100% is one core, so a container busy on 4 cores reads ~400%. A fixed threshold here fires constantly on multi-core hosts."
+                : metric === "cpu_total"
+                  ? "Normalised across the host's cores, so 0–100% whatever the core count. Usually what you want."
+                  : "Share of the container's memory limit, not of host RAM."}
+            </span>
           </div>
           <div>
             <label className="label">Operator</label>

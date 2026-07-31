@@ -81,6 +81,7 @@ func computeSample(id string, s *container.StatsResponse) StatsSample {
 	if cpus == 0 {
 		cpus = float64(len(s.CPUStats.CPUUsage.PercpuUsage))
 	}
+	sample.CPUCores = cpus
 	if sysDelta > 0 && cpuDelta > 0 {
 		sample.CPUPercent = (cpuDelta / sysDelta) * cpus * 100.0
 	}

@@ -6,6 +6,41 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **Threshold alerts are conditions with a lifetime, not lines reprinted every
+  minute.** Testing the engine against a real stack produced an alert log that was
+  the same seven lines repeated every 60 seconds, and three separate problems were
+  behind it. Every `resource` rule was evaluated independently, so a container over
+  both a *warning >5%* and a *critical >10%* memory rule emitted **two** alerts for
+  one fact. Nothing tracked whether a condition was already known, so the cooldown
+  expiring re-announced it as if it were new. And nothing was ever emitted when a
+  problem went away, so the log could not tell you whether it was still happening.
+
+  A threshold alert is now one **condition per container + metric**, regardless of
+  how many rules notice it, and only the most severe rule speaks for it. You get an
+  event when it starts, when it **escalates** or **eases** to a different severity,
+  when the re-notify interval elapses (`repeat`), and when it **resolves** —
+  carrying how long it lasted. Escalation updates the existing condition rather
+  than opening a second one, so the incident clock keeps running. Silence now means
+  "unchanged", which is the whole point.
+
+  Conditions are stored, so they survive a restart: without that, nothing would
+  ever resolve across one. `state`, `log` and `restart` rules stay edge-triggered
+  and keep the plain cooldown — a container that died has no later moment at which
+  it stops having died.
+
+- **CPU thresholds can be a percentage of the whole machine.** Docker's CPU figure
+  is per-core — 100% is one core — so a container busy on four cores reads ~400%
+  and a `> 80%` rule fires permanently on any multi-core host. Rules gained a
+  **CPU % (of all cores)** metric that normalises by the core count, the editor now
+  says which basis each option uses, and existing rules keep the per-core meaning
+  they were written with.
+
+- **Alert messages say what the number measures.** `MEM 61.9% > 5%` never revealed
+  whether that was of host RAM or of the container's limit (it is the limit). It
+  now reads `MEM 3.0 GB / 5.0 GB (61.9% of limit) > 5%`, and CPU messages name
+  their basis and the core count.
+
 ### Security
 - **Removing an MCP OAuth client now revokes its access immediately.** Deleting a
   client purged its authorization codes and refresh tokens, which stopped it

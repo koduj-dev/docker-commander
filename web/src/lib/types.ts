@@ -611,6 +611,11 @@ export interface AlertEvent {
   message: string;
   value: number | null;
   acknowledged: boolean;
+  // Where in a condition's life this event sits. Threshold rules move between
+  // these; state/log/restart rules only ever emit "firing", because a container
+  // that died has no later moment at which it stops having died.
+  kind: "firing" | "escalated" | "eased" | "repeat" | "resolved";
+  durationSec: number;
   createdAt: string;
 }
 
