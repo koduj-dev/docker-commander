@@ -114,9 +114,23 @@ refresh tokens). No external identity provider is required.
 - host **system info**, a resource **stats** snapshot and per-container **metrics
   history**, recent Docker **events**, and recent **audit** entries
 
+**Alerting:**
+
+- **list_alerts** — the history, with the same filters the UI has (severity,
+  lifecycle kind, container, rule, message text)
+- **active_alert_conditions** — what is over threshold *right now*, and for how long
+- **acknowledge_alert** — record that a human has seen one
+
+The split between the first two is deliberate. Since alerts became conditions
+with a lifetime, "what happened" and "what is wrong now" are different questions,
+and a model asking the first when it meant the second will confidently report a
+problem that fixed itself an hour ago. `active_alert_conditions` is the one to
+reach for when diagnosing.
+
 **Safe control** (write — blocked for read-only tokens/users):
 
 - **start / stop / restart** a container
+- **acknowledge_alert** — records who acknowledged; it changes nothing about the container, but it is attributed, so a read-only principal cannot make that claim on someone's behalf
 - **deploy / down** a managed Compose project. `deploy` runs
   `docker compose up -d --build`, matching the web UI — a project with a `build:`
   section is rebuilt from its current files rather than redeployed from a stale
