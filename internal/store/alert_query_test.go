@@ -248,3 +248,68 @@ func TestAlertDeliveriesRecordedAndCapped(t *testing.T) {
 		t.Errorf("unknown event returned %d delivery groups", len(got))
 	}
 }
+
+// TestAckAllRespectsTheFilterAndScope is the one that keeps a convenience button
+// from becoming a security bug: "acknowledge all" must never reach events the
+// caller could not see in the list it was clicked from.
+func TestAckAllRespectsTheFilterAndScope(t *testing.T) {
+	s, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	seedEvents(t, s, ctx)
+
+	// Scoped to the local daemon and host 1: host 2's event must survive.
+	n, err := s.AckMatchingAlertEvents(ctx, AlertQuery{HostIDs: []int64{0, 1}}, "filip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 4 {
+		t.Fatalf("acknowledged %d events, want the 4 in scope", n)
+	}
+	evs, _, _ := s.ListAlertEvents(ctx, AlertQuery{})
+	for _, e := range evs {
+		if e.HostID == 2 && e.Acknowledged {
+			t.Errorf("SECURITY: acknowledged an event on an out-of-scope host: %+v", e)
+		}
+		if e.HostID != 2 {
+			if !e.Acknowledged || e.AcknowledgedBy != "filip" {
+				t.Errorf("in-scope event not acknowledged by the caller: %+v", e)
+			}
+		}
+	}
+
+	// A second pass must not re-stamp what someone else already acknowledged.
+	again, err := s.AckMatchingAlertEvents(ctx, AlertQuery{HostIDs: []int64{0, 1}}, "someone-else")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != 0 {
+		t.Errorf("re-running acknowledged %d already-acknowledged events; attribution would be overwritten", again)
+	}
+}
+
+// TestAckAllHonoursNarrowerFilters: clicking it with a filter on must do what the
+// screen implied, not empty the whole feed.
+func TestAckAllHonoursNarrowerFilters(t *testing.T) {
+	s, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	seedEvents(t, s, ctx)
+
+	n, err := s.AckMatchingAlertEvents(ctx, AlertQuery{Severity: "critical"}, "filip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("acknowledged %d, want only the 1 critical event", n)
+	}
+	if _, unacked, _ := s.ListAlertEvents(ctx, AlertQuery{Unacked: true}); unacked != 4 {
+		t.Errorf("%d events left unacknowledged, want 4 — the filter was ignored", unacked)
+	}
+}

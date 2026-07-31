@@ -26,9 +26,15 @@ All notable changes to Docker Commander are documented here. The format follows
   is truncated so a remote endpoint can't write unbounded data into the database.
   There is no automatic retry yet: failures are recorded, not re-attempted.
 
-  **Acknowledging an alert records who did it** and when, and **a toast appears when
-  an alert arrives while the app is open**, so it reaches you without sitting on the
-  Alerts page.
+  **Acknowledging an alert records who did it** and when, and **Ack all** clears
+  everything matching the current filters behind a confirm that names which of the
+  two it will do. Filters include the **host**.
+
+  **A toast appears when an alert arrives while the app is open**, with a countdown
+  bar that pauses on hover, and can be turned off per account under
+  *Profile → Preferences*. The feed, the sidebar badge and the toasts share a single
+  poll: they had separate timers at first, so a row could appear in the table
+  seconds before the toast announcing it.
 
 ### Changed
 - **Threshold alerts are conditions with a lifetime, not lines reprinted every

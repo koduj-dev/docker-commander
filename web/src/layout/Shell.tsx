@@ -4,6 +4,7 @@ import { Activity, Bell, Blocks, Boxes, Container, Database, FolderGit2, KeyRoun
 import clsx from "clsx";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../lib/api";
+import { useAlertPulse } from "../lib/alertStream";
 import { useToasts, type ToastTone } from "../components/Toasts";
 import type { Host, UpdateStatus } from "../lib/types";
 import { getHostId, setHostId } from "../lib/host";
@@ -191,39 +192,21 @@ export function Shell({ children }: { children: ReactNode }) {
   const mainRef = useRef<HTMLElement>(null);
   useScrollRestoration(mainRef);
 
-  // Poll the unread alert count to badge the Alerts nav item, and raise a toast
-  // for anything that arrived since the last poll.
-  //
-  // Detection is by highest event id rather than by count: the count also moves
-  // when someone acknowledges something, which is not news. The first poll only
-  // establishes the baseline — otherwise opening the app would announce every
-  // alert already in the feed.
-  const lastSeenId = useRef<number | null>(null);
+  // One shared poll drives the badge, the toasts and the Alerts table, so a
+  // toast can never lag behind the row it is announcing.
+  const pulse = useAlertPulse();
+  useEffect(() => setUnread(pulse.unread), [pulse.unread]);
   useEffect(() => {
-    const load = () =>
-      api
-        .alerts({ limit: 5 })
-        .then((r) => {
-          setUnread(r.unread);
-          const newest = r.events[0]?.id ?? 0;
-          const baseline = lastSeenId.current;
-          lastSeenId.current = newest;
-          if (baseline === null || newest <= baseline) return;
-          // Oldest first, so a burst reads in the order it happened.
-          for (const e of r.events.filter((x) => x.id > baseline).reverse()) {
-            toasts.push({
-              tone: e.kind === "resolved" ? "ok" : (e.severity as ToastTone),
-              title: `${e.ruleName}${e.containerName ? ` — ${e.containerName}` : ""}`,
-              body: e.message,
-              to: "/alerts",
-            });
-          }
-        })
-        .catch(() => {});
-    load();
-    const t = setInterval(load, 8000);
-    return () => clearInterval(t);
-  }, [toasts]);
+    if (!getPref("alerts.toasts", true)) return;
+    for (const e of pulse.fresh) {
+      toasts.push({
+        tone: e.kind === "resolved" ? "ok" : (e.severity as ToastTone),
+        title: `${e.ruleName}${e.containerName ? ` — ${e.containerName}` : ""}`,
+        body: e.message,
+        to: "/alerts",
+      });
+    }
+  }, [pulse, toasts]);
 
   return (
     <div className="h-full grid grid-cols-[240px_1fr]">

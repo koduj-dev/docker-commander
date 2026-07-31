@@ -69,12 +69,23 @@ kind, rule, container and message text, plus an *unacknowledged only* toggle.
 Filtering happens in the database rather than in the browser, so the counts and
 the paging describe the whole result set, not the page you happen to be on.
 
+Filter by severity, lifecycle kind, **host**, rule, container and message text.
+
 **Acknowledging records who did it**, and when. "Someone dealt with this" is only
-useful if you can go and ask them.
+useful if you can go and ask them. **Ack all** acknowledges everything matching
+the *current filters* — not the whole table — behind a confirm that says which of
+the two it is about to do.
 
 **A toast appears when an alert arrives while the app is open**, so you learn
 about it without sitting on the Alerts page. It is a nudge, not a record — the
-feed is the record. Resolved conditions toast in green.
+feed is the record. Resolved conditions toast in green, a countdown bar shows how
+long is left, and hovering pauses it. Turn them off per account under
+**Profile → Preferences**; the alerts themselves are unaffected — still recorded,
+still counted in the sidebar badge, still delivered by webhook and e-mail.
+
+The feed, the badge and the toasts share **one** poll. They used to have separate
+timers, which meant a row could appear in the table seconds before the toast
+announcing it — the same event telling you about itself twice, out of order.
 
 ## Was it actually delivered?
 

@@ -289,6 +289,8 @@ func (s *Server) Handler() http.Handler {
 			r.Patch("/alert-rules/{id}", s.handleToggleAlertRule)
 			r.Delete("/alert-rules/{id}", s.handleDeleteAlertRule)
 			r.Get("/alerts", s.handleListAlertEvents)
+			// Static route before {id}, which would otherwise swallow "ack-all".
+			r.Post("/alerts/ack-all", s.handleAckAllAlertEvents)
 			r.Post("/alerts/{id}/ack", s.handleAckAlertEvent)
 			// Saved log parsing rules (applied client-side in the Logs view).
 			r.Get("/parse-rules", s.handleListParseRules)

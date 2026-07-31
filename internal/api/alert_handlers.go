@@ -168,7 +168,13 @@ func (s *Server) handleDeleteAlertRule(w http.ResponseWriter, r *http.Request) {
 
 // ---- Alert events (in-app feed) ---------------------------------------------
 
-func (s *Server) handleListAlertEvents(w http.ResponseWriter, r *http.Request) {
+// alertQueryFrom builds the store filter from the request, applying the caller's
+// host scope. It writes the error response and returns ok=false when an explicit
+// ?host= falls outside that scope.
+//
+// Shared by listing and bulk acknowledge on purpose: "acknowledge everything I
+// can see" must mean exactly what the list showed.
+func (s *Server) alertQueryFrom(w http.ResponseWriter, r *http.Request) (store.AlertQuery, bool) {
 	q := r.URL.Query()
 	// Host scoping goes INTO the query, not over its result: filtering a page
 	// after fetching it yields short pages and a total that counts rows the
@@ -194,9 +200,17 @@ func (s *Server) handleListAlertEvents(w http.ResponseWriter, r *http.Request) {
 				aq.HostID = &id
 			} else {
 				writeErr(w, http.StatusForbidden, "your access does not include that host")
-				return
+				return store.AlertQuery{}, false
 			}
 		}
+	}
+	return aq, true
+}
+
+func (s *Server) handleListAlertEvents(w http.ResponseWriter, r *http.Request) {
+	aq, ok := s.alertQueryFrom(w, r)
+	if !ok {
+		return
 	}
 
 	events, total, err := s.store.ListAlertEvents(r.Context(), aq)
@@ -253,6 +267,28 @@ func atoiDefault(s string, def int) int {
 		return def
 	}
 	return v
+}
+
+// handleAckAllAlertEvents acknowledges everything matching the caller's current
+// filter. Scoped to the filter rather than the whole table so the button does
+// what the screen in front of the user implies, and the count is returned so the
+// UI can say what happened.
+func (s *Server) handleAckAllAlertEvents(w http.ResponseWriter, r *http.Request) {
+	aq, ok := s.alertQueryFrom(w, r)
+	if !ok {
+		return
+	}
+	by := ""
+	if claims, ok := auth.ClaimsFrom(r.Context()); ok {
+		by = claims.Username
+	}
+	n, err := s.store.AckMatchingAlertEvents(r.Context(), aq, by)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not acknowledge")
+		return
+	}
+	s.audit(r, "alert.ack-all", strconv.FormatInt(n, 10), "")
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "acknowledged": n})
 }
 
 func (s *Server) handleAckAlertEvent(w http.ResponseWriter, r *http.Request) {

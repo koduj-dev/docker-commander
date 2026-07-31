@@ -255,19 +255,13 @@ func (s *Store) InsertAlertEvent(ctx context.Context, e *AlertEvent) (int64, err
 	return res.LastInsertId()
 }
 
-// ListAlertEvents returns a page of the event feed, newest first, plus the
-// total number of events matching the filter so a caller can page through it.
+// where builds the shared filter for the event feed.
 //
-// The filter is built as parameterised fragments rather than string-concatenated
-// values: every one of these comes from a query string.
-func (s *Store) ListAlertEvents(ctx context.Context, q AlertQuery) ([]AlertEvent, int, error) {
-	if q.Limit <= 0 || q.Limit > 500 {
-		q.Limit = 50
-	}
-	if q.Offset < 0 {
-		q.Offset = 0
-	}
-
+// Extracted so reads and bulk acknowledge use exactly the same predicate: if
+// they could drift, "acknowledge everything I can see" would start touching rows
+// the caller cannot see — which is the one way a convenience button becomes a
+// security bug.
+func (q AlertQuery) where() (string, []any) {
 	where := []string{"1=1"}
 	args := []any{}
 	add := func(frag string, v any) {
@@ -306,7 +300,23 @@ func (s *Store) ListAlertEvents(ctx context.Context, q AlertQuery) ([]AlertEvent
 			}
 		}
 	}
-	cond := strings.Join(where, " AND ")
+	return strings.Join(where, " AND "), args
+}
+
+// ListAlertEvents returns a page of the event feed, newest first, plus the
+// total number of events matching the filter so a caller can page through it.
+//
+// The filter is built as parameterised fragments rather than string-concatenated
+// values: every one of these comes from a query string.
+func (s *Store) ListAlertEvents(ctx context.Context, q AlertQuery) ([]AlertEvent, int, error) {
+	if q.Limit <= 0 || q.Limit > 500 {
+		q.Limit = 50
+	}
+	if q.Offset < 0 {
+		q.Offset = 0
+	}
+
+	cond, args := q.where()
 
 	var total int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alert_events WHERE `+cond, args...).Scan(&total); err != nil {
@@ -406,6 +416,22 @@ func (s *Store) AlertDeliveriesFor(ctx context.Context, eventIDs []int64) (map[i
 		out[d.EventID] = append(out[d.EventID], d)
 	}
 	return out, rows.Err()
+}
+
+// AckMatchingAlertEvents acknowledges every unacknowledged event the filter
+// matches, returning how many changed. Used by "acknowledge all", which is
+// deliberately scoped to what the caller is currently looking at rather than to
+// the whole table.
+func (s *Store) AckMatchingAlertEvents(ctx context.Context, q AlertQuery, by string) (int64, error) {
+	q.Unacked = true // never re-stamp something already acknowledged by someone else
+	cond, args := q.where()
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE alert_events SET acknowledged = 1, acknowledged_by = ?, acknowledged_at = ? WHERE `+cond,
+		append([]any{by, time.Now().UTC().Format(time.RFC3339)}, args...)...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // AckAlertEvent marks an alert event acknowledged, recording who did it.

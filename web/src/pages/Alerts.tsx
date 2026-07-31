@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Plus, Trash2, Webhook as WebhookIcon, Check, Pencil, Download, Upload } from "lucide-react";
+import { Plus, Trash2, Webhook as WebhookIcon, Check, CheckCheck, Pencil, Download, Upload } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import { triggerDownload } from "../components/LoadModal";
-import type { AlertEvent, AlertRule, AlertType, Severity, Webhook } from "../lib/types";
+import type { AlertEvent, AlertRule, AlertType, Host, Severity, Webhook } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
 import { useAuth } from "../auth/AuthContext";
 import { Tabs } from "../components/Tabs";
 import { useDialogs } from "../components/Dialog";
+import { useAlertPulse } from "../lib/alertStream";
 
 // Metric names understood by a resource rule. "cpu" is Docker's own
 // one-core-is-100% figure; "cpu_total" normalises it across the host's cores.
@@ -64,6 +65,7 @@ function Feed() {
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
   const [expanded, setExpanded] = useState<number | null>(null);
+  const dialogs = useDialogs();
 
   // Filters. `text` is debounced into `q` so typing doesn't fire a request per
   // keystroke against a table that can hold a lot of rows.
@@ -74,6 +76,11 @@ function Feed() {
   const [text, setText] = useState("");
   const [q, setQ] = useState("");
   const [unacked, setUnacked] = useState(false);
+  const [host, setHost] = useState<string>("");
+  const [hosts, setHosts] = useState<Host[]>([]);
+  useEffect(() => {
+    api.hosts().then(setHosts).catch(() => setHosts([]));
+  }, []);
   useEffect(() => {
     const t = setTimeout(() => setQ(text), 350);
     return () => clearTimeout(t);
@@ -81,30 +88,54 @@ function Feed() {
 
   // Any filter change restarts paging: staying on page 4 of a result set that
   // just shrank to one page shows an empty table and looks like a bug.
-  useEffect(() => setOffset(0), [severity, kind, container, rule, q, unacked]);
+  useEffect(() => setOffset(0), [severity, kind, container, rule, q, unacked, host]);
 
   const load = useCallback(() => {
     api
-      .alerts({ severity, kind, container, rule, q, unacked, limit: PAGE, offset })
+      .alerts({ severity, kind, container, rule, q, unacked, host: host === "" ? undefined : Number(host), limit: PAGE, offset })
       .then((r) => {
         setEvents(r.events);
         setTotal(r.total);
       })
       .catch(() => setEvents([]));
-  }, [severity, kind, container, rule, q, unacked, offset]);
+  }, [severity, kind, container, rule, q, unacked, host, offset]);
 
+  // Refresh on the shared alert poll rather than a timer of its own: a second
+  // interval is what made a toast arrive seconds after its row appeared.
+  const pulse = useAlertPulse();
   useEffect(() => {
     load();
-    const t = setInterval(load, 5000);
-    return () => clearInterval(t);
-  }, [load]);
+  }, [load, pulse.tick]);
 
   const ack = async (id: number) => {
     await api.ackAlert(id);
     load();
   };
 
-  const filtered = severity || kind || container || rule || q || unacked;
+  const filtered = !!(severity || kind || container || rule || q || unacked || host);
+  const ackAll = async () => {
+    if (
+      !(await dialogs.confirm({
+        title: "Acknowledge all",
+        message: filtered ? (
+          <>
+            Acknowledge every unacknowledged alert <strong>matching the current filters</strong> ({total} shown)? This
+            cannot be undone, and they will be attributed to you.
+          </>
+        ) : (
+          <>
+            Acknowledge <strong>every</strong> unacknowledged alert ({total} in the feed)? This cannot be undone, and
+            they will be attributed to you.
+          </>
+        ),
+        danger: true,
+        confirmLabel: "Acknowledge all",
+      }))
+    )
+      return;
+    await api.ackAllAlerts({ severity, kind, container, rule, q, host: host === "" ? undefined : Number(host) });
+    load();
+  };
   const clear = () => {
     setSeverity("");
     setKind("");
@@ -113,6 +144,7 @@ function Feed() {
     setText("");
     setQ("");
     setUnacked(false);
+    setHost("");
   };
 
   return (
@@ -150,10 +182,24 @@ function Feed() {
           <span className="label">Message</span>
           <input className="input py-1.5 w-full" value={text} onChange={(e) => setText(e.target.value)} placeholder="search text…" />
         </label>
+        <label className="block">
+          <span className="label">Host</span>
+          <select className="input py-1.5" value={host} onChange={(e) => setHost(e.target.value)}>
+            <option value="">Any</option>
+            {hosts.map((h) => (
+              <option key={h.id} value={h.id}>
+                {h.name}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="flex items-center gap-2 text-sm pb-1.5">
           <input type="checkbox" checked={unacked} onChange={(e) => setUnacked(e.target.checked)} />
           Unacknowledged only
         </label>
+        <button className="btn-ghost px-3 py-1.5 text-sm" onClick={ackAll} title="Acknowledge everything matching the filters">
+          <CheckCheck className="h-4 w-4" /> Ack all
+        </button>
         {filtered && (
           <button className="btn-ghost px-3 py-1.5 text-sm" onClick={clear}>
             Clear
