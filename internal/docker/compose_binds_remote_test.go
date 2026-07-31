@@ -150,7 +150,7 @@ func TestRemoteBindDeployEndToEnd(t *testing.T) {
 	if err := os.WriteFile(ovPath, ov, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out, err := ComposeUpFiles(ctx, dir, slug, nil, env, []string{"compose.yml", ovPath})
+	out, err := ComposeUpFiles(ctx, dir, slug, nil, env, []string{"compose.yml", ovPath}, false)
 	if err != nil {
 		t.Fatalf("remote deploy failed: %v\n%s", err, out)
 	}

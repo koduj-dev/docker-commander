@@ -25,6 +25,24 @@ All notable changes to Docker Commander are documented here. The format follows
 - **The profile page span forever if loading permissions failed** — "still loading"
   and "failed" were the same state. It now says what went wrong and offers a retry.
 
+### Fixed
+- **Deploying a project no longer runs a stale image.** A project with a `build:`
+  section was built on its first deploy and then never again: `docker compose up -d`
+  builds a service only when its image is **missing**, so every later deploy reused
+  the original image no matter what changed in the Dockerfile or its build context.
+  Edit a Dockerfile in the project editor, hit Deploy, and the CLI reported
+  `Container Running` — a wrong answer delivered as a success. Deploy now passes
+  `--build`, which is a no-op for services that only pull an image, so an image-only
+  project pays nothing. `POST` a deploy with `{"build": false}` to opt out. The MCP
+  `deploy` tool matches, so the same project behaves the same way from either.
+
+  While confirming this, one roadmap item turned out to rest on a wrong premise:
+  **uploading `build:` contexts to a remote host already worked.** Docker's build
+  API takes the context as a tar from the client, so a remote daemon receives the
+  local folder and builds the image there — unlike a bind mount, which nothing
+  uploads and which the app therefore seeds into a volume. Both are now covered
+  together by an end-to-end test against a second daemon.
+
 ### Added
 - **Edit and redeploy a stack that wasn't created here.** Stacks started with the
   host's `docker compose` CLI have always been visible and their compose file

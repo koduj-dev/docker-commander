@@ -564,7 +564,13 @@ function HostSelect({ hosts, value, onChange }: { hosts: Host[]; value: number; 
         <option value={0}>Local daemon</option>
         {hosts.filter((h) => h.kind !== "local").map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
       </select>
-      {value !== 0 && <span className="block text-xs text-muted mt-1">Remote deploy supports images and named volumes. Compose files that bind-mount local folders are blocked at deploy (a clear message is shown) until file sync lands.</span>}
+      {value !== 0 && (
+        <span className="block text-xs text-muted mt-1">
+          Remote deploy ships what the host can't see: bind mounts from inside the project folder are copied into volumes there, and{" "}
+          <code>build:</code> contexts are uploaded with the build. Binds pointing <em>outside</em> the project folder name paths on the remote
+          host and are refused unless you allow host paths below.
+        </span>
+      )}
     </label>
   );
 }
