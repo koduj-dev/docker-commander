@@ -116,3 +116,48 @@ func TestMonitorMonitoredHostsFallback(t *testing.T) {
 		t.Errorf("fallback host wrong: %+v", hosts)
 	}
 }
+
+// TestNetRatesFromConsecutivePolls covers the throughput the dashboard shows.
+//
+// Docker only gives cumulative counters, so a rate is a difference — and the two
+// cases that produce a confidently wrong number are a container seen for the
+// first time (no previous sample) and a counter reset after a recreate.
+func TestNetRatesFromConsecutivePolls(t *testing.T) {
+	prev := map[string]ContainerStat{
+		"a": {ID: "a", NetRx: 1000, NetTx: 500},
+		"b": {ID: "b", NetRx: 9000, NetTx: 9000},
+	}
+	next := map[string]ContainerStat{
+		"a": {ID: "a", NetRx: 3000, NetTx: 1500}, // +2000 / +1000
+		"b": {ID: "b", NetRx: 10, NetTx: 20},     // recreated: counter restarted
+		"c": {ID: "c", NetRx: 5000, NetTx: 5000}, // seen for the first time
+	}
+
+	applyNetRates(next, prev, 2.0) // two seconds between polls
+
+	if got := next["a"].NetRxRate; got != 1000 {
+		t.Errorf("rx rate = %v, want 1000 B/s (2000 bytes over 2s)", got)
+	}
+	if got := next["a"].NetTxRate; got != 500 {
+		t.Errorf("tx rate = %v, want 500 B/s", got)
+	}
+	// A reset must read as no traffic, not as a negative rate and not as a spike
+	// from the counters having wrapped.
+	if got := next["b"].NetRxRate; got != 0 {
+		t.Errorf("after a counter reset the rate should be 0, got %v", got)
+	}
+	// A container with no previous sample has no rate yet. Reporting its total as
+	// a rate would show a brand-new container as the busiest thing on the host.
+	if got := next["c"].NetRxRate; got != 0 {
+		t.Errorf("a first-seen container should have no rate, got %v", got)
+	}
+}
+
+func TestNetRatesIgnoreNonPositiveElapsed(t *testing.T) {
+	prev := map[string]ContainerStat{"a": {ID: "a", NetRx: 100}}
+	next := map[string]ContainerStat{"a": {ID: "a", NetRx: 200}}
+	applyNetRates(next, prev, 0) // clock skew or a duplicate poll
+	if next["a"].NetRxRate != 0 {
+		t.Error("a zero interval must not produce a rate (it would be a division by zero)")
+	}
+}

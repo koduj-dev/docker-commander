@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { api } from "../lib/api";
 import type { ResourceOverview, ResourceUsage } from "../lib/types";
+import { rate } from "../lib/format";
 import { Spinner } from "./ui";
 
 type Slice = { name: string; value: number };
@@ -71,17 +72,29 @@ export function ResourceBreakdown({ tick = 0 }: { tick?: number }) {
   } else if (containers.length === 0) {
     body = <div className="card p-4 text-sm text-muted">No running containers to sample.</div>;
   } else {
+    // Unlike CPU and memory there is no host ceiling to divide by, so this pie
+    // is each container's share of what is CURRENTLY moving — "who is talking
+    // most", not "how full the pipe is". The title carries the absolute figure so
+    // a big slice of nothing isn't mistaken for a problem.
+    const netTotal = containers.reduce((sum, c) => sum + c.netRxRate + c.netTxRate, 0);
     body = (
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <UsagePie title={`CPU · ${data.cpus} core${data.cpus === 1 ? "" : "s"}`} slices={build(containers, (c) => c.cpuPercent)} />
         <UsagePie title="Memory" slices={build(containers, (c) => c.memPercent)} />
+        <UsagePie
+          title={netTotal > 0 ? `Network · ${rate(netTotal)}` : "Network"}
+          slices={build(containers, (c) => c.netRxRate + c.netTxRate)}
+          empty={netTotal === 0 ? "No traffic right now" : undefined}
+        />
       </div>
     );
   }
 
   return (
     <div>
-      <h2 className="text-sm font-semibold text-muted mb-3">Resource usage · share of host</h2>
+      <h2 className="text-sm font-semibold text-muted mb-3">
+        Resource usage <span className="font-normal">· CPU and memory as a share of the host, network as a share of current throughput</span>
+      </h2>
       {body}
     </div>
   );
@@ -97,7 +110,15 @@ function PiePlaceholder({ loading }: { loading?: boolean }) {
   );
 }
 
-function UsagePie({ title, slices }: { title: string; slices: Slice[] }) {
+function UsagePie({ title, slices, empty }: { title: string; slices: Slice[]; empty?: string }) {
+  if (empty) {
+    return (
+      <div className="card p-4">
+        <div className="text-xs uppercase tracking-wide text-muted mb-2">{title}</div>
+        <div className="h-56 grid place-items-center text-sm text-muted">{empty}</div>
+      </div>
+    );
+  }
   return (
     <div className="card p-4">
       <div className="text-xs uppercase tracking-wide text-muted mb-2">{title}</div>

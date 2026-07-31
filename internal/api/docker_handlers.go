@@ -317,6 +317,7 @@ func (s *Server) handleStatsOverview(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Containers = append(out.Containers, docker.ResourceUsage{
 			ID: c.ID, Name: c.Name, CPUPercent: cpuShare, MemBytes: c.MemBytes, MemPercent: memShare,
+			NetRxRate: c.NetRxRate, NetTxRate: c.NetTxRate,
 		})
 	}
 	sort.SliceStable(out.Containers, func(i, j int) bool {

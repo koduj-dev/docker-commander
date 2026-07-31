@@ -524,6 +524,8 @@ export interface ResourceUsage {
   cpuPercent: number; // share of total host CPU (0..100)
   memBytes: number;
   memPercent: number; // share of total host memory (0..100)
+  netRxRate: number; // bytes/s, derived from consecutive polls
+  netTxRate: number;
 }
 
 export interface ResourceOverview {

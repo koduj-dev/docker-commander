@@ -21,6 +21,23 @@ All notable changes to Docker Commander are documented here. The format follows
 - **Network counters are kept in metric history** (`netrx` / `nettx`, cumulative),
   so rates can be derived at read time whatever the sampling interval was.
 
+- **Network in the dashboard's resource breakdown**, beside CPU and memory. Unlike
+  those it has no host ceiling to divide by, so it is each container's share of what
+  is *currently moving* — "who is talking most" rather than "how full the pipe is" —
+  with the absolute figure in the title so a large slice of nothing isn't mistaken
+  for a problem, and an explicit "no traffic right now" instead of an empty circle.
+
+- **Dropped packets and interface errors are kept in history**, as `netdrops` and
+  `neterrors`. Stored RX+TX combined rather than as four series: they are near-zero
+  almost always, so four would double the write volume to store zeros, and what an
+  operator acts on is "this container started losing packets", not the direction.
+  The live view keeps the split.
+
+- **Network history on the container detail** — a second view in the History card,
+  since throughput and percentages cannot share an axis. It derives rates with the
+  same helper the live chart uses, so a counter reset and an uneven sampling
+  interval behave identically in both rather than through two rules that can drift.
+
 - **Network throughput on the container detail page.** RX/TX were already sampled
   and sent to the browser, and displayed nowhere. There is now a live throughput
   chart alongside CPU and memory, plus totals since the container started with
@@ -179,6 +196,14 @@ All notable changes to Docker Commander are documented here. The format follows
   app.
 
 ### Fixed
+- **Opening the Alerts page made the app stop responding to navigation.** The URL
+  changed and the screen did not. Moving *Ack all* into the page header published
+  the handler through an effect that depended on the handler itself — a new closure
+  every render, so the effect re-ran every render, set state in the parent, and
+  re-rendered the page. An infinite render loop, which React does not report as an
+  error: it simply never gets far enough to paint. Published through a ref now, so
+  the only dependency is the stable setter.
+
 - **A role scoped to only-invalid hosts became unscoped instead of being refused.**
   Sending `hostIds: [0]` was sanitised down to an empty list, which means *every
   host* — so a request to narrow a role quietly produced an unrestricted one, with

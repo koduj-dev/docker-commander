@@ -28,6 +28,8 @@ type Sample struct {
 	MemBytes   float64 // bytes
 	NetRx      float64 // cumulative bytes received, summed across interfaces
 	NetTx      float64 // cumulative bytes sent
+	NetDrops   float64 // cumulative dropped packets, rx+tx
+	NetErrors  float64 // cumulative interface errors, rx+tx
 }
 
 // Point is a single (timestamp-ms, value) datapoint in a series.
@@ -48,6 +50,12 @@ const (
 	// counter reset for what it is, which a stored rate would have hidden.
 	MetricNetRx = "netrx" // cumulative bytes received
 	MetricNetTx = "nettx" // cumulative bytes sent
+	// Drops and errors are stored as RX+TX combined rather than as four series.
+	// They are near-zero almost always, so four series would double the write
+	// volume to store zeros; and what an operator acts on is "this container
+	// started losing packets", not the direction. The live view keeps the split.
+	MetricNetDrops  = "netdrops"  // cumulative dropped packets, rx+tx
+	MetricNetErrors = "neterrors" // cumulative interface errors, rx+tx
 )
 
 // Store persists and queries metric history.
@@ -101,10 +109,23 @@ func metricValue(s Sample, metric string) (float64, bool) {
 		return s.NetRx, true
 	case MetricNetTx:
 		return s.NetTx, true
+	case MetricNetDrops:
+		return s.NetDrops, true
+	case MetricNetErrors:
+		return s.NetErrors, true
 	default:
 		return 0, false
 	}
 }
 
 // allMetrics is the set of series stored per sample.
-var allMetrics = []string{MetricCPU, MetricMem, MetricMemBytes, MetricNetRx, MetricNetTx}
+var allMetrics = []string{MetricCPU, MetricMem, MetricMemBytes, MetricNetRx, MetricNetTx, MetricNetDrops, MetricNetErrors}
+
+// AllMetrics reports the series recorded for every sample. Exported so callers
+// that gate on metric names can be checked against what is actually stored,
+// rather than drifting from it silently.
+func AllMetrics() []string {
+	out := make([]string, len(allMetrics))
+	copy(out, allMetrics)
+	return out
+}

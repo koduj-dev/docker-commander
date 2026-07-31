@@ -137,6 +137,11 @@ type ResourceUsage struct {
 	CPUPercent float64 `json:"cpuPercent"` // share of total host CPU (0..100)
 	MemBytes   uint64  `json:"memBytes"`
 	MemPercent float64 `json:"memPercent"` // share of total host memory (0..100)
+	// Throughput derived from consecutive monitor polls. Zero until a second
+	// sample exists and after a counter reset — there is no honest rate to show
+	// for a container that has only just been seen.
+	NetRxRate float64 `json:"netRxRate"` // bytes/s
+	NetTxRate float64 `json:"netTxRate"` // bytes/s
 }
 
 // ResourceOverview is a snapshot of how the running containers divide up the
