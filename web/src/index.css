@@ -132,3 +132,11 @@
   width: 100vw !important;
   height: 100vh !important;
 }
+
+/* Countdown bar on a toast: shrinks over the toast's lifetime so the reader can
+   see how long is left rather than being surprised by the disappearance. Driven
+   by CSS so pausing is a single play-state change on hover. */
+@keyframes dc-toast-timer {
+  from { transform: scaleX(1); }
+  to   { transform: scaleX(0); }
+}

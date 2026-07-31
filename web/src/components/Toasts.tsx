@@ -40,11 +40,22 @@ export function useToasts(): ToastAPI {
 const TTL_MS = 8000;
 const MAX_VISIBLE = 4;
 
+// Tone colours the LEFT EDGE and the countdown bar, never the panel itself.
+// Tinting the background (bg-danger/10) replaced `card`'s opaque bg-panel with a
+// translucent colour, so whatever was behind the toast showed through and the
+// text became hard to read over a busy page.
 const toneStyle: Record<ToastTone, string> = {
-  critical: "border-danger/50 bg-danger/10",
-  warning: "border-warn/50 bg-warn/10",
-  info: "border-border bg-panel2",
-  ok: "border-ok/50 bg-ok/10",
+  critical: "border-l-danger",
+  warning: "border-l-warn",
+  info: "border-l-muted",
+  ok: "border-l-ok",
+};
+
+const toneBar: Record<ToastTone, string> = {
+  critical: "bg-danger",
+  warning: "bg-warn",
+  info: "bg-muted",
+  ok: "bg-ok",
 };
 
 const toneIcon: Record<ToastTone, React.ReactNode> = {
@@ -84,32 +95,62 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 }
 
 function ToastCard({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }) {
+  // Hovering pauses the countdown: a toast that vanishes while you are reading
+  // it is worse than one that lingers. The CSS bar and the JS timer are paused
+  // together, so the bar never disagrees with when it actually goes.
+  const [paused, setPaused] = useState(false);
+  const remaining = useRef(TTL_MS);
+  const startedAt = useRef(Date.now());
+
   useEffect(() => {
-    const timer = setTimeout(onDismiss, TTL_MS);
-    return () => clearTimeout(timer);
-  }, [onDismiss]);
+    if (paused) return;
+    startedAt.current = Date.now();
+    const timer = setTimeout(onDismiss, remaining.current);
+    return () => {
+      clearTimeout(timer);
+      remaining.current = Math.max(0, remaining.current - (Date.now() - startedAt.current));
+    };
+  }, [paused, onDismiss]);
 
   const inner = (
-    <div className={clsx("card border p-3 flex items-start gap-2.5 shadow-lg", toneStyle[toast.tone])}>
-      {toneIcon[toast.tone]}
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium truncate">{toast.title}</div>
-        {toast.body && <div className="text-xs text-muted break-words">{toast.body}</div>}
+    <div
+      className={clsx(
+        "card border border-l-4 shadow-lg relative overflow-hidden",
+        // bg-panel comes from `card` and must stay: the panel is opaque so the
+        // page behind never bleeds through the text.
+        toneStyle[toast.tone],
+      )}
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+    >
+      <div className="p-3 flex items-start gap-2.5">
+        {toneIcon[toast.tone]}
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium truncate">{toast.title}</div>
+          {toast.body && <div className="text-xs text-muted break-words">{toast.body}</div>}
+        </div>
+        <button
+          type="button"
+          className="btn-ghost px-1.5 py-1 shrink-0"
+          title="Dismiss"
+          onClick={(e) => {
+            // Stop the click reaching the wrapping link — dismissing is not
+            // "take me to the alerts page".
+            e.preventDefault();
+            e.stopPropagation();
+            onDismiss();
+          }}
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
       </div>
-      <button
-        type="button"
-        className="btn-ghost px-1.5 py-1 shrink-0"
-        title="Dismiss"
-        onClick={(e) => {
-          // Stop the click reaching the wrapping link — dismissing is not
-          // "take me to the alerts page".
-          e.preventDefault();
-          e.stopPropagation();
-          onDismiss();
+      <div
+        className={clsx("absolute bottom-0 left-0 h-0.5 w-full origin-left", toneBar[toast.tone])}
+        style={{
+          animation: `dc-toast-timer ${TTL_MS}ms linear forwards`,
+          animationPlayState: paused ? "paused" : "running",
         }}
-      >
-        <X className="h-3.5 w-3.5" />
-      </button>
+      />
     </div>
   );
 
