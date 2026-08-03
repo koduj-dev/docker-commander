@@ -170,8 +170,15 @@ unhealthy container* or *guided safe redeploy*).
 
 > **Stack `remove` is deliberately absent** even though the app implements it:
 > force-removing a stack's containers and networks is destruction, not safe
-> control. A test asserts no destructive verb ever appears in the tool list, so
-> adding one has to be a decision rather than an oversight.
+> control. Stopping a stack is offered; removing it is something to do by hand.
+> A test asserts no destructive verb ever appears in the tool list, so adding one
+> cannot happen by oversight.
+>
+> If destructive tools are ever wanted, the route is an **explicit opt-in the
+> operator enables in the UI** — off by default, in a separate risky toolset,
+> audited, and constrained by both token and role. The point is that "the
+> assistant deleted it" should only ever be possible after somebody decided it
+> could be.
 
 > Deliberately **not** available — by design, to avoid turning an AI token into a
 > data-exfiltration or destruction path: `exec`/shell, image `save`/export,

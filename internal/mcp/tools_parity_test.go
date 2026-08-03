@@ -14,8 +14,13 @@ import (
 // state. StackAction can also "remove" — force-removing a stack's containers and
 // its networks — and adding a tool for it would be one line, which is exactly why
 // this test exists. It fails on the ABSENCE of a decision rather than on a known
-// bug: if a destructive verb ever appears, it should be because someone argued
-// for it, not because it was next to the others.
+// bug.
+//
+// If destructive tools are ever wanted, the agreed route is NOT to add them here.
+// It is an explicit opt-in the operator turns on in the UI, off by default, in a
+// separate risky toolset, audited, and constrained by both token and role — so
+// that "my assistant deleted the stack" can only follow from someone having
+// decided it could. Until that exists, this test is the guard.
 func TestNoDestructiveToolsAreAdvertised(t *testing.T) {
 	ts, st, uid := newDenyAllServer(t)
 	mkToken(t, st, uid, "destruct-secret", nil, false)
@@ -38,8 +43,9 @@ func TestNoDestructiveToolsAreAdvertised(t *testing.T) {
 		name := strings.ToLower(tool.Name)
 		for _, b := range banned {
 			if strings.Contains(name, b) {
-				t.Errorf("tool %q looks destructive (%q). The MCP surface is read + safe control; "+
-					"if this is intended it needs an explicit decision, an audit trail and a docs entry.", tool.Name, b)
+				t.Errorf("tool %q looks destructive (%q). The MCP surface is read + safe control. "+
+					"Destructive tools need an operator-facing opt-in that is OFF by default, a separate risky "+
+					"toolset, an audit trail and a docs entry — not a new entry alongside the safe ones.", tool.Name, b)
 			}
 		}
 	}
