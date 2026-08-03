@@ -105,6 +105,8 @@ func (s *Server) Handler() http.Handler {
 			// with revoke/delete. Admin only (section "__admin").
 			r.Get("/mcp-admin/tokens", s.handleAdminListMCPTokens)
 			r.Delete("/mcp-admin/tokens/{id}", s.handleAdminRevokeMCPToken)
+			r.Get("/mcp-admin/token-policy", s.handleAdminGetMCPTokenPolicy)
+			r.Put("/mcp-admin/token-policy", s.handleAdminSetMCPTokenPolicy)
 			r.Get("/mcp-admin/oauth-clients", s.handleAdminListOAuthClients)
 			r.Delete("/mcp-admin/oauth-clients/{id}", s.handleAdminDeleteOAuthClient)
 

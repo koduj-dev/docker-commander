@@ -7,6 +7,23 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **MCP tokens expire by default, and admins set the rules.** New tokens last 30
+  days unless another lifetime is picked, and never-expiring ones are off until
+  an admin enables them. Revocation already existed, but it needs somebody to
+  remember — and the tokens most worth revoking are precisely the ones everyone
+  has forgotten about. An expiry date is the only control that keeps working when
+  nobody is paying attention.
+
+  There is a **ceiling** as well (a year by default), because "no never-expiring
+  tokens" means nothing if the same thing can be had by asking for 99999 days. All
+  three settings live on **MCP Admin → Token policy**, and the creation form only
+  offers lifetimes the server will accept — though the server re-checks anyway,
+  since a form is not a boundary.
+
+  It governs what may be **minted**, not what exists: tightening the policy will
+  not silently cut off a running integration. Existing never-expiring tokens are
+  listed on the same admin page and can be revoked there.
+
 - **A ceiling on how fast MCP can change things.** Every other control in MCP
   answers *is this allowed* — the token's narrowing, the user's permissions, the
   per-host scope. None answered *how much, how fast*, and that is the question

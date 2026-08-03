@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -47,10 +48,56 @@ func toMCPTokenJSON(t store.APIToken) mcpTokenJSON {
 // handleMCPStatus reports whether the MCP server is enabled and whether the
 // OAuth flow is available (needs a public URL), so the UI can guide the user.
 func (s *Server) handleMCPStatus(w http.ResponseWriter, r *http.Request) {
+	// The token policy rides along so the creation form can offer only lifetimes
+	// that will actually be accepted. That is a courtesy, not the enforcement —
+	// handleCreateMCPToken re-checks the policy, because a form is not a boundary.
+	policy, err := s.store.MCPTokenPolicy(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not read the token policy")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"enabled": s.cfg.MCPEnabled,
-		"oauth":   s.cfg.MCPEnabled && s.cfg.MCPPublicURL != "",
+		"enabled":     s.cfg.MCPEnabled,
+		"oauth":       s.cfg.MCPEnabled && s.cfg.MCPPublicURL != "",
+		"tokenPolicy": policy,
 	})
+}
+
+// handleAdminGetMCPTokenPolicy returns the token lifetime policy. Admin only.
+func (s *Server) handleAdminGetMCPTokenPolicy(w http.ResponseWriter, r *http.Request) {
+	policy, err := s.store.MCPTokenPolicy(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not read the token policy")
+		return
+	}
+	writeJSON(w, http.StatusOK, policy)
+}
+
+// handleAdminSetMCPTokenPolicy updates the token lifetime policy. Admin only:
+// loosening it — a longer ceiling, or re-enabling never-expiring tokens — is a
+// decision about how much credential risk the installation carries, which is not
+// something a token holder gets to make for themselves.
+func (s *Server) handleAdminSetMCPTokenPolicy(w http.ResponseWriter, r *http.Request) {
+	var p store.MCPTokenPolicy
+	if err := decodeJSON(r, &p); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := s.store.SetMCPTokenPolicy(r.Context(), p); err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not save the token policy")
+		return
+	}
+	// Read back rather than echoing the request: the store normalises
+	// contradictory combinations, and the admin should see what is actually in
+	// force, not what they typed.
+	saved, err := s.store.MCPTokenPolicy(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not read the token policy")
+		return
+	}
+	s.audit(r, "mcp.token_policy.update", "", fmt.Sprintf(
+		"default %dd, max %dd, never-expiring %v", saved.DefaultDays, saved.MaxDays, saved.AllowUnlimited))
+	writeJSON(w, http.StatusOK, saved)
 }
 
 func (s *Server) handleListMCPTokens(w http.ResponseWriter, r *http.Request) {
@@ -83,6 +130,10 @@ func (s *Server) handleCreateMCPToken(w http.ResponseWriter, r *http.Request) {
 		Sections      []string `json:"sections"`
 		HostIDs       []int64  `json:"hostIds"`
 		ExpiresInDays int      `json:"expiresInDays"`
+		// NeverExpires is separate from ExpiresInDays==0 deliberately: zero means
+		// "I did not choose", and the safe reading of silence is the policy
+		// default, not a credential that outlives everyone who remembers it.
+		NeverExpires bool `json:"neverExpires"`
 	}
 	if err := decodeJSON(r, &b); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid request body")
@@ -138,9 +189,19 @@ func (s *Server) handleCreateMCPToken(w http.ResponseWriter, r *http.Request) {
 	// A read-only owner can only mint read-only tokens.
 	readOnly := b.ReadOnly || u.ReadOnly
 
-	var expiresAt time.Time
-	if b.ExpiresInDays > 0 {
-		expiresAt = time.Now().Add(time.Duration(b.ExpiresInDays) * 24 * time.Hour)
+	// Lifetime is the administrator's call, not the token holder's. The policy
+	// decides the default, the ceiling, and whether "never" is on the menu at all;
+	// the UI reflects it, and this check is what actually enforces it, because the
+	// UI is not a security boundary.
+	policy, err := s.store.MCPTokenPolicy(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not read the token policy")
+		return
+	}
+	expiresAt, err := policy.ResolveExpiry(b.ExpiresInDays, b.NeverExpires, time.Now())
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	secret := randToken(32)

@@ -201,6 +201,19 @@ unhealthy container* or *guided safe redeploy*).
   a section for a user and the matching MCP tool stops working immediately.
 - **Tokens only narrow.** A token's section subset and read-only flag are applied
   *before* your own RBAC; they can never grant more than you have.
+- **Tokens expire by default.** New tokens last **30 days** unless another
+  lifetime is chosen, and never-expiring ones are **off** until an admin turns
+  them on. Revocation already existed, but revocation needs somebody to remember
+  — and the tokens most worth revoking are the ones everyone has forgotten. An
+  expiry date is the only control here that still works when nobody is paying
+  attention. There is also a **ceiling** (a year by default), because otherwise
+  "no never-expiring tokens" is a formality anyone can sidestep by asking for a
+  hundred years. Admins set all three on the **MCP Admin → Token policy** tab.
+
+  It governs what may be **minted**. Tokens that already exist keep the expiry
+  they were given, so tightening the policy will not cut off a running
+  integration overnight — existing never-expiring tokens are listed on the same
+  page and can be revoked there.
 - **Secrets are kept out.** Container env vars, audit detail, and raw event
   attributes are omitted from tool output; logs are size-capped.
 - **Off by default, behind HTTPS.** Enable it consciously. Access tokens are
