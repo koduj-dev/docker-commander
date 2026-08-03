@@ -52,6 +52,17 @@ const (
 type CheckAccessFunc func(ctx context.Context, u *store.User, section string, write bool, hostID int64) error
 
 // ManagedProject is a Compose project the application manages and can deploy.
+// ProjectPreview is what deploying a managed project would change.
+type ProjectPreview struct {
+	Project   string                 `json:"project,omitempty"`
+	Valid     bool                   `json:"valid"`
+	Error     string                 `json:"error,omitempty"`
+	Services  []docker.ServiceSpec   `json:"services,omitempty"`
+	Running   []docker.ServiceSpec   `json:"running,omitempty"`
+	Changes   []docker.ServiceChange `json:"changes,omitempty"`
+	Unchanged int                    `json:"unchanged,omitempty"`
+}
+
 type ManagedProject struct {
 	ID       int64  `json:"id"`
 	Name     string `json:"name"`
@@ -75,6 +86,8 @@ type Deps struct {
 	ListProjects  func(ctx context.Context) ([]ManagedProject, error)
 	DeployProject func(ctx context.Context, id int64, profiles []string) (string, error)
 	DownProject   func(ctx context.Context, id int64) (string, error)
+	// PreviewProject reports what a deploy would change, without deploying.
+	PreviewProject func(ctx context.Context, id int64) (ProjectPreview, error)
 
 	// ResourceURL is the canonical absolute URI of the /mcp endpoint
 	// (e.g. https://host/mcp); empty when no public URL is configured.
@@ -131,6 +144,7 @@ func (d Deps) Handlers() (mcpHandler, metadataHandler http.Handler) {
 	h.registerAlertTools(srv)
 	h.registerDiagnosticTools(srv)
 	h.registerParityTools(srv)
+	h.registerPreviewTool(srv)
 	h.registerControlTools(srv)
 	h.registerResources(srv)
 	h.registerPrompts(srv)

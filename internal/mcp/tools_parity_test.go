@@ -121,3 +121,75 @@ func TestStackActionRequiresAProject(t *testing.T) {
 		t.Error("an empty project name must be refused")
 	}
 }
+
+// TestPreviewDeployIsAReadNotAWrite.
+//
+// A preview exists to be reached BEFORE the deploy it protects. Gating it as a
+// write would mean a read-only token could not look before it leapt — and since
+// it cannot leap either, the only effect would be to leave it guessing. It
+// resolves the compose file and lists containers; it changes nothing.
+func TestPreviewDeployIsAReadNotAWrite(t *testing.T) {
+	h, uid := newTestHandler(t, nil)
+	ctx := context.Background()
+	u, err := h.deps.Store.UserByID(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	h.deps.PreviewProject = func(context.Context, int64) (ProjectPreview, error) {
+		called = true
+		return ProjectPreview{Valid: true, Project: "web"}, nil
+	}
+
+	ro := reqFor(&principal{user: u, roOnly: true})
+	if _, out, err := h.previewDeploy(ctx, ro, previewDeployInput{ProjectID: 1}); err != nil {
+		t.Fatalf("a read-only token must still be able to preview: %v", err)
+	} else if !out.Valid {
+		t.Errorf("unexpected result: %+v", out)
+	}
+	if !called {
+		t.Error("the preview closure was never reached")
+	}
+}
+
+// TestPreviewDeployStillNeedsTheProjectsSection: read-only is not the same as
+// unauthenticated, and the section gate still applies.
+func TestPreviewDeployStillNeedsTheProjectsSection(t *testing.T) {
+	h, uid := newTestHandler(t, denyAllCheckAccess)
+	ctx := context.Background()
+	u, err := h.deps.Store.UserByID(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.deps.PreviewProject = func(context.Context, int64) (ProjectPreview, error) {
+		t.Error("SECURITY: the preview ran despite the access gate denying everything")
+		return ProjectPreview{}, nil
+	}
+	if _, _, err := h.previewDeploy(ctx, reqFor(&principal{user: u}), previewDeployInput{ProjectID: 1}); err == nil {
+		t.Error("SECURITY: preview_deploy ignored the access gate")
+	}
+}
+
+func TestPreviewDeployValidatesInput(t *testing.T) {
+	h, uid := newTestHandler(t, nil)
+	ctx := context.Background()
+	u, err := h.deps.Store.UserByID(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := reqFor(&principal{user: u})
+
+	// No closure wired (the host application did not provide one): a clear
+	// message beats a nil dereference.
+	if _, _, err := h.previewDeploy(ctx, req, previewDeployInput{ProjectID: 1}); err == nil {
+		t.Error("an unavailable preview must be reported, not panic")
+	}
+
+	h.deps.PreviewProject = func(context.Context, int64) (ProjectPreview, error) {
+		t.Error("a bad project id should never reach the closure")
+		return ProjectPreview{}, nil
+	}
+	if _, _, err := h.previewDeploy(ctx, req, previewDeployInput{ProjectID: 0}); err == nil {
+		t.Error("project_id is required")
+	}
+}

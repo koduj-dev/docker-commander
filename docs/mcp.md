@@ -156,13 +156,19 @@ reach for when diagnosing.
 - **scan_image** — a Trivy vulnerability scan: severity summary plus the most
   serious findings. Gated as a write because it shells out and will pull the image
   if it is missing; it reports Trivy being absent rather than failing
+- **preview_deploy** — what a deploy *would* change, without deploying: services
+  that would be created, ones that would be recreated with a different image, and
+  ones running but no longer in the compose file. Also reports an invalid compose
+  file. A **read**, deliberately — a preview has to be cheaper to reach than the
+  deploy it protects, so a read-only token can look even though it cannot leap
 - **deploy / down** a managed Compose project. `deploy` runs
   `docker compose up -d --build`, matching the web UI — a project with a `build:`
   section is rebuilt from its current files rather than redeployed from a stale
   image. This is not a wider surface than before: `up` has always built an image
   that was missing, so deploying such a project could already run its Dockerfile.
-  Remote-host projects are still refused here (MCP tokens carry no per-host
-  authorization) and must be deployed from the web UI.
+  Remote-host projects are still refused here — for `preview_deploy` too, since
+  previewing one means listing that host's containers. MCP tokens carry no
+  per-host authorization yet; lifting that is one change for both.
 
 It also exposes MCP **resources** (the container inventory and compose files as
 attachable context) and **prompts** (curated workflows like *diagnose an
