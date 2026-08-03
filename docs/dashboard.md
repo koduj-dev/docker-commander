@@ -20,15 +20,32 @@ A breakdown from `docker system df`:
 Use this to spot bloat; reclaim space from [Images](images.md) (prune dangling),
 [Volumes](volumes.md) (prune unused) or the build cache.
 
-## Resource usage (share of host)
-Two pie charts show how the **running containers** divide up the host's **CPU**
-and **memory** — i.e. what slice of the whole machine each container is using
-right now, with the unused remainder shown as **Free**. The busiest containers
-get their own slice; the rest are grouped as **Other**. It's a snapshot taken
-when the page loads (sampling every container isn't free, so it doesn't poll).
+## Resource usage
+Three panels: **CPU** and **memory** as a share of the host, and **network** as
+current throughput.
+
+The two pie charts show how the **running containers** divide up the host's CPU
+and memory — i.e. what slice of the whole machine each container is using right
+now, with the unused remainder shown as **Free**. The busiest containers get their
+own slice; the rest are grouped as **Other**.
 
 > CPU share is relative to all cores (100% = the entire host); memory share is
 > usage ÷ total RAM. Remote hosts work the same, over the Docker API.
+
+**Network · all containers** is the host-wide RX/TX rate right now, with a short
+rolling trend beside it. It is deliberately *not* a pie or a top-talkers list: a
+pie claims "parts of a whole", and the only whole available is whatever happens to
+be moving — so one container at 100% of 2 KB/s would look exactly like one at 100%
+of 800 MB/s. A live ranking is no better, because throughput is bursty enough to
+reorder itself on every poll. Per-container series live on the
+[container detail](containers.md#network).
+
+Summed across running containers, so **container-to-container traffic counts
+twice** — once as one side's TX and once as the other's RX.
+
+All three panels re-sample on Docker lifecycle events and on a slow poll, updating
+in place; a transient error keeps the last good numbers rather than blanking the
+section.
 
 ## Open ports
 A host-wide map of every **published port** across the running containers.

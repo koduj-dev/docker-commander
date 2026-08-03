@@ -25,6 +25,11 @@ every guard and the fixture traps that come with a real Docker daemon.
 - **`ORDER BY` cannot be a bound parameter.** Anything sortable from the UI must
   map its sort key through a fixed whitelist (see `AlertQuery.orderBy`), or you
   are building SQL out of a query string.
+- **`time.Duration` is int64 nanoseconds, so `days * 24 * time.Hour` overflows**
+  above ~106,751 days. Asking for a 200,000-day token expiry produced a date in
+  1989 — a credential dead the moment it was issued — and larger values wrapped to
+  arbitrary dates. Validate the *number of days* against a ceiling before it ever
+  becomes a `Duration`.
 - **SQLite `LIKE` has no default escape character.** Escaping `%` and `_` only
   works together with an explicit `ESCAPE '\'` clause — without it the backslashes
   are matched literally and the filter silently searches for the wrong string.
@@ -43,10 +48,36 @@ every guard and the fixture traps that come with a real Docker daemon.
   put a phantom item on the roadmap for months.
 - **Alert-rule cooldown:** `docker stop` emits several events (kill → die → stop),
   so a 1s cooldown can double-fire. Defaults are 60s.
+- **Container network stats are cumulative counters that reset on recreate.**
+  Store the raw counters and derive rates at read time; a delta computed across a
+  reset is negative, and rendering it produces either a phantom spike or a
+  negative rate. `applyNetRates` skips the delta when the new counter is lower
+  than the previous one, so a reset reads as a gap at zero.
+- **`/containers/{id}/stats` is keyed by *interface*, not by network.** The API's
+  `endpoint_id` field exists but the daemon fills it in on **Windows only**, which
+  is why `docker stats` itself shows a single aggregate `NET I/O` column. Sum
+  across interfaces and say so; anything per-network needs MAC/namespace
+  inspection via netlink (Linux-only, hostile to remote hosts).
 - **On older engines `/containers/json` lags `inspect`.** After stopping a stack,
   Engine 24 reported a container as `running` for ~250 ms while `inspect` already
   said `exited`. The app polls, so it is only a problem for tests that assume
   instantaneous consistency.
+
+## Authorization
+
+- **A sequential id is not an access control.** Any endpoint or tool that takes an
+  integer id (project, alert, container-metrics series) must resolve the **host
+  that record belongs to** and authorize against it — checking the section alone
+  leaves the id space walkable, since ids are consecutive. Three MCP tools shipped
+  checking their section against **host 0** while acting on someone else's record.
+  The tell is machine-detectable: an integer id argument with no `host_id`.
+- **A missing record and an out-of-reach one must answer identically.** Otherwise
+  the error itself confirms the record exists, and the endpoint becomes a way to
+  map what runs on hosts you cannot see.
+- **Over-tightening is a bug too, not a safe default.** Host reach is derived from
+  grants across *all* sections, so also demanding the `hosts` section for a
+  host-scoped alert route hid alerts from users who legitimately reached that host.
+  Guards need a test for what they must still **allow**.
 
 ## Deployment
 

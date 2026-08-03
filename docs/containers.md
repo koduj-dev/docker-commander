@@ -22,7 +22,8 @@ to open the detail page.
 
 ![Container detail](images/container_detail.png)
 
-Live **CPU** and **memory** charts plus a **history** chart (15m / 1h / 6h).
+Live **CPU** and **memory** charts plus a **history** card over 15m / 1h / 6h,
+which switches between two views: **CPU & memory** (percentages) and **Network**.
 Header actions: **Commit** (snapshot to a new image), **Settings** (rename +
 update limits/restart policy at runtime), **Export** (download the filesystem as
 a tar), **Inspect** (raw JSON), and lifecycle buttons.
@@ -49,8 +50,11 @@ Tabs:
 
 ## Network
 
-The **Network** chart plots throughput — the derived rate, not the raw counter,
-since a chart of a number that only ever goes up says nothing. Beneath it, the
+The **Network** chart — live on this section, and as the history card's second
+view — plots throughput: the derived rate, not the raw counter, since a chart of a
+number that only ever goes up says nothing. History stores the cumulative counters
+and derives the rate at read time, which is what lets an old window be re-read
+correctly. Beneath it, the
 totals since the container started, with packets, **dropped** and **errors**
 called out: those are usually zero, and on the day they are not they are often
 the only visible sign of the problem.

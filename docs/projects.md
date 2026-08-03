@@ -12,18 +12,28 @@ Compose feature set — `depends_on`, profiles, `build:`, `configs`, init
 containers — for free. A deployed project also appears on the
 [Stacks](stacks.md) page, where its lifecycle and "view compose" live.
 
-> **Local host only.** The `docker compose` CLI follows its own Docker context,
-> independent of the host switcher, so Projects always target the **local**
-> Docker daemon. Deploy/Down are disabled (with a note) if the `docker compose`
-> CLI isn't installed where Docker Commander runs.
+> **The Compose CLI runs where Docker Commander runs; the daemon it talks to can
+> be anywhere.** A project targets the **local** daemon by default, or any host
+> you've added under [Hosts](hosts.md) — the CLI is pointed at it with
+> `DOCKER_HOST` (plus the host's TLS certs, or `ssh://`). A project's target host
+> is its own setting and does **not** follow the sidebar host switcher. See
+> [Deploying to a remote host](#deploying-to-a-remote-host).
+>
+> Deploy/Down are disabled (with a note) if the `docker compose` CLI isn't
+> installed **on the Docker Commander machine** — that is the one place it has to
+> exist, whichever daemon you deploy to.
 >
 > Running under **systemd** and Deploy/Down are disabled even though
 > `docker compose` works in your shell? It's the `ProtectHome=true` hardening —
 > see the fix in [Deployment → Running as a service](deployment.md#running-as-a-service).
 
 ## Creating a project
-Give the project a name (an identifier — *slug* — is derived from it, lowercased
-with diacritics transliterated), then pick how to scaffold it. The files are
+
+![New project](images/project_new.png)
+
+Give the project a name, pick the **host to deploy to** (the local daemon or any
+host you've added), then choose how to scaffold it. An identifier — the *slug* —
+is derived from the name, lowercased with diacritics transliterated. The files are
 always rendered and written **server-side**:
 
 - **Template** — start from a ready-made preset (e.g. **Nginx — static site**,

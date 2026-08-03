@@ -22,13 +22,13 @@ two cover installation and configuration.
 ## Observability
 - [Logs](logs.md) — aggregated streaming, regex search, structured parse rules
 - [Events](events.md) — the live Docker event feed
-- [Alerts](alerts.md) — rules, webhooks, email, Prometheus
+- [Alerts](alerts.md) — rules, conditions with a lifetime, the feed, delivery records, webhooks, email, Prometheus
 
 ## System & administration
 - [Hosts](hosts.md) — local / TCP+TLS / SSH daemons, host-key trust, per-host email
 - [Registries](registries.md) — stored credentials for private pull & push
 - [Users & roles](users.md) — accounts, permissions, read-only
-- [Settings](settings.md) — feature flags, localhost 2FA, LDAP
+- [Settings](settings.md) — feature flags, localhost 2FA, MCP token lifetimes, LDAP, SMTP
 - [Audit log](audit.md) — record of privileged actions
 - [MCP (AI tools)](mcp.md) — remote control from AI tools (Claude Code/Desktop, Cursor): tokens, OAuth, the safe tool surface
 

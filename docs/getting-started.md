@@ -36,8 +36,10 @@ After that you log in with username + password + the current TOTP code.
 - Passwords are hashed with Argon2id; sessions are `HttpOnly` cookies.
 - **2FA (TOTP)** is enforced for everyone unless an admin enables the localhost
   exemption.
-- **Roles**: `admin` (full access + administration) or `user` (limited to
-  granted sections, optionally read-only).
+- **Account type**: `admin` (full access + administration) or `user`. A `user`
+  reaches only what they are granted — through **named roles** (a reusable bundle
+  of sections, each read or write, optionally limited to specific **hosts**)
+  and/or sections set directly on the account.
 - Stored secrets (registry / SMTP / LDAP passwords) are encrypted at rest.
 
 See [Users & roles](users.md) and [Settings](settings.md) for administration.

@@ -15,10 +15,10 @@ you whether a remote deploy actually works.
 
 | Tier | What it proves | Where | Runs in CI |
 |---|---|---|---|
-| **1 · Unit** | Logic, parsing, edge cases, error paths | ~293 Go tests across 17 packages + 13 frontend (Vitest) tests | ✅ every push & PR |
-| **2 · Adversarial (pentests)** | Attacks are *rejected* — not just that the happy path works | 31 cases in 4 `*_pentest_test.go` files, plus `PENTEST:`-marked cases alongside the features they guard | ✅ (they're plain unit tests) |
+| **1 · Unit** | Logic, parsing, edge cases, error paths | ~510 Go tests across 17 packages + 55 frontend (Vitest) tests in 5 files | ✅ every push & PR |
+| **2 · Adversarial (pentests)** | Attacks are *rejected* — not just that the happy path works | 83 cases in 13 `*_pentest_test.go` files, plus `PENTEST:`-marked cases in ~25 more files, alongside the features they guard | ✅ (they're plain unit tests) |
 | **3 · Runtime smoke** | The real transport/CLI behaves as assumed — no mocks in the loop | MCP over real HTTP with the official SDK client; the Compose override resolved by the real `docker compose` | ⛔ needs Docker |
-| **4 · Integration** | Real Docker daemon, real Redis / OpenLDAP / SMTP | 10 test files behind `testing.Short()`; throwaway containers, skipped cleanly when unavailable | ⛔ needs Docker |
+| **4 · Integration** | Real Docker daemon, real Redis / OpenLDAP / SMTP | 12 test files behind `testing.Short()`; throwaway containers, skipped cleanly when unavailable | ⛔ needs Docker |
 | **5 · Multi-daemon end-to-end** | Remote operations against daemons that genuinely cannot see this machine | docker-in-docker sidecars over **TCP and SSH**, 1–3 at a time | ⛔ needs Docker + provisioning |
 | **6 · Version matrix** | The app works on the Docker Engine *you* run, not just the maintainer's | Tier 4 re-run against pinned `docker:NN-dind` for Engine 24–28 | 🌙 nightly + on demand ([compat.yml](../.github/workflows/compat.yml)) |
 
@@ -28,13 +28,45 @@ A test asserting "login works" says nothing about whether login can be *bypassed
 So for every security-relevant surface the repo also carries tests that mount the
 attack and assert it fails. Concretely, they cover things like JWT `alg=none` and
 wrong-key forgery, OAuth code/refresh **replay**, redirect smuggling, CSRF,
-**IDOR** (reaching another user's objects), PKCE downgrade, privilege escalation
-by a read-only or section-restricted user, path traversal, and symlink escapes.
+**IDOR** (reaching another user's objects), **per-host scope bypass** (reaching a
+host your grants don't cover, over REST *and* MCP), PKCE downgrade, privilege
+escalation by a read-only or section-restricted user, path traversal, and symlink
+escapes.
 
 They live next to what they guard — e.g. `internal/mcp/pentest_test.go`,
 `internal/api/oauth_pentest_test.go`, and the traversal/symlink cases in
 `internal/docker/compose_binds_test.go`. When one of these finds a real hole, the
 rule is to fix the hole and keep the test as a regression guard.
+
+### Sweeps, not spot checks, for anything gated
+
+A per-tool test only ever covers a tool somebody remembered to cover. What it
+cannot catch is the **next** one — a tool added later that simply never calls the
+access gate would run with no RBAC at all, and every existing test would still be
+green. So the gated surfaces are swept by construction, from the list the server
+actually advertises:
+
+- **`TestEveryToolConsultsTheAccessGate`** calls every advertised MCP tool with a
+  gate that denies everything and requires each to fail with that gate's own
+  sentinel. A tool that skips the gate cannot produce it. `TestEveryToolRespectsTokenScope`
+  does the same for a token's narrowing, and on the REST side
+  `TestRBACEveryAPIRouteHasASectionDecision` requires every registered route to map
+  to a section decision — so a new endpoint cannot arrive ungated by omission.
+- **`TestNoDestructiveToolsAreAdvertised`** fails on any destructive verb —
+  `exec`, `prune`, `remove`, image export — appearing in the tool list, so the
+  read + safe-control boundary cannot erode one tool at a time.
+- **`TestEveryRecordScopedToolChecksItsRecordsHost`** exists because the deny-all
+  sweep passed while three tools were still broken. `preview_deploy`, `alert_delivery` and `acknowledge_alert`
+  each authorized the right *section* against **host 0** while acting on a record
+  belonging to another host. The distinguishing property is machine-detectable — a
+  tool takes an integer id and **no** `host_id`, so the id implies a host nothing
+  in the arguments names — so the sweep finds such tools itself and **fails on any
+  it has no fixture for**. A new record-scoped tool cannot be added without
+  somebody deciding how it is host-scoped.
+
+The lesson generalises: when a bug turns out to be an instance of a *class*,
+fixing the instance is half the work. The other half is a test that enumerates the
+class.
 
 ### Every guard is mutation-tested
 
@@ -57,6 +89,12 @@ worth naming because they all look fine in review:
 - **The assertion was too weak to fail.** Asserting "not 200" survived removing a
   permission check, because a denial and an unrelated failure shared a status code.
   Fixed by making the responses distinguishable and asserting the specific one.
+- **Only refusals were asserted, so over-tightening looked like a pass.** Scoping
+  the alert routes per host, it was tempting to also demand the `hosts` section —
+  which reads as caution and is a different bug: host reach is derived from grants
+  across *all* sections, so it hid alerts from users who legitimately reached that
+  host. A guard needs a test for what it must still **allow**, not only for what it
+  must deny.
 
 If you cannot make a test fail by breaking the thing it names, it is not testing
 that thing.
@@ -213,8 +251,9 @@ Stated plainly, so nobody infers more than is there:
 - **Windows is cross-compiled and unit-tested, not integration-tested.** The
   `--install-service` path notably does not support Windows yet.
 - **Coverage is informational.** CI prints statement coverage for the `-short`
-  run: currently **~40% overall**, and higher where it matters most
-  (`internal/crypto` ~91%, `internal/auth` ~59%). Read that number for what it is —
+  run: currently **~45% overall**, and higher where it matters most
+  (`internal/crypto` ~91%, `internal/store` ~70%, `internal/auth` ~67%). Read that
+  number for what it is —
   it counts only tiers 1–2, so the integration and multi-daemon tiers, which carry
   much of the real assurance, contribute nothing to it. Conversely, a percentage
   says nothing about whether the *right* things are tested; the adversarial tier

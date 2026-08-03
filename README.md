@@ -41,7 +41,8 @@ level filters, regex search and structured parsing.
 
 **Monitor**
 - Live **CPU / memory graphs** over WebSockets and **historical charts** (Redis or in-memory).
-- **Dashboard** that updates in near real time (Docker events stream): host facts, disk usage, a **resource breakdown** (each container's share of host CPU/memory), and a **port scan** that fingerprints what's actually listening.
+- **Dashboard** that updates in near real time (Docker events stream): host facts, disk usage, a **resource breakdown** (each container's share of host CPU/memory plus host-wide **network throughput**), and a **port scan** that fingerprints what's actually listening.
+- **Network telemetry** — per-container **RX/TX rate** (derived, so a counter reset on recreate reads as a gap rather than a spike), totals, **packets / dropped / errors** and the per-interface breakdown, plus **endpoint totals** on a network's detail — labelled for what they are, since Docker reports no per-network counters.
 - **Logs** — per-container tail, plus a global **aggregated** view with level detection, **regex search** and saved **parsing rules** that turn lines into structured columns.
 - Live **events** feed, container **diff** / **top**, **disk usage**, and raw JSON **inspect** for any object.
 - **Networks & topology** — an interactive containers ↔ networks graph (force-directed, pan / zoom / fullscreen, **search**, **filter by compose stack**) with a compact **list view** (state, image, stack, ports, networks).
@@ -58,10 +59,11 @@ level filters, regex search and structured parsing.
 
 **Alerting & integrations**
 - Rules on **state**, **resource thresholds**, **log patterns** and **restart/crash-loops** — editable, with severity & cooldown.
+- Threshold alerts are **conditions with a lifetime** (`firing` → `escalated`/`eased` → `resolved`), one per container + metric, so overlapping rules produce one incident instead of one each — and the feed is server-side **paged, filtered and sorted**, with **who acknowledged** it and every **delivery attempt** recorded against it.
 - Notify via **webhooks**, **email (SMTP, per-host routing)**, an in-app feed, and a **Prometheus `/metrics`** exporter. Rules **import/export** as a portable JSON bundle.
 
 **Remote control from AI tools (MCP)**
-- An optional, **off-by-default** **Model Context Protocol** server lets AI tools (**Claude Code**, **Claude Desktop**, **Cursor**) **monitor and *safely* operate** Docker **as you**: read tools (containers, logs, images, projects, stats, events, audit…) plus *safe* control (**start/stop/restart**, **deploy/down**), with MCP **resources** & **prompts**.
+- An optional, **off-by-default** **Model Context Protocol** server lets AI tools (**Claude Code**, **Claude Desktop**, **Cursor**) **monitor and *safely* operate** Docker **as you**: read tools (containers, logs, images, projects, stats, events, audit…), **diagnostics without a shell** (`docker top` / `diff`, cross-container log search), the **alert** surface (history, what is firing *now*, rules, whether an alert was actually delivered, acknowledge), and *safe* control (**start/stop/restart** a container or a whole **stack**, **deploy/down** a project — including one targeting a **remote host** — plus a **preview** of what a deploy would change and a **Trivy image scan**), with MCP **resources** & **prompts**.
 - Authenticate with a **bearer API token** (self-service page) or **OAuth 2.1** (PKCE, dynamic client registration). Every call reuses the app's **RBAC**, and a token can only **narrow** your rights (a section subset + **read-only**). New tokens **expire after 30 days** by default (admin-configurable, with never-expiring tokens off unless enabled). **Changes are rate limited** (30/min per user; reads are not) so a model stuck in a loop — or a stolen token — is bounded to a few containers rather than your whole estate, and hitting that ceiling is audited. Deliberately **no exec / image export / file read / prune / remove**. See [MCP](docs/mcp.md).
 
 **Security & administration**
@@ -267,6 +269,8 @@ list. The Docker connection also honours the standard `DOCKER_HOST` /
 | `-redis-addr`        | `DC_REDIS_ADDR`        | (memory)           | Redis `host:port` for metric history; empty = in-memory ring. |
 | `-redis-password`    | `DC_REDIS_PASSWORD`    | (empty)            | Redis password; `DC_REDIS_DB` selects the DB index. |
 | `-metrics-retention` | `DC_METRICS_RETENTION` | `6h`               | History retention (e.g. `30m`, `24h`). |
+| `-trusted-proxies`   | `DC_TRUSTED_PROXIES`   | (none)             | Reverse-proxy IPs/CIDRs whose `X-Forwarded-For` may be trusted. The client IP keys rate limits, the localhost 2FA exemption and audit records — **set it behind a proxy**, and never to a range you don't control. |
+| `-self-update`       | `DC_SELF_UPDATE`       | on                 | Let admins apply an update from the web UI. `0` keeps the "update available" banner but forbids web-triggered self-replacement. |
 
 ## 🖥️ Run as a service
 
@@ -360,12 +364,13 @@ notify webhooks (Go-template bodies) and/or email. **Prometheus:** scrape
 ## 🧪 How it's tested
 
 You're pointing this at real Docker daemons, so the fast tests are the floor, not
-the ceiling. Alongside ~293 Go unit tests and 13 frontend tests, the repo carries
-**31 adversarial "pentest" cases** that assert attacks are *rejected* (token
-forgery, OAuth replay, CSRF, IDOR, privilege escalation, path traversal), an
-integration tier against a **real Docker daemon** (plus throwaway Redis / OpenLDAP
-/ SMTP), and an end-to-end tier that deploys to **separate daemons over both TCP
-and SSH** — because a mock daemon can't tell you whether a remote deploy works.
+the ceiling. Alongside ~510 Go unit tests and 55 frontend tests, the repo carries
+**80+ adversarial "pentest" cases** that assert attacks are *rejected* (token
+forgery, OAuth replay, CSRF, IDOR, per-host scope bypass, privilege escalation,
+path traversal), an integration tier against a **real Docker daemon** (plus
+throwaway Redis / OpenLDAP / SMTP), and an end-to-end tier that deploys to
+**separate daemons over both TCP and SSH** — because a mock daemon can't tell you
+whether a remote deploy works.
 
 CI runs the deterministic tiers; the daemon-backed ones are developer-run.
 **[docs/testing.md](docs/testing.md)** lays out each tier, how to run it, and

@@ -13,7 +13,7 @@ Turn whole menu sections **on/off for everyone**. A disabled section is hidden
 from the menu and its API is blocked — useful to trim the app to what your team
 actually uses. Admins re-enable them here.
 
-## Localhost 2FA exemption
+## Security — localhost 2FA exemption
 By default **2FA is mandatory** for all logins. Enable this to let connections
 from **loopback** (`127.0.0.1` / `::1`) log in with a password only (skipping
 both the enrollment gate and the TOTP challenge). Remote connections always
@@ -26,7 +26,40 @@ require 2FA.
 - This is the same toggle the **first-run setup** screen flips when you choose
   *"Skip 2FA for now"* — so you can decide up front and change it here later.
 
+## Security — MCP token lifetime
+
+![Settings → Security](images/settings_security.png)
+
+Instance-wide rules for the API tokens users mint on the [MCP](mcp.md) page. Three
+settings, all admin-only:
+
+- **Default lifetime** — **30 days** out of the box. Pre-selected in the creation
+  form, and used when a client asks for no particular expiry.
+- **Maximum lifetime** — a ceiling, **365 days** by default. Without one, "no
+  never-expiring tokens" is a formality anyone sidesteps by asking for 99999 days.
+- **Allow never-expiring tokens** — **off**. Turn it on only for an integration
+  that genuinely needs a permanent credential; the ceiling can then be cleared.
+
+Revocation already existed, but it needs somebody to remember — and the tokens
+most worth revoking are the ones everyone has forgotten. An expiry date is the
+only control here that keeps working when nobody is paying attention.
+
+The policy governs what may be **minted**, not what exists: tokens keep the expiry
+they were given, so tightening it will not cut a running integration off
+overnight. To retire tokens that predate a stricter rule, revoke them on the **MCP
+Admin** page, which stays the operational view of who holds what. The creation
+form only offers lifetimes the server will accept, and the server re-checks anyway
+— a form is not a boundary.
+
+Contradictory settings are repaired rather than stored: a default above the
+ceiling is lowered to it, and clearing the ceiling while never-expiring tokens are
+off puts the 365-day one back. The page shows what is actually in force after
+saving, not what was typed.
+
 ## LDAP / Active Directory
+
+![Settings → LDAP](images/settings_ldap.png)
+
 Optional external authentication.
 
 - **Enable** + **Server URL** (`ldap://host:389` or `ldaps://host:636`),
@@ -76,10 +109,21 @@ removing someone from the admin group does not auto-demote them (avoids lockout
 if the directory is unreachable); demote them in [Users](users.md).
 
 ## Email (SMTP)
+
+![Settings → Email](images/settings_email.png)
+
 One outbound mail relay for the **whole installation** — used by alert rules that
 opt into e-mail, and by system notifications. Set host/port, optional credentials,
-implicit TLS, and the From / To addresses, then **Send test** to check it end to
-end. The password is encrypted at rest and never returned by the API.
+and the From / To addresses (To takes a comma-separated list), then **Send test**
+to check it end to end. The password is encrypted at rest and never returned by
+the API.
+
+**Transport security** is one checkbox, not a choice of two: tick **Implicit TLS**
+for a relay that expects TLS from the first byte (port 465). Leave it off and the
+connection starts in the clear and is upgraded with **STARTTLS if the server
+offers it** — the usual arrangement on port 587. That upgrade is opportunistic, so
+a relay that advertises no STARTTLS is talked to in plaintext rather than refused;
+on an untrusted network, use implicit TLS.
 
 > **Admin only.** This used to live under [Alerts → Email](alerts.md) and was
 > reachable by anyone with the *alerts* section. Because it is a single

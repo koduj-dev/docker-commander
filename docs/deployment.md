@@ -22,7 +22,9 @@ list. Key ones:
 | `DC_MCP_PUBLIC_URL` | (unset) | externally reachable base URL (`https://host`) — required for the MCP **OAuth** flow (bearer tokens work without it) |
 | `DC_DATA_DIR` | OS config dir | SQLite DB + signing/encryption keys |
 | `DC_METRICS_TOKEN` | (open) | bearer token guarding `/metrics` |
-| `DC_REDIS_ADDR` | (memory) | Redis for metric history |
+| `DC_REDIS_ADDR` | (memory) | Redis for metric history; empty keeps the in-memory ring buffer |
+| `DC_REDIS_PASSWORD` | (empty) | Redis password, if the server requires auth |
+| `DC_REDIS_DB` | `0` | Redis database index |
 | `DC_METRICS_RETENTION` | `6h` | history retention |
 | `DC_METRICS_INTERVAL` | `15s` | how often the monitor samples every running container's stats — **raise it** (e.g. `30s`/`60s`) on a host with many containers if the sampling sweep is costly |
 | `DC_TRUSTED_PROXIES` | (none) | comma-separated reverse-proxy IPs/CIDRs whose `X-Forwarded-For` is trusted for the real client IP — **set this when behind a proxy** (see below) |

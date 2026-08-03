@@ -18,7 +18,8 @@ By participating you agree to follow our [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ```
 cmd/dockercmd/      # main: wiring, config, server bootstrap
-internal/           # Go backend (api, auth, store, docker, monitor, ws, history, config, crypto)
+internal/           # Go backend (api, auth, store, docker, monitor, mcp, ws, history,
+                    #   templates, backup, selfupdate, tlscert, service, config, crypto)
 web/                # React + TypeScript SPA (Vite, Tailwind); built into web/dist and embedded
 docs/               # per-feature user manual
 deploy/             # systemd unit + config example
@@ -108,6 +109,12 @@ to the risk of the change:
   any **new attack surface** (auth, parsers, endpoints, anything taking external
   input) **add adversarial tests** asserting the attack is rejected — see the
   `TestPen_*` cases in `*_pentest_test.go` (e.g. `internal/mcp/pentest_test.go`, `internal/api/oauth_pentest_test.go`). Keep `go test -short ./...` green.
+- **When a bug turns out to be an instance of a class, sweep the class.** Patching
+  the three tools that authorized against the wrong host is half the job; the half
+  that lasts is a test enumerating every tool with that shape, which fails on a new
+  one nobody has decided about (`internal/mcp/tool_host_scope_coverage_test.go`,
+  `tool_authz_coverage_test.go`). Prefer a check derived from the real registry —
+  routes, advertised tools — over a hand-maintained list, which goes stale silently.
 
 This is guidance, not tooling, but it's how the security-sensitive parts of the
 codebase have been built.

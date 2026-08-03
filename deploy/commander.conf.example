@@ -1,4 +1,5 @@
-# Docker Commander config file — the canonical list of settings.
+# Docker Commander config file — the canonical list of server settings.
+# (Dev-only switches such as `-dev` / DC_DEV are deliberately not listed here.)
 #
 # Default location: /etc/docker-commander/commander.conf (Linux),
 #                   %ProgramData%\docker-commander\commander.conf (Windows).
@@ -43,6 +44,12 @@ DC_DATA_DIR=/var/lib/dockercmd
 # Periodic GitHub-release update check that backs the admin "update available"
 # banner. On by default; set to 0 on air-gapped hosts.
 # DC_UPDATE_CHECK=0
+
+# Whether an admin may apply an update from the web UI (the one-tap "Update &
+# restart"). On by default. Set to 0 to keep the banner but forbid the running
+# binary from replacing itself — e.g. where updates come from your package
+# manager. Independent of DC_UPDATE_CHECK, which only controls the check.
+# DC_SELF_UPDATE=0
 
 # Session token lifetime is set with the -session-ttl flag (e.g. -session-ttl 8h).
 
