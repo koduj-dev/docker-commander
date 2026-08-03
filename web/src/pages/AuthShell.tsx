@@ -1,8 +1,10 @@
 import type { ReactNode } from "react";
 import { Container } from "lucide-react";
+import { useDocumentTitle } from "../lib/title";
 
 // Centered card layout shared by setup / login / 2FA screens.
 export function AuthShell({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
+  useDocumentTitle(title);
   return (
     <div className="min-h-full grid place-items-center p-4">
       <div className="w-full max-w-sm">
