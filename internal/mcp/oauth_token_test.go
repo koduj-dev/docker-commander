@@ -95,10 +95,10 @@ func TestVerifyTokenOAuthPath(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("client: %v", err)
 	}
-	h := &handler{deps: Deps{
+	h := newHandler(Deps{
 		Store: st, SigningKey: key, ResourceURL: testResource, IssuerURL: testIssuer,
 		CheckAccess: func(context.Context, *store.User, string, bool, int64) error { return nil },
-	}}
+	})
 
 	tok, _, _ := MintAccessToken(key, testIssuer, testResource, uid, "cli-test", true, time.Hour)
 	ti, err := h.verifyToken(context.Background(), tok, httptest.NewRequest("POST", "/mcp", nil))
@@ -188,10 +188,10 @@ func TestPentestRemovingAnOAuthClientRevokesItsAccessTokens(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("client: %v", err)
 	}
-	h := &handler{deps: Deps{
+	h := newHandler(Deps{
 		Store: st, SigningKey: key, ResourceURL: testResource, IssuerURL: testIssuer,
 		CheckAccess: func(context.Context, *store.User, string, bool, int64) error { return nil },
-	}}
+	})
 
 	// A long-lived token so the test can only pass because of revocation, never
 	// because the token happened to expire.

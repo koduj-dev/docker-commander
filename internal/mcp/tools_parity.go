@@ -237,6 +237,15 @@ func (h *handler) previewDeploy(ctx context.Context, req *mcpsdk.CallToolRequest
 	if in.ProjectID <= 0 {
 		return nil, ProjectPreview{}, errors.New("project_id is required")
 	}
+	// Re-check against the host the project actually targets, exactly as
+	// deploy/down do. Being a read does not exempt it: a preview lists the
+	// services and images running on that host, which is precisely the thing the
+	// per-host scope exists to withhold. Until remote projects were allowed, the
+	// blanket refusal of them WAS this check — removing that refusal without
+	// putting this here is what turned a closed door into an open one.
+	if err := h.authorizeProjectHost(ctx, req, in.ProjectID, false); err != nil {
+		return nil, ProjectPreview{}, err
+	}
 	out, err := h.deps.PreviewProject(ctx, in.ProjectID)
 	if err != nil {
 		return nil, ProjectPreview{}, err

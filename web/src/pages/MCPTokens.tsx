@@ -120,6 +120,15 @@ function MCPTokenForm({ sections, ownerReadOnly, policy, onCancel, onDone }: {
   // The value is the option's index: "never" and "0 days" would otherwise both
   // be 0 in a <select>, and those mean opposite things.
   const [lifetimeIdx, setLifetimeIdx] = useState(() => defaultLifetimeIndex(options, policy));
+  // The policy can arrive after the form is already open (the page renders as
+  // soon as the token list loads, while /api/mcp/status is still in flight). The
+  // options list changes underneath the index when it does, so an index chosen
+  // against the placeholder policy would silently come to mean a different
+  // lifetime. Re-seed rather than clamp: a choice made against the wrong menu is
+  // not a choice worth preserving.
+  useEffect(() => {
+    setLifetimeIdx(defaultLifetimeIndex(lifetimeOptions(policy), policy));
+  }, [policy]);
   const lifetime = options[lifetimeIdx] ?? options[0];
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
