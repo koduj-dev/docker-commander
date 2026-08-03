@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, ShieldOff, LayoutGrid, Network, Send, Plus, Trash2, Mail } from "lucide-react";
+import { Loader2, ShieldOff, LayoutGrid, Network, Send, Plus, Trash2, Mail, Timer } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import type { LdapConfig, Role } from "../lib/types";
@@ -7,6 +7,7 @@ import { sectionLabel } from "../lib/sections";
 import { PageHeader } from "../layout/Shell";
 import { Spinner } from "../components/ui";
 import { Tabs } from "../components/Tabs";
+import { TokenPolicyEditor } from "../components/TokenPolicyEditor";
 import { EmailConfig } from "../components/EmailConfig";
 
 type Tab = "features" | "security" | "ldap" | "email";
@@ -82,6 +83,17 @@ export function Settings() {
             <div className="flex justify-end">
               <button className="btn-primary" onClick={save} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Save settings</button>
             </div>
+
+            {/* MCP token lifetimes sit here rather than on the MCP admin page
+                because they are the same kind of thing as the exemption above:
+                instance-wide rules about how credentials work. The MCP admin page
+                is the operational view — who holds a token, and revoking it. */}
+            <div className="border-t border-border pt-4">
+              <div className="flex items-center gap-2 font-medium mb-2">
+                <Timer className="h-4 w-4 text-warn" /> MCP token lifetime
+              </div>
+              <TokenPolicyEditor />
+            </div>
           </div>
         )}
 
@@ -100,6 +112,17 @@ export function Settings() {
             {msg && <p className="text-sm text-ok">{msg}</p>}
             <div className="flex justify-end">
               <button className="btn-primary" onClick={save} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Save settings</button>
+            </div>
+
+            {/* MCP token lifetimes sit here rather than on the MCP admin page
+                because they are the same kind of thing as the exemption above:
+                instance-wide rules about how credentials work. The MCP admin page
+                is the operational view — who holds a token, and revoking it. */}
+            <div className="border-t border-border pt-4">
+              <div className="flex items-center gap-2 font-medium mb-2">
+                <Timer className="h-4 w-4 text-warn" /> MCP token lifetime
+              </div>
+              <TokenPolicyEditor />
             </div>
           </div>
         )}

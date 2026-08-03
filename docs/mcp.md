@@ -208,12 +208,12 @@ unhealthy container* or *guided safe redeploy*).
   expiry date is the only control here that still works when nobody is paying
   attention. There is also a **ceiling** (a year by default), because otherwise
   "no never-expiring tokens" is a formality anyone can sidestep by asking for a
-  hundred years. Admins set all three on the **MCP Admin → Token policy** tab.
+  hundred years. Admins set all three in **Settings → Security**, next to the other instance-wide credential rules; the **MCP Admin** page stays the operational view of who holds a token.
 
   It governs what may be **minted**. Tokens that already exist keep the expiry
   they were given, so tightening the policy will not cut off a running
-  integration overnight — existing never-expiring tokens are listed on the same
-  page and can be revoked there.
+  integration overnight — existing never-expiring tokens are listed on the MCP
+  Admin page and can be revoked there.
 - **Secrets are kept out.** Container env vars, audit detail, and raw event
   attributes are omitted from tool output; logs are size-capped.
 - **Off by default, behind HTTPS.** Enable it consciously. Access tokens are
