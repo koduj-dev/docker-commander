@@ -1,11 +1,14 @@
 # Design note — named roles & per-host scoping
 
-**Status:** **decided — see §9.** Implementation may start; phases 1 and 2 are in
-scope, phase 3 is deferred. No code has been written yet.
-**Why this document:** [NEXT.md](../NEXT.md) marks this item *design-first* because
-it touches the app's single authorization gate, every host-targeting operation,
-and the MCP surface. The goal here is to get the **model** and the **blast radius**
-agreed before anything is implemented.
+**Status:** **implemented — all three phases have shipped** (§7 records how each
+one landed, including where the implementation departed from this sketch). The
+document is kept as the record of *why* the model looks like this, and of the
+decisions in §9 that should not be re-argued. Sections 1–6 describe the tree **as
+it was before implementation** and are deliberately not rewritten — read them as
+history, not as a description of the code today.
+**Why this document:** it touches the app's single authorization gate, every
+host-targeting operation, and the MCP surface, so the **model** and the **blast
+radius** were agreed before anything was implemented.
 
 ---
 
@@ -282,7 +285,7 @@ Answering **D1–D4** is enough to start phase 1.
 
 | # | Decision | Notes |
 |---|---|---|
-| **D1** | **Phases 1 and 2.** Roles *and* host-scoping enforcement. **Phase 3 (aggregate filtering) is deferred.** | See the limitation below — it must be documented, not implied away. |
+| **D1** | **Phases 1 and 2.** Roles *and* host-scoping enforcement. **Phase 3 (aggregate filtering) is deferred.** | Superseded: phase 3 shipped shortly after, so the limitation below is historical. |
 | **D2** | **Per-section `write`.** `role_sections` carries a write flag; `users.read_only = true` maps to "every granted section read-only", so no behaviour changes on migration. | |
 | **D3** | **Host scope lives on the role.** A role is "Operator on staging". | Cleaner to reason about in the UI and in the audit log. |
 | **D4** | **An empty host set means all hosts.** Backwards compatible: after migration every user keeps exactly today's reach. | Accepted risk: an unset scope is *no* restriction. Phase 1 UI should say so where a scope is empty. |
@@ -292,7 +295,11 @@ Answering **D1–D4** is enough to start phase 1.
 
 ### The deferred-phase-3 limitation, stated explicitly
 
-With phases 1–2 shipped and phase 3 not, the state is:
+> **Historical.** Phase 3 shipped, so this limitation no longer holds and
+> invariant 4 is asserted. Kept because the *discipline* is the point: an
+> intermediate state is defensible only while it is stated in these terms.
+
+With phases 1–2 shipped and phase 3 not, the state was:
 
 > **Actions are authorized per host; some aggregated reads are not.** A user
 > scoped to one host cannot start, stop, exec into or deploy anything on another
@@ -300,9 +307,31 @@ With phases 1–2 shipped and phase 3 not, the state is:
 > still surface *names, images, ports and event text* from hosts outside their
 > scope. That is an information leak, not an action bypass.
 
-This must land in `docs/users.md` (and the release notes) in those terms. Shipping
-it silently would let an operator believe scoping is complete when it is not —
+It landed in `docs/users.md` and the release notes in those terms. Shipping it
+silently would have let an operator believe scoping was complete when it was not —
 which is worse than not having scoping, because it invites relying on it.
 
-Pentest invariant 4 (§5) therefore stays **open** and is the entry criterion for
-phase 3; the other six must pass before phase 2 ships.
+Pentest invariant 4 (§5) was the entry criterion for phase 3 and now passes with
+the other six.
+
+### What the sweep afterwards found — the part worth carrying forward
+
+Per-host authorization did not finish with phase 3. Three MCP tools —
+`preview_deploy`, `alert_delivery` and `acknowledge_alert` — were later found
+checking the right *section* against **host 0** while acting on a record belonging
+to some other host, and every existing coverage test passed while they did.
+
+The common shape: a tool takes an **integer id and no `host_id`**, so the host is
+implied by the record and nothing in the arguments names it. "You need the id
+first" is not an access control when ids are sequential integers. The fix that
+matters is not the three patches but
+`internal/mcp/tool_host_scope_coverage_test.go`, which detects that shape from the
+advertised tool list and fails on any such tool it has no fixture for — so a new
+one cannot be added without somebody deciding how it is host-scoped.
+
+The mirror-image mistake is worth naming too: scoping the alert routes, demanding
+the `hosts` section *as well* looked like caution and was a different bug. Host
+reach is derived from grants across all sections, so a user whose `alerts` grant
+already reaches a remote host would have been shown an alert they could neither
+acknowledge nor trace. Over-tightening is not a safe default, and it now has its
+own test.

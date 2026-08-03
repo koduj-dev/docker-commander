@@ -119,9 +119,14 @@ drivers, cgroup, and the current container/image counts.
 > describe that VM, not the Windows/macOS host — the Docker API can't see the
 > underlying OS. The **kernel** is the best hint (e.g. `…-WSL2` ⇒ Windows/WSL2).
 
+> **Not seeing a host you know exists?** Besides being *disabled* (below), a host
+> can simply be outside your **host scope** — the list, the switcher and every
+> per-host view only show hosts your grants reach. See
+> [Users & roles → Host scope](users.md).
+
 ## Reachability monitoring
 Beyond the on-demand **Test** button, the background monitor **pings every
-enabled host** on a short interval and tracks whether its Docker daemon is
+enabled host** every **30 seconds** and tracks whether its Docker daemon is
 reachable. When a host can't be reached, a 🔴 **unreachable** badge appears on
 its card and next to its name in the host switcher; it clears automatically once
 the daemon answers again.

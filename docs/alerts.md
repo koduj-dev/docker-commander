@@ -65,15 +65,12 @@ those still use the plain cooldown and never resolve.
 ## The feed
 
 The event feed is **paged** (50 at a time) and filterable by severity, lifecycle
-kind, rule, container and message text, plus an *unacknowledged only* toggle.
-Filtering happens in the database rather than in the browser, so the counts and
-the paging describe the whole result set, not the page you happen to be on.
-
-Filter by severity, lifecycle kind, **host**, rule, container and message text,
-and **sort by any of the first five columns** — server-side, so it orders the
-whole result set rather than just the page you can see. Severity sorts by how
-much it matters, not alphabetically (which would put *warning* above *info* and
-look almost right).
+kind, **host**, rule, container and message text, plus an *unacknowledged only*
+toggle — and **sortable by any of the first five columns**. All of it happens in
+the database rather than in the browser, so the filters, the counts, the paging
+and the ordering describe the whole result set, not the page you happen to be
+looking at. Severity sorts by how much it matters, not alphabetically (which would
+put *warning* above *info* and look almost right).
 
 **Ack all** sits in the page header with the other actions.
 
@@ -142,6 +139,16 @@ Two deliberate limits:
 
 There is no automatic retry yet — a failed delivery is recorded, not re-attempted.
 
+## From an AI tool
+
+If the [MCP server](mcp.md) is enabled, the same material is reachable read-only
+from an assistant: the history (`list_alerts`, with these filters), what is over
+threshold **right now** (`active_alert_conditions`), the rules and their
+thresholds (`list_alert_rules`), whether an alert actually reached anyone
+(`alert_delivery`), and `acknowledge_alert`, which is attributed like any other
+acknowledgement. Rule delivery is reported by **channel**, never by recipient or
+webhook URL. Everything obeys the caller's own permissions and host scope.
+
 ## What the CPU threshold is a percentage *of*
 
 This trips people up, so the rule editor now asks explicitly:
@@ -176,18 +183,29 @@ the **Webhooks** tab) before or after importing, then edit the rule to attach it
 
 ## Webhooks
 Fire to any HTTP endpoint (Slack, Discord, Grafana, n8n…). The body is a Go
-template over `{{.RuleName}} {{.Severity}} {{.Type}} {{.Container}} {{.Message}}
-{{.Value}} {{.Time}}`; with no template the alert is sent as JSON.
+template over `{{.RuleName}}`, `{{.Type}}`, `{{.Severity}}`, `{{.Container}}`,
+`{{.ContainerID}}`, `{{.Message}}`, `{{.Value}}` and `{{.Time}}` (RFC 3339, UTC);
+with no template the alert is sent as JSON with those same fields — `value` is
+omitted when the alert carries no measurement.
+
+Two things the payload does **not** carry, so build your routing accordingly: the
+**host** the alert came from, and the lifecycle **kind** (`firing`, `escalated`,
+`resolved`…). Both are recorded on the event and visible in the feed; a webhook
+consumer only sees them insofar as the message text says so. Per-host routing is
+available for **e-mail**, not for webhooks.
 
 ## Email (SMTP)
 Configure host/port, optional username + password (encrypted at rest), from and
-to, and TLS (implicit or STARTTLS). **Send test** verifies it. Per-host routing:
+to, and whether the relay wants **implicit TLS** (port 465) — otherwise STARTTLS
+is used opportunistically, when the server offers it. **Send test** verifies it.
+Per-host routing:
 a host's *alert email* (set on the [Hosts](hosts.md) page) overrides the global
 recipient for alerts from that host.
 
 ## Prometheus
 
-Scrape `/metrics`. Per container, labelled by `id`, `name` and `host`:
+Scrape `/metrics`. Per container, labelled by `id` (the **short**, 12-character
+form), `name` and `host`:
 
 | Metric | Meaning |
 |---|---|
@@ -196,6 +214,13 @@ Scrape `/metrics`. Per container, labelled by `id`, `name` and `host`:
 | `dockercmd_container_cpu_cores` | cores the daemon reports — divide the above by this for a share of the machine |
 | `dockercmd_container_mem_bytes` | memory in use |
 | `dockercmd_container_mem_percent` | share of the container's limit |
+
+Only `dockercmd_container_running` is emitted for **every** container; the four
+usage series cover **running** ones only. So a stopped container's memory series
+simply ends rather than reporting zero — join on `container_running` if a
+dashboard needs to tell "stopped" from "not scraped". **Network counters are not
+exported here yet**: they are collected, charted and kept in history, but
+`/metrics` carries CPU and memory only.
 
 And, from the alert engine:
 

@@ -26,6 +26,9 @@ containers as a **list** or a **graph** (toggle, top-right):
   and the container's **IP** on this network, with a per-row **disconnect**.
 - **Graph** — the network and its containers as an interactive force-directed
   diagram (the same renderer as the Topology page).
+
+  ![Network detail — graph view](images/network_detail_graph.png)
+
 - **Connect** — attach any container not already on the network.
 - **Inspect** (raw JSON) and **Remove**. Predefined networks (`bridge`, `host`,
   `none`) can't be removed; the daemon also refuses a network that still has

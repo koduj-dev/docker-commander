@@ -161,6 +161,10 @@ reach for when diagnosing.
   ones running but no longer in the compose file. Also reports an invalid compose
   file. A **read**, deliberately — a preview has to be cheaper to reach than the
   deploy it protects, so a read-only token can look even though it cannot leap
+- **list_managed_projects** — the projects this caller may act on, as a read. It
+  drops projects on hosts outside the caller's scope rather than erroring, because
+  a project names its target host: listing one discloses that host's workloads, and
+  whether they are deployed, to somebody who cannot reach it
 - **deploy / down** a managed Compose project. `deploy` runs
   `docker compose up -d --build`, matching the web UI — a project with a `build:`
   section is rebuilt from its current files rather than redeployed from a stale
@@ -177,6 +181,47 @@ reach for when diagnosing.
 It also exposes MCP **resources** (the container inventory and compose files as
 attachable context) and **prompts** (curated workflows like *diagnose an
 unhealthy container* or *guided safe redeploy*).
+
+### The whole tool list
+
+Every tool, the **section** it is gated by, and whether it counts as a read or a
+**write** (writes are refused for a read-only token or user, and are audited and
+rate limited). This is the list a token's section subset narrows.
+
+| Tool | Section | R/W | What it does |
+|---|---|---|---|
+| `list_hosts` | hosts | R | The hosts this server manages, with their ids |
+| `list_containers` | containers | R | Containers on a host: id, name, image, state, published ports |
+| `get_container` | containers | R | Inspect one container — **without** its environment variables |
+| `container_logs` | logs | R | The tail of one container's logs, size-capped |
+| `search_logs` | logs | R | A substring or regex **across** the containers on a host |
+| `container_processes` | containers | R | What is running inside a container (`docker top`) |
+| `container_changes` | containers | R | Files added/modified/deleted since it started (`docker diff`) — paths only |
+| `list_images` | images | R | Images on a host: tags, size, age, whether in use |
+| `list_volumes` | volumes | R | Volumes and who mounts them — never their contents |
+| `list_networks` | networks | R | Networks: driver, scope, subnets, attached containers |
+| `list_projects` | projects | R | Compose projects (stacks) discovered on a host |
+| `get_compose` | projects | R | A project's compose file |
+| `list_managed_projects` | projects | R | The app's managed projects; hosts out of scope are dropped from the list |
+| `preview_deploy` | projects | R | What a deploy *would* change — also checks the project's own host |
+| `stats_overview` | dashboard | R | Host CPU/memory plus a per-container snapshot |
+| `system_info` | dashboard | R | Engine and host facts: versions, OS/kernel, drivers, counts |
+| `metrics_history` | dashboard | R | Historical CPU%/memory% for one container (authorized against the container's host) |
+| `recent_events` | events | R | Recent Docker daemon events on a host |
+| `recent_audit` | audit | R | Recent audit entries — most tokens will not have this section |
+| `list_alerts` | alerts | R | Alert history with the UI's filters |
+| `active_alert_conditions` | alerts | R | What is over threshold **right now**, and for how long |
+| `list_alert_rules` | alerts | R | Rules and thresholds; channels, never recipients or webhook URLs |
+| `alert_delivery` | alerts | R | Whether an alert reached anyone (authorized against the alert's host) |
+| `acknowledge_alert` | alerts | **W** | Record that a human saw it, attributed to the caller |
+| `start_container` / `stop_container` / `restart_container` | containers | **W** | One container's lifecycle |
+| `start_stack` / `stop_stack` / `restart_stack` | containers | **W** | A whole Compose stack by project name |
+| `scan_image` | images | **W** | Trivy scan — a write because it shells out and may pull the image |
+| `deploy_project` / `down_project` | projects (+ `hosts` for a remote target) | **W** | `docker compose up -d --build` / `down` on a managed project |
+
+`host_id` defaults to the local host when omitted. Tools that take a **record id**
+instead — a project, an alert, a container's metrics — resolve that record's host
+and authorize against it; see the security model below.
 
 > **Stack `remove` is deliberately absent** even though the app implements it:
 > force-removing a stack's containers and networks is destruction, not safe

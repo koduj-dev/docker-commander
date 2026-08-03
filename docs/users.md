@@ -162,8 +162,12 @@ regardless of permissions:
 - **Security** — 2FA status, and **Pair a new authenticator** for a new phone.
   Starting that flow is safe: the authenticator you already have keeps working
   until you enter a code from the new one, so cancelling changes nothing.
-- **Access** — the roles you hold, plus every section you can reach, whether you
-  can change it, and which role granted it. Handy for answering "why can I see
-  this?" without an admin.
+- **Access** — the roles you hold, plus every section you can reach (**You can**),
+  on which hosts (**Where**) and which role granted it (**Granted by**). Handy for
+  answering "why can I see this?" — or "why can't I?" — without an admin.
+- **Preferences** — per-account UI settings that follow you across browsers.
+  Today: whether alerts **pop up as a toast** while you have the app open. Turning
+  that off changes nothing about the alerts themselves — still recorded, still
+  counted in the sidebar badge, still delivered by webhook and e-mail.
 
 It reads only your own account.

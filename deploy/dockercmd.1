@@ -49,6 +49,24 @@ Stop and remove the service (the data dir and service user are left in place).
 .TP
 .B \-\-service-status
 Show the service status.
+.TP
+.BI \-\-backup " file " [ \fB\-\-passphrase\fR ]
+Write a self-contained backup of the data dir (SQLite database, projects and
+project templates) to
+.IR file ,
+mode 0600. With
+.B \-\-passphrase
+the archive is encrypted (AES-256-GCM, Argon2id) and the passphrase is read from
+the terminal or standard input, never from the command line. The archive is
+equivalent to every stored secret, because the at-rest encryption key lives
+inside the database it contains.
+.TP
+.BI \-\-restore " file " [ \fB\-\-force\fR ", " \fB\-\-passphrase\fR ]
+Restore a backup into the data dir. Refuses if a database is already present
+unless
+.B \-\-force
+is given. Entries are confined to the data dir, so a tampered archive cannot
+write elsewhere.
 .SH OPTIONS
 Every option also has a
 .B DC_*

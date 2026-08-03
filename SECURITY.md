@@ -58,9 +58,13 @@ A few things worth knowing when assessing a report:
   authenticated (a hashed-at-rest **bearer API token** or an **OAuth 2.1** access
   token — PKCE, audience-bound, signed with a dedicated key) and authorized by
   the **same RBAC** as the UI, re-checked against the live user on every call.
-  Tokens can only **narrow** their owner's rights (section subset + read-only),
-  and the tool set is an allow-list of reads + *safe* control — no `exec`, image
-  export, volume-content reads, `prune` or `remove`. See [docs/mcp.md](docs/mcp.md).
+  Tokens can only **narrow** their owner's rights (a subset of their sections and
+  of the **hosts** they reach, plus read-only), they **expire** by default
+  (30 days, with an admin-set ceiling; never-expiring tokens are off unless
+  enabled), and **changes are rate limited per user** so a runaway or stolen token
+  is bounded. The tool set is an allow-list of reads + *safe* control — no `exec`,
+  image export, volume-content reads, `prune` or `remove`. See
+  [docs/mcp.md](docs/mcp.md).
 
 Generally **out of scope:** issues that require an already-compromised host or
 data directory, exposing the app without the documented protections, or

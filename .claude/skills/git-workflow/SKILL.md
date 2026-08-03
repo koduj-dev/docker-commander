@@ -1,6 +1,6 @@
 ---
 name: git-workflow
-description: Use BEFORE any git or release operation in this repo — committing, branching, staging, opening or editing a PR, tagging, or cutting a release. Captures the project's conventions so they aren't re-derived or skipped: PR bodies MUST follow .github/PULL_REQUEST_TEMPLATE.md, commits use Conventional-Commit style with NO Co-Authored-By / Claude trailer (and none in PR bodies either), branch before committing (never commit straight to main), the gofmt gate runs AFTER git add, web/dist is committed whenever web/src changes, CHANGELOG accumulates under [Unreleased] then becomes [x.y.z] + a link def at release, and pushing a vX.Y.Z tag triggers release.yml. Read it before touching git.
+description: Use BEFORE any git or release operation in this repo — committing, branching, staging, opening or editing a PR, tagging, or cutting a release. Captures the project's conventions so they aren't re-derived or skipped: PR bodies MUST follow .github/PULL_REQUEST_TEMPLATE.md, commit subjects start with a bracketed action (`[add]`, `[fix]`, `[docs]`) and stay terse because they feed changelog generation, with NO Co-Authored-By / Claude trailer (and none in PR bodies either), branch before committing (never commit straight to main), the gofmt gate runs AFTER git add, web/dist is committed whenever web/src changes, CHANGELOG accumulates under [Unreleased] then becomes [x.y.z] + a link def at release, and pushing a vX.Y.Z tag triggers release.yml. Read it before touching git.
 ---
 
 # Docker Commander — git & release conventions
@@ -19,16 +19,24 @@ already told you to proceed.
 
 ## Commit messages
 
-- **Conventional Commits**: `type(scope): subject`, imperative, lower-case
-  subject, no trailing period. Types seen in this repo: `feat`, `fix`, `docs`,
-  `chore`, `build`, `perf`, `security`, `refactor`. Scope is optional
-  (`feat(mcp): …`, `docs(web): …`).
+- **Action in square brackets first, then as short a subject as possible**:
+  `[add] preview_deploy for MCP`, `[fix] scope single-alert ack to the alert's host`,
+  `[docs] split NEXT.md into roadmap, gotchas and dev environment`. Actions in use:
+  `[add]`, `[fix]`, `[docs]`, `[wip]`, `[remove]`, `[revert]`.
+  Commit subjects feed automatic changelog generation, which is why they are
+  uniform and terse — no essays in the subject.
+- Older history uses Conventional Commits (`feat(mcp): …`) and Dependabot still
+  opens `build(deps): …` PRs. Don't "fix" those; write new commits in the bracket
+  style.
 - **NO `Co-Authored-By` and NO "Generated with Claude Code" trailer** — not in
   commit messages and not in PR bodies. The maintainer keeps the history clean.
 - Body (optional) explains *what* and *why*, wrapped ~72 cols.
 
 ## Pull requests
 
+- **The PR title is the commit subject**, same bracketed-action style
+  (`[add] MCP control rate limit + remote-host projects`) — merged PRs become the
+  history the changelog is generated from.
 - **Always fill in `.github/PULL_REQUEST_TEMPLATE.md`** — do not invent your own
   structure. The sections are **Summary**, **Type of change**, **Checklist**,
   **Notes for reviewers**.

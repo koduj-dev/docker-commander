@@ -71,32 +71,30 @@ the old repeat-every-cooldown engine would have produced a timeline of noise.
 
 ### Network statistics
 
-Docker returns per-interface RX/TX, packets, errors and drops from
-`/containers/{id}/stats`. **What we actually have today:** `StatsSample.NetRx` and
-`NetTx` are sampled and sent to the browser — but summed across interfaces, not
-displayed anywhere, not stored in history, and packets/errors/drops are not
-captured at all.
+Phases 1 and 2 have shipped — per-container throughput, totals, packets, drops,
+errors and a per-interface breakdown; endpoint totals on a network's detail; a
+host-wide summary on the dashboard — and so has phase 3's storage half: history
+keeps the **raw cumulative counters** and derives rates at read time. What is left
+is what you *do* with them.
 
-- **Phase 1 — container.** Surface what is already collected: current RX/TX rate
-  (from the delta between samples), totals, packets/s, drops and errors, and a
-  history graph. Requires capturing the fields we currently discard, and handling
-  a **counter reset** on recreate/restart rather than rendering a negative rate.
-- **Phase 2 — network detail.** Aggregate the containers attached to a network.
-  Label it **Endpoint RX/TX total**, not "network traffic": container-to-container
-  traffic is counted twice, once as each side's TX and RX, and claiming otherwise
-  would be a number that looks authoritative and is wrong.
-- **Phase 3 — history, top talkers, alerts.** Store *raw cumulative counters* and
-  derive rates at read time. Alert on throughput, and on the **increase** in drops
-  and errors rather than their absolute value.
+- **Alert on network.** Rule metrics are still `cpu` / `cpu_total` / `mem` only.
+  Throughput needs a rule of its own, and drops and errors should be alerted on by
+  their **increase**, not their absolute value — a counter sitting at 12 since a
+  bad afternoon last month is not an incident.
+- **Top talkers.** Only readable over a window: point-in-time throughput reorders
+  itself on every poll, which is why the dashboard shows a host-wide time series
+  rather than a ranking. Rank over a stored interval, not over a sample.
 - **Phase 4 (optional) — a Linux collector** via netlink/eBPF for flows, protocols,
   connections and retransmits. Keep it an optional capability, never a condition of
   running Docker Commander: it is Linux-only, awkward under Docker Desktop and
   rootless, and needs host namespaces.
 
-_Interface-to-network mapping:_ `ContainerStats` gives `eth0`, `eth1`… without
-saying which Docker network each belongs to. Exact mapping needs MAC/namespace
-inspection via netlink — Linux-only and hostile to remote hosts. The first version
-should sum across interfaces and say so.
+_Interface-to-network mapping stays unsolved, and constrains all of the above:_
+`ContainerStats` is keyed by `eth0`, `eth1`… and never says which Docker network
+each belongs to (the API's `endpoint_id` field is filled in on Windows only).
+Exact mapping needs MAC/namespace inspection via netlink — Linux-only and hostile
+to remote hosts. So the app sums across interfaces and says so, rather than
+publishing a per-network number that looks authoritative and is wrong.
 
 ### Identity and access
 
@@ -143,8 +141,9 @@ should sum across interfaces and say so.
   console exe is not a native service (SCM error 1053), so this needs
   `golang.org/x/sys/windows/svc`; the Task Scheduler script remains the supported
   path meanwhile.
-- **Sidebar navigation rework** into collapsible groups, if the flat list stops
-  scaling.
+- **Collapsible sidebar groups.** The sidebar is already grouped (Compute,
+  Network, Observability, System); the groups just don't fold. Worth doing only if
+  the list grows enough that folding beats scrolling.
 - **Version matrix — narrower axes.** It pins Engine **majors**, so a regression in
   a specific patch isn't caught the moment it ships; and it does not pin the
   **Compose plugin**, which comes from the runner. Compose is the more likely one
