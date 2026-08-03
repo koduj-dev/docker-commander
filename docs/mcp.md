@@ -166,9 +166,13 @@ reach for when diagnosing.
   section is rebuilt from its current files rather than redeployed from a stale
   image. This is not a wider surface than before: `up` has always built an image
   that was missing, so deploying such a project could already run its Dockerfile.
-  Remote-host projects are still refused here — for `preview_deploy` too, since
-  previewing one means listing that host's containers. MCP tokens carry no
-  per-host authorization yet; lifting that is one change for both.
+  Projects that target a **remote host** work here too. They authorize against
+  that host — the `hosts` section plus the per-host scope, the same rule the web
+  UI applies — and they resolve their compose environment exactly the way the UI
+  does, so a remote deploy through MCP still ships the project's own bind mounts
+  to the target and still **refuses** binds pointing outside the project folder
+  unless the project is explicitly opted in. Anything remapped is reported back
+  in the tool's output rather than left unsaid.
 
 It also exposes MCP **resources** (the container inventory and compose files as
 attachable context) and **prompts** (curated workflows like *diagnose an
@@ -197,12 +201,37 @@ unhealthy container* or *guided safe redeploy*).
   a section for a user and the matching MCP tool stops working immediately.
 - **Tokens only narrow.** A token's section subset and read-only flag are applied
   *before* your own RBAC; they can never grant more than you have.
+- **Tokens expire by default.** New tokens last **30 days** unless another
+  lifetime is chosen, and never-expiring ones are **off** until an admin turns
+  them on. Revocation already existed, but revocation needs somebody to remember
+  — and the tokens most worth revoking are the ones everyone has forgotten. An
+  expiry date is the only control here that still works when nobody is paying
+  attention. There is also a **ceiling** (a year by default), because otherwise
+  "no never-expiring tokens" is a formality anyone can sidestep by asking for a
+  hundred years. Admins set all three in **Settings → Security**, next to the other instance-wide credential rules; the **MCP Admin** page stays the operational view of who holds a token.
+
+  It governs what may be **minted**. Tokens that already exist keep the expiry
+  they were given, so tightening the policy will not cut off a running
+  integration overnight — existing never-expiring tokens are listed on the MCP
+  Admin page and can be revoked there.
 - **Secrets are kept out.** Container env vars, audit detail, and raw event
   attributes are omitted from tool output; logs are size-capped.
 - **Off by default, behind HTTPS.** Enable it consciously. Access tokens are
   signed with a key dedicated to MCP, separate from your login session secret.
 - Every **control** call (start/stop/restart, deploy/down) is written to the
   [audit log](audit.md) under your account.
+- **Changes are rate limited** — at most 30 per minute per user, with a burst of
+  30. Every other control here answers *is this allowed*; this one answers *how
+  much, how fast*, which is the question that matters when the caller is a model
+  stuck in a loop or a token in the wrong hands. Both look exactly like an
+  authorized user: each call is permitted, there are simply thousands of them.
+  The cap turns "the whole estate stopped" into "a few containers stopped and the
+  audit log is shouting". **Reads are not limited** — they change nothing, and
+  throttling them would push an assistant toward acting without looking, which is
+  the behaviour the cap exists to prevent. Reaching the ceiling writes **one**
+  audit entry per episode, not one per rejected call, so a runaway cannot bury
+  the evidence of itself. A large batch of changes made on purpose belongs in the
+  web UI.
 
 ## Tips
 - Keep MCP **behind a reverse proxy / HTTPS**; the OAuth and rate-limited

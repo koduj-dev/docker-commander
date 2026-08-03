@@ -705,6 +705,16 @@ export interface MCPToken {
 export interface MCPStatus {
   enabled: boolean; // the MCP server is turned on (DC_MCP_ENABLED)
   oauth: boolean; // OAuth flow available (public URL configured)
+  tokenPolicy: MCPTokenPolicy; // lifetime rules the creation form must respect
+}
+
+// How long an MCP bearer token may live. Set by an admin; enforced server-side
+// when a token is minted, and reflected in the creation form so a user is never
+// offered a lifetime that will be refused.
+export interface MCPTokenPolicy {
+  defaultDays: number; // applied when the request does not name a lifetime
+  maxDays: number; // longest lifetime a user may choose; 0 = no ceiling
+  allowUnlimited: boolean; // whether never-expiring tokens may be created at all
 }
 
 // Admin overview rows: every user's tokens (with the owner's username) and the

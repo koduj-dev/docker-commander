@@ -31,6 +31,7 @@ import type {
   RoleSection,
   MCPToken,
   MCPStatus,
+  MCPTokenPolicy,
   AdminMCPToken,
   AdminOAuthClient,
   Project,
@@ -577,13 +578,23 @@ export const api = {
   // MCP access tokens (self-service — each user manages their own).
   mcpStatus: () => req<MCPStatus>("GET", "/api/mcp/status"),
   mcpTokens: () => req<MCPToken[]>("GET", "/api/mcp/tokens"),
-  createMcpToken: (b: { name: string; readOnly: boolean; sections: string[]; expiresInDays: number }) =>
+  createMcpToken: (b: {
+    name: string;
+    readOnly: boolean;
+    sections: string[];
+    expiresInDays: number;
+    // Separate from expiresInDays: 0 means "not chosen" (the server applies its
+    // default), so wanting no expiry at all has to be said explicitly.
+    neverExpires?: boolean;
+  }) =>
     req<{ id: number; token: string }>("POST", "/api/mcp/tokens", b),
   deleteMcpToken: (id: number) => req<{ ok: boolean }>("DELETE", `/api/mcp/tokens/${id}`),
 
   // MCP admin overview (admin-only): every user's tokens + registered OAuth clients.
   mcpAdminTokens: () => req<AdminMCPToken[]>("GET", "/api/mcp-admin/tokens"),
   mcpAdminRevokeToken: (id: number) => req<{ ok: boolean }>("DELETE", `/api/mcp-admin/tokens/${id}`),
+  mcpAdminTokenPolicy: () => req<MCPTokenPolicy>("GET", "/api/mcp-admin/token-policy"),
+  mcpAdminSetTokenPolicy: (b: MCPTokenPolicy) => req<MCPTokenPolicy>("PUT", "/api/mcp-admin/token-policy", b),
   mcpAdminOAuthClients: () => req<AdminOAuthClient[]>("GET", "/api/mcp-admin/oauth-clients"),
   mcpAdminDeleteOAuthClient: (id: string) =>
     req<{ ok: boolean }>("DELETE", `/api/mcp-admin/oauth-clients/${encodeURIComponent(id)}`),

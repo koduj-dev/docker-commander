@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { Plus, Trash2, KeyRound, Copy, Check, Clock, ShieldCheck } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
-import type { MCPToken, MCPStatus } from "../lib/types";
+import type { MCPToken, MCPStatus, MCPTokenPolicy } from "../lib/types";
+import { lifetimeOptions, defaultLifetimeIndex } from "../lib/tokenPolicy";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
 import { useDialogs } from "../components/Dialog";
@@ -54,6 +55,7 @@ export function MCPTokens() {
           <MCPTokenForm
             sections={user?.role === "admin" ? ALL_SECTIONS : (user?.sections ?? [])}
             ownerReadOnly={user?.readOnly ?? false}
+            policy={status?.tokenPolicy ?? FALLBACK_POLICY}
             onCancel={() => setShowForm(false)}
             onDone={(secret) => { setShowForm(false); setCreated(secret); load(); }}
           />
@@ -99,16 +101,26 @@ export function MCPTokens() {
   );
 }
 
-function MCPTokenForm({ sections, ownerReadOnly, onCancel, onDone }: {
+// Used only until /api/mcp/status answers. It matches the server's own default
+// rather than being permissive: a form that briefly offers "never" and then
+// takes it away is worse than one that starts conservative.
+const FALLBACK_POLICY: MCPTokenPolicy = { defaultDays: 30, maxDays: 365, allowUnlimited: false };
+
+function MCPTokenForm({ sections, ownerReadOnly, policy, onCancel, onDone }: {
   sections: string[];
   ownerReadOnly: boolean;
+  policy: MCPTokenPolicy;
   onCancel: () => void;
   onDone: (secret: string) => void;
 }) {
   const [name, setName] = useState("");
   const [readOnly, setReadOnly] = useState(ownerReadOnly);
   const [picked, setPicked] = useState<string[]>([]);
-  const [expiresInDays, setExpiresInDays] = useState(90);
+  const options = lifetimeOptions(policy);
+  // The value is the option's index: "never" and "0 days" would otherwise both
+  // be 0 in a <select>, and those mean opposite things.
+  const [lifetimeIdx, setLifetimeIdx] = useState(() => defaultLifetimeIndex(options, policy));
+  const lifetime = options[lifetimeIdx] ?? options[0];
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -118,7 +130,11 @@ function MCPTokenForm({ sections, ownerReadOnly, onCancel, onDone }: {
     e.preventDefault();
     setErr(""); setBusy(true);
     try {
-      const res = await api.createMcpToken({ name, readOnly, sections: picked, expiresInDays });
+      const res = await api.createMcpToken({
+        name, readOnly, sections: picked,
+        expiresInDays: lifetime.never ? 0 : lifetime.days,
+        neverExpires: !!lifetime.never,
+      });
       onDone(res.token);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "failed");
@@ -136,12 +152,14 @@ function MCPTokenForm({ sections, ownerReadOnly, onCancel, onDone }: {
         </div>
         <div>
           <label className="label">Expires</label>
-          <select className="input" value={expiresInDays} onChange={(e) => setExpiresInDays(Number(e.target.value))}>
-            <option value={30}>in 30 days</option>
-            <option value={90}>in 90 days</option>
-            <option value={365}>in 1 year</option>
-            <option value={0}>never</option>
+          <select className="input" value={lifetimeIdx} onChange={(e) => setLifetimeIdx(Number(e.target.value))}>
+            {options.map((o, i) => <option key={`${o.days}-${o.never ?? false}`} value={i}>{o.label}</option>)}
           </select>
+          {!policy.allowUnlimited && (
+            <p className="text-xs text-muted mt-1">
+              Never-expiring tokens are turned off by your administrator.
+            </p>
+          )}
         </div>
       </div>
 
