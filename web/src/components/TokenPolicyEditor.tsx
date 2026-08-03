@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import type { MCPTokenPolicy } from "../lib/types";
+import { Timer } from "lucide-react";
 import { Spinner } from "./ui";
 
 // The lifetime rules applied when anyone mints an MCP token.
@@ -44,6 +45,7 @@ export function TokenPolicyEditor() {
 
   return (
     <div className="card p-5 space-y-4 max-w-2xl">
+      <div className="flex items-center gap-2 font-medium"><Timer className="h-4 w-4 text-warn" /> MCP token lifetime</div>
       <p className="text-xs text-muted">
         Applies when a token is <strong>created</strong>. Tokens that already exist keep the expiry they were given —
         tightening this will not cut off a running integration. To retire tokens that predate a stricter rule, revoke
@@ -78,10 +80,12 @@ export function TokenPolicyEditor() {
         </span>
       </label>
 
-      {err && <p className="text-xs text-danger">{err}</p>}
-      <div className="flex items-center gap-3">
+      {/* Same shape as the other cards on this page: the action sits inside the
+          card it applies to, bottom-right, with its result beside it. */}
+      <div className="flex items-center justify-end gap-3 pt-1">
+        {err && <span className="text-sm text-danger">{err}</span>}
+        {saved && <span className="text-sm text-ok">Saved.</span>}
         <button className="btn-primary" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save policy"}</button>
-        {saved && <span className="text-xs text-accent">Saved.</span>}
       </div>
     </div>
   );

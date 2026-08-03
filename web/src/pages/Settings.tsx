@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, ShieldOff, LayoutGrid, Network, Send, Plus, Trash2, Mail, Timer } from "lucide-react";
+import { Loader2, ShieldOff, LayoutGrid, Network, Send, Plus, Trash2, Mail } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import type { LdapConfig, Role } from "../lib/types";
@@ -78,21 +78,10 @@ export function Settings() {
                   );
                 })}
               </div>
-            </div>
-            {msg && <p className="text-sm text-ok">{msg}</p>}
-            <div className="flex justify-end">
-              <button className="btn-primary" onClick={save} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Save settings</button>
-            </div>
-
-            {/* MCP token lifetimes sit here rather than on the MCP admin page
-                because they are the same kind of thing as the exemption above:
-                instance-wide rules about how credentials work. The MCP admin page
-                is the operational view — who holds a token, and revoking it. */}
-            <div className="border-t border-border pt-4">
-              <div className="flex items-center gap-2 font-medium mb-2">
-                <Timer className="h-4 w-4 text-warn" /> MCP token lifetime
+              <div className="flex items-center justify-end gap-3 pt-1">
+                {msg && <span className="text-sm text-ok">{msg}</span>}
+                <button className="btn-primary" onClick={save} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Save settings</button>
               </div>
-              <TokenPolicyEditor />
             </div>
           </div>
         )}
@@ -108,22 +97,17 @@ export function Settings() {
                   <span className="block text-xs text-muted mt-0.5">When on, connections from 127.0.0.1/::1 skip the mandatory 2FA enrollment and challenge. Remote connections always require 2FA. Leave off for server deployments.</span>
                 </span>
               </label>
-            </div>
-            {msg && <p className="text-sm text-ok">{msg}</p>}
-            <div className="flex justify-end">
-              <button className="btn-primary" onClick={save} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Save settings</button>
+              <div className="flex items-center justify-end gap-3 pt-1">
+                {msg && <span className="text-sm text-ok">{msg}</span>}
+                <button className="btn-primary" onClick={save} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Save settings</button>
+              </div>
             </div>
 
-            {/* MCP token lifetimes sit here rather than on the MCP admin page
-                because they are the same kind of thing as the exemption above:
-                instance-wide rules about how credentials work. The MCP admin page
-                is the operational view — who holds a token, and revoking it. */}
-            <div className="border-t border-border pt-4">
-              <div className="flex items-center gap-2 font-medium mb-2">
-                <Timer className="h-4 w-4 text-warn" /> MCP token lifetime
-              </div>
-              <TokenPolicyEditor />
-            </div>
+            {/* MCP token lifetimes are the same kind of thing as the exemption
+                above: an instance-wide rule about how credentials work here. The
+                MCP admin page stays the operational view — who holds a token,
+                and revoking it. */}
+            <TokenPolicyEditor />
           </div>
         )}
 
