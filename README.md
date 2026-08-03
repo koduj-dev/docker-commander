@@ -62,7 +62,7 @@ level filters, regex search and structured parsing.
 
 **Remote control from AI tools (MCP)**
 - An optional, **off-by-default** **Model Context Protocol** server lets AI tools (**Claude Code**, **Claude Desktop**, **Cursor**) **monitor and *safely* operate** Docker **as you**: read tools (containers, logs, images, projects, stats, events, audit…) plus *safe* control (**start/stop/restart**, **deploy/down**), with MCP **resources** & **prompts**.
-- Authenticate with a **bearer API token** (self-service page) or **OAuth 2.1** (PKCE, dynamic client registration). Every call reuses the app's **RBAC**, and a token can only **narrow** your rights (a section subset + **read-only**). Deliberately **no exec / image export / file read / prune / remove**. See [MCP](docs/mcp.md).
+- Authenticate with a **bearer API token** (self-service page) or **OAuth 2.1** (PKCE, dynamic client registration). Every call reuses the app's **RBAC**, and a token can only **narrow** your rights (a section subset + **read-only**). **Changes are rate limited** (30/min per user; reads are not) so a model stuck in a loop — or a stolen token — is bounded to a few containers rather than your whole estate, and hitting that ceiling is audited. Deliberately **no exec / image export / file read / prune / remove**. See [MCP](docs/mcp.md).
 
 **Security & administration**
 - **Argon2id** passwords + **TOTP 2FA** (optionally exempt for localhost), rate limiting, strict headers, signed `HttpOnly` cookies.
@@ -355,7 +355,7 @@ notify webhooks (Go-template bodies) and/or email. **Prometheus:** scrape
 - **2FA is enforced everywhere** unless an admin enables the *localhost exemption* (Settings), which trusts `RemoteAddr` only — keep it **off** behind a proxy.
 - **SSH hosts** verify the daemon host key (known_hosts / trust-on-first-use); a changed key is refused as a possible MITM.
 - Signing key and at-rest encryption key are generated on first run and stored in the data dir; stored secrets are never returned by the API.
-- The **MCP server is off by default** (`DC_MCP_ENABLED`); when on, it's bearer/OAuth-authenticated, reuses the app's RBAC (with per-token **read-only** / section scope), and exposes only reads + *safe* control — no exec, image export, file reads or prune/remove. See [MCP](docs/mcp.md).
+- The **MCP server is off by default** (`DC_MCP_ENABLED`); when on, it's bearer/OAuth-authenticated, reuses the app's RBAC (with per-token **read-only** / section scope), and exposes only reads + *safe* control — no exec, image export, file reads or prune/remove. Control calls are additionally **rate limited per user** to bound the damage a runaway or stolen token can do. See [MCP](docs/mcp.md).
 
 ## 🧪 How it's tested
 

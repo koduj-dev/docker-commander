@@ -7,6 +7,35 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **A ceiling on how fast MCP can change things.** Every other control in MCP
+  answers *is this allowed* — the token's narrowing, the user's permissions, the
+  per-host scope. None answered *how much, how fast*, and that is the question
+  that matters when the caller is a model stuck in a loop or a token that has been
+  stolen. Both look exactly like an authorized user: every call is permitted,
+  there are just suddenly thousands of them. Changes are now capped at 30 per
+  minute per user, which bounds an incident to a few containers instead of an
+  estate.
+
+  **Reads are deliberately not capped.** They change nothing, and throttling them
+  would push an assistant toward acting without looking — the behaviour the cap
+  exists to prevent. Hitting the ceiling writes **one** audit entry per episode
+  rather than one per rejected call, so a runaway loop cannot flood the audit log
+  and bury the evidence of itself, and a refused call says plainly that it did
+  *not* happen, because a model told only "denied" may record it as done.
+
+- **MCP can deploy projects that target a remote host.** Previously refused,
+  because MCP tokens carried no per-host authorization. They do now: a remote
+  project is checked against the `hosts` section and the token's host scope, the
+  same rule the web UI applies.
+
+  It resolves its compose environment through exactly the helper the UI's deploy
+  uses, not the simpler one — so a remote deploy through MCP still ships the
+  project's own bind mounts to the target host and still **refuses** binds
+  pointing outside the project folder unless that project is explicitly opted in.
+  Using the simpler helper would have deployed successfully, passed every existing
+  test, and quietly mounted paths off the remote host's filesystem; a test now
+  drives that refusal through the MCP path specifically.
+
 - **`preview_deploy` — see what a deploy would do before doing it.** Which services
   would be created, which would be recreated with a different image, and which are
   running but no longer in the compose file. It compares against the **containers

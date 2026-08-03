@@ -37,7 +37,7 @@ func newTestHandler(t *testing.T, check CheckAccessFunc) (*handler, int64) {
 	if check == nil {
 		check = func(context.Context, *store.User, string, bool, int64) error { return nil }
 	}
-	return &handler{deps: Deps{Store: st, CheckAccess: check}}, uid
+	return newHandler(Deps{Store: st, CheckAccess: check}), uid
 }
 
 func TestVerifyToken(t *testing.T) {

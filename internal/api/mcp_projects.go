@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/koduj-dev/docker-commander/internal/docker"
 	"github.com/koduj-dev/docker-commander/internal/mcp"
@@ -51,13 +52,15 @@ func (s *Server) mcpDeployProject(ctx context.Context, id int64, profiles []stri
 	if err != nil {
 		return "", err
 	}
-	if p.HostID != 0 {
-		// MCP tokens carry no per-host authorization, so remote-host deploys go
-		// through the web UI (which enforces the "hosts" permission).
-		return "", errors.New("this project targets a remote host; deploy it from the web UI")
-	}
 	dir := s.projectRoot(p.ID)
-	env, cleanup, err := s.projectComposeEnv(ctx, p, dir)
+	// projectDeployEnv, NOT projectComposeEnv — the same resolver the web UI's
+	// deploy uses. For a local project the two are identical, but for a remote
+	// host only this one ships the project's bind-mount sources to the target and
+	// repoints them, and only this one refuses binds from OUTSIDE the project
+	// folder unless the project is explicitly opted in. Deploying through MCP with
+	// the weaker resolver would have quietly produced a different deployment than
+	// the same button in the UI, and skipped that refusal.
+	env, files, note, cleanup, err := s.projectDeployEnv(ctx, p, dir)
 	if err != nil {
 		return "", err
 	}
@@ -67,7 +70,14 @@ func (s *Server) mcpDeployProject(ctx context.Context, id int64, profiles []stri
 	// with a `build:` section could always run its Dockerfile. What this fixes is
 	// the inconsistency where the same project deployed through MCP would keep
 	// running a stale image while the UI refreshed it.
-	return docker.ComposeUp(ctx, dir, p.Slug, profiles, env, true)
+	out, err := docker.ComposeUpFiles(ctx, dir, p.Slug, profiles, env, files, true)
+	if note != "" {
+		// The note says which bind mounts were shipped or passed through to the
+		// remote host. The UI shows it; without it here the model would report a
+		// clean deploy and never mention that paths were remapped.
+		out = strings.TrimRight(out, "\n") + "\nnote: " + note
+	}
+	return out, err
 }
 
 // mcpDownProject runs `docker compose down` for a managed project.
@@ -78,9 +88,6 @@ func (s *Server) mcpDownProject(ctx context.Context, id int64) (string, error) {
 	p, err := s.store.ProjectByID(ctx, id)
 	if err != nil {
 		return "", err
-	}
-	if p.HostID != 0 {
-		return "", errors.New("this project targets a remote host; manage it from the web UI")
 	}
 	dir := s.projectRoot(p.ID)
 	env, cleanup, err := s.projectComposeEnv(ctx, p, dir)
@@ -107,13 +114,6 @@ func (s *Server) mcpPreviewProject(ctx context.Context, id int64) (mcp.ProjectPr
 	if err != nil {
 		return out, err
 	}
-	if p.HostID != 0 {
-		// Same restriction as deploy: MCP tokens carry no per-host authorization,
-		// and previewing a remote project means listing that host's containers.
-		// Lifting this is a single change for both, and belongs with it.
-		return out, errors.New("this project targets a remote host; preview it from the web UI")
-	}
-
 	dir := s.projectRoot(p.ID)
 	cfgJSON, err := docker.ComposeConfigJSON(ctx, dir, p.Slug)
 	if err != nil {

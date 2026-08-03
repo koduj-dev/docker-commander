@@ -105,6 +105,15 @@ type Deps struct {
 // handler bundles deps behind the SDK server and the bearer verifier.
 type handler struct {
 	deps Deps
+	// limiter caps how fast one identity can make changes. See ratelimit.go.
+	limiter *controlLimiter
+}
+
+// newHandler builds the tool handler. The single construction point for both
+// Handlers and the tests, so the limiter cannot be present in production and
+// quietly absent from everything that checks the behaviour.
+func newHandler(d Deps) *handler {
+	return &handler{deps: d, limiter: newControlLimiter()}
 }
 
 // principal is the request-scoped identity resolved from a bearer token: the
@@ -133,7 +142,7 @@ var errInvalidProject = errors.New("project_id must be a positive id from list_m
 // transport and the protected-resource metadata document. The caller mounts
 // these only when MCP is enabled.
 func (d Deps) Handlers() (mcpHandler, metadataHandler http.Handler) {
-	h := &handler{deps: d}
+	h := newHandler(d)
 
 	srv := mcpsdk.NewServer(&mcpsdk.Implementation{
 		Name:    "docker-commander",
@@ -300,6 +309,27 @@ func (h *handler) authorizeExtra(ctx context.Context, re *mcpsdk.RequestExtra, s
 	}
 	if err := h.deps.CheckAccess(ctx, p.user, section, write, hostID); err != nil {
 		return nil, err
+	}
+	// Last, and only for changes: the blast-radius cap. It runs AFTER the
+	// permission checks so a denied call never spends anyone's allowance —
+	// otherwise a caller probing for what it may do would throttle the user it is
+	// impersonating, and the refusals it collected would look like a rate limit
+	// rather than the authorization failures they are.
+	//
+	// Charged per authorization, so an operation that authorizes twice (a project
+	// on a remote host checks "projects" again against that host) spends two
+	// units. That errs toward caution, which is the right direction for a ceiling.
+	if write {
+		ok, firstTrip := h.limiter.allow(p.user.ID)
+		if !ok {
+			if firstTrip {
+				// Hitting the ceiling is not normal operation. Whatever caused it —
+				// a model in a loop or someone using a stolen token — this is the
+				// line an operator needs to find afterwards.
+				h.audit(p, "mcp.ratelimit", section, "control rate limit reached via MCP; changes refused")
+			}
+			return nil, errControlRateLimited()
+		}
 	}
 	return p, nil
 }

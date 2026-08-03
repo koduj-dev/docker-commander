@@ -166,9 +166,13 @@ reach for when diagnosing.
   section is rebuilt from its current files rather than redeployed from a stale
   image. This is not a wider surface than before: `up` has always built an image
   that was missing, so deploying such a project could already run its Dockerfile.
-  Remote-host projects are still refused here — for `preview_deploy` too, since
-  previewing one means listing that host's containers. MCP tokens carry no
-  per-host authorization yet; lifting that is one change for both.
+  Projects that target a **remote host** work here too. They authorize against
+  that host — the `hosts` section plus the per-host scope, the same rule the web
+  UI applies — and they resolve their compose environment exactly the way the UI
+  does, so a remote deploy through MCP still ships the project's own bind mounts
+  to the target and still **refuses** binds pointing outside the project folder
+  unless the project is explicitly opted in. Anything remapped is reported back
+  in the tool's output rather than left unsaid.
 
 It also exposes MCP **resources** (the container inventory and compose files as
 attachable context) and **prompts** (curated workflows like *diagnose an
@@ -203,6 +207,18 @@ unhealthy container* or *guided safe redeploy*).
   signed with a key dedicated to MCP, separate from your login session secret.
 - Every **control** call (start/stop/restart, deploy/down) is written to the
   [audit log](audit.md) under your account.
+- **Changes are rate limited** — at most 30 per minute per user, with a burst of
+  30. Every other control here answers *is this allowed*; this one answers *how
+  much, how fast*, which is the question that matters when the caller is a model
+  stuck in a loop or a token in the wrong hands. Both look exactly like an
+  authorized user: each call is permitted, there are simply thousands of them.
+  The cap turns "the whole estate stopped" into "a few containers stopped and the
+  audit log is shouting". **Reads are not limited** — they change nothing, and
+  throttling them would push an assistant toward acting without looking, which is
+  the behaviour the cap exists to prevent. Reaching the ceiling writes **one**
+  audit entry per episode, not one per rejected call, so a runaway cannot bury
+  the evidence of itself. A large batch of changes made on purpose belongs in the
+  web UI.
 
 ## Tips
 - Keep MCP **behind a reverse proxy / HTTPS**; the OAuth and rate-limited
