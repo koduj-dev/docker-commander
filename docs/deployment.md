@@ -325,6 +325,9 @@ dockercmd --restore /var/backups/dc.tar.gz --force    # overwrite an existing in
 systemctl start dockercmd
 ```
 
-Restore refuses to overwrite an existing installation unless `--force`, so a
-mistyped path can't destroy a running instance. Archive entries are jailed to the
-data dir, so a tampered backup can't write elsewhere on the filesystem.
+**Stop the server first** — as in the snippet above. The database is replaced
+wholesale, and nothing enforces this: restoring underneath a live process leaves
+it holding a database that no longer exists. Restore also refuses to overwrite an
+existing installation unless `--force`, so a mistyped path can't destroy an
+instance by accident. Archive entries are jailed to the data dir, so a tampered
+backup can't write elsewhere on the filesystem.
