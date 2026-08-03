@@ -62,10 +62,12 @@ equivalent to every stored secret, because the at-rest encryption key lives
 inside the database it contains.
 .TP
 .BI \-\-restore " file " [ \fB\-\-force\fR ", " \fB\-\-passphrase\fR ]
-Restore a backup into the data dir. Refuses if a database is already present
-unless
+Restore a backup into the data dir. The server must
+.B not
+be running — the database is replaced wholesale, so restoring underneath a live
+process corrupts its view of it. Refuses if a database is already present unless
 .B \-\-force
-is given. Entries are confined to the data dir, so a tampered archive cannot
+is given, which overwrites it. Entries are confined to the data dir, so a tampered archive cannot
 write elsewhere.
 .SH OPTIONS
 Every option also has a

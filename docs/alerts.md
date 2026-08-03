@@ -217,7 +217,7 @@ form), `name` and `host`:
 
 Only `dockercmd_container_running` is emitted for **every** container; the four
 usage series cover **running** ones only. So a stopped container's memory series
-simply ends rather than reporting zero — join on `container_running` if a
+simply ends rather than reporting zero — join on `dockercmd_container_running` if a
 dashboard needs to tell "stopped" from "not scraped". **Network counters are not
 exported here yet**: they are collected, charted and kept in history, but
 `/metrics` carries CPU and memory only.

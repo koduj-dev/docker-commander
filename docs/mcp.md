@@ -186,7 +186,8 @@ unhealthy container* or *guided safe redeploy*).
 
 Every tool, the **section** it is gated by, and whether it counts as a read or a
 **write** (writes are refused for a read-only token or user, and are audited and
-rate limited). This is the list a token's section subset narrows.
+rate limited). This is the list a token's section subset narrows; its host subset
+then decides *where* each one may act.
 
 | Tool | Section | R/W | What it does |
 |---|---|---|---|
@@ -244,8 +245,8 @@ and authorize against it; see the security model below.
 - **RBAC is reused, not reinvented.** Every tool maps to a section + read/write
   and is checked against your **live** permissions on **every** request — disable
   a section for a user and the matching MCP tool stops working immediately.
-- **Tokens only narrow.** A token's section subset and read-only flag are applied
-  *before* your own RBAC; they can never grant more than you have.
+- **Tokens only narrow.** A token's section subset, **host subset** and read-only
+  flag are applied *before* your own RBAC; they can never grant more than you have.
 - **Tokens expire by default.** New tokens last **30 days** unless another
   lifetime is chosen, and never-expiring ones are **off** until an admin turns
   them on. Revocation already existed, but revocation needs somebody to remember
