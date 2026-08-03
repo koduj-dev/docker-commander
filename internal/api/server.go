@@ -341,14 +341,15 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) mountMCP(r chi.Router) {
 	base := strings.TrimRight(s.cfg.MCPPublicURL, "/")
 	deps := mcp.Deps{
-		Store:         s.store,
-		Docker:        s.docker,
-		History:       s.history,
-		CheckAccess:   s.checkAccess,
-		Version:       s.cfg.Version,
-		ListProjects:  s.mcpListProjects,
-		DeployProject: s.mcpDeployProject,
-		DownProject:   s.mcpDownProject,
+		Store:          s.store,
+		Docker:         s.docker,
+		History:        s.history,
+		CheckAccess:    s.checkAccess,
+		Version:        s.cfg.Version,
+		ListProjects:   s.mcpListProjects,
+		DeployProject:  s.mcpDeployProject,
+		DownProject:    s.mcpDownProject,
+		PreviewProject: s.mcpPreviewProject,
 	}
 	// OAuth (for interactive clients like Claude Desktop) needs a public URL for
 	// audience binding + discovery. Without one, only bearer/API-token auth works.

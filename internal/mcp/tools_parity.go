@@ -208,3 +208,38 @@ func (h *handler) alertDelivery(ctx context.Context, req *mcpsdk.CallToolRequest
 	}
 	return nil, out, nil
 }
+
+// ---- preview_deploy ----
+
+type previewDeployInput struct {
+	ProjectID int64 `json:"project_id" jsonschema:"the managed project id, from list_managed_projects"`
+}
+
+func (h *handler) registerPreviewTool(s *mcpsdk.Server) {
+	mcpsdk.AddTool(s, &mcpsdk.Tool{
+		Name: "preview_deploy",
+		Description: "What deploying a managed project WOULD change, without deploying it: which services would be " +
+			"created, which would be recreated with a different image, and which are running but no longer in the " +
+			"compose file. Also reports an invalid compose file. Use this before deploy_project.",
+	}, h.previewDeploy)
+}
+
+func (h *handler) previewDeploy(ctx context.Context, req *mcpsdk.CallToolRequest, in previewDeployInput) (*mcpsdk.CallToolResult, ProjectPreview, error) {
+	// A read: it resolves the compose file and lists containers, and changes
+	// nothing. Gating it as a write would be the wrong lesson — a preview must be
+	// cheaper to reach than the deploy it protects, or nobody uses it.
+	if _, err := h.authorize(ctx, req, "projects", false, 0); err != nil {
+		return nil, ProjectPreview{}, err
+	}
+	if h.deps.PreviewProject == nil {
+		return nil, ProjectPreview{}, errors.New("project preview is not available on this server")
+	}
+	if in.ProjectID <= 0 {
+		return nil, ProjectPreview{}, errors.New("project_id is required")
+	}
+	out, err := h.deps.PreviewProject(ctx, in.ProjectID)
+	if err != nil {
+		return nil, ProjectPreview{}, err
+	}
+	return nil, out, nil
+}

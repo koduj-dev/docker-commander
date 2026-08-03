@@ -7,6 +7,19 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **`preview_deploy` — see what a deploy would do before doing it.** Which services
+  would be created, which would be recreated with a different image, and which are
+  running but no longer in the compose file. It compares against the **containers
+  actually running** rather than a record of the last deploy: a record says what
+  someone last asked for, the containers say what is there, and those differ exactly
+  when it matters. An invalid compose file comes back as a result rather than an
+  error, because that is the single most useful thing a preview can report.
+
+  Two things it is careful not to claim: a service that builds locally has no image
+  until it is built, so it is never reported as an image change; and an orphaned
+  service is described as *left running*, because the app does not pass
+  `--remove-orphans` and saying "will be removed" would be alarming and false.
+
 - **MCP caught up with the rest of the app.** Stack lifecycle (`start_stack`,
   `stop_stack`, `restart_stack`), `scan_image` for Trivy vulnerability scans, and
   `alert_delivery` — whether an alert actually reached anyone, which is a different

@@ -90,3 +90,62 @@ func (s *Server) mcpDownProject(ctx context.Context, id int64) (string, error) {
 	defer cleanup()
 	return docker.ComposeDown(ctx, dir, p.Slug, env)
 }
+
+// mcpPreviewProject reports what deploying a managed project would change,
+// without deploying it.
+//
+// Compares the resolved compose against the containers actually running under
+// the project's label — not against a record of the last deploy. A stored record
+// says what someone last asked for; the containers say what is there, and the two
+// diverge exactly when it matters (a manual removal, a deploy that half-failed).
+func (s *Server) mcpPreviewProject(ctx context.Context, id int64) (mcp.ProjectPreview, error) {
+	var out mcp.ProjectPreview
+	if !docker.ComposeAvailable(ctx) {
+		return out, errors.New("the `docker compose` CLI is not available on the host running Docker Commander")
+	}
+	p, err := s.store.ProjectByID(ctx, id)
+	if err != nil {
+		return out, err
+	}
+	if p.HostID != 0 {
+		// Same restriction as deploy: MCP tokens carry no per-host authorization,
+		// and previewing a remote project means listing that host's containers.
+		// Lifting this is a single change for both, and belongs with it.
+		return out, errors.New("this project targets a remote host; preview it from the web UI")
+	}
+
+	dir := s.projectRoot(p.ID)
+	cfgJSON, err := docker.ComposeConfigJSON(ctx, dir, p.Slug)
+	if err != nil {
+		// An invalid compose file is the single most useful thing a preview can
+		// report, so it comes back as a result rather than an error.
+		out.Valid = false
+		out.Error = err.Error()
+		return out, nil
+	}
+	resolved, err := docker.ParseComposeServices(cfgJSON)
+	if err != nil {
+		out.Valid = false
+		out.Error = err.Error()
+		return out, nil
+	}
+
+	var running []docker.ServiceSpec
+	if stacks, serr := s.docker.ListStacks(ctx, p.HostID); serr == nil {
+		for i := range stacks {
+			if stacks[i].Project == p.Slug {
+				running = docker.RunningServices(&stacks[i])
+				break
+			}
+		}
+	}
+
+	prev := docker.BuildDeployPreview(resolved, running)
+	out.Valid = true
+	out.Project = p.Name
+	out.Services = prev.Services
+	out.Running = prev.Running
+	out.Changes = prev.Changes
+	out.Unchanged = prev.Unchanged
+	return out, nil
+}
