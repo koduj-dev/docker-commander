@@ -7,6 +7,22 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **Acknowledging an alert is now scoped to that alert's host**, over both the
+  REST route and MCP. The feed and *ack all* were already scoped; acknowledging a
+  single id was not, and alert ids are sequential integers — so a role confined
+  to staging could clear production's alerts. Quietly, too: an acknowledged alert
+  stops being surfaced, which makes it a suppression primitive rather than a
+  nuisance. A missing alert and an out-of-reach one give the same answer, so the
+  route cannot be used to discover which ids exist elsewhere.
+
+  Deliberately **not** gated behind the `hosts` section. Host reach is derived
+  from grants across all sections, so a user whose `alerts` grant is scoped to a
+  remote host already sees that host's alerts; demanding `hosts` as well would
+  show them an alert they could neither acknowledge nor trace. (The same
+  correction applies to `alert_delivery`, which had been over-tightened when it
+  was first scoped.) Over-tightening is not a safe default — it is a different
+  bug that looks like caution, and it now has its own test.
+
 - **`list_managed_projects` no longer names projects on out-of-scope hosts.** The
   REST list has always filtered these out — a project names its target host, so
   listing one discloses that host's workloads, and whether they are deployed, to
