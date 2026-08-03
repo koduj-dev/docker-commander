@@ -120,6 +120,21 @@ function MCPTokenForm({ sections, ownerReadOnly, policy, onCancel, onDone }: {
   // The value is the option's index: "never" and "0 days" would otherwise both
   // be 0 in a <select>, and those mean opposite things.
   const [lifetimeIdx, setLifetimeIdx] = useState(() => defaultLifetimeIndex(options, policy));
+  // The policy can arrive after the form is already open (the page renders as
+  // soon as the token list loads, while /api/mcp/status is still in flight). The
+  // options list changes underneath the index when it does, so an index chosen
+  // against the placeholder policy would silently come to mean a different
+  // lifetime. Re-seed rather than clamp: a choice made against the wrong menu is
+  // not a choice worth preserving.
+  //
+  // Keyed on the policy's VALUES, not the object. The page reloads its token
+  // list after a revoke, handing down a fresh but identical policy object; on
+  // object identity that would wipe a selection the user had already made, for
+  // no reason they could see.
+  useEffect(() => {
+    setLifetimeIdx(defaultLifetimeIndex(lifetimeOptions(policy), policy));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [policy.defaultDays, policy.maxDays, policy.allowUnlimited]);
   const lifetime = options[lifetimeIdx] ?? options[0];
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);

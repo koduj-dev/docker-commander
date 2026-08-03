@@ -38,7 +38,7 @@ func (s *Server) mcpListProjects(ctx context.Context) ([]mcp.ManagedProject, err
 	}
 	out := make([]mcp.ManagedProject, 0, len(projs))
 	for _, p := range projs {
-		out = append(out, mcp.ManagedProject{ID: p.ID, Name: p.Name, Slug: p.Slug, Deployed: deployed[p.HostID][p.Slug]})
+		out = append(out, mcp.ManagedProject{ID: p.ID, Name: p.Name, Slug: p.Slug, HostID: p.HostID, Deployed: deployed[p.HostID][p.Slug]})
 	}
 	return out, nil
 }

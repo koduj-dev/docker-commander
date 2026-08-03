@@ -20,6 +20,11 @@ import (
 
 const scanMaxVulns = 100
 
+// errNoSuchAlert covers both "no such id" and "belongs to a host you cannot
+// reach". One message for both, so the tool cannot be used to discover which
+// alert ids exist elsewhere.
+var errNoSuchAlert = errors.New("no such alert, or it belongs to a host outside your access")
+
 func (h *handler) registerParityTools(s *mcpsdk.Server) {
 	for _, a := range []struct{ name, action, verb string }{
 		{"start_stack", "start", "Start"},
@@ -191,6 +196,20 @@ func (h *handler) alertDelivery(ctx context.Context, req *mcpsdk.CallToolRequest
 	if in.AlertID <= 0 {
 		return nil, alertDeliveryOut{}, errors.New("alert_id is required")
 	}
+	// Authorise against the host the alert belongs to, not host 0. list_alerts
+	// scopes its results by host; without the same check here, a token confined
+	// to one host could walk alert ids — they are sequential integers — and read
+	// back which webhooks fired for another host and whether they succeeded.
+	// The REST feed never has this problem because it only ever fetches
+	// deliveries for events a host-scoped query already returned.
+	//
+	// A missing alert and an out-of-reach one deliberately give the SAME answer:
+	// distinguishing them would turn this into an oracle for which ids exist on
+	// hosts the caller cannot see.
+	hostID, herr := h.deps.Store.AlertEventHost(ctx, in.AlertID)
+	if herr != nil || h.authorizeHost(ctx, req, "alerts", false, hostID) != nil {
+		return nil, alertDeliveryOut{}, errNoSuchAlert
+	}
 	byEvent, err := h.deps.Store.AlertDeliveriesFor(ctx, []int64{in.AlertID})
 	if err != nil {
 		return nil, alertDeliveryOut{}, err
@@ -236,6 +255,15 @@ func (h *handler) previewDeploy(ctx context.Context, req *mcpsdk.CallToolRequest
 	}
 	if in.ProjectID <= 0 {
 		return nil, ProjectPreview{}, errors.New("project_id is required")
+	}
+	// Re-check against the host the project actually targets, exactly as
+	// deploy/down do. Being a read does not exempt it: a preview lists the
+	// services and images running on that host, which is precisely the thing the
+	// per-host scope exists to withhold. Until remote projects were allowed, the
+	// blanket refusal of them WAS this check — removing that refusal without
+	// putting this here is what turned a closed door into an open one.
+	if err := h.authorizeProjectHost(ctx, req, in.ProjectID, false); err != nil {
+		return nil, ProjectPreview{}, err
 	}
 	out, err := h.deps.PreviewProject(ctx, in.ProjectID)
 	if err != nil {

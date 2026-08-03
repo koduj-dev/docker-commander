@@ -134,3 +134,38 @@ func TestStoredPolicyRoundTripsAndFailsSafe(t *testing.T) {
 		t.Fatalf("corrupt policy failed open: %+v", p)
 	}
 }
+
+// A lifetime long enough to overflow the arithmetic must be refused, not
+// silently turned into something else.
+//
+// time.Duration is int64 nanoseconds, so days × 24h wraps above ~106,751 days.
+// Before this was bounded, 200,000 days produced an expiry in 1989 — a token
+// dead the moment it was issued — and larger values wrapped round to arbitrary
+// dates bearing no relation to the request. It fails safe, but it answers the
+// wrong question without saying so, which is worse than refusing.
+func TestAbsurdLifetimeIsRefusedNotWrapped(t *testing.T) {
+	// No ceiling: the only configuration in which a huge request gets this far.
+	p := MCPTokenPolicy{DefaultDays: 30, MaxDays: 0, AllowUnlimited: true}
+
+	for _, days := range []int{200_000, 1 << 40} {
+		exp, err := p.ResolveExpiry(days, false, policyEpoch)
+		if err == nil {
+			t.Errorf("%d days accepted, producing %v", days, exp)
+			continue
+		}
+		var lim *TokenLifetimeError
+		if !errors.As(err, &lim) {
+			t.Errorf("%d days: want a lifetime error, got %v", days, err)
+		}
+	}
+
+	// A long-but-sane lifetime still works, and lands in the future — the
+	// boundary must not be so tight that it breaks legitimate use.
+	exp, err := p.ResolveExpiry(3650, false, policyEpoch)
+	if err != nil {
+		t.Fatalf("a 10-year token was refused: %v", err)
+	}
+	if !exp.After(policyEpoch) {
+		t.Fatalf("expiry %v is not in the future", exp)
+	}
+}

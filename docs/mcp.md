@@ -214,6 +214,12 @@ unhealthy container* or *guided safe redeploy*).
   they were given, so tightening the policy will not cut off a running
   integration overnight — existing never-expiring tokens are listed on the MCP
   Admin page and can be revoked there.
+- **Host scope reaches aggregates, not just arguments.** Tools that take an id
+  rather than a host — a project, an alert — resolve the host that id belongs to
+  and authorize against it, and list tools drop rows for hosts the caller cannot
+  reach. Ids are sequential integers, so "you need the id first" is not an access
+  control. A missing object and an out-of-reach one give the same answer, so the
+  tools cannot be used to map what exists elsewhere.
 - **Secrets are kept out.** Container env vars, audit detail, and raw event
   attributes are omitted from tool output; logs are size-capped.
 - **Off by default, behind HTTPS.** Enable it consciously. Access tokens are

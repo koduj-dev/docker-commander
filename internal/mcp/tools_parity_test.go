@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/koduj-dev/docker-commander/internal/store"
+
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -141,8 +143,17 @@ func TestPreviewDeployIsAReadNotAWrite(t *testing.T) {
 		return ProjectPreview{Valid: true, Project: "web"}, nil
 	}
 
+	// A real project row: previewDeploy resolves the project to authorize against
+	// the host it targets, so a made-up id is now refused before it gets that far.
+	pid, err := h.deps.Store.CreateProject(ctx, &store.Project{
+		Name: "web", Slug: "web", ComposeFile: "compose.yml",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	ro := reqFor(&principal{user: u, roOnly: true})
-	if _, out, err := h.previewDeploy(ctx, ro, previewDeployInput{ProjectID: 1}); err != nil {
+	if _, out, err := h.previewDeploy(ctx, ro, previewDeployInput{ProjectID: pid}); err != nil {
 		t.Fatalf("a read-only token must still be able to preview: %v", err)
 	} else if !out.Valid {
 		t.Errorf("unexpected result: %+v", out)

@@ -44,6 +44,13 @@ const (
 	// genuine long-lived integration, short enough that a forgotten credential
 	// eventually stops working on its own.
 	defaultMCPTokenMaxDays = 365
+	// absoluteMaxTokenDays bounds the arithmetic, not the policy. time.Duration is
+	// int64 nanoseconds, so days * 24h overflows above roughly 106,751 — and an
+	// overflowed expiry lands in the PAST, silently handing back a token that is
+	// dead on arrival, or (further round the wrap) one whose lifetime bears no
+	// relation to what was asked for. A century is beyond any real lifetime and
+	// keeps every case well inside the range.
+	absoluteMaxTokenDays = 100 * 365
 )
 
 // DefaultMCPTokenPolicy is what a fresh install gets, and what a stored policy
@@ -135,6 +142,13 @@ func (p MCPTokenPolicy) ResolveExpiry(requestedDays int, never bool, now time.Ti
 	}
 	if p.MaxDays > 0 && days > p.MaxDays {
 		return time.Time{}, &TokenLifetimeError{MaxDays: p.MaxDays}
+	}
+	// Reachable only when the admin has removed the ceiling, which they may only
+	// do alongside allowing never-expiring tokens. Refused rather than clamped:
+	// silently substituting a different lifetime is what the overflow already
+	// did, and the caller wanting something this long should say "never".
+	if days > absoluteMaxTokenDays {
+		return time.Time{}, &TokenLifetimeError{MaxDays: absoluteMaxTokenDays}
 	}
 	return now.Add(time.Duration(days) * 24 * time.Hour), nil
 }

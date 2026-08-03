@@ -59,10 +59,27 @@ func (h *handler) listManagedProjects(ctx context.Context, req *mcpsdk.CallToolR
 	if err != nil {
 		return nil, managedProjectsOut{}, err
 	}
-	if projs == nil {
-		projs = []ManagedProject{}
+	// Filter by the host each project targets, exactly as the REST list does: a
+	// project names its target host, so listing one on an out-of-scope host
+	// discloses that host's workloads — its name, and whether it is deployed —
+	// to someone who cannot reach it. Answering with a shorter list is right
+	// here; an error would tell the caller such a project exists, which is the
+	// thing being withheld.
+	out := make([]ManagedProject, 0, len(projs))
+	reachable := map[int64]bool{}
+	for _, p := range projs {
+		ok, seen := reachable[p.HostID]
+		if !seen {
+			// Memoised per host: projects cluster onto a few hosts, and each miss
+			// costs a grants lookup.
+			ok = h.authorizeHost(ctx, req, "projects", false, p.HostID) == nil
+			reachable[p.HostID] = ok
+		}
+		if ok {
+			out = append(out, p)
+		}
 	}
-	return nil, managedProjectsOut{Projects: projs}, nil
+	return nil, managedProjectsOut{Projects: out}, nil
 }
 
 // ---- deploy_project / down_project (write) ----
@@ -128,15 +145,29 @@ func (h *handler) authorizeProjectHost(ctx context.Context, req *mcpsdk.CallTool
 	if err != nil {
 		return errInvalidProject
 	}
-	if proj.HostID == 0 {
-		return nil
+	return h.authorizeHost(ctx, req, "projects", write, proj.HostID)
+}
+
+// authorizeHost gates a section against a specific Docker host. Reaching a
+// remote host needs the "hosts" section too, matching the REST rule in
+// api.requireHostAccess.
+//
+// One function rather than the check written out at each call site: the two
+// times this rule has been missed, it was missed by a caller that did not know
+// it existed, and a rule spelled out in several places is a rule that will
+// eventually be spelled out in only most of them.
+func (h *handler) authorizeHost(ctx context.Context, req *mcpsdk.CallToolRequest, section string, write bool, hostID int64) error {
+	// The "hosts" requirement is what the local daemon is exempt from — it is
+	// always in scope. The SECTION check is not optional for it. Returning early
+	// on host 0 would make this helper safe only because today's callers happen
+	// to have checked the section themselves first, and the whole point of
+	// having one gate is that the next caller does not have to know that.
+	if hostID != 0 {
+		if _, err := h.authorize(ctx, req, "hosts", false, hostID); err != nil {
+			return err
+		}
 	}
-	// Targeting a remote host needs the "hosts" section too, matching the REST
-	// rule in api.requireHostAccess.
-	if _, err := h.authorize(ctx, req, "hosts", false, proj.HostID); err != nil {
-		return err
-	}
-	_, err = h.authorize(ctx, req, "projects", write, proj.HostID)
+	_, err := h.authorize(ctx, req, section, write, hostID)
 	return err
 }
 
