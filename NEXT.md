@@ -166,9 +166,14 @@ Recorded so they don't get re-proposed.
   runtime dependency whose real pain (`ProtectHome` plugin discovery) is already
   fixed.
 - **Arbitrary MCP `exec` / file access / prune / remove / image export.** The tool
-  surface is deliberately read + safe-control. If any of these ever appear they
-  must be explicitly opt-in, in a separate risky toolset, audited, and constrained
-  by both token and role.
+  surface is deliberately read + safe-control. Stopping things is offered;
+  destroying them is not — that is a trip to the UI.
+
+  If they are ever wanted, the shape is settled and should not be re-argued: an
+  **opt-in the operator turns on in the UI**, off by default, in a separate risky
+  toolset, audited, and constrained by both token and role. A test
+  (`TestNoDestructiveToolsAreAdvertised`) fails on any destructive verb in the
+  advertised list, so this cannot be eroded a tool at a time.
 - **More plain Docker API CRUD wrappers.** The everyday management surface is
   covered. New work should aggregate, explain, protect a change, or make recovery
   possible.

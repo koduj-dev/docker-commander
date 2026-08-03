@@ -130,6 +130,7 @@ func (d Deps) Handlers() (mcpHandler, metadataHandler http.Handler) {
 	h.registerReadTools(srv)
 	h.registerAlertTools(srv)
 	h.registerDiagnosticTools(srv)
+	h.registerParityTools(srv)
 	h.registerControlTools(srv)
 	h.registerResources(srv)
 	h.registerPrompts(srv)

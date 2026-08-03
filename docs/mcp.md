@@ -132,6 +132,9 @@ same questions and a great many others nobody intended to allow.
   lifecycle kind, container, rule, message text)
 - **active_alert_conditions** — what is over threshold *right now*, and for how long
 - **acknowledge_alert** — record that a human has seen one
+- **alert_delivery** — whether an alert actually reached anyone. No attempts means
+  it was never routed anywhere; a failed attempt means nobody was told, which is a
+  different problem from nobody responding
 - **list_alert_rules** — the rules and their thresholds. `MEM 61% of limit > 5%`
   cannot be judged without the rule behind it: this is how an assistant tells a
   real problem from a badly chosen threshold. It reports which channels a rule
@@ -148,6 +151,11 @@ reach for when diagnosing.
 
 - **start / stop / restart** a container
 - **acknowledge_alert** — records who acknowledged; it changes nothing about the container, but it is attributed, so a read-only principal cannot make that claim on someone's behalf
+- **start / stop / restart** a Compose **stack** by project name — the whole stack,
+  so prefer the per-container tools when one service is the problem
+- **scan_image** — a Trivy vulnerability scan: severity summary plus the most
+  serious findings. Gated as a write because it shells out and will pull the image
+  if it is missing; it reports Trivy being absent rather than failing
 - **deploy / down** a managed Compose project. `deploy` runs
   `docker compose up -d --build`, matching the web UI — a project with a `build:`
   section is rebuilt from its current files rather than redeployed from a stale
@@ -159,6 +167,18 @@ reach for when diagnosing.
 It also exposes MCP **resources** (the container inventory and compose files as
 attachable context) and **prompts** (curated workflows like *diagnose an
 unhealthy container* or *guided safe redeploy*).
+
+> **Stack `remove` is deliberately absent** even though the app implements it:
+> force-removing a stack's containers and networks is destruction, not safe
+> control. Stopping a stack is offered; removing it is something to do by hand.
+> A test asserts no destructive verb ever appears in the tool list, so adding one
+> cannot happen by oversight.
+>
+> If destructive tools are ever wanted, the route is an **explicit opt-in the
+> operator enables in the UI** — off by default, in a separate risky toolset,
+> audited, and constrained by both token and role. The point is that "the
+> assistant deleted it" should only ever be possible after somebody decided it
+> could be.
 
 > Deliberately **not** available — by design, to avoid turning an AI token into a
 > data-exfiltration or destruction path: `exec`/shell, image `save`/export,
