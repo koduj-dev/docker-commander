@@ -5,6 +5,7 @@ import { api, fileApiForContainer } from "../lib/api";
 import type { ContainerDetail as Detail, DiffEntry, LogLine, PortMapping, PortProbe, StatsSample, TopResult } from "../lib/types";
 import { live, ensureLive } from "../lib/live";
 import { shortId } from "../lib/format";
+import { useDocumentTitle } from "../lib/title";
 import { StateBadge, Spinner } from "../components/ui";
 import { Tabs } from "../components/Tabs";
 import { StatsCharts } from "../components/StatsChart";
@@ -73,6 +74,12 @@ export function ContainerDetail() {
     await api.containerAction(id, action);
     await load();
   };
+
+  // This screen draws its own header rather than PageHeader, so it names the tab
+  // itself — with the container's name, which is the useful thing when several
+  // are open side by side. Called before the loading return: hooks are not
+  // conditional.
+  useDocumentTitle(detail?.name ?? "Container");
 
   if (!detail) return <div className="p-6 flex items-center gap-2 text-muted"><Spinner /> Loading…</div>;
 

@@ -9,6 +9,7 @@ import { useToasts, type ToastTone } from "../components/Toasts";
 import type { Host, UpdateStatus } from "../lib/types";
 import { getHostId, setHostId } from "../lib/host";
 import { getPref, setPref } from "../lib/prefs";
+import { useDocumentTitle } from "../lib/title";
 import { useDialogs } from "../components/Dialog";
 
 // Navigation grouped into sections so the sidebar stays scannable as the
@@ -402,6 +403,10 @@ function iconForPath(pathname: string): typeof Boxes | undefined {
 export function PageHeader({ title, actions }: { title: string; actions?: ReactNode }) {
   const { pathname } = useLocation();
   const Icon = iconForPath(pathname);
+  // Every agenda renders this header, so naming the browser tab here covers them
+  // all — including the loading branches, which render the same header and would
+  // otherwise flash a stale title.
+  useDocumentTitle(title);
   return (
     <div className="flex items-center justify-between h-16 px-6 border-b border-border sticky top-0 bg-bg/80 backdrop-blur-sm z-10">
       <h1 className="text-lg font-semibold flex items-center gap-2">

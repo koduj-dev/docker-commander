@@ -56,6 +56,13 @@ All notable changes to Docker Commander are documented here. The format follows
   preview closure is never reached for an out-of-scope host.
 
 ### Added
+- **The browser tab now names the page you are on** — `Images · Docker Commander`,
+  and a container's own name on its detail page. Every screen was titled just
+  "Docker Commander", which is no label at all once a few tabs are open: the app
+  name is the part they all share. The page comes first for the same reason, since
+  a narrow tab shows the beginning of the title and nothing else. The sign-in and
+  first-run screens name themselves too.
+
 - **MCP tokens expire by default, and admins set the rules.** New tokens last 30
   days unless another lifetime is picked, and never-expiring ones are off until
   an admin enables them. Revocation already existed, but it needs somebody to
