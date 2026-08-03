@@ -640,3 +640,20 @@ func (s *Store) DeleteAlertState(ctx context.Context, hostID int64, containerID,
 		hostID, containerID, metric)
 	return err
 }
+
+// AlertEventHost returns the Docker host an alert event belongs to.
+//
+// Exists so a caller holding only an alert id can authorise against that alert's
+// host before reading anything about it. Alert ids are sequential integers, so
+// "you need the id first" is not an access control.
+func (s *Store) AlertEventHost(ctx context.Context, id int64) (int64, error) {
+	var hostID sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `SELECT host_id FROM alert_events WHERE id = ?`, id).Scan(&hostID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, err
+	}
+	return hostID.Int64, nil
+}

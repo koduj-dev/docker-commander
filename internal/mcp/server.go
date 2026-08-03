@@ -64,10 +64,15 @@ type ProjectPreview struct {
 }
 
 type ManagedProject struct {
-	ID       int64  `json:"id"`
-	Name     string `json:"name"`
-	Slug     string `json:"slug"`
-	Deployed bool   `json:"deployed"`
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+	// HostID is the Docker host the project deploys to (0 = the local daemon).
+	// Carried so the tool layer can drop projects on hosts the caller may not
+	// reach — the store row has it, and without it here the filter would have to
+	// re-read every project.
+	HostID   int64 `json:"hostId"`
+	Deployed bool  `json:"deployed"`
 }
 
 // Deps are the host-application dependencies the MCP server needs. The api

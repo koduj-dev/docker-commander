@@ -7,6 +7,28 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **`list_managed_projects` no longer names projects on out-of-scope hosts.** The
+  REST list has always filtered these out — a project names its target host, so
+  listing one discloses that host's workloads, and whether they are deployed, to
+  someone who cannot reach it. The MCP tool returned every project regardless.
+  It now applies the same filter, and answers with a shorter list rather than an
+  error, since an error would itself confirm such a project exists.
+
+- **`alert_delivery` now authorizes against the alert's host.** It took an alert
+  id and checked only the `alerts` section, so a token confined to one host could
+  walk the id space — alert ids are sequential integers — and read which webhooks
+  fired for another host and whether they succeeded. The REST feed never had this
+  problem: it only fetches deliveries for events a host-scoped query already
+  returned. A missing alert and an out-of-reach one now give the same answer, so
+  the tool cannot be used to discover which ids exist elsewhere.
+
+- **An absurd token lifetime is refused rather than silently wrapped.**
+  `time.Duration` is int64 nanoseconds, so days × 24h overflows above ~106,751
+  days: asking for 200,000 days produced an expiry in 1989 — a token dead the
+  moment it was issued — and larger values wrapped to arbitrary dates. Only
+  reachable once an admin removed the ceiling, and it failed safe, but it
+  answered the wrong question without saying so.
+
 - **`preview_deploy` now re-checks the project's host.** While remote-host
   projects were refused outright, that refusal was the only thing gating this
   tool; allowing them without a per-host check let a token scoped to one host
