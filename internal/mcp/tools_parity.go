@@ -25,6 +25,18 @@ const scanMaxVulns = 100
 // alert ids exist elsewhere.
 var errNoSuchAlert = errors.New("no such alert, or it belongs to a host outside your access")
 
+// mustAuthorize discards the principal so an authorize() call can be used as a
+// plain predicate.
+//
+// Alerts are checked against the alert's host with the "alerts" section ALONE —
+// deliberately not through authorizeHost, which additionally demands "hosts".
+// That extra requirement is right for projects, where reaching a remote host
+// means acting on it, and wrong here: a user whose alerts grant is scoped to a
+// remote host already sees those alerts in the feed without holding "hosts", so
+// demanding it would let them read an alert and then refuse to tell them whether
+// anyone was paged about it.
+func mustAuthorize(_ *principal, err error) error { return err }
+
 func (h *handler) registerParityTools(s *mcpsdk.Server) {
 	for _, a := range []struct{ name, action, verb string }{
 		{"start_stack", "start", "Start"},
@@ -207,7 +219,7 @@ func (h *handler) alertDelivery(ctx context.Context, req *mcpsdk.CallToolRequest
 	// distinguishing them would turn this into an oracle for which ids exist on
 	// hosts the caller cannot see.
 	hostID, herr := h.deps.Store.AlertEventHost(ctx, in.AlertID)
-	if herr != nil || h.authorizeHost(ctx, req, "alerts", false, hostID) != nil {
+	if herr != nil || mustAuthorize(h.authorize(ctx, req, "alerts", false, hostID)) != nil {
 		return nil, alertDeliveryOut{}, errNoSuchAlert
 	}
 	byEvent, err := h.deps.Store.AlertDeliveriesFor(ctx, []int64{in.AlertID})

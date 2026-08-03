@@ -1192,6 +1192,28 @@ func (s *Server) requireHostAccess(r *http.Request, hostID int64) error {
 	return s.checkAccess(r.Context(), u, "projects", isWriteRequest(r), hostID)
 }
 
+// requireSectionOnHost checks one section against one Docker host, for handlers
+// that resolve the host from a record rather than from ?host=.
+//
+// Deliberately does NOT also demand the "hosts" section, which is what separates
+// it from requireHostAccess. That extra requirement belongs to projects, where
+// reaching a remote host means acting on it. For data that is merely scoped by
+// host — an alert, say — it would be wrong: a user whose grant is scoped to a
+// remote host already sees that host's alerts in the feed without holding
+// "hosts", so requiring it here would show them an alert they then could not
+// acknowledge.
+func (s *Server) requireSectionOnHost(r *http.Request, section string, write bool, hostID int64) error {
+	claims, ok := auth.ClaimsFrom(r.Context())
+	if !ok {
+		return errors.New("unauthorized")
+	}
+	u, err := s.store.UserByID(r.Context(), claims.UserID)
+	if err != nil {
+		return errors.New("unauthorized")
+	}
+	return s.checkAccess(r.Context(), u, section, write, hostID)
+}
+
 // requireHostsPermission gates actions whose authority is really about the remote
 // host rather than the project — currently only opting a project into mounting
 // paths that live on that host.

@@ -311,6 +311,19 @@ func (s *Server) handleAckAllAlertEvents(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) handleAckAlertEvent(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	// Acknowledging by id has to be scoped to the alert's host, the same way the
+	// feed and ack-all already are. Alert ids are sequential integers, so without
+	// this a role confined to staging could clear production's alerts — quietly,
+	// since an acknowledged alert stops being surfaced.
+	//
+	// A missing alert and an out-of-reach one give the SAME answer: distinguishing
+	// them would turn this into an oracle for which ids exist on hosts the caller
+	// cannot see.
+	hostID, herr := s.store.AlertEventHost(r.Context(), id)
+	if herr != nil || s.requireSectionOnHost(r, "alerts", true, hostID) != nil {
+		writeErr(w, http.StatusNotFound, "no such alert, or it belongs to a host outside your access")
+		return
+	}
 	// Record WHO acknowledged: "someone dealt with this" is only actionable if
 	// you can go and ask them.
 	by := ""
