@@ -185,6 +185,47 @@ own names before creating them (`freeName`), so a poisoned daemon self-heals.
 first and the Compose tests deploy to your own daemon, then hang waiting for
 containers that started somewhere else.
 
+## Adversarial review — and why it is deliberately not a tier
+
+Tests answer *"does the thing I thought of still work?"*. They cannot answer
+*"what didn't I think of?"* — and on a tool that controls production Docker
+daemons, that second question is the expensive one.
+
+So the codebase is periodically swept by an **adversarial review**: several
+independent reviewers, each confined to one lane so nobody's attention is spread
+across everything —
+
+| Lane | Ground covered |
+|---|---|
+| Authentication & crypto | password hashing, sessions, TOTP, LDAP, secrets at rest, backups |
+| Authorization | the RBAC gate, named roles, per-host scoping, the MCP tool surface, OAuth |
+| Untrusted input | path handling, archives, command execution, SSRF, SQL, resource caps |
+| Backend correctness | concurrency, leaks, transactions, the alert engine, Docker integration |
+| Frontend | injection surfaces, subscription hygiene, error handling, destructive-action guards |
+
+They run on **Claude Fable 5**, and the prompts matter as much as the model: each
+reviewer is told to read the code rather than infer it, to **try to refute every
+candidate finding before reporting it**, to say whether a test already covers the
+guard, and that an empty report is a respectable outcome. Without that last
+instruction a reviewer invents work to look useful, which is worse than silence
+because it buries the real findings.
+
+**Why this is not tier 7.** A review is not reproducible, does not run in CI, and
+guards nothing on its own — the next regression walks straight past it. It is a way
+of *finding out what to test*, not a substitute for testing. So the rule is:
+
+> A finding counts as handled when it lands as a **fix plus a test that fails
+> without the fix** — and, where the finding is an instance of a class, plus the
+> sweep that enumerates the class (see *Sweeps, not spot checks* above).
+
+**Treat every finding as a claim, not a verdict.** Machine reviewers produce
+confident, well-written findings that describe code which does not exist; the
+automated review on a recent PR filed two comments about imports the file never
+had and about a missing `Bearer` prefix that was already there. Everything is
+re-verified by reading the named lines before it is believed, let alone fixed. The
+same discipline applies in the other direction — a finding that survives
+verification is not softened because it is inconvenient.
+
 ## Running the tests
 
 ```bash

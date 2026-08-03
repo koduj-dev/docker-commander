@@ -372,6 +372,12 @@ throwaway Redis / OpenLDAP / SMTP), and an end-to-end tier that deploys to
 **separate daemons over both TCP and SSH** — because a mock daemon can't tell you
 whether a remote deploy works.
 
+On top of the tests, the tree is periodically swept by an **adversarial review on
+Claude Fable 5** — independent reviewers per lane (auth & crypto, authorization,
+untrusted input, backend correctness, frontend), each instructed to refute a
+finding before reporting it. It is not a tier and it guards nothing by itself: a
+finding counts only once it lands as a fix **plus** the test that fails without it.
+
 CI runs the deterministic tiers; the daemon-backed ones are developer-run.
 **[docs/testing.md](docs/testing.md)** lays out each tier, how to run it, and
 what is deliberately *not* covered.

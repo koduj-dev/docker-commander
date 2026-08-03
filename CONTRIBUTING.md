@@ -119,6 +119,14 @@ to the risk of the change:
 This is guidance, not tooling, but it's how the security-sensitive parts of the
 codebase have been built.
 
+Beyond per-change review, the tree is periodically swept end-to-end by an
+**adversarial review on Claude Fable 5** — independent reviewers per lane (auth &
+crypto, authorization, untrusted input, backend correctness, frontend), each told
+to refute a finding before reporting it. It is not a smoke test and it is not a
+tier: it finds what to test, and a finding is only handled once it lands as a fix
+plus a test that fails without it. See
+[docs/testing.md](docs/testing.md#adversarial-review--and-why-it-is-deliberately-not-a-tier).
+
 ## Code style
 
 - **Go must be `gofmt`-clean.** CI enforces it with

@@ -35,6 +35,29 @@ fix and disclosure timeline. We'll credit reporters who want to be named once a
 fix is released. This is a community project maintained on a best-effort basis —
 thanks for your patience.
 
+## What review this code has had — and what it hasn't
+
+Every change is reviewed for correctness and security before it merges, and
+anything touching authentication, authorization, crypto or untrusted input ships
+with adversarial tests that assert the attack is *rejected*. On top of that, the
+tree is periodically swept end to end by an **adversarial review on Claude
+Fable 5** — independent reviewers per lane (auth & crypto, authorization,
+untrusted input, backend correctness, frontend), each instructed to refute a
+finding before reporting it. A finding is handled the same way a report from you
+would be: a fix, plus a regression test that fails without it. The method and its
+limits are written up in [docs/testing.md](docs/testing.md#adversarial-review--and-why-it-is-deliberately-not-a-tier).
+
+Stated plainly, so nobody infers more than is there:
+
+- **There has been no third-party security audit.** The above is the maintainer's
+  own reading and tooling, not an independent assessment. Treat it as diligence,
+  not as assurance.
+- **A review only covers what it was pointed at.** That some lane came back clean
+  is evidence about that lane on that day, and nothing about the rest.
+- **Findings are fixed before they are described publicly.** If you are running an
+  older release, assume it has issues a newer one does not — upgrading is part of
+  running this safely.
+
 ## Scope & threat model
 
 A few things worth knowing when assessing a report:
