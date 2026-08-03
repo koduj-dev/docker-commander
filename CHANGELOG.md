@@ -7,6 +7,17 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **MCP caught up with the rest of the app.** Stack lifecycle (`start_stack`,
+  `stop_stack`, `restart_stack`), `scan_image` for Trivy vulnerability scans, and
+  `alert_delivery` — whether an alert actually reached anyone, which is a different
+  question from whether anyone responded. Each already existed in the UI and simply
+  had no MCP surface, leaving an assistant able to reason about a problem but not
+  finish the thought: it could restart a container but not the stack around it.
+
+  Stack **remove** is deliberately not offered — force-removing containers and
+  networks is destruction, not safe control — and a test now fails if any
+  destructive verb appears in the tool list, so adding one has to be a decision.
+
 - **MCP diagnostic tools that don't need a shell.** `container_processes` (what is
   running inside), `container_changes` (what has been written since it started) and
   `search_logs` (find a string or regex across a host's containers, for when you
