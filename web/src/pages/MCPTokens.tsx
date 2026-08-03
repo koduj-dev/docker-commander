@@ -126,9 +126,15 @@ function MCPTokenForm({ sections, ownerReadOnly, policy, onCancel, onDone }: {
   // against the placeholder policy would silently come to mean a different
   // lifetime. Re-seed rather than clamp: a choice made against the wrong menu is
   // not a choice worth preserving.
+  //
+  // Keyed on the policy's VALUES, not the object. The page reloads its token
+  // list after a revoke, handing down a fresh but identical policy object; on
+  // object identity that would wipe a selection the user had already made, for
+  // no reason they could see.
   useEffect(() => {
     setLifetimeIdx(defaultLifetimeIndex(lifetimeOptions(policy), policy));
-  }, [policy]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [policy.defaultDays, policy.maxDays, policy.allowUnlimited]);
   const lifetime = options[lifetimeIdx] ?? options[0];
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);

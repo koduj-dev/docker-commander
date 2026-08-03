@@ -157,11 +157,15 @@ func (h *handler) authorizeProjectHost(ctx context.Context, req *mcpsdk.CallTool
 // it existed, and a rule spelled out in several places is a rule that will
 // eventually be spelled out in only most of them.
 func (h *handler) authorizeHost(ctx context.Context, req *mcpsdk.CallToolRequest, section string, write bool, hostID int64) error {
-	if hostID == 0 {
-		return nil // the local daemon is always in scope
-	}
-	if _, err := h.authorize(ctx, req, "hosts", false, hostID); err != nil {
-		return err
+	// The "hosts" requirement is what the local daemon is exempt from — it is
+	// always in scope. The SECTION check is not optional for it. Returning early
+	// on host 0 would make this helper safe only because today's callers happen
+	// to have checked the section themselves first, and the whole point of
+	// having one gate is that the next caller does not have to know that.
+	if hostID != 0 {
+		if _, err := h.authorize(ctx, req, "hosts", false, hostID); err != nil {
+			return err
+		}
 	}
 	_, err := h.authorize(ctx, req, section, write, hostID)
 	return err
