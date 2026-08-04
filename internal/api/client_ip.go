@@ -1,10 +1,26 @@
 package api
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"strings"
 )
+
+// ctxKey namespaces the values this package puts on a request context.
+type ctxKey int
+
+// viaProxyKey records whether the request arrived through a configured trusted
+// proxy, decided while r.RemoteAddr still held the TCP peer.
+const viaProxyKey ctxKey = 0
+
+// viaTrustedProxy reports whether a configured reverse proxy was in the path.
+// False for a direct connection — and false, deliberately, when no proxies are
+// configured at all, so forwarded headers are never believed by default.
+func viaTrustedProxy(r *http.Request) bool {
+	v, _ := r.Context().Value(viaProxyKey).(bool)
+	return v
+}
 
 // clientIP normalises r.RemoteAddr to the real client IP, trusting the
 // X-Forwarded-For chain ONLY when the immediate connection comes from a
@@ -26,11 +42,19 @@ func (s *Server) clientIP(next http.Handler) http.Handler {
 		ip := host
 		peer := net.ParseIP(host)
 		// Only consult forwarded headers when the peer is a trusted proxy.
-		if peer != nil && ipInAny(peer, s.cfg.TrustedProxies) {
+		viaProxy := peer != nil && ipInAny(peer, s.cfg.TrustedProxies)
+		if viaProxy {
 			if real := realClientFromXFF(r, s.cfg.TrustedProxies); real != "" {
 				ip = real
 			}
 		}
+		// Remember that a proxy was in the path. RemoteAddr is about to be
+		// rewritten to the client, so this is the only place that still knows
+		// what the TCP peer actually was — and two later decisions need it: the
+		// loopback 2FA exemption (which must mean "physically local", not
+		// "claims to be") and the Secure cookie flag (which believes
+		// X-Forwarded-Proto only from a proxy we configured).
+		r = r.WithContext(context.WithValue(r.Context(), viaProxyKey, viaProxy))
 		// Normalise to the bare client IP (no ephemeral port). Downstream keys
 		// rate limits and audit on r.RemoteAddr as a string, so a stable per-IP
 		// value is what we want — this also matches RealIP's old behaviour and

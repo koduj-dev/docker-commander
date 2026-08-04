@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -106,11 +107,11 @@ func TestLogin2FAFlow(t *testing.T) {
 		t.Fatalf("expected MFA challenge: %+v err=%v", res, err)
 	}
 	code2, _ := totp.GenerateCode(enr.Secret, time.Now())
-	done, err := svc.VerifyMFA(ctx, res.Token, code2)
+	done, err := svc.VerifyMFA(ctx, "ip", res.Token, code2)
 	if err != nil || done.MFARequired || done.Token == "" {
 		t.Fatalf("VerifyMFA: %+v err=%v", done, err)
 	}
-	if _, err := svc.VerifyMFA(ctx, res.Token, "000000"); err == nil {
+	if _, err := svc.VerifyMFA(ctx, "ip", res.Token, "000000"); err == nil {
 		t.Error("bad code should fail VerifyMFA")
 	}
 
@@ -185,5 +186,134 @@ func TestTokenExpiryAndTamper(t *testing.T) {
 	expTok, _, _ := expTM.Issue(1, "admin", "admin", KindSession)
 	if _, err := tm.Parse(expTok); err == nil {
 		t.Error("expired token should be rejected")
+	}
+}
+
+// enable2FA sets up an account with TOTP enabled and returns it plus its secret.
+func enable2FA(t *testing.T, svc *Service, ctx context.Context) (*store.User, string) {
+	t.Helper()
+	u, err := svc.Setup(ctx, "admin", "correcthorse123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	enr, err := svc.BeginTOTPEnrollment(ctx, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, _ := totp.GenerateCode(enr.Secret, time.Now())
+	if err := svc.ConfirmTOTPEnrollment(ctx, u.ID, code); err != nil {
+		t.Fatal(err)
+	}
+	return u, enr.Secret
+}
+
+// PENTEST: the second factor is the only thing left once an attacker has the
+// password, and it is six digits. Unthrottled it is guessable in minutes, so the
+// verification step must burn the same budget the password step does.
+func TestPentestMFA_BruteForceIsRateLimited(t *testing.T) {
+	svc, ctx := newService(t)
+	enable2FA(t, svc, ctx)
+
+	res, err := svc.Login(ctx, "10.0.0.9", "admin", "correcthorse123", false)
+	if err != nil || !res.MFARequired {
+		t.Fatalf("expected an MFA challenge: %+v err=%v", res, err)
+	}
+
+	// The limiter allows 5 attempts per window; the 6th must be refused before
+	// the code is even looked at.
+	for i := 0; i < 5; i++ {
+		if _, err := svc.VerifyMFA(ctx, "10.0.0.9", res.Token, "000000"); !errors.Is(err, ErrInvalidMFACode) {
+			t.Fatalf("attempt %d: want ErrInvalidMFACode, got %v", i+1, err)
+		}
+	}
+	if _, err := svc.VerifyMFA(ctx, "10.0.0.9", res.Token, "000000"); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("6th attempt: want ErrRateLimited, got %v", err)
+	}
+}
+
+// PENTEST: rotating the source address must not buy a fresh budget — otherwise
+// the limit is a speed bump for anyone with more than one IP.
+func TestPentestMFA_RotatingTheClientIPStillHitsTheAccountBucket(t *testing.T) {
+	svc, ctx := newService(t)
+	enable2FA(t, svc, ctx)
+
+	res, _ := svc.Login(ctx, "10.0.0.1", "admin", "correcthorse123", false)
+	for i := 0; i < 5; i++ {
+		ip := "10.0.0." + strconv.Itoa(100+i) // a different address every time
+		if _, err := svc.VerifyMFA(ctx, ip, res.Token, "000000"); !errors.Is(err, ErrInvalidMFACode) {
+			t.Fatalf("attempt %d from %s: want ErrInvalidMFACode, got %v", i+1, ip, err)
+		}
+	}
+	if _, err := svc.VerifyMFA(ctx, "10.0.0.200", res.Token, "000000"); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("a fresh IP after 5 failures: want ErrRateLimited, got %v", err)
+	}
+}
+
+// PENTEST: a correct password must not clear the failure window while the login
+// is still unfinished — an attacker who knows the password could otherwise reset
+// their own budget by re-authenticating between guesses.
+func TestPentestMFA_PasswordSuccessDoesNotResetTheWindow(t *testing.T) {
+	svc, ctx := newService(t)
+	enable2FA(t, svc, ctx)
+
+	for i := 0; i < 4; i++ {
+		if _, err := svc.Login(ctx, "10.0.0.7", "admin", "wrong-password", false); !errors.Is(err, ErrInvalidCreds) {
+			t.Fatalf("password attempt %d: want ErrInvalidCreds, got %v", i+1, err)
+		}
+	}
+	res, err := svc.Login(ctx, "10.0.0.7", "admin", "correcthorse123", false)
+	if err != nil || !res.MFARequired {
+		t.Fatalf("correct password should still reach the 2FA step: %+v err=%v", res, err)
+	}
+	// One more failure fills the window (4 + 1 = 5), so the next call is refused.
+	if _, err := svc.VerifyMFA(ctx, "10.0.0.7", res.Token, "000000"); !errors.Is(err, ErrInvalidMFACode) {
+		t.Fatalf("5th failure: want ErrInvalidMFACode, got %v", err)
+	}
+	if _, err := svc.VerifyMFA(ctx, "10.0.0.7", res.Token, "000000"); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("want ErrRateLimited once the window is full, got %v", err)
+	}
+}
+
+// A legitimate user who fumbles a code and then gets it right must not be left
+// throttled: success clears both buckets. Guards against "fixing" brute force by
+// making the app unusable.
+func TestMFA_SuccessClearsTheWindow(t *testing.T) {
+	svc, ctx := newService(t)
+	_, secret := enable2FA(t, svc, ctx)
+
+	res, _ := svc.Login(ctx, "10.0.0.5", "admin", "correcthorse123", false)
+	if _, err := svc.VerifyMFA(ctx, "10.0.0.5", res.Token, "000000"); !errors.Is(err, ErrInvalidMFACode) {
+		t.Fatalf("want ErrInvalidMFACode, got %v", err)
+	}
+	code, _ := totp.GenerateCode(secret, time.Now())
+	if _, err := svc.VerifyMFA(ctx, "10.0.0.5", res.Token, code); err != nil {
+		t.Fatalf("correct code after a fumble: %v", err)
+	}
+	// Both buckets are clear, so a fresh login + 5 wrong codes are available again.
+	res2, _ := svc.Login(ctx, "10.0.0.5", "admin", "correcthorse123", false)
+	for i := 0; i < 5; i++ {
+		if _, err := svc.VerifyMFA(ctx, "10.0.0.5", res2.Token, "000000"); !errors.Is(err, ErrInvalidMFACode) {
+			t.Fatalf("after a success the window should be clear; attempt %d gave %v", i+1, err)
+		}
+	}
+}
+
+// ChallengeUsername is what the audit trail is written from, so it must not accept
+// anything unsigned.
+func TestChallengeUsername(t *testing.T) {
+	svc, ctx := newService(t)
+	enable2FA(t, svc, ctx)
+	res, _ := svc.Login(ctx, "ip", "admin", "correcthorse123", false)
+
+	if got := svc.ChallengeUsername(res.Token); got != "admin" {
+		t.Errorf("challenge token names %q, want admin", got)
+	}
+	if got := svc.ChallengeUsername("not.a.token"); got != "" {
+		t.Errorf("garbage token → %q, want empty", got)
+	}
+	// A full session token is not a challenge token and must not be accepted.
+	full, _ := svc.Login(ctx, "ip2", "admin", "correcthorse123", true)
+	if got := svc.ChallengeUsername(full.Token); got != "" {
+		t.Errorf("session token accepted as a challenge → %q", got)
 	}
 }

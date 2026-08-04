@@ -79,7 +79,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, "auth.setup", u.Username, "first admin created")
-	s.setSessionCookie(w, res.Token, res.ExpiresAt)
+	s.setSessionCookie(w, r, res.Token, res.ExpiresAt)
 	writeJSON(w, http.StatusOK, s.loginResponse(r, res))
 }
 
@@ -107,7 +107,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, "auth.login", res.User.Username, "password only")
-	s.setSessionCookie(w, res.Token, res.ExpiresAt)
+	s.setSessionCookie(w, r, res.Token, res.ExpiresAt)
 	writeJSON(w, http.StatusOK, s.loginResponse(r, res))
 }
 
@@ -124,13 +124,25 @@ func (s *Server) handleVerify2FA(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	res, err := s.auth.VerifyMFA(r.Context(), body.MFAToken, body.Code)
+	res, err := s.auth.VerifyMFA(r.Context(), r.RemoteAddr, body.MFAToken, body.Code)
 	if err != nil {
+		// Audited because this is the last factor standing between an attacker
+		// who already has the password and a session: unaudited, a brute-force
+		// attempt leaves no trace at all. The username comes from the challenge
+		// token, which is signed, so it cannot be used to write arbitrary names
+		// into the log.
+		if name := s.auth.ChallengeUsername(body.MFAToken); name != "" {
+			s.audit(r, "auth.2fa.failed", name, "invalid code")
+		}
+		if errors.Is(err, auth.ErrRateLimited) {
+			writeErr(w, http.StatusTooManyRequests, err.Error())
+			return
+		}
 		writeErr(w, http.StatusUnauthorized, "invalid code")
 		return
 	}
 	s.audit(r, "auth.login", res.User.Username, "password + 2fa")
-	s.setSessionCookie(w, res.Token, res.ExpiresAt)
+	s.setSessionCookie(w, r, res.Token, res.ExpiresAt)
 	writeJSON(w, http.StatusOK, s.loginResponse(r, res))
 }
 
@@ -198,13 +210,22 @@ func contains(list []string, v string) bool {
 	return false
 }
 
-// isLoopback reports whether the request originates from a loopback address.
-// It reads r.RemoteAddr, which the clientIP middleware has already resolved:
-// forwarded headers are honoured only from a configured trusted proxy, so a
-// remote client cannot spoof a loopback address to claim the 2FA exemption.
-// (Behind a reverse proxy, set DC_TRUSTED_PROXIES so the real client IP — not
-// the proxy's loopback address — is what this sees.)
+// isLoopback reports whether the request originates from a loopback address AND
+// reached the server directly, with no proxy in the path.
+//
+// Both halves matter. r.RemoteAddr has been resolved by the clientIP middleware,
+// which honours forwarded headers only from a configured trusted proxy — but
+// that is not enough on its own here, because a proxy on the same machine is
+// itself loopback. Two ways that bites: a proxy that forwards the client's own
+// X-Forwarded-For unchanged (the nginx default, if you don't set it) lets a
+// remote client claim 127.0.0.1; and a proxy that sends no forwarded header at
+// all leaves every remote request looking loopback, since the peer is the local
+// proxy. So a proxied request never qualifies, whatever the address says —
+// "skip 2FA on localhost" has to mean the machine itself.
 func isLoopback(r *http.Request) bool {
+	if viaTrustedProxy(r) {
+		return false
+	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
@@ -251,17 +272,50 @@ func (s *Server) handleTOTPEnable(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// setSessionCookie writes the httpOnly session cookie. Secure is omitted so it
-// works over plain HTTP on localhost; behind TLS the browser still upgrades.
-func (s *Server) setSessionCookie(w http.ResponseWriter, token string, exp time.Time) {
+// setSessionCookie writes the httpOnly session cookie, marked Secure whenever
+// the connection is actually HTTPS (see cookieSecure).
+func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, token string, exp time.Time) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     auth.SessionCookie,
 		Value:    token,
 		Path:     "/",
 		Expires:  exp,
 		HttpOnly: true,
+		Secure:   s.cookieSecure(r),
 		SameSite: http.SameSiteStrictMode,
 	})
+}
+
+// cookieSecure reports whether the session cookie may be marked Secure.
+//
+// Without the flag a browser sends the session JWT over any plaintext request to
+// the same host — one stray http:// link, or an attacker who can inject one, is
+// enough to hand over twelve hours of Docker control. SameSite=Strict does not
+// help here: it constrains cross-site requests, not the scheme.
+//
+// It cannot be set unconditionally: a plain-HTTP loopback install (the default)
+// would stop being able to log in at all, since the browser would refuse to send
+// the cookie back. So it follows the actual transport — native TLS, or a trusted
+// proxy that says it terminated TLS. X-Forwarded-Proto is honoured only from a
+// configured trusted proxy, for the same reason the client IP is.
+func (s *Server) cookieSecure(r *http.Request) bool {
+	if r.TLS != nil || s.cfg.TLSCert != "" {
+		return true
+	}
+	if !viaTrustedProxy(r) {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(firstHeaderValue(r, "X-Forwarded-Proto")), "https")
+}
+
+// firstHeaderValue returns the first comma-separated entry of a header, which is
+// the one the outermost proxy set.
+func firstHeaderValue(r *http.Request, name string) string {
+	v := r.Header.Get(name)
+	if i := strings.IndexByte(v, ','); i >= 0 {
+		return v[:i]
+	}
+	return v
 }
 
 // loginResponse shapes the JSON returned on a successful login.

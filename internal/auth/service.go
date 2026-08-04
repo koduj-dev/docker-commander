@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -154,8 +155,6 @@ func (s *Service) Login(ctx context.Context, rlKey, username, password string, e
 		}
 		u = authed
 	}
-	s.limiter.Reset(rlKey)
-
 	// exemptMFA (localhost + admin setting) issues a session straight away,
 	// even for accounts with TOTP enabled.
 	if u.TOTPEnabled && !exemptMFA {
@@ -163,26 +162,68 @@ func (s *Service) Login(ctx context.Context, rlKey, username, password string, e
 		if err != nil {
 			return nil, err
 		}
+		// The window is deliberately NOT reset here: the login is not finished,
+		// and resetting would hand an attacker who has the password a fresh
+		// budget for guessing codes — repeatable every time they re-authenticate.
 		return &LoginResult{MFARequired: true, Token: tok, ExpiresAt: exp, User: u}, nil
 	}
+	s.limiter.Reset(rlKey)
 	return s.issueSession(ctx, u)
 }
 
 // VerifyMFA completes login by validating a TOTP code against the MFA-challenge
-// token issued by Login.
-func (s *Service) VerifyMFA(ctx context.Context, challengeToken, code string) (*LoginResult, error) {
+// token issued by Login. rlKey is the same bucket Login uses (the client IP).
+//
+// This step is rate limited for the same reason the password step is, and the
+// reason is easy to miss: by the time it runs the attacker already has the
+// password, so a six-digit code is the only thing left. Unthrottled, that is
+// ~10^6 guesses — minutes of scripted requests — and the code path is cheap
+// (no argon2), which is what makes it practical rather than theoretical.
+//
+// It is keyed on the client IP *and* on the account, so rotating source
+// addresses doesn't buy a fresh budget: the account bucket keeps counting.
+func (s *Service) VerifyMFA(ctx context.Context, rlKey, challengeToken, code string) (*LoginResult, error) {
+	if !s.limiter.Allow(rlKey) {
+		return nil, ErrRateLimited
+	}
 	claims, err := s.tokens.Parse(challengeToken)
 	if err != nil || claims.Kind != KindMFAChallenge {
+		s.limiter.Fail(rlKey)
 		return nil, ErrInvalidCreds
+	}
+	userKey := mfaKey(claims.UserID)
+	if !s.limiter.Allow(userKey) {
+		return nil, ErrRateLimited
 	}
 	u, err := s.store.UserByID(ctx, claims.UserID)
 	if err != nil {
+		s.limiter.Fail(rlKey)
+		s.limiter.Fail(userKey)
 		return nil, ErrInvalidCreds
 	}
 	if !u.TOTPEnabled || !ValidateTOTP(strings.TrimSpace(code), u.TOTPSecret) {
+		s.limiter.Fail(rlKey)
+		s.limiter.Fail(userKey)
 		return nil, ErrInvalidMFACode
 	}
+	s.limiter.Reset(rlKey)
+	s.limiter.Reset(userKey)
 	return s.issueSession(ctx, u)
+}
+
+// mfaKey buckets 2FA attempts per account, alongside the per-IP bucket.
+func mfaKey(userID int64) string { return "mfa:" + strconv.FormatInt(userID, 10) }
+
+// ChallengeUsername reports which account an MFA challenge token names, so a
+// failed verification can be audited against it. It validates the token's
+// signature and kind but says nothing about the code — callers must not treat a
+// non-empty result as authentication.
+func (s *Service) ChallengeUsername(challengeToken string) string {
+	claims, err := s.tokens.Parse(challengeToken)
+	if err != nil || claims.Kind != KindMFAChallenge {
+		return ""
+	}
+	return claims.Username
 }
 
 // BeginTOTPEnrollment generates a new secret + QR for the user. The secret is
