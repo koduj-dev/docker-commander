@@ -1403,6 +1403,35 @@ func (s *Server) loadProject(w http.ResponseWriter, r *http.Request) (*store.Pro
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return nil, false
 	}
+	// Authorize against the host this project targets, not against host 0.
+	//
+	// The permissions middleware only ever saw `?host=` — absent here — so it
+	// checked the `projects` section against host 0, which every grant satisfies.
+	// The host a project acts on lives in the record, so resolving the id has to
+	// be the moment it is checked; every {id} route funnels through here, which is
+	// why the check belongs here rather than in each handler.
+	//
+	// A project's files are its compose file and its sidecars: credentials, in
+	// practice. Reading them discloses the target host's workloads, and writing
+	// them is stored code execution — the next authorized deploy runs whatever is
+	// on disk. So reads are scoped too, not just writes.
+	//
+	// Visibility and permission are answered separately, and the difference is
+	// deliberate. No read access to that host → the project must be
+	// indistinguishable from one that does not exist, or the id space becomes a
+	// directory of what runs where. Visible but read-only → 403, because telling
+	// an operator who can see the project that it vanished is a lie that costs
+	// support time and hides nothing (they can already read it).
+	if err := s.requireSectionOnHost(r, "projects", false, p.HostID); err != nil {
+		writeErr(w, http.StatusNotFound, "project not found")
+		return nil, false
+	}
+	if isWriteRequest(r) {
+		if err := s.requireSectionOnHost(r, "projects", true, p.HostID); err != nil {
+			writeErr(w, http.StatusForbidden, "read-only")
+			return nil, false
+		}
+	}
 	return p, true
 }
 

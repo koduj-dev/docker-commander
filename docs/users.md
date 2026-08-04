@@ -76,6 +76,14 @@ metrics history is refused even if you know the container id. The per-host views
 dashboard counts, disk usage, published ports, topology, the events feed — are
 each authorized against the host they name.
 
+That holds for objects addressed by **id** as well, not only for views that name a
+host: a project, a host record, an alert. Those resolve the host from the record
+itself and authorize against it, so knowing an id buys nothing — ids are
+sequential, and a record you can't reach answers exactly like one that doesn't
+exist. Being able to *see* something and being allowed to *change* it stay
+separate, though: a read-only grant on a visible project is told **403**, not 404,
+because pretending it vanished would only mislead the person looking at it.
+
 > **The one thing scoping still doesn't cover.** The **alert engine** watches every
 > host by design: it is background work with no user context. So if a rule lists
 > you as an e-mail recipient, you can receive mail about a host you can't see in
