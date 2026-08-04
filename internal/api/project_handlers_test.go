@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/koduj-dev/docker-commander/internal/auth"
 	"github.com/koduj-dev/docker-commander/internal/config"
 	"github.com/koduj-dev/docker-commander/internal/store"
 )
@@ -28,6 +29,11 @@ func newProjectServer(t *testing.T) (*Server, int64) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
+	// projectReq authenticates as user 1; loadProject resolves that user to check
+	// the project's host, so the row has to exist.
+	if _, err := st.CreateUser(context.Background(), &store.User{Username: "admin", Role: "admin"}); err != nil {
+		t.Fatal(err)
+	}
 	id, err := st.CreateProject(context.Background(), &store.Project{Name: "demo", Slug: "demo", CreatedBy: "test"})
 	if err != nil {
 		t.Fatal(err)
@@ -46,7 +52,12 @@ func projectReq(method, target string, id int64, body io.Reader) *http.Request {
 	r := httptest.NewRequest(method, target, body)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", strconv.FormatInt(id, 10))
-	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+	ctx := context.WithValue(r.Context(), chi.RouteCtxKey, rctx)
+	// A real request always carries a session by the time it reaches a handler,
+	// and loadProject now authorizes against the project's host — so these
+	// functional tests have to look like requests, not like bare calls. Admin
+	// keeps them about the behaviour under test rather than about grants.
+	return r.WithContext(auth.WithClaims(ctx, &auth.Claims{UserID: 1, Role: "admin"}))
 }
 
 func TestOverlayProject(t *testing.T) {

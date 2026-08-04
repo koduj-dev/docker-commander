@@ -7,6 +7,31 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Security
+- **Project routes addressed by id now authorize against the project's host.**
+  Every `/api/projects/{id}/…` route except deploy/down/restart resolved the id and
+  acted on it without asking which host the project targets. The permissions
+  middleware could not have caught it: with no `?host=` it authorizes against host
+  0, which every grant satisfies. So a role scoped to staging could read a
+  production project's compose file and sidecars — credentials, in practice — and
+  rewrite them. It could not deploy, but the next deploy by someone who could would
+  run what it left behind.
+
+- **The same hole existed on `/api/hosts/{id}`**, and the sweep below is what
+  found it: those routes name the host in the *path*, so a role scoped to one host
+  could rename, disable or delete another — and pin a new **SSH host key** for it,
+  which is the one operation the trust-on-first-use design exists to make
+  deliberate.
+
+- **A systemic sweep now enumerates this class.** `TestEveryRecordAddressedRouteDecidesItsHost`
+  walks the real router and fails on any record-addressed route without a host-scope
+  decision, and `TestPentestRecordRoutes_OutOfScopeHostIsRefused` drives all 23 of
+  them against an out-of-scope record. MCP has had this since the equivalent bugs
+  were fixed there; REST did not, which is exactly why these two survived.
+
+  Out of reach answers **404**, like missing, so the id space can't be walked to
+  learn what exists elsewhere. Visible-but-read-only still answers **403** — an
+  operator who can see a project shouldn't be told it vanished.
+
 - **The 2FA step is rate limited and audited.** Verifying a TOTP code had no
   throttle, no attempt counter and no audit entry on failure, so an attacker who
   already had the password — the exact situation the second factor exists for —

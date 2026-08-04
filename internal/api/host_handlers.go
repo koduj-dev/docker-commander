@@ -58,10 +58,46 @@ func (s *Server) handleCreateHost(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]int64{"id": id})
 }
 
+// scopedHostID resolves the {id} path parameter and authorizes the caller
+// against that host.
+//
+// These routes name the host in the PATH, not in ?host=, so the permissions
+// middleware authorized the `hosts` section against host 0 — which every grant
+// satisfies. Without this, a role scoped to one host could rename, disable or
+// delete another, and worse: /trust pins a new SSH host key, so an out-of-scope
+// caller could vouch for a key the operator never saw. Host ids are sequential.
+//
+// Out of scope answers like missing, so the id space cannot be walked to learn
+// which hosts exist.
+func (s *Server) scopedHostID(w http.ResponseWriter, r *http.Request, write bool) (int64, bool) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid host id")
+		return 0, false
+	}
+	// Out of reach answers like missing (see loadProject for why); visible but
+	// read-only answers 403, so an operator who can see the host isn't told it
+	// disappeared.
+	if err := s.requireSectionOnHost(r, "hosts", false, id); err != nil {
+		writeErr(w, http.StatusNotFound, "host not found")
+		return 0, false
+	}
+	if write {
+		if err := s.requireSectionOnHost(r, "hosts", true, id); err != nil {
+			writeErr(w, http.StatusForbidden, "read-only")
+			return 0, false
+		}
+	}
+	return id, true
+}
+
 // handleUpdateHost updates a host's per-host alert email override and/or its
 // disabled flag (fields are optional — only those present are changed).
 func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := s.scopedHostID(w, r, true)
+	if !ok {
+		return
+	}
 	var b struct {
 		AlertEmail *string `json:"alertEmail"`
 		Disabled   *bool   `json:"disabled"`
@@ -95,7 +131,10 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteHost(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := s.scopedHostID(w, r, true)
+	if !ok {
+		return
+	}
 	if err := s.store.DeleteHost(r.Context(), id); err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not delete host")
 		return
@@ -107,7 +146,10 @@ func (s *Server) handleDeleteHost(w http.ResponseWriter, r *http.Request) {
 
 // handleTestHost checks whether a host is reachable by fetching system info.
 func (s *Server) handleTestHost(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id, ok := s.scopedHostID(w, r, false)
+	if !ok {
+		return
+	}
 	// Bound the probe so an unreachable host fails fast instead of hanging.
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
@@ -150,7 +192,11 @@ type trustBody struct {
 // passed the fingerprint they reviewed, it must still match — otherwise the host
 // swapped keys between review and trust and we refuse.
 func (s *Server) handleTrustHost(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	// A write: pinning a host key is an authority decision about that host.
+	id, ok := s.scopedHostID(w, r, true)
+	if !ok {
+		return
+	}
 
 	var b trustBody
 	_ = decodeJSON(r, &b) // body is optional
