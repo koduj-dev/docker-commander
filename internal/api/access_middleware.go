@@ -55,6 +55,20 @@ func sectionForPath(path string) string {
 		return "audit"
 	case "users", "roles", "settings", "ldap", "update", "mcp-admin":
 		return "__admin"
+	case "stats":
+		// The dashboard's own data: /stats/overview enumerates every running
+		// container with its resource usage, and /stats/ports enumerates every
+		// published port AND actively connects to each one to fingerprint it.
+		// Both were ungated "for the shell", which meant an account with no
+		// sections at all could inventory a host and make it dial its own ports.
+		return "dashboard"
+	case "system":
+		// /api/system is version/health for the shell (ungated), but
+		// /api/system/df is the dashboard's disk-usage breakdown.
+		if strings.HasPrefix(p, "system/df") {
+			return "dashboard"
+		}
+		return ""
 	case "inspect":
 		// /api/inspect/{kind} returns the RAW docker inspect payload, which for a
 		// container includes Config.Env — database passwords, API keys. It must be
@@ -119,7 +133,10 @@ func isWriteRequest(r *http.Request) bool {
 	// A few GETs are effectively privileged actions: WebSocket exec, pull/push,
 	// and a vulnerability scan (spawns a heavy subprocess + outbound calls), so
 	// they need write access — a read-only account must not trigger them.
-	for _, suffix := range []string{"/exec", "/pull", "/push", "/scan"} {
+	// /stats/ports is a GET that opens a TCP connection to every published port
+	// on the host and fingerprints what answers — an active network action, the
+	// same category as /scan, so a read-only account must not be able to launch it.
+	for _, suffix := range []string{"/exec", "/pull", "/push", "/scan", "/stats/ports"} {
 		if strings.HasSuffix(r.URL.Path, suffix) {
 			return true
 		}

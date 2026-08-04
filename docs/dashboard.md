@@ -49,7 +49,10 @@ section.
 
 ## Open ports
 A host-wide map of every **published port** across the running containers.
-**Scan** actively connects to each one and fingerprints what's really listening
+**Scan** needs **write** access to the *dashboard* section, because it is an
+active network action rather than a lookup — a read-only account can see the port
+map but not launch the probe. It actively connects to each one and fingerprints
+what's really listening
 (SSH / HTTP(S) / SMTP / Redis / TLS / banner) — not just a guess from the port
 number. It only runs on demand (probing is an active network action), works for
 remote hosts too (SSH ports are tunnelled), and only touches **your own** hosts.

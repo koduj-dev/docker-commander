@@ -70,6 +70,16 @@ function subscribe(fn: Listener): () => void {
   };
 }
 
+/** The current pulse, without subscribing. */
+export function alertPulseSnapshot(): AlertPulse {
+  return state;
+}
+
+/** Poll once, now, outside the interval. Returns when the state has been updated. */
+export function pollAlertsOnce(): Promise<void> {
+  return poll();
+}
+
 /** Forget the baseline and counts — call on logout so the next user starts clean. */
 export function resetAlertStream(): void {
   lastSeenId = null;
