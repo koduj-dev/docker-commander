@@ -7,6 +7,24 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Security
+- **A crafted backup could write anywhere on the filesystem during `--restore`.**
+  The jail refused a symlink whose target climbed out with `../`, but an
+  **absolute** target slipped through: `filepath.Join(dir, "/etc/cron.d")` is
+  `dir/etc/cron.d` — Join treats an absolute path as a relative component — so the
+  validated form looked safely inside while `os.Symlink` then stored the original
+  target. A following file entry was opened with `O_CREATE|O_TRUNC`, which follows
+  the link, and the bytes landed wherever it pointed, as whoever ran the restore.
+
+  Reproduced before fixing (a two-entry archive wrote a file outside the data dir
+  and `Restore` returned no error), and the guard is mutation-tested: removing it
+  puts the escape back. The existing test only covered the relative spelling of the
+  same class, which is how this survived.
+
+  Consequence worth knowing: an archive containing a symlink with an absolute
+  target is now **refused entirely** rather than partially restored. Such a link
+  was already a bad arrangement — the backup stores the link, not what it points
+  at, so its contents were never captured.
+
 - **Project routes addressed by id now authorize against the project's host.**
   Every `/api/projects/{id}/…` route except deploy/down/restart resolved the id and
   acted on it without asking which host the project targets. The permissions

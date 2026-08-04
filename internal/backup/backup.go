@@ -294,6 +294,13 @@ func extract(r io.Reader, dataDir string) error {
 				return err
 			}
 		case tar.TypeSymlink:
+			// An ABSOLUTE target has to be refused before the join, because
+			// filepath.Join(dir, "/etc/cron.d") is dir/etc/cron.d — Join treats it
+			// as a relative component — so the jailed form looks safe while
+			// os.Symlink below would store the original absolute path.
+			if filepath.IsAbs(hdr.Linkname) || strings.HasPrefix(hdr.Linkname, "/") {
+				return fmt.Errorf("backup: refusing symlink %q → %q: absolute targets are not restorable", hdr.Name, hdr.Linkname)
+			}
 			// The link target is jailed as well: a symlink pointing out of the data
 			// dir would let a later write escape it.
 			if _, err := safeJoin(root, filepath.Join(filepath.Dir(hdr.Name), hdr.Linkname)); err != nil {

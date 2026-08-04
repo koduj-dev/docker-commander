@@ -347,3 +347,114 @@ func TestArchiveDropsOwnership(t *testing.T) {
 		}
 	}
 }
+
+// archiveEntry is one tar record, written in the order given — order matters for
+// the attack below, where a symlink has to exist before the write that follows it.
+type archiveEntry struct {
+	name     string
+	linkname string // non-empty ⇒ symlink
+	content  string
+}
+
+// writeOrderedArchive builds a .dcbak whose entries keep their given order.
+func writeOrderedArchive(t *testing.T, path string, entries []archiveEntry) {
+	t.Helper()
+	var payload bytes.Buffer
+	gz := gzip.NewWriter(&payload)
+	tw := tar.NewWriter(gz)
+	for _, e := range entries {
+		hdr := &tar.Header{Name: e.name, Mode: 0o755, Typeflag: tar.TypeReg, Size: int64(len(e.content))}
+		if e.linkname != "" {
+			hdr = &tar.Header{Name: e.name, Mode: 0o777, Typeflag: tar.TypeSymlink, Linkname: e.linkname}
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			t.Fatal(err)
+		}
+		if e.linkname == "" {
+			if _, err := tw.Write([]byte(e.content)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	out.Write(magic)
+	out.WriteByte(flagPlain)
+	out.Write(payload.Bytes())
+	if err := os.WriteFile(path, out.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// PENTEST: an ABSOLUTE symlink target escapes the jail that a relative one hits.
+//
+// filepath.Join(dir, "/etc/cron.d") is dir/etc/cron.d — Join treats the absolute
+// path as a relative component and cleans it — so validating the *joined* form
+// says "inside the data dir" while os.Symlink then stores the original absolute
+// target. A following regular-file entry is opened with O_CREATE|O_TRUNC, which
+// follows the link, and the write lands wherever it points.
+//
+// TestPentestEscapingSymlinkRefused covers only the relative "../../../../etc"
+// form, which is why this survived: same class, different spelling.
+func TestPentestAbsoluteSymlinkTargetRefused(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	victimDir := t.TempDir() // stands in for /etc/cron.d
+	victim := filepath.Join(victimDir, "pwn")
+	base := t.TempDir()
+	dataDir := filepath.Join(base, "data")
+	archive := filepath.Join(t.TempDir(), "evil.dcbak")
+
+	writeOrderedArchive(t, archive, []archiveEntry{
+		{name: "projects/evil", linkname: victimDir},
+		{name: "projects/evil/pwn", content: "PWNED"},
+	})
+
+	err := Restore(archive, dataDir, "", true)
+
+	// The write must not have happened, whatever the error handling looks like.
+	if _, statErr := os.Stat(victim); statErr == nil {
+		got, _ := os.ReadFile(victim)
+		t.Fatalf("SECURITY: restore wrote through an absolute symlink to %s (content %q, err %v)", victim, got, err)
+	}
+	if err == nil {
+		t.Error("SECURITY: an archive with an absolute symlink target was accepted")
+	}
+	if fi, lerr := os.Lstat(filepath.Join(dataDir, "projects", "evil")); lerr == nil {
+		t.Errorf("SECURITY: the escaping symlink was created (%v)", fi.Mode())
+	}
+}
+
+// PENTEST: even a symlink whose target stays inside the data dir must not become
+// a write path for a later entry — the jail is about where bytes land, and a
+// legitimate-looking link plus a traversing name is the same escape in two steps.
+func TestPentestWriteThroughSymlinkIsRefused(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	victimDir := t.TempDir()
+	base := t.TempDir()
+	dataDir := filepath.Join(base, "data")
+	archive := filepath.Join(t.TempDir(), "evil.dcbak")
+
+	// A relative target that resolves out of the data dir once it is followed.
+	rel, err := filepath.Rel(filepath.Join(dataDir, "projects"), victimDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeOrderedArchive(t, archive, []archiveEntry{
+		{name: "projects/link", linkname: rel},
+		{name: "projects/link/pwn", content: "PWNED"},
+	})
+
+	_ = Restore(archive, dataDir, "", true)
+	if _, statErr := os.Stat(filepath.Join(victimDir, "pwn")); statErr == nil {
+		t.Fatal("SECURITY: restore wrote through a relative symlink out of the data dir")
+	}
+}
