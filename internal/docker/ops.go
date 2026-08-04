@@ -220,8 +220,25 @@ func (m *Manager) Ping(ctx context.Context, hostID int64) error {
 	if err != nil {
 		return err
 	}
-	_, err = cli.Ping(ctx)
-	return err
+	if _, err = cli.Ping(ctx); err != nil {
+		// Drop the cached client so the next call redials.
+		//
+		// An ssh client captures its SSH connection in the transport's dialer;
+		// once that connection dies (the host rebooted, the link dropped) every
+		// later call fails against the same dead object forever. Nothing else
+		// evicts it — Disconnect is only called when a host is edited, deleted or
+		// re-trusted — so the host stayed "unreachable" in the UI until someone
+		// re-saved it or restarted the binary. It would alert as offline and then
+		// never recover, which is the failure mode that teaches people to ignore
+		// the alert.
+		//
+		// Eviction happens here, in the health loop's own call, because that is
+		// the one path guaranteed to run again: a reconnect costs one dial on the
+		// next 30-second sweep, and a healthy host never reaches this branch.
+		m.Disconnect(hostID)
+		return err
+	}
+	return nil
 }
 
 func (m *Manager) SystemInfo(ctx context.Context, hostID int64) (*SystemInfo, error) {

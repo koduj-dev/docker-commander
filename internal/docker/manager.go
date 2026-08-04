@@ -28,14 +28,21 @@ type Manager struct {
 	// to ports on the remote host.
 	clients  map[int64]*client.Client
 	sshConns map[int64]*ssh.Client
+
+	// newClient builds the Docker client for a host. Swappable so the connection
+	// bookkeeping — caching, eviction, and not holding the lock across a dial —
+	// can be tested without a daemon or an SSH server. Production always uses
+	// buildClient.
+	newClient func(*store.Host) (*client.Client, error)
 }
 
 // NewManager returns a manager that resolves hosts from the store.
 func NewManager(s *store.Store) *Manager {
 	return &Manager{
-		store:    s,
-		clients:  make(map[int64]*client.Client),
-		sshConns: make(map[int64]*ssh.Client),
+		store:     s,
+		clients:   make(map[int64]*client.Client),
+		sshConns:  make(map[int64]*ssh.Client),
+		newClient: buildClient,
 	}
 }
 
@@ -52,17 +59,33 @@ func (m *Manager) Client(ctx context.Context, hostID int64) (*client.Client, err
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if c, ok := m.clients[hostID]; ok {
+		m.mu.Unlock()
 		return c, nil
 	}
+	m.mu.Unlock()
+
+	// Built OUTSIDE the lock. For an ssh host buildClient dials synchronously,
+	// and ssh.Dial's handshake is not bounded by ctx — so holding the
+	// manager-wide mutex across it stalls every other host, including the local
+	// one, for as long as one unreachable peer takes to fail. The UI freezing in
+	// ten-second bursts because a laptop is asleep is not acceptable.
 	h, err := m.store.HostByID(ctx, hostID)
 	if err != nil {
 		return nil, err
 	}
-	c, err := buildClient(h)
+	c, err := m.newClient(h)
 	if err != nil {
 		return nil, err
+	}
+
+	// Two callers can race here; keep the first one cached so a single client is
+	// shared, and close the loser rather than leaking its connection.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if existing, ok := m.clients[hostID]; ok {
+		_ = c.Close()
+		return existing, nil
 	}
 	m.clients[hostID] = c
 	return c, nil

@@ -133,7 +133,8 @@ the daemon answers again.
 
 A change of state also raises an **alert**: a host going **offline** fires a
 *critical* event, and its **recovery** fires an *info* event (noting how long it
-was down). These land in the [Alerts](alerts.md) feed and, if SMTP is set up, are
+was down). Recovery is automatic: a failed probe drops the cached connection, so
+the next sweep dials afresh rather than retrying a socket that died with the peer. These land in the [Alerts](alerts.md) feed and, if SMTP is set up, are
 emailed — to the host's own **Alert email** if set, otherwise the global
 recipient. This watch is automatic and needs **no alert rule**. To avoid noise on
 startup, the very first probe never alerts — a host that is already down when the

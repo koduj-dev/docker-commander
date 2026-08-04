@@ -79,6 +79,22 @@ All notable changes to Docker Commander are documented here. The format follows
   send the cookie back at all.
 
 ### Fixed
+- **A host that went away stayed "unreachable" until the app was restarted.** The
+  Docker client is cached per host, and an SSH one captures its SSH connection in
+  the transport's dialer — so once that connection died (the machine rebooted, the
+  link dropped) every later call failed against the same dead object. Nothing
+  evicted it: the cache was only cleared when a host was edited, deleted or
+  re-trusted. The host alerted as offline and then never recovered, which is the
+  behaviour that teaches people to ignore host alerts. A failed health probe now
+  drops the cached client, so the next 30-second sweep dials afresh.
+
+- **One unreachable host no longer freezes the others.** Building a client held a
+  manager-wide lock, and for SSH hosts that includes a synchronous dial whose
+  handshake isn't bounded by the request context. A single sleeping laptop could
+  stall every Docker call in the app — the local host included — in ten-second
+  bursts. The dial now happens outside the lock, with concurrent first-time callers
+  still ending up on one shared connection.
+
 - **Acknowledging an alert is now scoped to that alert's host**, over both the
   REST route and MCP. The feed and *ack all* were already scoped; acknowledging a
   single id was not, and alert ids are sequential integers — so a role confined
