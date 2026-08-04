@@ -19,9 +19,11 @@ from **loopback** (`127.0.0.1` / `::1`) log in with a password only (skipping
 both the enrollment gate and the TOTP challenge). Remote connections always
 require 2FA.
 
-- It trusts the connection's `RemoteAddr` only (not forwarded headers), so
-  **keep it off behind a reverse proxy** — otherwise every proxied request looks
-  like localhost.
+- It applies only to a **direct** loopback connection. A request that arrived
+  through a reverse proxy never qualifies, even when it resolves to `127.0.0.1`:
+  a proxy on the same machine is itself loopback, and a client's forwarded header
+  is only a claim. So the exemption cannot leak through a proxy — but it also
+  cannot be used *by* one, which is the point.
 - Good for a personal/local install; leave off for shared servers.
 - This is the same toggle the **first-run setup** screen flips when you choose
   *"Skip 2FA for now"* — so you can decide up front and change it here later.

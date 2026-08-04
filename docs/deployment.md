@@ -258,11 +258,23 @@ location / {
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
     proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
 }
 ```
 
-> Behind a proxy, **keep the localhost 2FA exemption off** — it trusts the
-> connection address, which becomes the proxy. See [Settings](settings.md).
+**Set those last two headers.** `$proxy_add_x_forwarded_for` appends the real peer
+to whatever the client sent — without it nginx forwards the client's own
+`X-Forwarded-For` untouched, so anyone can claim to be any address, and the client
+IP keys your rate limits and audit records. `X-Forwarded-Proto` is what tells the
+app the connection was HTTPS, which is what marks the session cookie `Secure`.
+Both are believed **only** from an address listed in `DC_TRUSTED_PROXIES`, so set
+that too.
+
+> The **localhost 2FA exemption never applies to a proxied request**, whatever
+> address it resolves to — a proxy cannot vouch that someone is sitting at the
+> machine. You can leave the setting on for local use without it leaking through
+> the proxy. See [Settings](settings.md).
 
 ## Self-update
 Docker Commander compares the running build against the latest **GitHub

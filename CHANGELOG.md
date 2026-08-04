@@ -6,6 +6,35 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+- **The 2FA step is rate limited and audited.** Verifying a TOTP code had no
+  throttle, no attempt counter and no audit entry on failure, so an attacker who
+  already had the password — the exact situation the second factor exists for —
+  could guess six digits at line speed and leave no trace. Failures now burn the
+  same budget the password step does, keyed on the client IP **and** on the
+  account, so rotating source addresses doesn't buy a fresh one.
+
+  A correct password no longer clears the failure window either. It used to reset
+  it before the login was finished, which meant an attacker could refresh their
+  own budget between guesses simply by authenticating again.
+
+- **The localhost 2FA exemption no longer applies to proxied requests.** It is
+  meant for someone sitting at the machine, and a proxy cannot vouch for that. A
+  reverse proxy on the same host is itself loopback, so *every* request through it
+  presented a loopback peer; and unless the operator set
+  `$proxy_add_x_forwarded_for`, nginx forwards the client's own header untouched,
+  so a remote client could simply claim `127.0.0.1`. Either way the exemption is
+  now refused — the address still resolves for rate limits and audit, but it
+  cannot skip the second factor. The documented nginx block sets both forwarded
+  headers now.
+
+- **The session cookie is marked `Secure` when the connection is HTTPS** — native
+  TLS, or a trusted proxy reporting `X-Forwarded-Proto: https`. Without it, one
+  plaintext request to the same host hands over twelve hours of Docker control;
+  `SameSite=Strict` constrains cross-site requests, not the scheme. It stays off
+  for a plain-HTTP loopback install, where the browser would otherwise refuse to
+  send the cookie back at all.
+
 ### Fixed
 - **Acknowledging an alert is now scoped to that alert's host**, over both the
   REST route and MCP. The feed and *ack all* were already scoped; acknowledging a

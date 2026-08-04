@@ -356,7 +356,7 @@ notify webhooks (Go-template bodies) and/or email. **Prometheus:** scrape
 ## 🔒 Security notes
 
 - Local-by-default (binds to loopback). Behind a server, terminate TLS at a reverse proxy.
-- **2FA is enforced everywhere** unless an admin enables the *localhost exemption* (Settings), which trusts `RemoteAddr` only — keep it **off** behind a proxy.
+- **2FA is enforced everywhere** unless an admin enables the *localhost exemption* (Settings), which applies only to a **direct** loopback connection — a proxied request never qualifies, however it presents itself. Failed 2FA attempts are rate limited and audited, so the second factor can't be brute-forced by someone who already has the password.
 - **SSH hosts** verify the daemon host key (known_hosts / trust-on-first-use); a changed key is refused as a possible MITM.
 - Signing key and at-rest encryption key are generated on first run and stored in the data dir; stored secrets are never returned by the API.
 - The **MCP server is off by default** (`DC_MCP_ENABLED`); when on, it's bearer/OAuth-authenticated, reuses the app's RBAC (with per-token **read-only** / section scope), and exposes only reads + *safe* control — no exec, image export, file reads or prune/remove. Control calls are additionally **rate limited per user** to bound the damage a runaway or stolen token can do. See [MCP](docs/mcp.md).
