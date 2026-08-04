@@ -15,7 +15,7 @@ you whether a remote deploy actually works.
 
 | Tier | What it proves | Where | Runs in CI |
 |---|---|---|---|
-| **1 · Unit** | Logic, parsing, edge cases, error paths | ~510 Go tests across 17 packages + 55 frontend (Vitest) tests in 5 files | ✅ every push & PR |
+| **1 · Unit** | Logic, parsing, edge cases, error paths | ~533 Go tests across 17 packages + 73 frontend (Vitest) tests in 9 files, 3 of them DOM-backed | ✅ every push & PR |
 | **2 · Adversarial (pentests)** | Attacks are *rejected* — not just that the happy path works | 83 cases in 13 `*_pentest_test.go` files, plus `PENTEST:`-marked cases in ~25 more files, alongside the features they guard | ✅ (they're plain unit tests) |
 | **3 · Runtime smoke** | The real transport/CLI behaves as assumed — no mocks in the loop | MCP over real HTTP with the official SDK client; the Compose override resolved by the real `docker compose` | ⛔ needs Docker |
 | **4 · Integration** | Real Docker daemon, real Redis / OpenLDAP / SMTP | 12 test files behind `testing.Short()`; throwaway containers, skipped cleanly when unavailable | ⛔ needs Docker |
@@ -89,6 +89,12 @@ worth naming because they all look fine in review:
 - **The assertion was too weak to fail.** Asserting "not 200" survived removing a
   permission check, because a denial and an unrelated failure shared a status code.
   Fixed by making the responses distinguishable and asserting the specific one.
+- **The fixture made the assertion true by itself.** A logout test checked that the
+  previous user's alerts are not replayed, using the *same* event ids before and
+  after — so the "nothing new" result held whether or not the state was cleared.
+  It passed with the teardown deleted. Fixed by making the post-logout poll return
+  a newer id than the pre-logout baseline, so only a cleared baseline can produce
+  an empty result.
 - **Only refusals were asserted, so over-tightening looked like a pass.** Scoping
   the alert routes per host, it was tempting to also demand the `hosts` section —
   which reads as caution and is a different bug: host reach is derived from grants
@@ -282,10 +288,17 @@ Stated plainly, so nobody infers more than is there:
 - **The matrix pins Engine majors, not every patch release.** `docker:24-dind`
   resolves to the newest 24.x at pull time, so a regression in a specific patch
   between nightly runs is not caught the moment it ships.
-- **No automated browser/UI test suite.** The frontend has type-checking and unit
-  tests for logic, and UI changes are verified by hand. (`scripts/screenshots/`
-  drives a real browser, but it generates documentation images — it asserts
-  nothing.)
+- **No automated browser/UI test suite.** The frontend has type-checking, unit
+  tests for logic, and a small number of component tests that render against
+  **happy-dom** — enough to pin wiring that unit tests cannot see, like "does the
+  header actually call the hook that names the tab" and "does logging out really
+  clear the previous user's alerts". It is not end-to-end coverage: layout,
+  styling and real-browser behaviour are still verified by hand.
+  (`scripts/screenshots/` drives a real browser, but it generates documentation
+  images — it asserts nothing.)
+
+  Those tests opt in per file with a `/** @vitest-environment happy-dom */`
+  docblock, so the pure ones keep running in the faster node environment.
 - **No automated HTTP round trip for remote projects.** Tier 5 drives the Go
   packages directly; it does not go through a running `dockercmd` with login and
   2FA. The HTTP handlers themselves have unit tests.
