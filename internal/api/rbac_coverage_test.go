@@ -51,10 +51,7 @@ var ungatedRoutes = map[string]string{
 	"/api/mcp/tokens/{id}": "own tokens only",
 	// Shared reads that carry no host/container authority of their own.
 	"/api/system":          "version/health for the shell",
-	"/api/system/df":       "aggregate disk usage; no per-object detail (?host= is still authorised — see TestPentestAggregate_UngatedDashboardRoutesStillCheckTheHost)",
 	"/api/version":         "app version for the shell",
-	"/api/stats/overview":  "counts for the dashboard shell (?host= is still authorised)",
-	"/api/stats/ports":     "published-port map used by the shell's port hints (?host= is still authorised)",
 	"/api/metrics/history": "per-container CPU/mem series (no config, no env); authorised against the host the samples came from",
 	"/api/ws":              "gated per subscription channel (see wsChannelSection)",
 	"/api/prefs":           "own UI preferences",

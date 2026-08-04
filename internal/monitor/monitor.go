@@ -215,6 +215,10 @@ func (m *Monitor) runningInSnapshot() int {
 
 func (m *Monitor) pollStats(ctx context.Context) {
 	next := make(map[string]ContainerStat)
+	// Hosts whose container list actually came back. A host missing from here was
+	// not observed this round — which is NOT the same as "nothing is wrong on it",
+	// and the resolve sweep has to know the difference.
+	sampled := make(map[int64]bool)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 8) // bound concurrent stats calls
@@ -229,6 +233,7 @@ func (m *Monitor) pollStats(ctx context.Context) {
 		if err != nil {
 			continue
 		}
+		sampled[h.ID] = true
 		for _, c := range containers {
 			cs := ContainerStat{HostID: h.ID, HostName: h.Name, ID: c.ID, Name: c.Name, State: c.State}
 			if c.State != "running" {
@@ -276,7 +281,7 @@ func (m *Monitor) pollStats(ctx context.Context) {
 	m.mu.Unlock()
 
 	m.recordHistory(ctx, next)
-	m.evalResourceRules(ctx, next)
+	m.evalResourceRules(ctx, next, sampled)
 }
 
 // applyNetRates fills in per-container throughput from the previous poll.
@@ -344,7 +349,7 @@ func (m *Monitor) recordHistory(ctx context.Context, snap map[string]ContainerSt
 // severe speaks; the rest are its context, not separate news. A condition is
 // announced when it starts, again only if it changes severity or the re-notify
 // interval elapses, and once more when it ends, carrying how long it lasted.
-func (m *Monitor) evalResourceRules(ctx context.Context, snap map[string]ContainerStat) {
+func (m *Monitor) evalResourceRules(ctx context.Context, snap map[string]ContainerStat, sampled map[int64]bool) {
 	rules, err := m.store.ListAlertRules(ctx)
 	if err != nil {
 		return
@@ -439,6 +444,15 @@ func (m *Monitor) evalResourceRules(ctx context.Context, snap map[string]Contain
 	// Anything that was firing and no longer wins its condition has ended.
 	for ck, st := range prev {
 		if _, still := winners[ck]; still {
+			continue
+		}
+		// Unless its host wasn't observed this round. A failed or timed-out
+		// container listing means we know nothing about that host — and silence is
+		// not recovery. Resolving here announced "MEM back to normal" for every
+		// condition on a host that had merely become unreachable, then started the
+		// incident over from zero when it came back, so a flaky link produced a
+		// resolve/fire pair every poll. Disabling a host did the same.
+		if !sampled[st.HostID] {
 			continue
 		}
 		dur := int(now.Sub(st.StartedAt).Seconds())

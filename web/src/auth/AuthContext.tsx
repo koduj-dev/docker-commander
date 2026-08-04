@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { api } from "../lib/api";
-import { loadPrefs, clearPrefs } from "../lib/prefs";
+import { loadPrefs } from "../lib/prefs";
+import { clearUserState } from "../lib/session";
 import type { User } from "../lib/types";
 
 interface AuthState {
@@ -43,7 +44,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = async () => {
     await api.logout();
-    clearPrefs();
+    clearUserState();
     setUser(null);
   };
 

@@ -7,6 +7,26 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Security
+- **The dashboard's data endpoints now require the `dashboard` section.**
+  `/api/stats/overview`, `/api/stats/ports` and `/api/system/df` were deliberately
+  ungated "for the shell", which meant an account with **no sections at all** could
+  still enumerate every running container with its resource usage, read the host's
+  disk breakdown, and — through the port map — have the server dial every published
+  port and fingerprint what answered. They were host-authorized already; they are
+  section-authorized now too, the way MCP has always treated them.
+
+  The port scan additionally counts as a **write**: it opens a TCP connection to
+  every published port, the same category as an image vulnerability scan, so a
+  read-only account cannot launch it — or repeat it.
+
+- **Signing out no longer leaves alerts behind for the next user.**
+  `resetAlertStream()` existed and was documented as "call on logout" — but had no
+  call sites, and a logout is an SPA navigation rather than a page load. So on a
+  shared browser the next person to sign in inherited the previous user's unread
+  badge and had their pending alerts replayed as toasts, naming containers on hosts
+  the new user may not be scoped to. Session teardown now lives in one function, so
+  the next thing that caches per-user data gets cleared by construction.
+
 - **A crafted backup could write anywhere on the filesystem during `--restore`.**
   The jail refused a symlink whose target climbed out with `../`, but an
   **absolute** target slipped through: `filepath.Join(dir, "/etc/cron.d")` is
@@ -79,6 +99,14 @@ All notable changes to Docker Commander are documented here. The format follows
   send the cookie back at all.
 
 ### Fixed
+- **An unreachable host no longer reports its alerts as resolved.** A failed or
+  timed-out container listing left that host out of the stats snapshot, and the
+  resolve sweep read the absence as recovery — so every live condition on it got a
+  "back to normal" event, and then started over as a fresh incident, with the
+  duration reset, when the host returned. On a flaky link that produced a
+  resolve/fire pair every poll; disabling a host did the same. Silence is not
+  recovery: only a host that was actually observed can end a condition.
+
 - **A host that went away stayed "unreachable" until the app was restarted.** The
   Docker client is cached per host, and an SSH one captures its SSH connection in
   the transport's dialer — so once that connection died (the machine rebooted, the

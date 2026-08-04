@@ -56,6 +56,17 @@ func snapOf(cs ContainerStat) map[string]ContainerStat {
 	return map[string]ContainerStat{cs.ID: cs}
 }
 
+// hostsOf marks the containers' hosts as successfully observed this round, which
+// is what lets a condition resolve. Tests that want an UNobserved host pass an
+// empty map instead — see TestUnreachableHostDoesNotResolveItsConditions.
+func hostsOf(stats ...ContainerStat) map[int64]bool {
+	seen := make(map[int64]bool, len(stats))
+	for _, cs := range stats {
+		seen[cs.HostID] = true
+	}
+	return seen
+}
+
 func events(t *testing.T, st *store.Store, ctx context.Context) []store.AlertEvent {
 	t.Helper()
 	evs, _, err := st.ListAlertEvents(ctx, store.AlertQuery{Limit: 100})
@@ -81,7 +92,7 @@ func TestAlertConditionIsAnnouncedOnceThenGoesQuiet(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		m.ready(id, cs.ID)
-		m.evalResourceRules(ctx, snapOf(cs))
+		m.evalResourceRules(ctx, snapOf(cs), hostsOf(cs))
 	}
 
 	evs := events(t, st, ctx)
@@ -107,7 +118,7 @@ func TestAlertOverlappingRulesEmitOnlyTheMostSevere(t *testing.T) {
 
 	m.ready(warn, cs.ID)
 	m.ready(crit, cs.ID)
-	m.evalResourceRules(ctx, snapOf(cs))
+	m.evalResourceRules(ctx, snapOf(cs), hostsOf(cs))
 
 	evs := events(t, st, ctx)
 	if len(evs) != 1 {
@@ -130,7 +141,7 @@ func TestAlertResolvesWhenTheConditionEnds(t *testing.T) {
 	cs := busyContainer()
 
 	m.ready(id, cs.ID)
-	m.evalResourceRules(ctx, snapOf(cs))
+	m.evalResourceRules(ctx, snapOf(cs), hostsOf(cs))
 
 	// Backdate the incident so the resolved event carries a measurable duration.
 	// It has to be deleted and re-inserted: UpsertAlertState deliberately never
@@ -150,7 +161,7 @@ func TestAlertResolvesWhenTheConditionEnds(t *testing.T) {
 
 	calm := cs
 	calm.MemPercent = 1 // back under the threshold
-	m.evalResourceRules(ctx, snapOf(calm))
+	m.evalResourceRules(ctx, snapOf(calm), hostsOf(calm))
 
 	evs := events(t, st, ctx)
 	if len(evs) != 2 {
@@ -181,7 +192,7 @@ func TestAlertEscalationStaysOneIncident(t *testing.T) {
 	cs := busyContainer()
 	cs.MemPercent = 60 // over warning only
 	m.ready(warn, cs.ID)
-	m.evalResourceRules(ctx, snapOf(cs))
+	m.evalResourceRules(ctx, snapOf(cs), hostsOf(cs))
 
 	before, _ := st.ListAlertStates(ctx)
 	if len(before) != 1 {
@@ -192,7 +203,7 @@ func TestAlertEscalationStaysOneIncident(t *testing.T) {
 	cs.MemPercent = 90 // now over critical too
 	m.ready(warn, cs.ID)
 	m.ready(crit, cs.ID)
-	m.evalResourceRules(ctx, snapOf(cs))
+	m.evalResourceRules(ctx, snapOf(cs), hostsOf(cs))
 
 	evs := events(t, st, ctx)
 	if len(evs) != 2 {
@@ -221,11 +232,11 @@ func TestAlertRepeatsOnlyAfterTheInterval(t *testing.T) {
 	cs := busyContainer()
 
 	m.ready(id, cs.ID)
-	m.evalResourceRules(ctx, snapOf(cs))
+	m.evalResourceRules(ctx, snapOf(cs), hostsOf(cs))
 
 	// Still true a moment later: silence.
 	m.ready(id, cs.ID)
-	m.evalResourceRules(ctx, snapOf(cs))
+	m.evalResourceRules(ctx, snapOf(cs), hostsOf(cs))
 	if evs := events(t, st, ctx); len(evs) != 1 {
 		t.Fatalf("within the interval the condition should stay quiet, got %d events:\n%s", len(evs), dump(evs))
 	}
@@ -237,7 +248,7 @@ func TestAlertRepeatsOnlyAfterTheInterval(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.ready(id, cs.ID)
-	m.evalResourceRules(ctx, snapOf(cs))
+	m.evalResourceRules(ctx, snapOf(cs), hostsOf(cs))
 
 	evs := events(t, st, ctx)
 	if len(evs) != 2 {
@@ -266,7 +277,7 @@ func TestAlertQuietCyclesDoNotResetTheRepeatClock(t *testing.T) {
 	cs := busyContainer()
 
 	m.ready(id, cs.ID)
-	m.evalResourceRules(ctx, snapOf(cs))
+	m.evalResourceRules(ctx, snapOf(cs), hostsOf(cs))
 
 	first, _ := st.ListAlertStates(ctx)
 	if len(first) != 1 {
@@ -291,7 +302,7 @@ func TestAlertQuietCyclesDoNotResetTheRepeatClock(t *testing.T) {
 	// Several evaluations with nothing changed — the quiet path.
 	for i := 0; i < 3; i++ {
 		m.ready(id, cs.ID)
-		m.evalResourceRules(ctx, snapOf(cs))
+		m.evalResourceRules(ctx, snapOf(cs), hostsOf(cs))
 	}
 
 	after, _ := st.ListAlertStates(ctx)
@@ -376,4 +387,70 @@ func dump(evs []store.AlertEvent) string {
 		b.WriteString(sprintf("  kind=%s severity=%s rule=%q msg=%q\n", e.Kind, e.Severity, e.RuleName, e.Message))
 	}
 	return b.String()
+}
+
+// A host we failed to observe must not have its conditions declared resolved.
+//
+// pollStats skips a host whose container listing errors or times out, so nothing
+// from it reaches the snapshot — and the resolve sweep read that absence as "the
+// problem went away". The result was a false "back to normal" for every live
+// condition on a host that had merely become unreachable, followed by a brand-new
+// incident (duration reset to zero) when it returned. On a flaky link that is a
+// resolve/fire pair every 15 seconds; disabling a host in the UI did the same.
+//
+// Silence is not recovery. Only a host we actually looked at can end a condition.
+func TestUnreachableHostDoesNotResolveItsConditions(t *testing.T) {
+	m, st, ctx := newAlertMonitor(t)
+	id := addRule(t, st, ctx, "Memory", "warning", 5, "mem", 0)
+	cs := busyContainer()
+	cs.HostID = 3
+	cs.HostName = "staging"
+
+	m.ready(id, cs.ID)
+	m.evalResourceRules(ctx, snapOf(cs), hostsOf(cs))
+	if states, _ := st.ListAlertStates(ctx); len(states) != 1 {
+		t.Fatalf("expected one live condition, got %d", len(states))
+	}
+
+	// The host goes unreachable: empty snapshot, and host 3 was not observed.
+	m.evalResourceRules(ctx, map[string]ContainerStat{}, map[int64]bool{})
+
+	evs := events(t, st, ctx)
+	if len(evs) != 1 {
+		t.Fatalf("an unobserved host must produce no new events, got %d:\n%s", len(evs), dump(evs))
+	}
+	if states, _ := st.ListAlertStates(ctx); len(states) != 1 {
+		t.Errorf("the condition must survive an unobserved round, %d left", len(states))
+	}
+
+	// And when the host comes back still over threshold, the incident continues
+	// rather than starting over.
+	m.ready(id, cs.ID)
+	m.evalResourceRules(ctx, snapOf(cs), hostsOf(cs))
+	if evs := events(t, st, ctx); len(evs) != 1 {
+		t.Errorf("a recovered host that is still over threshold is not news, got %d:\n%s", len(evs), dump(evs))
+	}
+}
+
+// The counterweight: a host that WAS observed and whose container is gone still
+// resolves. Without this, "never resolve" would pass the test above.
+func TestObservedHostStillResolvesADisappearedContainer(t *testing.T) {
+	m, st, ctx := newAlertMonitor(t)
+	id := addRule(t, st, ctx, "Memory", "warning", 5, "mem", 0)
+	cs := busyContainer()
+	cs.HostID = 3
+
+	m.ready(id, cs.ID)
+	m.evalResourceRules(ctx, snapOf(cs), hostsOf(cs))
+
+	// Host 3 answered this round; the container simply isn't on it any more.
+	m.evalResourceRules(ctx, map[string]ContainerStat{}, map[int64]bool{3: true})
+
+	evs := events(t, st, ctx)
+	if len(evs) != 2 || evs[0].Kind != store.KindResolved {
+		t.Fatalf("an observed host must still resolve a vanished container, got %d events:\n%s", len(evs), dump(evs))
+	}
+	if states, _ := st.ListAlertStates(ctx); len(states) != 0 {
+		t.Errorf("the resolved condition should be cleared, %d left", len(states))
+	}
 }
