@@ -319,14 +319,20 @@ func (s *Service) RemoveFactor(ctx context.Context, userID, factorID int64) erro
 }
 
 // VerifyUserPassword checks a password against the account it belongs to, local
-// hash or directory bind, without issuing anything.
+// hash or directory bind, without issuing anything. It returns nil when the
+// password is right, ErrRateLimited when the budget for this key is spent, and
+// ErrInvalidCreds otherwise.
 //
-// Used for step-up on operations a session alone must not authorise. It burns the
-// same rate-limit budget as a login: otherwise it is a password oracle that
-// answers as fast as you can ask, reachable by anyone holding a session.
-func (s *Service) VerifyUserPassword(ctx context.Context, rlKey string, u *store.User, password string) bool {
+// Used for step-up on operations a session alone must not authorise. It burns a
+// rate-limit budget: otherwise it is a password oracle that answers as fast as you
+// can ask, reachable by anyone holding a session.
+//
+// Telling the two failures apart matters. Reporting a spent budget as "wrong
+// password" tells the owner their own password is wrong, which is both false and
+// the exact moment they are trying to recover an account.
+func (s *Service) VerifyUserPassword(ctx context.Context, rlKey string, u *store.User, password string) error {
 	if !s.limiter.Allow(rlKey) {
-		return false
+		return ErrRateLimited
 	}
 	ok := false
 	if u.AuthSource == "ldap" {
@@ -338,27 +344,39 @@ func (s *Service) VerifyUserPassword(ctx context.Context, rlKey string, u *store
 	}
 	if !ok {
 		s.limiter.Fail(rlKey)
-		return false
+		return ErrInvalidCreds
 	}
 	// Reset on success, exactly as Login does. Without it, someone else's failed
 	// attempts from the same address keep the real account holder locked out of
 	// their own step-up until the window rolls over — a denial of service bought
 	// with wrong guesses.
 	s.limiter.Reset(rlKey)
-	return true
+	return nil
 }
 
 // mfaKey buckets 2FA attempts per account, alongside the per-IP bucket.
 func mfaKey(userID int64) string { return "mfa:" + strconv.FormatInt(userID, 10) }
 
-// StepUpKey buckets password re-checks per account.
+// StepUpKey buckets password re-checks per account AND per session.
 //
-// Deliberately not the client address, which is what login uses: step-up is only
-// reachable with a session, and keying it on the address let anyone holding one
-// spend the address's login budget — five wrong passwords on "remove this
-// authenticator" and nobody at that address could sign in for fifteen minutes.
-// Per account, guessing is bounded just as tightly and the collateral is gone.
-func StepUpKey(userID int64) string { return "stepup:" + strconv.FormatInt(userID, 10) }
+// Not the client address, which is what login uses: keying it there let anyone
+// holding a session spend the address's login budget — five wrong passwords on
+// "remove this authenticator" and nobody at that address could sign in for fifteen
+// minutes.
+//
+// But not the account alone either, which merely moves the damage onto the victim.
+// Step-up is reachable with nothing but a session, so a stolen one could burn the
+// account's whole budget every fifteen minutes: the owner's CORRECT password is
+// then refused for exactly the two things they need to recover — removing the
+// attacker's authenticator and pairing a replacement — while logins keep working,
+// so nothing looks broken.
+//
+// Per session, the attacker's stolen session spends its own budget and the owner's
+// is untouched. Minting more sessions needs the password, which is what the
+// attacker is trying to guess.
+func StepUpKey(userID int64, sessionID string) string {
+	return "stepup:" + strconv.FormatInt(userID, 10) + ":" + sessionID
+}
 
 // ChallengeUsername reports which account an MFA challenge token names, so a
 // failed verification can be audited against it. It validates the token's

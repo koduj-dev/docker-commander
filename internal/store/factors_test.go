@@ -172,11 +172,30 @@ func TestOneFactorPerSecret(t *testing.T) {
 func TestDuplicateFactorsAreCollapsedOnStart(t *testing.T) {
 	st, uid := factorStore(t)
 	ctx := context.Background()
+
+	// The index has to go first, or the seed cannot represent the damaged database
+	// this repairs. It used to be a t.Skipf here — which meant the test never ran
+	// once, and the collapse logic it names had no coverage at all.
+	if _, err := st.db.ExecContext(ctx, `DROP INDEX IF EXISTS idx_auth_factors_secret_unique`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := st.db.ExecContext(ctx, `
 		INSERT INTO auth_factors (user_id, kind, name, secret, last_counter, created_at)
 		VALUES (?, 'totp', 'A', 'DUP', 10, '2026-01-01T00:00:00Z'),
 		       (?, 'totp', 'B', 'DUP', 77, '2026-01-01T00:00:00Z')`, uid, uid); err != nil {
-		t.Skipf("the unique index already forbids seeding duplicates: %v", err)
+		t.Fatalf("seeding the damaged state: %v", err)
+	}
+	// Another account holding the same secret, to prove the collapse is scoped: it
+	// must survive with its own watermark rather than being merged or deleted.
+	bob, err := st.CreateUser(ctx, &User{Username: "bob", Role: "user"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: bob, Name: "Bob", Secret: "DUP"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.BurnFactorCounter(ctx, mustFactorID(t, st, bob), 5); err != nil {
+		t.Fatal(err)
 	}
 
 	if err := st.enforceOneFactorPerSecret(ctx); err != nil {
@@ -189,6 +208,74 @@ func TestDuplicateFactorsAreCollapsedOnStart(t *testing.T) {
 	if factors[0].LastCounter != 77 {
 		t.Errorf("SECURITY: collapsing kept watermark %d, want the highest (77) — otherwise a spent code works again",
 			factors[0].LastCounter)
+	}
+
+	others, _ := st.ListFactors(ctx, bob)
+	if len(others) != 1 {
+		t.Fatalf("SECURITY: the collapse reached another account's factors (%d left)", len(others))
+	}
+	if others[0].LastCounter != 5 {
+		t.Errorf("SECURITY: another account's watermark was merged to %d, want its own 5", others[0].LastCounter)
+	}
+}
+
+// mustFactorID returns the id of a user's single factor.
+func mustFactorID(t *testing.T, st *Store, uid int64) int64 {
+	t.Helper()
+	factors, err := st.ListFactors(context.Background(), uid)
+	if err != nil || len(factors) != 1 {
+		t.Fatalf("want exactly one factor for %d: %v %+v", uid, err, factors)
+	}
+	return factors[0].ID
+}
+
+// A factor with no secret shares nothing with anything, so an account may hold as
+// many as it likes. This is what a passkey will be — its credential does not live
+// in that column — and a plain unique index would have allowed exactly one, then
+// silently deleted the rest on the next start.
+func TestFactorsWithoutASecretAreNotDeduplicated(t *testing.T) {
+	st, uid := factorStore(t)
+	ctx := context.Background()
+	for _, name := range []string{"Laptop passkey", "Phone passkey", "Security key"} {
+		if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Kind: "webauthn", Name: name}); err != nil {
+			t.Fatalf("pairing %q: %v", name, err)
+		}
+	}
+	if err := st.enforceOneFactorPerSecret(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := st.CountFactors(ctx, uid); n != 3 {
+		t.Errorf("SECURITY: %d of 3 secretless factors survived — the rest were deleted silently", n)
+	}
+}
+
+// The compare-and-swap is not just a duplicate guard: it is what stops a STALE
+// confirmation from consuming a newer enrolment. Scan a QR, start again with a
+// different one, then confirm the first — the second enrolment must survive.
+//
+// The unique index cannot catch this (the secrets differ), so without its own test
+// the CAS could be removed and nothing would notice.
+func TestPairPendingFactorRefusesAStaleEnrolment(t *testing.T) {
+	st, uid := factorStore(t)
+	ctx := context.Background()
+	if err := st.SetTOTPPending(ctx, uid, "NEWSECRET"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := st.PairPendingFactor(ctx, uid, "OLDSECRET", "Stale"); err != ErrNotFound {
+		t.Errorf("a stale enrolment returned %v, want ErrNotFound", err)
+	}
+	u, _ := st.UserByID(ctx, uid)
+	if u.TOTPPending != "NEWSECRET" {
+		t.Errorf("the pending enrolment was consumed by a stale confirmation (now %q)", u.TOTPPending)
+	}
+	if n, _ := st.CountFactors(ctx, uid); n != 0 {
+		t.Errorf("a stale confirmation paired %d factor(s)", n)
+	}
+
+	// The current one still completes.
+	if _, err := st.PairPendingFactor(ctx, uid, "NEWSECRET", "Phone"); err != nil {
+		t.Fatalf("the current enrolment should complete: %v", err)
 	}
 }
 

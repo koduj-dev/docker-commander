@@ -84,10 +84,19 @@ All notable changes to Docker Commander are documented here. The format follows
   claims its enrolment with a compare-and-swap inside a transaction, and a burn that
   moves no row is an error. Each has a concurrency test that fails without the fix.
 
-  Step-up password checks are also bucketed **per account** rather than per address:
-  five wrong passwords on "remove this authenticator" used to spend the *address's*
-  login budget, so anyone holding a session could stop everyone behind that address
-  from signing in for fifteen minutes.
+  Step-up password checks are bucketed **per session**. Per address (the original)
+  meant anyone holding a session could stop everyone behind that address from
+  signing in for fifteen minutes. Per account — the first attempt at fixing that,
+  and caught by a second review round — merely aimed the same weapon at the victim:
+  a stolen session could burn the budget every fifteen minutes, and the owner's
+  *correct* password would then be refused for exactly the two things they need to
+  recover (removing the attacker's authenticator, pairing a replacement) while
+  logins kept working, so nothing looked broken. Per session, the stolen session
+  spends its own budget and minting another needs the password.
+
+  A spent budget now answers **429**, not "password required" — telling someone
+  their own password is wrong while they are recovering an account is both false
+  and cruel.
 
 - **See what is signed in as you, and end it.** *Profile → Security* now lists every
   live session for your account — the device, the address, when it was last used and

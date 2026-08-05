@@ -576,22 +576,53 @@ func TestVerifyUserPasswordResetsTheBudgetOnSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	key := StepUpKey(u.ID, "session-1")
+
 	// Four wrong guesses: one short of the limit of five.
 	for i := 0; i < 4; i++ {
-		if svc.VerifyUserPassword(ctx, "10.0.0.7", u, "nope") {
-			t.Fatal("a wrong password was accepted")
+		if err := svc.VerifyUserPassword(ctx, key, u, "nope"); !errors.Is(err, ErrInvalidCreds) {
+			t.Fatalf("a wrong password returned %v, want ErrInvalidCreds", err)
 		}
 	}
-	if !svc.VerifyUserPassword(ctx, "10.0.0.7", u, "correcthorse123") {
-		t.Fatal("the correct password should still be accepted with budget left")
+	if err := svc.VerifyUserPassword(ctx, key, u, "correcthorse123"); err != nil {
+		t.Fatalf("the correct password should still be accepted with budget left: %v", err)
 	}
 
 	// If the budget survived that success, the fifth failure below would trip the
 	// limiter and the correct password after it would be refused.
 	for i := 0; i < 4; i++ {
-		svc.VerifyUserPassword(ctx, "10.0.0.7", u, "nope")
+		_ = svc.VerifyUserPassword(ctx, key, u, "nope")
 	}
-	if !svc.VerifyUserPassword(ctx, "10.0.0.7", u, "correcthorse123") {
-		t.Error("a successful step-up should have reset the rate-limit budget")
+	if err := svc.VerifyUserPassword(ctx, key, u, "correcthorse123"); err != nil {
+		t.Errorf("a successful step-up should have reset the rate-limit budget: %v", err)
+	}
+}
+
+// PENTEST: a stolen session must not be able to lock the owner out of recovery.
+//
+// Step-up needs nothing but a session. Bucketing it per ACCOUNT meant an attacker
+// holding one could burn the whole budget every fifteen minutes, and the owner's
+// CORRECT password would then be refused for the two things they need — removing
+// the attacker's authenticator and pairing a replacement — while logins kept
+// working, so nothing looked broken.
+func TestPentestStepUpBudgetIsPerSession(t *testing.T) {
+	svc, ctx := newService(t)
+	u, err := svc.Setup(ctx, "admin", "correcthorse123")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The attacker's stolen session spends its own budget, and then some.
+	stolen := StepUpKey(u.ID, "stolen-session")
+	for i := 0; i < 8; i++ {
+		_ = svc.VerifyUserPassword(ctx, stolen, u, "guess")
+	}
+	if err := svc.VerifyUserPassword(ctx, stolen, u, "correcthorse123"); !errors.Is(err, ErrRateLimited) {
+		t.Errorf("the exhausted session should be rate limited, got %v", err)
+	}
+
+	// The owner, on their own session, is unaffected.
+	if err := svc.VerifyUserPassword(ctx, StepUpKey(u.ID, "owners-session"), u, "correcthorse123"); err != nil {
+		t.Errorf("SECURITY: a stolen session locked the owner out of their own recovery: %v", err)
 	}
 }

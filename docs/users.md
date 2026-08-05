@@ -189,6 +189,11 @@ regardless of permissions:
 
   An account can hold ten authenticators.
 
+  Repeated wrong passwords on these actions are rate limited per **sign-in session**,
+  so a device that has been fumbling cannot stop you doing the same thing from
+  another one. When that limit is hit the app says so, rather than claiming the
+  password was wrong.
+
   Starting a pairing is always safe: nothing changes until you enter a code from
   the new device, so cancelling leaves things exactly as they were.
 

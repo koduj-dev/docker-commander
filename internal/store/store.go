@@ -478,17 +478,29 @@ func (s *Store) enforceOneFactorPerSecret(ctx context.Context) error {
 		UPDATE auth_factors SET last_counter = (
 			SELECT MAX(d.last_counter) FROM auth_factors d
 			WHERE d.user_id = auth_factors.user_id AND d.secret = auth_factors.secret
-		)`); err != nil {
+		) WHERE secret != ''`); err != nil {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `
-		DELETE FROM auth_factors WHERE id NOT IN (
-			SELECT MIN(id) FROM auth_factors GROUP BY user_id, secret
+		DELETE FROM auth_factors WHERE secret != '' AND id NOT IN (
+			SELECT MIN(id) FROM auth_factors WHERE secret != '' GROUP BY user_id, secret
 		)`); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_factors_user_secret ON auth_factors(user_id, secret)`)
+	// Partial, and every statement above is too. A shared secret is what makes two
+	// rows the same authenticator; a factor with NO secret — which is what a passkey
+	// will be, since its credential does not live in this column — shares nothing
+	// with anything. A plain unique index would let an account hold exactly one of
+	// them and silently delete the rest on the next start, which is a trap laid for
+	// the very feature the `kind` column exists to allow.
+	// The earlier name carried a NON-partial index. `CREATE ... IF NOT EXISTS` would
+	// leave it in place — same name, wrong definition — so it goes explicitly.
+	if _, err := s.db.ExecContext(ctx, `DROP INDEX IF EXISTS idx_auth_factors_user_secret`); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_factors_secret_unique
+		ON auth_factors(user_id, secret) WHERE secret != ''`)
 	return err
 }
 

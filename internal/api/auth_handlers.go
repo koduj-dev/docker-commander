@@ -301,7 +301,11 @@ func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "invalid body")
 			return
 		}
-		if !s.auth.VerifyUserPassword(r.Context(), auth.StepUpKey(u.ID), u, body.Password) {
+		if err := s.auth.VerifyUserPassword(r.Context(), auth.StepUpKey(u.ID, c.ID), u, body.Password); err != nil {
+			if errors.Is(err, auth.ErrRateLimited) {
+				writeErr(w, http.StatusTooManyRequests, err.Error())
+				return
+			}
 			s.audit(r, "auth.2fa.repair.denied", u.Username, "wrong password")
 			writeErr(w, http.StatusForbidden, "password required to pair a new authenticator")
 			return
