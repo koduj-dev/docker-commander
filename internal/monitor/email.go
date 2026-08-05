@@ -109,6 +109,10 @@ func SendMail(cfg store.SMTPConfig, subject, body string) error {
 	}
 	c, err := smtp.NewClient(conn, cfg.Host)
 	if err != nil {
+		// The TLS connection is ours until NewClient takes ownership of it; if it
+		// fails, nothing else will ever close this socket. One leaked descriptor
+		// per attempt, and a misbehaving relay is retried on every alert.
+		_ = conn.Close()
 		return err
 	}
 	defer c.Close()

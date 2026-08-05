@@ -165,33 +165,65 @@ func (m *Manager) StreamLogs(ctx context.Context, hostID int64, id string, follo
 	}
 	defer reader.Close()
 
-	// Docker multiplexes stdout/stderr; demux into two pipes we read linewise.
+	return demuxLines(ctx, reader, emit)
+}
+
+// demuxLines splits Docker's multiplexed stream into stdout/stderr lines and
+// hands each to emit. Split out from StreamLogs so the part with the interesting
+// failure modes — a scanner ending early, or one stream outliving the other — is
+// testable without a daemon.
+func demuxLines(ctx context.Context, reader io.Reader, emit func(LogLine)) error {
 	stdoutR, stdoutW := io.Pipe()
 	stderrR, stderrW := io.Pipe()
 	go func() {
-		_, _ = stdcopy.StdCopy(stdoutW, stderrW, reader)
-		_ = stdoutW.Close()
-		_ = stderrW.Close()
+		_, err := stdcopy.StdCopy(stdoutW, stderrW, reader)
+		_ = stdoutW.CloseWithError(err)
+		_ = stderrW.CloseWithError(err)
 	}()
 
-	done := make(chan struct{}, 2)
-	scan := func(r io.Reader, stream string) {
+	// Both scanners must finish, not just the first.
+	//
+	// Returning on whichever ended first dropped whatever the other was still
+	// emitting — with follow=false (the REST log fetch) stdout typically ends
+	// while stderr is mid-flight, so trailing lines went missing from a listing
+	// that looked complete.
+	//
+	// Scanner errors were discarded too. A line over the 1 MiB buffer ends the
+	// scan with bufio.ErrTooLong, which surfaced as a clean end: the WebSocket
+	// client saw a normal close and a monitor log-follower stopped silently until
+	// the next reconcile, missing every match in between.
+	done := make(chan error, 2)
+	scan := func(r *io.PipeReader, stream string) {
 		sc := bufio.NewScanner(r)
 		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for sc.Scan() {
 			emit(splitTimestamp(stream, sc.Text()))
 		}
-		done <- struct{}{}
+		// Tell the writer this side is done reading. Without it a scanner that
+		// gave up (an over-long line) leaves StdCopy blocked forever on a pipe
+		// nobody drains — and then the OTHER scanner never ends either, so
+		// waiting for both would hang. Waiting for one used to hide that.
+		_ = r.CloseWithError(io.EOF)
+		done <- sc.Err()
 	}
 	go scan(stdoutR, "stdout")
 	go scan(stderrR, "stderr")
 
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-done:
-		return nil
+	var firstErr error
+	for range 2 {
+		select {
+		case <-ctx.Done():
+			// Unblock both scanners so they don't outlive the call.
+			_ = stdoutR.CloseWithError(ctx.Err())
+			_ = stderrR.CloseWithError(ctx.Err())
+			return ctx.Err()
+		case err := <-done:
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
 	}
+	return firstErr
 }
 
 // splitTimestamp separates the RFC3339Nano timestamp Docker prepends (because

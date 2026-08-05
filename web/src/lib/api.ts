@@ -74,11 +74,31 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  const data = parseJSON(text);
   if (!res.ok) {
     throw new ApiError(res.status, data?.error ?? res.statusText);
   }
   return data as T;
+}
+
+// parseJSON tolerates a body that isn't JSON.
+//
+// Parsing before checking res.ok meant an error page from something other than
+// this app — a reverse proxy's 502/504 HTML, a plain-text gateway message — threw
+// SyntaxError instead of the ApiError every caller expects. The UI then showed
+// "Unexpected token '<'" rather than the status, and code branching on
+// `e instanceof ApiError` (the login screen, for one) took the wrong path.
+// A body we cannot read is not an excuse to lose the status that came with it.
+// Returns `any`, mirroring JSON.parse itself: call sites already narrow the shape
+// they expect, and a stricter type here would only move the cast around.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function parseJSON(text: string): any {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 // smtpPayload strips read-only/derived fields (hasPassword) the API rejects.
@@ -108,7 +128,7 @@ async function uploadTar(path: string, file: File): Promise<{ ok: boolean; error
     body: file,
   });
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  const data = parseJSON(text);
   if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText);
   return data;
 }
@@ -249,7 +269,7 @@ export const api = {
       method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/octet-stream" }, body: file,
     });
     const text = await res.text();
-    const data = text ? JSON.parse(text) : null;
+    const data = parseJSON(text);
     if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText);
     return data as { ok: boolean; error?: string; bytes?: number };
   },
@@ -273,7 +293,7 @@ export const api = {
       method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/octet-stream" }, body: file,
     });
     const text = await res.text();
-    const data = text ? JSON.parse(text) : null;
+    const data = parseJSON(text);
     if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText);
     return data as { ok: boolean; error?: string };
   },
@@ -299,7 +319,7 @@ export const api = {
       method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/octet-stream" }, body: file,
     });
     const text = await res.text();
-    const data = text ? JSON.parse(text) : null;
+    const data = parseJSON(text);
     if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText);
     return data as { ok: boolean; error?: string; bytes?: number };
   },
@@ -323,7 +343,7 @@ export const api = {
       method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/octet-stream" }, body: file,
     });
     const text = await res.text();
-    const data = text ? JSON.parse(text) : null;
+    const data = parseJSON(text);
     if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText);
     return data as { ok: boolean; error?: string };
   },
@@ -380,7 +400,7 @@ export const api = {
       method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/zip" }, body: file,
     });
     const text = await res.text();
-    const data = text ? JSON.parse(text) : null;
+    const data = parseJSON(text);
     if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText);
     return data as { id: number; slug: string; files: number };
   },
@@ -414,7 +434,7 @@ export const api = {
       method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/octet-stream" }, body: file,
     });
     const text = await res.text();
-    const data = text ? JSON.parse(text) : null;
+    const data = parseJSON(text);
     if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText);
     return data as { ok: boolean; error?: string; bytes?: number };
   },
@@ -481,7 +501,7 @@ export const api = {
       method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/octet-stream" }, body: file,
     });
     const text = await res.text();
-    const data = text ? JSON.parse(text) : null;
+    const data = parseJSON(text);
     if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText);
     return data as { ok: boolean; error?: string; bytes?: number };
   },

@@ -27,6 +27,7 @@ func (m *memoryStore) Record(_ context.Context, samples []Sample) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cutoff := time.Now().Add(-m.retention).UnixMilli()
+	m.forgetStale(cutoff)
 	for _, s := range samples {
 		m.hosts[s.ContainerID] = s.HostID
 		byMetric := m.series[s.ContainerID]
@@ -47,6 +48,29 @@ func (m *memoryStore) Record(_ context.Context, samples []Sample) error {
 		}
 	}
 	return nil
+}
+
+// forgetStale drops containers that have stopped being sampled.
+//
+// Trimming only ever ran for the containers in the current batch, so a container
+// that was deleted kept its whole retention window — seven metrics × up to six
+// hours at 15s is ~10k points — plus its hosts entry, for as long as the process
+// lived. On a host with churn that is a slow leak with no upper bound.
+//
+// Caller holds m.mu.
+func (m *memoryStore) forgetStale(cutoff int64) {
+	for cid, byMetric := range m.series {
+		newest := int64(0)
+		for _, pts := range byMetric {
+			if n := len(pts); n > 0 && pts[n-1].T > newest {
+				newest = pts[n-1].T
+			}
+		}
+		if newest < cutoff {
+			delete(m.series, cid)
+			delete(m.hosts, cid)
+		}
+	}
 }
 
 func (m *memoryStore) Query(_ context.Context, containerID, metric string, since time.Time) ([]Point, error) {
