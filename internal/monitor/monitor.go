@@ -788,26 +788,33 @@ func (m *Monitor) ensureFollower(ctx context.Context, key string, r store.AlertR
 	m.logCancels[key] = cancel
 	m.logMu.Unlock()
 
-	go func() {
-		defer func() {
-			// cancel() as well as delete(): the context was derived from the
-			// monitor's long-lived root, so forgetting the entry without
-			// cancelling leaves a child attached to that root for the life of the
-			// process. One per follower that ends on its own — a container
-			// stopping, a stream erroring — which on a host with churn is every
-			// few minutes, for ever.
-			cancel()
-			m.logMu.Lock()
-			delete(m.logCancels, key)
-			m.logMu.Unlock()
-		}()
+	go runFollower(cancel, func() {
+		m.logMu.Lock()
+		delete(m.logCancels, key)
+		m.logMu.Unlock()
+	}, func() error {
 		// tail "0": only match new lines, never the historical backlog.
-		_ = m.docker.StreamLogs(fctx, hostID, cid, true, "0", func(l docker.LogLine) {
+		return m.docker.StreamLogs(fctx, hostID, cid, true, "0", func(l docker.LogLine) {
 			if cfg.match(l.Message) {
 				m.fire(fctx, r, hostID, hostName, cid, name, "log match: "+truncate(l.Message, 200), nil)
 			}
 		})
+	})
+}
+
+// runFollower streams until it ends, then cancels its context and cleans up.
+//
+// Extracted so the cancel can be asserted: forgetting it is invisible from the
+// outside — the follower's entry disappears either way — while leaving a child
+// context attached to the monitor's long-lived root for the life of the process.
+// One per follower that ends on its own, which on a churning host is every few
+// minutes.
+func runFollower(cancel context.CancelFunc, cleanup func(), stream func() error) {
+	defer func() {
+		cancel()
+		cleanup()
 	}()
+	_ = stream()
 }
 
 func (m *Monitor) stopAllFollowers() {

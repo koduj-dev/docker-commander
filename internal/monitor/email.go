@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log"
+	"net"
 	"net/smtp"
 	"strings"
 	"time"
@@ -103,16 +104,19 @@ func SendMail(cfg store.SMTPConfig, subject, body string) error {
 	}
 
 	// Implicit TLS: dial a TLS socket first, then speak SMTP over it.
-	conn, err := tls.Dial("tcp", addr, &tls.Config{ServerName: cfg.Host, MinVersion: tls.VersionTLS12})
+	conn, err := tlsDial("tcp", addr, &tls.Config{ServerName: cfg.Host, MinVersion: tls.VersionTLS12})
 	if err != nil {
 		return err
 	}
+	// NewClient takes ownership of conn even when it fails: it wraps the socket in
+	// a textproto.Conn and closes that if the greeting doesn't arrive. So there is
+	// nothing to close here — an explicit conn.Close() on this path would be dead
+	// code, which is what it was until a mutation test showed it could not be made
+	// to matter. TestSendMailClosesTheConnectionWhenTheGreetingFails pins the
+	// contract we are relying on, so a refactor that stops handing the socket over
+	// gets caught.
 	c, err := smtp.NewClient(conn, cfg.Host)
 	if err != nil {
-		// The TLS connection is ours until NewClient takes ownership of it; if it
-		// fails, nothing else will ever close this socket. One leaked descriptor
-		// per attempt, and a misbehaving relay is retried on every alert.
-		_ = conn.Close()
 		return err
 	}
 	defer c.Close()
@@ -155,6 +159,13 @@ func SendMail(cfg store.SMTPConfig, subject, body string) error {
 // as itself in the subject line instead of running two words together.
 func headerValue(v string) string {
 	return strings.NewReplacer("\r", " ", "\n", " ").Replace(v)
+}
+
+// tlsDial is tls.Dial, swappable so the ownership of the connection — who closes
+// it when the SMTP handshake fails — can be asserted without a certificate
+// authority. Production always uses tls.Dial.
+var tlsDial = func(network, addr string, cfg *tls.Config) (net.Conn, error) {
+	return tls.Dial(network, addr, cfg)
 }
 
 func buildMessage(from, to, subject, body string) []byte {

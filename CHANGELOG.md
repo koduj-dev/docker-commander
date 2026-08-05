@@ -187,14 +187,12 @@ All notable changes to Docker Commander are documented here. The format follows
   close and a log-following alert rule stopped silently until the next reconcile,
   missing every match in between.
 
-- **Four slow leaks.** A log follower that ended on its own forgot its cancel
+- **Three slow leaks.** A log follower that ended on its own forgot its cancel
   function instead of calling it, leaving a context attached to the monitor's root
   for the life of the process; restart timestamps were pruned only when a restart
   rule happened to read them, so a host with churn accumulated them for ever with
   no such rule configured; the in-memory metric history never forgot containers
-  that stopped reporting, keeping their full retention window indefinitely; and a
-  failed SMTP handshake leaked its TLS connection, once per alert against a
-  misbehaving relay.
+  that stopped reporting, keeping their full retention window indefinitely.
 
 - **A non-JSON error response is reported as its status.** The API client parsed
   the body before checking whether the request succeeded, so an error page from
