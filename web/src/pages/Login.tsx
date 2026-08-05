@@ -43,7 +43,17 @@ export function Login() {
         await refresh(); // loads prefs, then sets the user
       }
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Invalid code");
+      // A challenge token is good for one attempt, so a wrong code cannot be
+      // retried here — the server has already spent it. Sending the user back to
+      // the password step is the honest thing: staying on a form that can no
+      // longer succeed would just produce a second, more confusing error.
+      setStep("password");
+      setMfaToken("");
+      setCode("");
+      setPassword("");
+      setErr(e instanceof ApiError && e.status === 429
+        ? e.message
+        : "That code was not accepted. Sign in again to get a new one.");
     } finally {
       setBusy(false);
     }

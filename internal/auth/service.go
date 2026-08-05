@@ -27,6 +27,8 @@ type Service struct {
 	store   *store.Store
 	tokens  *TokenManager
 	limiter *LoginLimiter
+	// challenges makes an MFA challenge token good for one attempt.
+	challenges *usedChallenges
 	// ldapAuth is the directory bind, swappable so the provisioning rules below
 	// (what a login is allowed to grant) can be tested without a directory.
 	// Production always uses LDAPAuthenticate.
@@ -36,10 +38,11 @@ type Service struct {
 // NewService wires the auth service together.
 func NewService(s *store.Store, tm *TokenManager) *Service {
 	return &Service{
-		store:    s,
-		tokens:   tm,
-		limiter:  NewLoginLimiter(5, 15*time.Minute),
-		ldapAuth: LDAPAuthenticate,
+		store:      s,
+		tokens:     tm,
+		limiter:    NewLoginLimiter(5, 15*time.Minute),
+		challenges: newUsedChallenges(),
+		ldapAuth:   LDAPAuthenticate,
 	}
 }
 
@@ -210,6 +213,15 @@ func (s *Service) VerifyMFA(ctx context.Context, rlKey, challengeToken, code str
 	userKey := mfaKey(claims.UserID)
 	if !s.limiter.Allow(userKey) {
 		return nil, ErrRateLimited
+	}
+	// One challenge, one attempt — spent before the code is even looked at, so a
+	// wrong guess costs another password round trip rather than another try. The
+	// rate limiter bounds guesses per window; this bounds them per password entry,
+	// which is the half an attacker with the password can otherwise repeat freely.
+	if !s.challenges.spend(claims.ID, claims.ExpiresAt.Time) {
+		s.limiter.Fail(rlKey)
+		s.limiter.Fail(userKey)
+		return nil, ErrInvalidCreds
 	}
 	u, err := s.store.UserByID(ctx, claims.UserID)
 	if err != nil {
