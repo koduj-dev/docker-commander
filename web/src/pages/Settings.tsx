@@ -18,7 +18,11 @@ export function Settings() {
   const [no2fa, setNo2fa] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState("");
+  // Scoped to the card that saved. Both cards write through the same endpoint
+  // (one settings payload), so a single message string meant pressing Save under
+  // Features also lit up the 2FA card in Security — with Features' wording, which
+  // is about nav changes and says nothing true about the exemption.
+  const [msg, setMsg] = useState<{ scope: Tab; text: string } | null>(null);
   const [tab, setTab] = useState<Tab>("features");
 
   const load = useCallback(() => {
@@ -31,13 +35,13 @@ export function Settings() {
   }, []);
   useEffect(() => load(), [load]);
 
-  const save = async () => {
-    setBusy(true); setMsg("");
+  const save = async (scope: Tab, okText: string) => {
+    setBusy(true); setMsg(null);
     try {
       await api.setSettings({ disabledSections: [...disabled], localhostNo2fa: no2fa });
-      setMsg("Saved. Users may need to reload for nav changes to apply.");
+      setMsg({ scope, text: okText });
     } catch {
-      setMsg("Save failed");
+      setMsg({ scope, text: "Save failed" });
     } finally { setBusy(false); }
   };
 
@@ -79,8 +83,12 @@ export function Settings() {
                 })}
               </div>
               <div className="flex items-center justify-end gap-3 pt-1">
-                {msg && <span className="text-sm text-ok">{msg}</span>}
-                <button className="btn-primary" onClick={save} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Save settings</button>
+                {msg?.scope === "features" && <span className="text-sm text-ok">{msg.text}</span>}
+                <button
+                  className="btn-primary"
+                  onClick={() => save("features", "Saved. Users may need to reload for nav changes to apply.")}
+                  disabled={busy}
+                >{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Save settings</button>
               </div>
             </div>
           </div>
@@ -98,8 +106,12 @@ export function Settings() {
                 </span>
               </label>
               <div className="flex items-center justify-end gap-3 pt-1">
-                {msg && <span className="text-sm text-ok">{msg}</span>}
-                <button className="btn-primary" onClick={save} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Save settings</button>
+                {msg?.scope === "security" && <span className="text-sm text-ok">{msg.text}</span>}
+                <button
+                  className="btn-primary"
+                  onClick={() => save("security", "Saved. It applies to the next sign-in.")}
+                  disabled={busy}
+                >{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Save settings</button>
               </div>
             </div>
 
