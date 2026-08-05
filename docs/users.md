@@ -175,15 +175,18 @@ regardless of permissions:
   because there is no factor to replace.
 
   It also lists **what is signed in as you** — every browser and device holding a
-  live session, with the address it last came from, what it says it is, and when
-  it was last used. The one you are using is marked *this one*. Any row can be
-  signed out, and **Sign out everywhere else** ends all the others in one go.
-  Signing out the current row simply signs you out here.
+  live session, named (*Firefox on Linux*, *Safari on iPhone*, *curl*) with the
+  address it last came from, when it was last used and when it signed in. The one
+  you are using is marked *this device*. Any row can be signed out, and **Sign out
+  everywhere else** ends all the others in one go. Signing out the current row
+  simply signs you out here.
 
   Only you see this list, and only for your own account: an admin view of
   everyone's sessions would be a record of when each person works and from where.
-  The address and browser are recognition aids — both are ultimately what the
-  client claims — so treat them as "does this look like me?", not as proof.
+  The address and the device name are recognition aids — both are ultimately what
+  the client claims, and the name is our reading of it — so treat them as "does
+  this look like me?", not as proof. A client we cannot place is shown exactly as
+  it identified itself.
 
   If something there is not you, sign it out **and change your password**: that
   ends every session at once, including the one you didn't spot.
