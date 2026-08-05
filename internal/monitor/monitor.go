@@ -672,10 +672,27 @@ func (m *Monitor) handleEvent(ctx context.Context, hostID int64, hostName string
 	}
 }
 
+// restartRetention bounds how long a restart timestamp is worth keeping. Rules
+// use windows of seconds to minutes; an hour is generous for any of them.
+const restartRetention = time.Hour
+
 func (m *Monitor) recordRestart(cid string) {
 	m.restartMu.Lock()
 	defer m.restartMu.Unlock()
-	m.restarts[cid] = append(m.restarts[cid], time.Now())
+	now := time.Now()
+	// Pruned here, not only in restartCount. Every container start appends,
+	// regardless of whether any rule cares — but the pruning lived in the read
+	// path, which only runs when a restart rule matches that container. With no
+	// restart rules (or one targeting a different name) a host with CI or cron
+	// churn accumulated timestamps until the process was restarted.
+	cutoff := now.Add(-restartRetention)
+	kept := m.restarts[cid][:0]
+	for _, t := range m.restarts[cid] {
+		if t.After(cutoff) {
+			kept = append(kept, t)
+		}
+	}
+	m.restarts[cid] = append(kept, now)
 }
 
 func (m *Monitor) restartCount(cid string, windowSec int) int {
@@ -773,6 +790,13 @@ func (m *Monitor) ensureFollower(ctx context.Context, key string, r store.AlertR
 
 	go func() {
 		defer func() {
+			// cancel() as well as delete(): the context was derived from the
+			// monitor's long-lived root, so forgetting the entry without
+			// cancelling leaves a child attached to that root for the life of the
+			// process. One per follower that ends on its own — a container
+			// stopping, a stream erroring — which on a host with churn is every
+			// few minutes, for ever.
+			cancel()
 			m.logMu.Lock()
 			delete(m.logCancels, key)
 			m.logMu.Unlock()

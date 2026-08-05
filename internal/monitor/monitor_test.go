@@ -161,3 +161,45 @@ func TestNetRatesIgnoreNonPositiveElapsed(t *testing.T) {
 		t.Error("a zero interval must not produce a rate (it would be a division by zero)")
 	}
 }
+
+// Every container start appends a timestamp, whether or not a restart rule cares.
+// Pruning used to live only in the read path, which runs when a restart rule
+// matches that container — so with no restart rules at all, a host with CI or
+// cron churn accumulated timestamps until the process was restarted.
+func TestRecordRestartPrunesItsOwnHistory(t *testing.T) {
+	m := New(nil, nil, nil)
+
+	m.restartMu.Lock()
+	old := time.Now().Add(-2 * restartRetention)
+	m.restarts["c1"] = []time.Time{old, old, old}
+	m.restartMu.Unlock()
+
+	m.recordRestart("c1")
+
+	m.restartMu.Lock()
+	got := len(m.restarts["c1"])
+	m.restartMu.Unlock()
+	if got != 1 {
+		t.Errorf("stale timestamps should be dropped on record: %d kept, want just the new one", got)
+	}
+}
+
+// The counterweight: timestamps inside the window are what a crash-loop rule
+// counts, so pruning must not touch them.
+func TestRecordRestartKeepsRecentHistory(t *testing.T) {
+	m := New(nil, nil, nil)
+	recent := time.Now().Add(-time.Minute)
+
+	m.restartMu.Lock()
+	m.restarts["c1"] = []time.Time{recent, recent}
+	m.restartMu.Unlock()
+
+	m.recordRestart("c1")
+
+	m.restartMu.Lock()
+	got := len(m.restarts["c1"])
+	m.restartMu.Unlock()
+	if got != 3 {
+		t.Errorf("recent restarts must survive: %d kept, want 3", got)
+	}
+}

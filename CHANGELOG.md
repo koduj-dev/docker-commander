@@ -150,6 +150,39 @@ All notable changes to Docker Commander are documented here. The format follows
   send the cookie back at all.
 
 ### Fixed
+- **Re-subscribing to a live stream no longer cancels the wrong one.** The
+  frontend reuses deterministic subscription ids, so leaving a container page and
+  coming straight back replaced a subscription while the old stream was still
+  winding down — and the old one's cleanup then removed the *new* entry. The new
+  stream kept running with nothing able to stop it short of closing the socket,
+  and the client was told its live subscription had ended. Subscriptions are
+  numbered now, so a stream can tell whether the entry under its id is still its
+  own.
+
+- **A log stream no longer ends when the first of its two readers does.** Docker
+  multiplexes stdout and stderr; returning as soon as either finished dropped
+  whatever the other was still emitting, which on a plain log fetch typically
+  meant losing the tail of stderr. Scanner errors were discarded too, so a line
+  over the 1 MiB buffer looked like a clean end — the WebSocket client saw a normal
+  close and a log-following alert rule stopped silently until the next reconcile,
+  missing every match in between.
+
+- **Four slow leaks.** A log follower that ended on its own forgot its cancel
+  function instead of calling it, leaving a context attached to the monitor's root
+  for the life of the process; restart timestamps were pruned only when a restart
+  rule happened to read them, so a host with churn accumulated them for ever with
+  no such rule configured; the in-memory metric history never forgot containers
+  that stopped reporting, keeping their full retention window indefinitely; and a
+  failed SMTP handshake leaked its TLS connection, once per alert against a
+  misbehaving relay.
+
+- **A non-JSON error response is reported as its status.** The API client parsed
+  the body before checking whether the request succeeded, so an error page from
+  something other than this app — a reverse proxy's 502 — threw a SyntaxError
+  instead of the error type every caller expects. The UI showed
+  `Unexpected token '<'` rather than the status, and code branching on the error
+  type took the wrong path.
+
 - **An unreachable host no longer reports its alerts as resolved.** A failed or
   timed-out container listing left that host out of the stats snapshot, and the
   resolve sweep read the absence as recovery — so every live condition on it got a

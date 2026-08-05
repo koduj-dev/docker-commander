@@ -68,7 +68,7 @@ func (h *Hub) Serve(ctx context.Context, conn *websocket.Conn, allow func(channe
 	c := &connState{
 		conn:    conn,
 		docker:  h.docker,
-		subs:    make(map[string]context.CancelFunc),
+		subs:    make(map[string]subscription),
 		writeMu: &sync.Mutex{},
 		allow:   allow,
 	}
@@ -99,7 +99,16 @@ type connState struct {
 	allow   func(channel string, hostID int64) bool
 
 	mu   sync.Mutex
-	subs map[string]context.CancelFunc
+	subs map[string]subscription
+	// gen numbers subscriptions so a stream that ends can tell whether the entry
+	// under its id is still its own.
+	gen uint64
+}
+
+// subscription is one live stream: how to stop it, and which generation it is.
+type subscription struct {
+	cancel context.CancelFunc
+	gen    uint64
 }
 
 func (c *connState) subscribe(parent context.Context, msg clientMsg) {
@@ -125,11 +134,13 @@ func (c *connState) subscribe(parent context.Context, msg clientMsg) {
 
 	ctx, cancel := context.WithCancel(parent)
 	c.mu.Lock()
-	c.subs[msg.SubID] = cancel
+	c.gen++
+	gen := c.gen
+	c.subs[msg.SubID] = subscription{cancel: cancel, gen: gen}
 	c.mu.Unlock()
 
 	go func() {
-		defer c.finish(msg.SubID)
+		defer c.finish(msg.SubID, gen)
 		var err error
 		switch msg.Channel {
 		case "stats":
@@ -151,30 +162,42 @@ func (c *connState) subscribe(parent context.Context, msg clientMsg) {
 
 func (c *connState) unsubscribe(subID string) {
 	c.mu.Lock()
-	if cancel, ok := c.subs[subID]; ok {
-		cancel()
+	if sub, ok := c.subs[subID]; ok {
+		sub.cancel()
 		delete(c.subs, subID)
 	}
 	c.mu.Unlock()
 }
 
-// finish removes a subscription that ended on its own and notifies the client.
-func (c *connState) finish(subID string) {
+// finish removes a subscription that ended on its own and notifies the client —
+// but only if the entry under that id is still the one it registered.
+//
+// The frontend reuses deterministic ids ("stats:<container>"), so leaving a
+// container page and coming straight back — or React StrictMode's double mount in
+// dev — replaces a subscription while the old stream is still winding down. Its
+// deferred finish would then delete the NEW entry: the new stream keeps running
+// with nothing able to cancel it (until the socket closes) and the client is told
+// its live subscription ended. Comparing generations is what makes "mine" mean
+// mine.
+func (c *connState) finish(subID string, gen uint64) {
 	c.mu.Lock()
-	_, existed := c.subs[subID]
-	delete(c.subs, subID)
+	sub, existed := c.subs[subID]
+	mine := existed && sub.gen == gen
+	if mine {
+		delete(c.subs, subID)
+	}
 	c.mu.Unlock()
-	if existed {
+	if mine {
 		c.write(context.Background(), serverMsg{Type: "end", SubID: subID})
 	}
 }
 
 func (c *connState) closeAll() {
 	c.mu.Lock()
-	for _, cancel := range c.subs {
-		cancel()
+	for _, sub := range c.subs {
+		sub.cancel()
 	}
-	c.subs = make(map[string]context.CancelFunc)
+	c.subs = make(map[string]subscription)
 	c.mu.Unlock()
 }
 
