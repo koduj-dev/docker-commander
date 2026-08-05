@@ -44,7 +44,14 @@ func NewMiddleware(tokens *TokenManager, epochs SessionEpochSource) *Middleware 
 func (m *Middleware) RequireSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		claims, err := m.extract(r)
-		if err != nil || claims.Kind != KindSession {
+		// The id is required, not merely present in practice. A JWT's jti is
+		// optional, so a signed token without one parses cleanly and arrives here
+		// with ID == "" — and everything downstream keys on it: the session row that
+		// makes revocation work, and the step-up rate-limit bucket, which would
+		// collapse from per-session back to per-account and hand a stolen session
+		// the power to lock its owner out of recovery. Refusing it makes both
+		// structural rather than incidental.
+		if err != nil || claims.Kind != KindSession || claims.ID == "" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}

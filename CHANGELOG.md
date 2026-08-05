@@ -98,6 +98,13 @@ All notable changes to Docker Commander are documented here. The format follows
   their own password is wrong while they are recovering an account is both false
   and cruel.
 
+  A session token carrying no `jti` is refused outright. `jti` is optional in a
+  JWT, so a signed token without one parsed cleanly and arrived with an empty id —
+  and both the revocation row and the per-session rate-limit bucket key on it, the
+  second of which would have collapsed back to per-account. Minting such a token
+  needs the signing key, so this makes a property that held by accident hold by
+  construction.
+
 - **See what is signed in as you, and end it.** *Profile → Security* now lists every
   live session for your account — the device, the address, when it was last used and
   when it signed in, with the one you are using marked — and lets you sign out any of

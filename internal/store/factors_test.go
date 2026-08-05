@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -487,5 +488,66 @@ func TestTOTPEnabledCountsOnlyAuthenticatorApps(t *testing.T) {
 	u, _ = st.UserByID(ctx, uid)
 	if !u.TOTPEnabled {
 		t.Error("an authenticator app should switch TOTP on")
+	}
+}
+
+// The upgrade path for the constraint itself.
+//
+// An earlier build of this branch created a NON-partial unique index under the
+// name idx_auth_factors_user_secret. `CREATE UNIQUE INDEX IF NOT EXISTS` under the
+// new name succeeds beside it, so without an explicit DROP the old one keeps
+// enforcing uniqueness over EVERY row — including the secretless ones a passkey
+// will be — and the fix simply never reaches a database that was already running.
+//
+// Every other test here starts from a fresh database that never had the old index,
+// which is exactly why this one has to build it by hand.
+func TestUpgradeDropsTheOldNonPartialIndex(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "upgrade.db")
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uid, err := st.CreateUser(context.Background(), &User{Username: "alice", Role: "user"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Put the database back into the shape the earlier build left it in.
+	ctx := context.Background()
+	if _, err := st.db.ExecContext(ctx, `DROP INDEX IF EXISTS idx_auth_factors_secret_unique`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.ExecContext(ctx,
+		`CREATE UNIQUE INDEX idx_auth_factors_user_secret ON auth_factors(user_id, secret)`); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	// Restart.
+	st, err = Open(path)
+	if err != nil {
+		t.Fatalf("reopening an upgraded database: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	var stale int
+	if err := st.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_auth_factors_user_secret'`).
+		Scan(&stale); err != nil {
+		t.Fatal(err)
+	}
+	if stale != 0 {
+		t.Error("the old non-partial index survived the upgrade — it still forbids a second secretless factor")
+	}
+
+	// The consequence, stated as behaviour rather than as schema: two factors that
+	// carry no secret can coexist.
+	for _, name := range []string{"Laptop passkey", "Phone passkey"} {
+		if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Kind: "webauthn", Name: name}); err != nil {
+			t.Fatalf("pairing %q on an upgraded database: %v", name, err)
+		}
+	}
+	if n, _ := st.CountFactors(ctx, uid); n != 2 {
+		t.Errorf("an upgraded database holds %d secretless factors, want 2", n)
 	}
 }

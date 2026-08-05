@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"github.com/golang-jwt/jwt/v5"
+
 	"context"
 	"crypto/rand"
 	"errors"
@@ -624,5 +626,52 @@ func TestPentestStepUpBudgetIsPerSession(t *testing.T) {
 	// The owner, on their own session, is unaffected.
 	if err := svc.VerifyUserPassword(ctx, StepUpKey(u.ID, "owners-session"), u, "correcthorse123"); err != nil {
 		t.Errorf("SECURITY: a stolen session locked the owner out of their own recovery: %v", err)
+	}
+}
+
+// PENTEST: a session token with no id must be refused.
+//
+// `jti` is optional in a JWT, so a correctly-signed token without one parses fine
+// and reaches the handlers with ID == "". Everything that makes a session
+// controllable keys on that id: the row whose deletion revokes it, and the
+// per-session step-up bucket — which with an empty id collapses back to
+// per-account, the exact shape that let a stolen session lock its owner out of
+// recovering their 2FA.
+//
+// Minting one needs the signing secret, so this is defence in depth. It is also
+// one condition, and the alternative is a security property that holds only
+// because no code path happens to produce the input that breaks it.
+func TestPentestSession_TokenWithoutAnIDIsRefused(t *testing.T) {
+	svc, ctx := newService(t)
+	u, err := svc.Setup(ctx, "admin", "correcthorse123")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Signed by us, valid in every way, except that it carries no id.
+	forged, err := jwt.NewWithClaims(jwt.SigningMethodHS256, Claims{
+		UserID: u.ID, Username: u.Username, Role: u.Role, Kind: KindSession, Epoch: u.SessionEpoch,
+		RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))},
+	}).SignedString(svc.tokens.secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// …and a session row under the empty id, so the middleware's existence check
+	// cannot be what refuses it.
+	if err := svc.store.CreateSession(ctx, &store.Session{
+		ID: "", UserID: u.ID, ExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	mw := NewMiddleware(svc.tokens, epochStore{svc})
+	reached := false
+	h := mw.RequireSession(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { reached = true }))
+	r := httptest.NewRequest("GET", "/api/auth/me", nil)
+	r.AddCookie(&http.Cookie{Name: SessionCookie, Value: forged})
+	h.ServeHTTP(httptest.NewRecorder(), r)
+
+	if reached {
+		t.Error("SECURITY: a session token with no id was accepted")
 	}
 }
