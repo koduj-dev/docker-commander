@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api, ApiError } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { AuthShell } from "./AuthShell";
+import { describePasskeyError, passkeysSupported, usePasskey } from "../lib/webauthn";
 
 // Two-step login: password, then (if enabled) a TOTP code.
 export function Login() {
@@ -11,6 +12,10 @@ export function Login() {
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [mfaToken, setMfaToken] = useState("");
+  // Which second factors this account actually has. Offering a passkey button to
+  // someone who has none is a dead end, and offering the code box to someone who
+  // only has a passkey is worse — they would sit there hunting for an app.
+  const [methods, setMethods] = useState<string[]>([]);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -22,6 +27,7 @@ export function Login() {
       const res = await api.login(username, password);
       if (res.mfaRequired && res.mfaToken) {
         setMfaToken(res.mfaToken);
+        setMethods(res.methods ?? ["totp"]);
         setStep("2fa");
       } else if (res.user) {
         await refresh(); // loads prefs, then sets the user
@@ -49,6 +55,7 @@ export function Login() {
       // longer succeed would just produce a second, more confusing error.
       setStep("password");
       setMfaToken("");
+      setMethods([]);
       setCode("");
       setPassword("");
       // Distinguish "the server said no" from "the request never got there":
@@ -64,23 +71,74 @@ export function Login() {
     }
   };
 
+  const submitPasskey = async () => {
+    setErr("");
+    setBusy(true);
+    try {
+      const options = await api.passkeyLoginBegin(mfaToken);
+      const credential = await usePasskey(options);
+      const res = await api.passkeyLoginFinish(mfaToken, credential);
+      if (res.user) {
+        await refresh();
+        return;
+      }
+      setErr("That passkey was not accepted.");
+    } catch (e) {
+      // A dismissed prompt leaves the challenge token spent, exactly as a wrong
+      // code does, so there is nothing to retry here — back to the password step.
+      setStep("password");
+      setMfaToken("");
+      setMethods([]);
+      setCode("");
+      setPassword("");
+      setErr(`${describePasskeyError(e)} Sign in again to try once more.`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (step === "2fa") {
+    const hasPasskey = methods.includes("passkey") && passkeysSupported();
+    const hasCode = methods.includes("totp");
     return (
-      <AuthShell title="Two-factor authentication" subtitle="Enter the 6-digit code from your authenticator app.">
-        <form onSubmit={submitCode} className="space-y-4">
-          <input
-            className="input text-center tracking-[0.5em] text-lg font-mono"
-            value={code}
-            onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-            inputMode="numeric"
-            autoFocus
-            placeholder="000000"
-          />
+      <AuthShell
+        title="Two-factor authentication"
+        subtitle={hasCode
+          ? "Enter the 6-digit code from your authenticator app."
+          : "Use your passkey to finish signing in."}
+      >
+        <div className="space-y-4">
+          {hasCode && (
+            <form onSubmit={submitCode} className="space-y-4">
+              <input
+                className="input text-center tracking-[0.5em] text-lg font-mono"
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                inputMode="numeric"
+                autoFocus
+                placeholder="000000"
+              />
+              <button className="btn-primary w-full" disabled={busy || code.length !== 6}>
+                {busy ? "Verifying…" : "Verify"}
+              </button>
+            </form>
+          )}
+
+          {hasPasskey && (
+            <>
+              {hasCode && (
+                <div className="flex items-center gap-3 text-xs text-muted">
+                  <span className="h-px flex-1 bg-border" /> or <span className="h-px flex-1 bg-border" />
+                </div>
+              )}
+              <button type="button" className="btn-ghost w-full justify-center" onClick={submitPasskey} disabled={busy}>
+                Use a passkey
+              </button>
+            </>
+          )}
+
           {err && <p className="text-sm text-danger">{err}</p>}
-          <button className="btn-primary w-full" disabled={busy || code.length !== 6}>
-            {busy ? "Verifying…" : "Verify"}
-          </button>
-        </form>
+        </div>
       </AuthShell>
     );
   }

@@ -78,6 +78,13 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/auth/setup", s.handleSetup)
 			r.Post("/auth/login", s.handleLogin)
 			r.Post("/auth/2fa", s.handleVerify2FA)
+			// The passkey half of the 2FA step. Gated by the MFA challenge token,
+			// which is proof the password was already right.
+			r.Post("/auth/2fa/webauthn/begin", s.handlePasskeyLoginBegin)
+			r.Post("/auth/2fa/webauthn/finish", s.handlePasskeyLoginFinish)
+			// Whether this connection is a secure context at all, so the login screen
+			// can explain the absence instead of showing a button that cannot work.
+			r.Get("/auth/webauthn/support", s.handlePasskeySupport)
 		})
 
 		// Authenticated endpoints.
@@ -100,6 +107,9 @@ func (s *Server) Handler() http.Handler {
 			// Own second factors: list them, unpair one (password required).
 			r.Get("/auth/factors", s.handleListFactors)
 			r.Delete("/auth/factors/{id}", s.handleDeleteFactor)
+			// Own passkeys: pairing needs the password once any factor exists.
+			r.Post("/auth/webauthn/register/begin", s.handlePasskeyRegisterBegin)
+			r.Post("/auth/webauthn/register/finish", s.handlePasskeyRegisterFinish)
 
 			// MCP access tokens — self-service (each user manages their own).
 			// Ungated: a token can only narrow its owner's rights.

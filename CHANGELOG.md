@@ -61,6 +61,26 @@ All notable changes to Docker Commander are documented here. The format follows
     test pins.
 
 ### Added
+- **Passkeys.** *Profile → Security → Add a passkey* pairs whatever the device
+  already has — fingerprint, face, PIN, or a plugged-in security key — as a second
+  factor, and sign-in then offers it instead of typing a code.
+
+  Two properties make it worth having over TOTP. The private key never leaves the
+  device's secure hardware, so there is nothing on our side to steal and nothing on
+  yours to read out to a caller. And the signature covers the **origin** the browser
+  saw, so a page that looks exactly like this one gets an assertion it cannot use —
+  the part of phishing resistance a server can actually verify.
+
+  It is an option, never a requirement: a passkey needs a secure context (HTTPS or
+  `localhost`), so on a plain-HTTP deployment the button explains its absence rather
+  than failing when pressed. Accounts can hold both kinds at once; sign-in offers
+  whichever exist. A passkey counts as a second factor everywhere the app already
+  counted them — including the rule that the last one cannot be removed.
+
+  A signature counter that goes backwards is refused and audited: it means the key
+  answered from two places, and the honest device and the copy are indistinguishable
+  from here.
+
 - **An account can hold several authenticators.** *Profile → Security* lists every
   paired one by a name you choose, with when it was added and last used, and lets
   you add or remove them. Pairing used to *replace*: the phone in your hand stopped

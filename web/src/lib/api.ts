@@ -59,6 +59,7 @@ import type {
   AuthFactor,
 } from "./types";
 import { getHostId, hostParam } from "./host";
+import type { CreationOptions, RequestOptions } from "./webauthn";
 
 export class ApiError extends Error {
   status: number;
@@ -144,6 +145,8 @@ export interface Enrollment {
 export interface LoginResult {
   mfaRequired?: boolean;
   mfaToken?: string;
+  /** Which second factors this account can actually offer: "totp", "passkey". */
+  methods?: string[];
   user?: User;
   expiresAt?: string;
 }
@@ -221,6 +224,18 @@ export const api = {
   totpSetup: (password?: string) => req<Enrollment>("POST", "/api/auth/totp/setup", password === undefined ? undefined : { password }),
   totpEnable: (code: string, name?: string) => req<{ ok: boolean }>("POST", "/api/auth/totp/enable", { code, name: name ?? "" }),
   factors: () => req<AuthFactor[]>("GET", "/api/auth/factors"),
+  // Passkeys. The credential JSON is the whole body of the "finish" calls, because
+  // that is what the WebAuthn library on the server reads — so the name and the
+  // challenge token travel in the query string rather than sharing the body.
+  passkeySupport: () => req<{ available: boolean; reason: string }>("GET", "/api/auth/webauthn/support"),
+  passkeyRegisterBegin: (password?: string) =>
+    req<CreationOptions>("POST", "/api/auth/webauthn/register/begin", password === undefined ? undefined : { password }),
+  passkeyRegisterFinish: (name: string, credential: unknown) =>
+    req<{ ok: boolean }>("POST", `/api/auth/webauthn/register/finish?name=${encodeURIComponent(name)}`, credential),
+  passkeyLoginBegin: (mfaToken: string) =>
+    req<RequestOptions>("POST", "/api/auth/2fa/webauthn/begin", { mfaToken }),
+  passkeyLoginFinish: (mfaToken: string, credential: unknown) =>
+    req<LoginResult>("POST", `/api/auth/2fa/webauthn/finish?mfaToken=${encodeURIComponent(mfaToken)}`, credential),
   // The password travels in the body, not the path: removing a factor is a
   // step-up, and a URL is the one part of a request that gets logged everywhere.
   removeFactor: (id: number, password: string) =>

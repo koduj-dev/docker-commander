@@ -29,6 +29,8 @@ type Service struct {
 	limiter *LoginLimiter
 	// challenges makes an MFA challenge token good for one attempt.
 	challenges *usedChallenges
+	// ceremonies holds the server half of an in-flight WebAuthn exchange.
+	ceremonies *ceremonies
 	// ldapAuth is the directory bind, swappable so the provisioning rules below
 	// (what a login is allowed to grant) can be tested without a directory.
 	// Production always uses LDAPAuthenticate.
@@ -42,6 +44,7 @@ func NewService(s *store.Store, tm *TokenManager) *Service {
 		tokens:     tm,
 		limiter:    NewLoginLimiter(5, 15*time.Minute),
 		challenges: newUsedChallenges(),
+		ceremonies: newCeremonies(),
 		ldapAuth:   LDAPAuthenticate,
 	}
 }
@@ -187,8 +190,12 @@ func (s *Service) Login(ctx context.Context, rlKey, username, password string, e
 		u = authed
 	}
 	// exemptMFA (localhost + admin setting) issues a session straight away,
-	// even for accounts with TOTP enabled.
-	if u.TOTPEnabled && !exemptMFA {
+	// even for accounts with a second factor.
+	//
+	// The test is "has ANY factor", not "has an authenticator app": an account
+	// holding only a passkey is protected by it, and gating on TOTP alone would
+	// hand out a session on the password by itself.
+	if u.MFAEnabled && !exemptMFA {
 		iss, err := s.tokens.Issue(u.ID, u.Username, u.Role, KindMFAChallenge, u.SessionEpoch)
 		if err != nil {
 			return nil, err

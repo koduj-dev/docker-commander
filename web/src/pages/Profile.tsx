@@ -12,6 +12,7 @@ import { EmptyState, Spinner } from "../components/ui";
 import { useAuth } from "../auth/AuthContext";
 import { useDialogs } from "../components/Dialog";
 import { describeClient, sinceLabel, type ClientKind } from "../lib/userAgent";
+import { createPasskey, describePasskeyError, passkeysSupported } from "../lib/webauthn";
 
 type Tab = "account" | "security" | "access" | "prefs";
 
@@ -154,6 +155,8 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [factors, setFactors] = useState<AuthFactor[] | null>(null);
   const [factorsErr, setFactorsErr] = useState("");
+  const [passkeys, setPasskeys] = useState<{ available: boolean; reason: string } | null>(null);
+  const [passkeyBusy, setPasskeyBusy] = useState(false);
 
   const loadFactors = useCallback(() => {
     setFactorsErr("");
@@ -161,6 +164,32 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
       setFactorsErr(e instanceof Error ? e.message : "could not load your authenticators"));
   }, []);
   useEffect(() => loadFactors(), [loadFactors]);
+  useEffect(() => {
+    // Whether the connection is a secure context is the server's answer; whether
+    // the browser has the API at all is ours. Both have to be true.
+    if (!passkeysSupported()) {
+      setPasskeys({ available: false, reason: "This browser does not support passkeys." });
+      return;
+    }
+    api.passkeySupport().then(setPasskeys).catch(() => setPasskeys(null));
+  }, []);
+
+  const addPasskey = async () => {
+    setPasskeyBusy(true); setMsg(null);
+    try {
+      // The password is required exactly when pairing anything else is: once the
+      // account already has a second factor.
+      const options = await api.passkeyRegisterBegin(user?.totpEnabled || (factors?.length ?? 0) > 0 ? password : undefined);
+      const credential = await createPasskey(options);
+      await api.passkeyRegisterFinish(deviceName.trim() || "Passkey", credential);
+      setPassword(""); setDeviceName("");
+      await onChanged();
+      loadFactors();
+      setMsg({ ok: true, text: "Passkey added. Everything you already had paired still works." });
+    } catch (e) {
+      setMsg({ ok: false, text: describePasskeyError(e) });
+    } finally { setPasskeyBusy(false); }
+  };
 
   const start = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -243,6 +272,24 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
                 paired keeps working; this adds one.
               </p>
             )}
+
+            <div className="pt-2">
+              <button
+                type="button"
+                className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40"
+                onClick={addPasskey}
+                disabled={passkeyBusy || !passkeys?.available}
+                title={passkeys?.available ? "Use this device's fingerprint, face or security key" : passkeys?.reason}
+              >
+                {passkeyBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+                Add a passkey
+              </button>
+              <p className="text-xs text-muted mt-1">
+                {passkeys?.available
+                  ? "A passkey lives in this device's secure hardware and is tied to this site's address, so it cannot be phished or read out over the phone. Use it instead of a code."
+                  : passkeys?.reason || "Checking whether this connection supports passkeys…"}
+              </p>
+            </div>
           </form>
         )}
 
@@ -459,9 +506,16 @@ function AuthenticatorList({ factors, error, onRetry, onRemoved }: {
       {factors.map((f) => (
         <li key={f.id} className="rounded-lg border border-border p-3">
           <div className="flex items-center gap-3">
-            <Smartphone className="h-5 w-5 shrink-0 text-muted" />
+            {f.kind === "webauthn"
+              ? <KeyRound className="h-5 w-5 shrink-0 text-muted" />
+              : <Smartphone className="h-5 w-5 shrink-0 text-muted" />}
             <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-medium">{f.name}</div>
+              <div className="flex items-center gap-2">
+                <span className="truncate text-sm font-medium">{f.name}</span>
+                <span className="shrink-0 rounded border border-border px-1 text-[10px] uppercase tracking-wide text-muted">
+                  {f.kind === "webauthn" ? "passkey" : "app"}
+                </span>
+              </div>
               <div className="mt-0.5 text-xs text-muted">
                 added {sinceLabel(f.createdAt)} ·{" "}
                 {f.lastUsedAt && !f.lastUsedAt.startsWith("0001-01-01")

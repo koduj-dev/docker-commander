@@ -104,7 +104,21 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if res.MFARequired {
 		// Return the short-lived challenge token in the body; the browser keeps
 		// it only for the immediate 2FA call.
-		writeJSON(w, http.StatusOK, map[string]any{"mfaRequired": true, "mfaToken": res.Token})
+		// Which second factors this account can actually offer, so the browser shows
+		// the ones that exist rather than a passkey button for an account that has
+		// none — or on a connection where the browser would refuse anyway.
+		methods := []string{}
+		if res.User.TOTPEnabled {
+			methods = append(methods, "totp")
+		}
+		if _, secure := s.relyingParty(r); secure {
+			if has, err := s.auth.HasPasskeys(r.Context(), res.User.ID); err == nil && has {
+				methods = append(methods, "passkey")
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"mfaRequired": true, "mfaToken": res.Token, "methods": methods,
+		})
 		return
 	}
 	s.audit(r, "auth.login", res.User.Username, "password only")

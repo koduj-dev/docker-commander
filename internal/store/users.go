@@ -23,12 +23,17 @@ type User struct {
 	Role         string
 	// Email receives alerts from rules this user creates. Optional; when an LDAP
 	// directory publishes a mail attribute it is synced here on login.
-	Email       string
-	AuthSource  string // "local" (password stored here) or "ldap" (verified externally)
-	ReadOnly    bool
-	Sections    []string
-	TOTPSecret  string
+	Email      string
+	AuthSource string // "local" (password stored here) or "ldap" (verified externally)
+	ReadOnly   bool
+	Sections   []string
+	TOTPSecret string
+	// TOTPEnabled means "has an authenticator app". MFAEnabled means "has a second
+	// factor of any kind" — the two stopped being the same thing when passkeys
+	// arrived, and the login path needs the second: an account with only a passkey
+	// must still be challenged, and must not be asked for a code it cannot produce.
 	TOTPEnabled bool
+	MFAEnabled  bool
 	// TOTPPending holds a secret being paired while an authenticator is already
 	// active. It is promoted to TOTPSecret on confirmation, and otherwise simply
 	// never takes effect: a wrong code, a cancel or a closed tab leave it sitting
@@ -107,6 +112,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, username, password_hash, role, email, totp_secret,
 		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id AND f.kind = 'totp'),
+		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id),
 		       totp_pending, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
 		FROM users ORDER BY username`)
 	if err != nil {
@@ -159,6 +165,7 @@ func (s *Store) UserByUsername(ctx context.Context, username string) (*User, err
 	return scanUserRow(s.db.QueryRowContext(ctx, `
 		SELECT id, username, password_hash, role, email, totp_secret,
 		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id AND f.kind = 'totp'),
+		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id),
 		       totp_pending, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
 		FROM users WHERE username = ?`, username))
 }
@@ -168,6 +175,7 @@ func (s *Store) UserByID(ctx context.Context, id int64) (*User, error) {
 	return scanUserRow(s.db.QueryRowContext(ctx, `
 		SELECT id, username, password_hash, role, email, totp_secret,
 		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id AND f.kind = 'totp'),
+		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id),
 		       totp_pending, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
 		FROM users WHERE id = ?`, id))
 }
@@ -215,7 +223,8 @@ func scanUserRow(row scanner) (*User, error) {
 	var u User
 	var enabled, readOnly int
 	var sections, createdAt, lastLogin string
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.Email, &u.TOTPSecret, &enabled,
+	var mfa int
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.Email, &u.TOTPSecret, &enabled, &mfa,
 		&u.TOTPPending, &u.TOTPLastCounter, &u.SessionEpoch, &readOnly, &sections, &u.AuthSource, &createdAt, &lastLogin)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -224,6 +233,7 @@ func scanUserRow(row scanner) (*User, error) {
 		return nil, err
 	}
 	u.TOTPEnabled = enabled != 0
+	u.MFAEnabled = mfa != 0
 	u.ReadOnly = readOnly != 0
 	u.Sections = unmarshalSections(sections)
 	u.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)

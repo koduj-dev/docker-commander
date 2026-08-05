@@ -265,7 +265,13 @@ CREATE TABLE IF NOT EXISTS auth_factors (
 	secret       TEXT NOT NULL DEFAULT '',
 	last_counter INTEGER NOT NULL DEFAULT 0,
 	created_at   TEXT NOT NULL,
-	last_used_at TEXT NOT NULL DEFAULT ''
+	last_used_at TEXT NOT NULL DEFAULT '',
+	-- A passkey stores no shared secret: what identifies it is its credential id,
+	-- and what verifies it is a public key. Both live in the credential column as
+	-- the JSON the WebAuthn library round-trips; credential_id is lifted out of it
+	-- because every assertion arrives naming one, so it has to be found by it.
+	credential_id TEXT NOT NULL DEFAULT '',
+	credential    TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_auth_factors_user ON auth_factors(user_id);
 
@@ -410,6 +416,13 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
 	// existed. SQLite has no "ADD COLUMN IF NOT EXISTS", so we ignore the
 	// duplicate-column error that older-or-newer DBs harmlessly raise.
 	for _, alter := range []string{
+		// Passkey columns, added to the same table so an account's factors stay one
+		// list with one answer to "how many do I have".
+		`ALTER TABLE auth_factors ADD COLUMN credential_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE auth_factors ADD COLUMN credential TEXT NOT NULL DEFAULT ''`,
+		// The user handle a passkey is registered against: opaque, per account, and
+		// stable, because it is what the authenticator stores alongside the key.
+		`ALTER TABLE users ADD COLUMN webauthn_handle TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE hosts ADD COLUMN host_key TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE alert_rules ADD COLUMN email INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN read_only INTEGER NOT NULL DEFAULT 0`,
@@ -498,9 +511,17 @@ func (s *Store) enforceOneFactorPerSecret(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `DROP INDEX IF EXISTS idx_auth_factors_user_secret`); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `
+	if _, err := s.db.ExecContext(ctx, `
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_factors_secret_unique
-		ON auth_factors(user_id, secret) WHERE secret != ''`)
+		ON auth_factors(user_id, secret) WHERE secret != ''`); err != nil {
+		return err
+	}
+	// A credential id is globally unique by construction, and must be unique here
+	// too: an assertion names one, and two rows answering to it would make "whose
+	// passkey is this?" ambiguous — across accounts, not just within one.
+	_, err := s.db.ExecContext(ctx, `
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_factors_credential_unique
+		ON auth_factors(credential_id) WHERE credential_id != ''`)
 	return err
 }
 

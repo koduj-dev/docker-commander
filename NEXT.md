@@ -103,11 +103,11 @@ publishing a per-network number that looks authoritative and is wrong.
   container, the way LDAP is already tested against OpenLDAP. Only provider-specific
   quirks — Azure's `iss` shape, Google not returning `groups` without Directory API
   — need a real tenant, and those are the last mile rather than the blocker.
-- **Passkeys / WebAuthn** as a second factor (and eventually a first): the private
-  key never leaves the device's secure element and the signature is bound to the
-  origin, which is what makes it phishing-proof in a way TOTP is not. It needs a
-  secure context — HTTPS, or localhost — so it lands as an **option** alongside
-  TOTP rather than a replacement.
+- **Passwordless sign-in with a passkey.** They are a second factor today, which is
+  the conservative half: the password still comes first. A discoverable credential
+  would let the passkey be the whole login, which needs resident keys, a user
+  handle the authenticator can enumerate, and a decision about what happens to an
+  account whose only credential lives on a lost phone.
 
 ### Configuration and secrets
 
