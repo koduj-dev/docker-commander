@@ -179,7 +179,11 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
   };
 
   return (
+    // Sessions first: it is the part of this page you come to *read* — the 2FA
+    // card is a control you touch when something changes.
     <div className="grid gap-4 xl:grid-cols-2 items-start">
+      <SessionsCard />
+
       <div className="card p-5 space-y-3">
         <div className="flex items-center gap-2 font-medium"><ShieldCheck className="h-4 w-4 text-accent" /> Two-factor authentication</div>
         <Field label="Status">
@@ -254,8 +258,6 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
         )}
         {!enr && msg && <p className={clsx("text-sm", msg.ok ? "text-ok" : "text-danger")}>{msg.text}</p>}
       </div>
-
-      <SessionsCard />
     </div>
   );
 }
