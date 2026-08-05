@@ -123,10 +123,16 @@ func pingSurvives(ctx context.Context, conn *websocket.Conn) error {
 // only because cancelling killed the socket) — delivered under that id, they would
 // arrive at the new handler as a duplicate log line or a stale sample.
 type replacedStreamer struct {
-	started chan struct{}
 	release chan struct{}
-	mu      sync.Mutex
-	n       int
+	// tailWritten closes after the old stream's last emit has RETURNED, i.e. after
+	// the write was either sent or dropped. Without it the test can finish while
+	// that frame is still in flight: the pong overtakes it, the test returns happy,
+	// and a build with no guard at all passes. (Measured: it slipped through 2 runs
+	// in 600.) Waiting on this puts the frame on the wire — if it is written at all
+	// — before the ping that ends the test.
+	tailWritten chan struct{}
+	mu          sync.Mutex
+	n           int
 }
 
 func (r *replacedStreamer) StreamStats(ctx context.Context, _ int64, _ string, emit func(docker.StatsSample)) error {
@@ -142,6 +148,7 @@ func (r *replacedStreamer) StreamStats(ctx context.Context, _ int64, _ string, e
 		// subscription, which is exactly the frame that must be dropped.
 		<-r.release
 		emit(docker.StatsSample{ContainerID: "tail-of-stream-1"})
+		close(r.tailWritten)
 		return nil
 	}
 	<-ctx.Done()
@@ -154,7 +161,7 @@ func (r *replacedStreamer) StreamLogs(ctx context.Context, _ int64, _ string, _ 
 }
 
 func TestReplacedSubscriptionsTailIsDropped(t *testing.T) {
-	streamer := &replacedStreamer{started: make(chan struct{}), release: make(chan struct{})}
+	streamer := &replacedStreamer{release: make(chan struct{}), tailWritten: make(chan struct{})}
 	hub := NewHub(streamer)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
@@ -189,6 +196,7 @@ func TestReplacedSubscriptionsTailIsDropped(t *testing.T) {
 		t.Fatalf("after re-subscribing, the frame came from %q", got)
 	}
 	close(streamer.release)
+	<-streamer.tailWritten // the tail frame has now been written, or dropped
 
 	// Anything that arrives before the pong must belong to the live subscription.
 	if err := wsjson.Write(ctx, conn, clientMsg{Type: "ping", SubID: "alive"}); err != nil {
