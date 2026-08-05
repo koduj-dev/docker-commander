@@ -58,10 +58,36 @@ All notable changes to Docker Commander are documented here. The format follows
   account, which with two paired devices would have let a code from one refuse the
   same time step on the other.
 
-  Existing installations migrate on start: the single stored authenticator becomes
-  the first entry in the list, keeping the same secret, so nobody has to re-pair.
-  The old column is cleared in the process — a live secret that nothing reads and
+  An account holds at most ten, and pairing the same secret twice is refused by the
+  database itself: two rows sharing a secret would give that authenticator two
+  independent replay watermarks, so each of its codes could be spent twice.
+
+  Note what this does *not* do: pairing no longer implicitly revokes anything. If
+  you are replacing a lost phone, remove its entry as well — adding the new one is
+  no longer enough.
+
+  Existing installations migrate on start, in one transaction: the single stored
+  authenticator becomes the first entry in the list, keeping the same secret and
+  the same replay watermark, so nobody has to re-pair. Every legacy secret is
+  cleared from the old column in the process — a live secret that nothing reads and
   nobody can remove is a credential nobody knows exists.
+
+- **Removing a factor, pairing one, and spending a code are each atomic.** Found by
+  an independent adversarial review of the change above, which reproduced all three:
+  sixteen parallel confirmations of one enrolment produced **five** authenticators
+  sharing a single secret (and therefore five replay watermarks); two concurrent
+  removals both passed the "this is your last one" check and left the account with
+  **none** — which is not a lockout but 2FA silently switched off, since it is
+  derived from whether any factor exists; and one TOTP code minted **two or three**
+  sessions when presented simultaneously, because the watermark write reported
+  "nothing to update" as success. The count now lives inside the `DELETE`, pairing
+  claims its enrolment with a compare-and-swap inside a transaction, and a burn that
+  moves no row is an error. Each has a concurrency test that fails without the fix.
+
+  Step-up password checks are also bucketed **per account** rather than per address:
+  five wrong passwords on "remove this authenticator" used to spend the *address's*
+  login budget, so anyone holding a session could stop everyone behind that address
+  from signing in for fifteen minutes.
 
 - **See what is signed in as you, and end it.** *Profile → Security* now lists every
   live session for your account — the device, the address, when it was last used and

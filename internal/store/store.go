@@ -454,9 +454,42 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
 	if err := s.migrateTOTPToFactors(ctx); err != nil {
 		return err
 	}
+	if err := s.enforceOneFactorPerSecret(ctx); err != nil {
+		return err
+	}
 	// Built-in roles come last: the tables above must exist first, and seeding is
 	// idempotent (an existing row is left untouched).
 	return s.seedBuiltinRoles(ctx)
+}
+
+// enforceOneFactorPerSecret makes "one authenticator, one row" a property of the
+// database rather than of the code that happens to write it.
+//
+// Two rows sharing a secret give that authenticator two independent replay
+// watermarks, so every code it produces becomes spendable twice. The pairing path
+// is written not to allow it; this is the backstop for the paths nobody thought
+// about — a bad migration, a future import, a hand-edited database.
+//
+// Duplicates are collapsed first (keeping the oldest row and the highest watermark
+// among them), because an index that cannot be created would take the whole
+// installation down on start.
+func (s *Store) enforceOneFactorPerSecret(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE auth_factors SET last_counter = (
+			SELECT MAX(d.last_counter) FROM auth_factors d
+			WHERE d.user_id = auth_factors.user_id AND d.secret = auth_factors.secret
+		)`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		DELETE FROM auth_factors WHERE id NOT IN (
+			SELECT MIN(id) FROM auth_factors GROUP BY user_id, secret
+		)`); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_factors_user_secret ON auth_factors(user_id, secret)`)
+	return err
 }
 
 // migrateTOTPToFactors moves the single per-user authenticator into auth_factors.
@@ -469,17 +502,34 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
 // Idempotent by the same test that drives it: a user is migrated only while their
 // secret is still in the old column, and the move clears it.
 func (s *Store) migrateTOTPToFactors(ctx context.Context) error {
+	// One transaction, because the two halves are one fact. SQLite autocommits each
+	// statement, so an INSERT that commits and an UPDATE that then fails (BUSY, a
+	// full disk, a kill between them) leaves the secret in BOTH places: startup
+	// aborts, and the next start re-runs the INSERT and pairs the same authenticator
+	// twice. Two factors, one secret, one watermark each — every code from that
+	// device replayable, for every 2FA user in the installation at once.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	now := time.Now().UTC().Format(time.RFC3339)
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO auth_factors (user_id, kind, name, secret, last_counter, created_at)
 		SELECT id, 'totp', 'Authenticator', totp_secret, totp_last_counter, ?
 		FROM users WHERE totp_secret != '' AND totp_enabled = 1`, now); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `
-		UPDATE users SET totp_secret = '', totp_last_counter = 0
-		WHERE totp_secret != '' AND totp_enabled = 1`)
-	return err
+	// Every legacy secret goes, not just the confirmed ones. An unconfirmed
+	// enrolment left behind is a scanned secret sitting in a column nothing reads
+	// and nobody can remove — the same "dead credential" this migration exists to
+	// avoid, minus the excuse.
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE users SET totp_secret = '', totp_last_counter = 0 WHERE totp_secret != ''`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // isDuplicateColumn reports whether err is SQLite's "duplicate column name"

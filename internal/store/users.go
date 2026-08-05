@@ -106,7 +106,7 @@ func (s *Store) CreateUser(ctx context.Context, u *User) (int64, error) {
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, username, password_hash, role, email, totp_secret,
-		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id),
+		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id AND f.kind = 'totp'),
 		       totp_pending, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
 		FROM users ORDER BY username`)
 	if err != nil {
@@ -158,7 +158,7 @@ func (s *Store) UpdateUserAccess(ctx context.Context, id int64, role string, rea
 func (s *Store) UserByUsername(ctx context.Context, username string) (*User, error) {
 	return scanUserRow(s.db.QueryRowContext(ctx, `
 		SELECT id, username, password_hash, role, email, totp_secret,
-		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id),
+		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id AND f.kind = 'totp'),
 		       totp_pending, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
 		FROM users WHERE username = ?`, username))
 }
@@ -167,7 +167,7 @@ func (s *Store) UserByUsername(ctx context.Context, username string) (*User, err
 func (s *Store) UserByID(ctx context.Context, id int64) (*User, error) {
 	return scanUserRow(s.db.QueryRowContext(ctx, `
 		SELECT id, username, password_hash, role, email, totp_secret,
-		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id),
+		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id AND f.kind = 'totp'),
 		       totp_pending, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
 		FROM users WHERE id = ?`, id))
 }

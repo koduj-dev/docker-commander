@@ -3,6 +3,9 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -273,4 +276,179 @@ func TestPentestReplayGuardIsPerFactor(t *testing.T) {
 // secret, so the tests can complete a real enrolment rather than mocking it.
 func currentCode(secret string) (string, error) {
 	return totp.GenerateCode(secret, time.Now().UTC())
+}
+
+// PENTEST: a code from SOMEONE ELSE'S authenticator must not sign you in.
+//
+// consumeTOTP walks the account's factor list, so if that list were ever fetched
+// unscoped, any valid code from any user in the installation would authenticate as
+// whoever asked. That mutant is invisible to a test that only ever has one account
+// in the database — which is what every other test here had.
+func TestPentestAnotherAccountsCodeDoesNotSignYouIn(t *testing.T) {
+	svc, st, alice := totpFixture(t)
+	ctx := context.Background()
+	bob, err := st.CreateUser(ctx, &store.User{Username: "bob", Role: "user"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aliceSecret := pair(t, svc, st, alice, "Alice phone")
+	bobSecret := pair(t, svc, st, bob, "Bob phone")
+	if aliceSecret == bobSecret {
+		t.Fatal("the two enrolments produced the same secret")
+	}
+
+	if accepts(t, svc, st, alice, bobSecret) {
+		t.Error("SECURITY: Bob's authenticator signed in as Alice")
+	}
+	if accepts(t, svc, st, bob, aliceSecret) {
+		t.Error("SECURITY: Alice's authenticator signed in as Bob")
+	}
+	// …and each account's own still works, so the test above is not passing merely
+	// because nothing is accepted at all.
+	if !accepts(t, svc, st, alice, aliceSecret) {
+		t.Error("Alice's own authenticator stopped working")
+	}
+	if !accepts(t, svc, st, bob, bobSecret) {
+		t.Error("Bob's own authenticator stopped working")
+	}
+}
+
+// PENTEST: one enrolment, many parallel confirmations, exactly one factor.
+//
+// Sixteen simultaneous POSTs to /auth/totp/enable is one curl loop away. If they
+// all inserted, the account would hold N rows carrying ONE secret — and since the
+// replay watermark is per row, every code that authenticator ever shows would be
+// spendable N times inside its window.
+func TestPentestParallelConfirmationsPairOnce(t *testing.T) {
+	svc, st, uid := totpFixture(t)
+	ctx := context.Background()
+
+	enr, err := svc.BeginTOTPEnrollment(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := currentCode(enr.Secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	var accepted atomic.Int64
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := svc.ConfirmTOTPEnrollment(ctx, uid, code, "Phone"); err == nil {
+				accepted.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := accepted.Load(); got != 1 {
+		t.Errorf("SECURITY: %d of 16 parallel confirmations succeeded, want exactly 1", got)
+	}
+	if n, _ := st.CountFactors(ctx, uid); n != 1 {
+		t.Errorf("SECURITY: one enrolment produced %d factors", n)
+	}
+}
+
+// PENTEST: parallel removals must not empty the account.
+//
+// Zero factors is not the self-lockout it sounds like: 2FA is derived from whether
+// any factor exists, so an account with none signs in on the password alone. A
+// stolen session plus the password would otherwise be a silent, permanent way to
+// switch someone's second factor off.
+func TestPentestParallelRemovalsCannotDisable2FA(t *testing.T) {
+	svc, st, uid := totpFixture(t)
+	ctx := context.Background()
+	pair(t, svc, st, uid, "Phone")
+	pair(t, svc, st, uid, "Tablet")
+
+	factors, _ := st.ListFactors(ctx, uid)
+	var wg sync.WaitGroup
+	for _, f := range factors {
+		wg.Add(1)
+		go func(id int64) {
+			defer wg.Done()
+			_ = svc.RemoveFactor(ctx, uid, id)
+		}(f.ID)
+	}
+	wg.Wait()
+
+	n, _ := st.CountFactors(ctx, uid)
+	if n == 0 {
+		t.Fatal("SECURITY: parallel removals left the account with no second factor")
+	}
+	u, _ := st.UserByID(ctx, uid)
+	if !u.TOTPEnabled {
+		t.Error("SECURITY: 2FA came out of this switched off")
+	}
+}
+
+// An account cannot accumulate authenticators without bound. Adding one needs the
+// password, so this is hygiene rather than a gate — but every verification walks
+// the list.
+func TestFactorsPerAccountAreCapped(t *testing.T) {
+	svc, st, uid := totpFixture(t)
+	ctx := context.Background()
+	for i := 0; i < maxFactorsPerAccount; i++ {
+		pair(t, svc, st, uid, fmt.Sprintf("Device %d", i))
+	}
+
+	enr, err := svc.BeginTOTPEnrollment(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := currentCode(enr.Secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ConfirmTOTPEnrollment(ctx, uid, code, "One too many"); !errors.Is(err, ErrTooManyFactors) {
+		t.Errorf("pairing past the cap: want ErrTooManyFactors, got %v", err)
+	}
+	if n, _ := st.CountFactors(ctx, uid); n != maxFactorsPerAccount {
+		t.Errorf("the account holds %d factors, want the cap of %d", n, maxFactorsPerAccount)
+	}
+}
+
+// PENTEST: one TOTP code, one session — even when two requests present it at the
+// same instant.
+//
+// The watermark is what makes a code single-use, so the write that moves it is the
+// gate. If the store reported "nothing to update" as success, both racers would be
+// handed a session from a single code — which is what a shoulder-surfed or
+// phished code is worth: exactly one login, not as many as the attacker can fire
+// before the step rolls over.
+func TestPentestOneCodeCannotMintTwoSessions(t *testing.T) {
+	svc, st, uid := totpFixture(t)
+	ctx := context.Background()
+	secret := pair(t, svc, st, uid, "Phone")
+
+	code, err := currentCode(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := st.UserByID(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	var accepted atomic.Int64
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if svc.consumeTOTP(ctx, u, code) {
+				accepted.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := accepted.Load(); got != 1 {
+		t.Errorf("SECURITY: one code was accepted %d times, want exactly 1", got)
+	}
 }

@@ -183,6 +183,12 @@ regardless of permissions:
   authenticator could not sign in at all, and no admin can reset it for you. Pair
   the replacement first, then remove the old one.
 
+  Replacing a lost device is therefore two steps: pair the new one, then remove the
+  old entry. Pairing does not revoke anything on its own — which is the point, but
+  it does mean the old device keeps working until you say otherwise.
+
+  An account can hold ten authenticators.
+
   Starting a pairing is always safe: nothing changes until you enter a code from
   the new device, so cancelling leaves things exactly as they were.
 

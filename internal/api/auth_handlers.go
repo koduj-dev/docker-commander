@@ -301,7 +301,7 @@ func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "invalid body")
 			return
 		}
-		if !s.auth.VerifyUserPassword(r.Context(), r.RemoteAddr, u, body.Password) {
+		if !s.auth.VerifyUserPassword(r.Context(), auth.StepUpKey(u.ID), u, body.Password) {
 			s.audit(r, "auth.2fa.repair.denied", u.Username, "wrong password")
 			writeErr(w, http.StatusForbidden, "password required to pair a new authenticator")
 			return
@@ -330,6 +330,10 @@ func (s *Server) handleTOTPEnable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.auth.ConfirmTOTPEnrollment(r.Context(), c.UserID, body.Code, body.Name); err != nil {
+		if errors.Is(err, auth.ErrTooManyFactors) {
+			writeErr(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeErr(w, http.StatusBadRequest, "invalid code")
 		return
 	}

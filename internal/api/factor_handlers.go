@@ -66,7 +66,7 @@ func (s *Server) handleDeleteFactor(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if !s.auth.VerifyUserPassword(r.Context(), r.RemoteAddr, u, body.Password) {
+	if !s.auth.VerifyUserPassword(r.Context(), auth.StepUpKey(u.ID), u, body.Password) {
 		s.audit(r, "auth.2fa.remove.denied", u.Username, "wrong password")
 		writeErr(w, http.StatusForbidden, "password required to remove an authenticator")
 		return
