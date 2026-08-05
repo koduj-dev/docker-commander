@@ -31,3 +31,6 @@ web/tsconfig.tsbuildinfo
 .DS_Store
 .idea/
 .vscode/
+
+# Scratch folder for screenshots waiting to be sorted into docs/images/.
+.screens/
