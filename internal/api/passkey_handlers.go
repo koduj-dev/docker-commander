@@ -38,9 +38,17 @@ func (s *Server) relyingParty(r *http.Request) (auth.RelyingParty, bool) {
 	if s.cookieSecure(r) {
 		scheme = "https"
 	}
-	if scheme != "https" && !isLoopbackHost(hostname) {
+	if scheme != "https" && !isSecureLocalHost(hostname) {
 		// Plain HTTP to a remote host: the browser will refuse, so offering it here
 		// would produce a button that does nothing.
+		return auth.RelyingParty{}, false
+	}
+	// An RP id must be a DOMAIN. An IP literal is not one, and every browser throws
+	// SecurityError on it — so reaching this app at https://192.0.2.10/ or at
+	// http://127.0.0.1:8470/ cannot do passkeys, however secure the context is.
+	// Saying so here is the difference between an explanation and a button that
+	// fails when pressed.
+	if net.ParseIP(strings.Trim(hostname, "[]")) != nil {
 		return auth.RelyingParty{}, false
 	}
 	return auth.RelyingParty{
@@ -50,12 +58,16 @@ func (s *Server) relyingParty(r *http.Request) (auth.RelyingParty, bool) {
 	}, true
 }
 
-// isLoopbackHost reports whether the browser would treat this host as a secure
-// context without TLS. localhost is special-cased by the spec; so are the loopback
-// addresses.
-func isLoopbackHost(host string) bool {
-	host = strings.Trim(host, "[]")
-	if strings.EqualFold(host, "localhost") || strings.HasSuffix(strings.ToLower(host), ".localhost") {
+// isSecureLocalHost reports whether the browser would treat this host as a secure
+// context without TLS. localhost (and anything under it) is special-cased by the
+// spec, as are the loopback addresses.
+//
+// A trailing dot is the same name — "localhost." is how you write the fully
+// qualified form — and the browser treats it as a secure context, so it must not
+// fall through to "remote host, plain HTTP".
+func isSecureLocalHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(strings.Trim(host, "[]"), "."))
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
 		return true
 	}
 	ip := net.ParseIP(host)
@@ -198,11 +210,17 @@ func (s *Server) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Request
 		}
 		writeErr(w, http.StatusUnauthorized, err.Error())
 		return
-	default:
+	case errors.Is(err, auth.ErrInvalidCreds):
 		if name := s.auth.ChallengeUsername(token); name != "" {
 			s.audit(r, "auth.2fa.failed", name, "passkey rejected")
 		}
 		writeErr(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	default:
+		// Anything else got past the signature check and then failed on our side.
+		// Reporting it as a rejected passkey would blame the user for our outage and
+		// put a false failure in the audit log.
+		writeErr(w, http.StatusInternalServerError, "the passkey verified, but the login could not be completed")
 		return
 	}
 

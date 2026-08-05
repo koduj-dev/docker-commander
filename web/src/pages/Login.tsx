@@ -16,6 +16,10 @@ export function Login() {
   // someone who has none is a dead end, and offering the code box to someone who
   // only has a passkey is worse — they would sit there hunting for an app.
   const [methods, setMethods] = useState<string[]>([]);
+  // Having a passkey and being able to use it are different facts: the browser
+  // needs a secure context, and the account may be reached over plain HTTP.
+  const [passkeyReady, setPasskeyReady] = useState(false);
+  const [passkeyReason, setPasskeyReason] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -28,6 +32,8 @@ export function Login() {
       if (res.mfaRequired && res.mfaToken) {
         setMfaToken(res.mfaToken);
         setMethods(res.methods ?? ["totp"]);
+        setPasskeyReady(res.passkeyReady ?? false);
+        setPasskeyReason(res.passkeyReason ?? "");
         setStep("2fa");
       } else if (res.user) {
         await refresh(); // loads prefs, then sets the user
@@ -98,8 +104,11 @@ export function Login() {
   };
 
   if (step === "2fa") {
-    const hasPasskey = methods.includes("passkey") && passkeysSupported();
+    const hasPasskey = methods.includes("passkey") && passkeyReady && passkeysSupported();
     const hasCode = methods.includes("totp");
+    // The account has a passkey but this connection (or browser) cannot use it,
+    // and there is no code to fall back on. Saying so beats an empty box.
+    const stuck = !hasCode && !hasPasskey;
     return (
       <AuthShell
         title="Two-factor authentication"
@@ -135,6 +144,18 @@ export function Login() {
                 Use a passkey
               </button>
             </>
+          )}
+
+          {stuck && (
+            <div className="space-y-2 text-sm">
+              <p className="text-danger">
+                This account is protected by a passkey, and this connection cannot use one.
+              </p>
+              <p className="text-xs text-muted">
+                {passkeyReason || "Passkeys need HTTPS (or localhost)."} Reach this server over
+                HTTPS — or over <code className="font-mono">localhost</code> — and sign in again.
+              </p>
+            </div>
           )}
 
           {err && <p className="text-sm text-danger">{err}</p>}

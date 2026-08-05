@@ -195,8 +195,11 @@ regardless of permissions:
   that looks exactly like this one cannot use what it captures.
 
   Passkeys need a **secure context**, which is the browser's rule, not ours: HTTPS,
-  or `localhost`. On a plain-HTTP deployment the button says why it is unavailable
-  rather than failing when you press it. See [Deployment](deployment.md) for TLS.
+  or `localhost`. They also need a **hostname** — an IP address cannot be a passkey's
+  relying party, so `http://127.0.0.1:8470/` will not offer them even though it is a
+  secure context; use `http://localhost:8470/` instead. Where they are unavailable
+  the button says why rather than failing when you press it. See
+  [Deployment](deployment.md) for TLS.
 
   A passkey counts as a second factor like any other: it appears in the same list,
   it can be removed the same way, and it cannot be the one you remove last. At

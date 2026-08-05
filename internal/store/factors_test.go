@@ -551,3 +551,43 @@ func TestUpgradeDropsTheOldNonPartialIndex(t *testing.T) {
 		t.Errorf("an upgraded database holds %d secretless factors, want 2", n)
 	}
 }
+
+// A credential id identifies exactly one passkey, across the whole table.
+//
+// An assertion arrives naming one, and the account it belongs to is the answer —
+// so two rows answering to the same id would make that answer ambiguous between
+// ACCOUNTS, not merely within one. The uniqueness is what lets the lookup be
+// unscoped.
+func TestCredentialIDIsUniqueAcrossAccounts(t *testing.T) {
+	st, alice := factorStore(t)
+	ctx := context.Background()
+	bob, err := st.CreateUser(ctx, &User{Username: "bob", Role: "user"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := st.CreateFactor(ctx, &AuthFactor{
+		UserID: alice, Kind: FactorKindPasskey, Name: "Alice laptop",
+		CredentialID: "CRED-1", Credential: `{"id":"x"}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateFactor(ctx, &AuthFactor{
+		UserID: bob, Kind: FactorKindPasskey, Name: "Bob laptop",
+		CredentialID: "CRED-1", Credential: `{"id":"x"}`,
+	}); err == nil {
+		t.Error("SECURITY: two accounts hold the same credential id — an assertion naming it is ambiguous")
+	}
+
+	// The lookup is deliberately unscoped, so it must resolve to the one owner.
+	f, err := st.FactorByCredentialID(ctx, "CRED-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.UserID != alice {
+		t.Errorf("credential resolved to user %d, want %d", f.UserID, alice)
+	}
+	if _, err := st.FactorByCredentialID(ctx, ""); err != ErrNotFound {
+		t.Errorf("an empty credential id should resolve to nothing, got %v", err)
+	}
+}

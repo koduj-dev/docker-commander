@@ -145,8 +145,12 @@ export interface Enrollment {
 export interface LoginResult {
   mfaRequired?: boolean;
   mfaToken?: string;
-  /** Which second factors this account can actually offer: "totp", "passkey". */
+  /** Which second factors this account HAS: "totp", "passkey". */
   methods?: string[];
+  /** Whether a passkey ceremony is possible on this connection. */
+  passkeyReady?: boolean;
+  /** Why it is not, when the account has a passkey but the connection cannot use it. */
+  passkeyReason?: string;
   user?: User;
   expiresAt?: string;
 }

@@ -104,21 +104,31 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if res.MFARequired {
 		// Return the short-lived challenge token in the body; the browser keeps
 		// it only for the immediate 2FA call.
-		// Which second factors this account can actually offer, so the browser shows
-		// the ones that exist rather than a passkey button for an account that has
-		// none — or on a connection where the browser would refuse anyway.
+		// Which second factors this account HAS, and separately whether this
+		// connection can do a passkey ceremony at all.
+		//
+		// Keeping those apart matters: an account whose only factor is a passkey,
+		// reached over plain HTTP, would otherwise be offered nothing — a 2FA screen
+		// with no control on it and no explanation, which is a lockout that looks
+		// like a bug. Now the screen can say what is wrong.
 		methods := []string{}
 		if res.User.TOTPEnabled {
 			methods = append(methods, "totp")
 		}
-		if _, secure := s.relyingParty(r); secure {
-			if has, err := s.auth.HasPasskeys(r.Context(), res.User.ID); err == nil && has {
-				methods = append(methods, "passkey")
-			}
+		hasPasskey := false
+		if has, err := s.auth.HasPasskeys(r.Context(), res.User.ID); err == nil && has {
+			hasPasskey = true
+			methods = append(methods, "passkey")
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
+		_, secure := s.relyingParty(r)
+		body := map[string]any{
 			"mfaRequired": true, "mfaToken": res.Token, "methods": methods,
-		})
+			"passkeyReady": hasPasskey && secure,
+		}
+		if hasPasskey && !secure {
+			body["passkeyReason"] = auth.ErrPasskeyUnavailable.Error()
+		}
+		writeJSON(w, http.StatusOK, body)
 		return
 	}
 	s.audit(r, "auth.login", res.User.Username, "password only")
@@ -179,7 +189,7 @@ func (s *Server) userView(r *http.Request, u *store.User) map[string]any {
 	return map[string]any{
 		"id": u.ID, "username": u.Username, "role": u.Role,
 		"email":    u.Email,
-		"readOnly": u.ReadOnly, "totpEnabled": u.TOTPEnabled,
+		"readOnly": u.ReadOnly, "totpEnabled": u.TOTPEnabled, "mfaEnabled": u.MFAEnabled,
 		"authSource": u.AuthSource,
 		"createdAt":  u.CreatedAt, "lastLoginAt": u.LastLoginAt,
 		"sections":    s.effectiveSections(r.Context(), u),
@@ -301,9 +311,16 @@ func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
 	// attacker pairs their own device and satisfies 2FA from then on, while the
 	// owner's app quietly stops working.
 	//
-	// A first enrolment is different: there is no factor to replace, and the
+	// A first enrolment is different: there is nothing yet to protect, and the
 	// first-run wizard walks straight into it.
-	if u.TOTPEnabled {
+	//
+	// The test is "has ANY factor", not "has an authenticator app". Keying it on
+	// TOTP meant an account whose only factor is a PASSKEY was treated as having
+	// nothing to protect: a stolen session could pair its own authenticator app
+	// without the password, and from then on the passkey was no longer what
+	// protected the account. That is the exact takeover the paragraph above says
+	// must not be possible.
+	if u.MFAEnabled {
 		var body struct {
 			Password string `json:"password"`
 		}

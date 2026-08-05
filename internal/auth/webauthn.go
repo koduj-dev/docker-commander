@@ -331,11 +331,16 @@ func (s *Service) FinishPasskeyLogin(ctx context.Context, rp RelyingParty, rlKey
 	// quietly succeeding.
 	factor, err := s.store.FactorByCredentialID(ctx, base64.RawURLEncoding.EncodeToString(credential.ID))
 	if err != nil {
-		return nil, ErrInvalidCreds
+		// The signature already verified, so this is our storage failing, not the
+		// user failing a second factor. Saying so keeps a database hiccup out of the
+		// audit log as "invalid credentials" and out of the rate limiter.
+		return nil, fmt.Errorf("passkey verified but its record could not be read: %w", err)
 	}
 	if factor.UserID != u.ID {
-		// Cannot happen while credential ids are unique, which the schema enforces.
-		// If it ever does, it is someone else's key and this login is over.
+		// Unreachable while credential ids are unique, which the schema enforces —
+		// the library has already refused a credential that is not in this user's
+		// own list. Kept as the last line rather than removed: if the uniqueness
+		// ever lapses, this is the difference between a wrong login and no login.
 		return nil, ErrInvalidCreds
 	}
 	blob, err := json.Marshal(credential)
@@ -343,7 +348,7 @@ func (s *Service) FinishPasskeyLogin(ctx context.Context, rp RelyingParty, rlKey
 		return nil, err
 	}
 	if err := s.store.UpdateCredential(ctx, factor.ID, string(blob)); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("passkey verified but its counter could not be stored: %w", err)
 	}
 
 	s.limiter.Reset(rlKey)

@@ -5,8 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
+
+	"github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/koduj-dev/docker-commander/internal/store"
+	"github.com/koduj-dev/docker-commander/internal/webauthntest"
 )
 
 const (
@@ -30,23 +34,23 @@ func passkeyFixture(t *testing.T) (*Service, *store.Store, *store.User) {
 }
 
 // pairPasskey runs a full registration ceremony and returns the authenticator.
-func pairPasskey(t *testing.T, svc *Service, u *store.User, name string) *virtualAuthenticator {
+func pairPasskey(t *testing.T, svc *Service, u *store.User, name string) *webauthntest.Device {
 	t.Helper()
 	ctx := context.Background()
 	creation, err := svc.BeginPasskeyRegistration(ctx, testRP(), u.ID)
 	if err != nil {
 		t.Fatalf("begin registration: %v", err)
 	}
-	device := newVirtualAuthenticator(t)
-	body := device.register(t, testRPID, testOrigin, creation.Response.Challenge.String())
-	if err := svc.FinishPasskeyRegistration(ctx, testRP(), u.ID, name, ceremonyRequest(body)); err != nil {
+	device := webauthntest.New(t)
+	body := device.Register(t, testRPID, testOrigin, creation.Response.Challenge.String())
+	if err := svc.FinishPasskeyRegistration(ctx, testRP(), u.ID, name, webauthntest.Request(body)); err != nil {
 		t.Fatalf("finish registration: %v", err)
 	}
 	return device
 }
 
 // signInWithPasskey runs password → challenge → assertion, and returns the result.
-func signInWithPasskey(t *testing.T, svc *Service, device *virtualAuthenticator) (*LoginResult, error) {
+func signInWithPasskey(t *testing.T, svc *Service, device *webauthntest.Device) (*LoginResult, error) {
 	t.Helper()
 	ctx := context.Background()
 	res, err := svc.Login(ctx, "10.0.0.1", "alice", "correcthorse123", false, SessionInfo{})
@@ -60,8 +64,8 @@ func signInWithPasskey(t *testing.T, svc *Service, device *virtualAuthenticator)
 	if err != nil {
 		return nil, err
 	}
-	body := device.assert(t, testRPID, testOrigin, assertion.Response.Challenge.String())
-	return svc.FinishPasskeyLogin(ctx, testRP(), "10.0.0.1", res.Token, ceremonyRequest(body), SessionInfo{})
+	body := device.Assert(t, testRPID, testOrigin, assertion.Response.Challenge.String())
+	return svc.FinishPasskeyLogin(ctx, testRP(), "10.0.0.1", res.Token, webauthntest.Request(body), SessionInfo{})
 }
 
 // The whole round trip, against the real library: register a key, then use it.
@@ -122,8 +126,8 @@ func TestPentestPasskeyIsBoundToItsOrigin(t *testing.T) {
 	}
 
 	// The same key, the same challenge, signed for the attacker's origin.
-	body := device.assert(t, testRPID, "https://docker-example.com.evil.test", assertion.Response.Challenge.String())
-	if _, err := svc.FinishPasskeyLogin(ctx, testRP(), "10.0.0.1", res.Token, ceremonyRequest(body), SessionInfo{}); err == nil {
+	body := device.Assert(t, testRPID, "https://docker-example.com.evil.test", assertion.Response.Challenge.String())
+	if _, err := svc.FinishPasskeyLogin(ctx, testRP(), "10.0.0.1", res.Token, webauthntest.Request(body), SessionInfo{}); err == nil {
 		t.Error("SECURITY: an assertion signed for another origin was accepted")
 	}
 }
@@ -143,8 +147,8 @@ func TestPentestPasskeyIsBoundToTheRelyingParty(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	body := device.assert(t, "evil.test", testOrigin, assertion.Response.Challenge.String())
-	if _, err := svc.FinishPasskeyLogin(ctx, testRP(), "10.0.0.1", res.Token, ceremonyRequest(body), SessionInfo{}); err == nil {
+	body := device.Assert(t, "evil.test", testOrigin, assertion.Response.Challenge.String())
+	if _, err := svc.FinishPasskeyLogin(ctx, testRP(), "10.0.0.1", res.Token, webauthntest.Request(body), SessionInfo{}); err == nil {
 		t.Error("SECURITY: an assertion naming another relying party was accepted")
 	}
 }
@@ -167,13 +171,13 @@ func TestPentestPasskeyAssertionCannotBeReplayed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := device.assert(t, testRPID, testOrigin, assertion.Response.Challenge.String())
+	body := device.Assert(t, testRPID, testOrigin, assertion.Response.Challenge.String())
 
-	if _, err := svc.FinishPasskeyLogin(ctx, testRP(), "10.0.0.1", res.Token, ceremonyRequest(body), SessionInfo{}); err != nil {
+	if _, err := svc.FinishPasskeyLogin(ctx, testRP(), "10.0.0.1", res.Token, webauthntest.Request(body), SessionInfo{}); err != nil {
 		t.Fatalf("the first use should succeed: %v", err)
 	}
 	// The very same assertion, again.
-	if _, err := svc.FinishPasskeyLogin(ctx, testRP(), "10.0.0.1", res.Token, ceremonyRequest(body), SessionInfo{}); err == nil {
+	if _, err := svc.FinishPasskeyLogin(ctx, testRP(), "10.0.0.1", res.Token, webauthntest.Request(body), SessionInfo{}); err == nil {
 		t.Error("SECURITY: a captured assertion was accepted twice")
 	}
 }
@@ -193,8 +197,8 @@ func TestPentestPasskeyRejectsAnUninvitedChallenge(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	body := device.assert(t, testRPID, testOrigin, "Y2hhbGxlbmdlLW9mLW15LW93bi1jaG9vc2luZw")
-	if _, err := svc.FinishPasskeyLogin(ctx, testRP(), "10.0.0.1", res.Token, ceremonyRequest(body), SessionInfo{}); err == nil {
+	body := device.Assert(t, testRPID, testOrigin, "Y2hhbGxlbmdlLW9mLW15LW93bi1jaG9vc2luZw")
+	if _, err := svc.FinishPasskeyLogin(ctx, testRP(), "10.0.0.1", res.Token, webauthntest.Request(body), SessionInfo{}); err == nil {
 		t.Error("SECURITY: an assertion answering a challenge the server never issued was accepted")
 	}
 }
@@ -224,8 +228,8 @@ func TestPentestPasskeyBelongsToOneAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Alice's key, answering Bob's challenge.
-	body := device.assert(t, testRPID, testOrigin, assertion.Response.Challenge.String())
-	if _, err := svc.FinishPasskeyLogin(ctx, testRP(), "10.0.0.1", res.Token, ceremonyRequest(body), SessionInfo{}); err == nil {
+	body := device.Assert(t, testRPID, testOrigin, assertion.Response.Challenge.String())
+	if _, err := svc.FinishPasskeyLogin(ctx, testRP(), "10.0.0.1", res.Token, webauthntest.Request(body), SessionInfo{}); err == nil {
 		t.Error("SECURITY: one account's passkey signed in as another")
 	}
 }
@@ -238,14 +242,14 @@ func TestPentestPasskeyRefusesAClonedAuthenticator(t *testing.T) {
 	svc, _, u := passkeyFixture(t)
 	device := pairPasskey(t, svc, u, "Laptop")
 
-	device.signCount = 50
+	device.SignCount = 50
 	if _, err := signInWithPasskey(t, svc, device); err != nil {
 		t.Fatalf("a normal sign-in should work: %v", err)
 	}
 
 	// A cloned key still holds a valid private key — it just has not seen the
 	// logins the original has.
-	device.signCount = 20
+	device.SignCount = 20
 	_, err := signInWithPasskey(t, svc, device)
 	if !errors.Is(err, ErrClonedAuthenticator) {
 		t.Errorf("SECURITY: a rewound counter was accepted (%v)", err)
@@ -259,7 +263,7 @@ func TestPasskeyCounterIsPersisted(t *testing.T) {
 	ctx := context.Background()
 	device := pairPasskey(t, svc, u, "Laptop")
 
-	device.signCount = 7
+	device.SignCount = 7
 	if _, err := signInWithPasskey(t, svc, device); err != nil {
 		t.Fatal(err)
 	}
@@ -279,9 +283,9 @@ func TestPasskeyCounterIsPersisted(t *testing.T) {
 	// The device incremented as it signed; whatever it ended on is what must be on
 	// disk, or the next login compares against a stale counter and the clone check
 	// stops meaning anything.
-	if stored.Authenticator.SignCount != device.signCount {
+	if stored.Authenticator.SignCount != device.SignCount {
 		t.Errorf("stored counter %d, want the %d the device sent",
-			stored.Authenticator.SignCount, device.signCount)
+			stored.Authenticator.SignCount, device.SignCount)
 	}
 }
 
@@ -342,18 +346,82 @@ func TestPasskeyRegistrationCeremonyIsSingleUse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	device := newVirtualAuthenticator(t)
-	body := device.register(t, testRPID, testOrigin, creation.Response.Challenge.String())
+	device := webauthntest.New(t)
+	body := device.Register(t, testRPID, testOrigin, creation.Response.Challenge.String())
 
-	if err := svc.FinishPasskeyRegistration(ctx, testRP(), u.ID, "Laptop", ceremonyRequest(body)); err != nil {
+	if err := svc.FinishPasskeyRegistration(ctx, testRP(), u.ID, "Laptop", webauthntest.Request(body)); err != nil {
 		t.Fatalf("the first registration should succeed: %v", err)
 	}
 	// The very same response, again. It must be refused because the ceremony is
 	// gone — not because the database happened to reject a duplicate id.
-	if err := svc.FinishPasskeyRegistration(ctx, testRP(), u.ID, "Laptop again", ceremonyRequest(body)); !errors.Is(err, ErrInvalidCreds) {
+	if err := svc.FinishPasskeyRegistration(ctx, testRP(), u.ID, "Laptop again", webauthntest.Request(body)); !errors.Is(err, ErrInvalidCreds) {
 		t.Errorf("a replayed registration returned %v, want ErrInvalidCreds", err)
 	}
 	if n, _ := st.CountFactors(ctx, u.ID); n != 1 {
 		t.Errorf("a replayed registration produced %d factors, want 1", n)
+	}
+}
+
+// PENTEST: one password entry, one passkey attempt.
+//
+// The challenge token is spent on the first FinishPasskeyLogin, right or wrong.
+// Without that, a password entry funds an unlimited number of assertion attempts —
+// which matters less than for a guessable code, but the rule is the rule, and the
+// spend is also what stops a captured assertion being retried against a fresh
+// ceremony.
+//
+// This needs its own test: the replay test above is killed by the ceremony being
+// single-use, so it never reaches the token spend at all.
+func TestPentestPasskeyChallengeTokenIsSpentOnFirstAttempt(t *testing.T) {
+	svc, _, u := passkeyFixture(t)
+	ctx := context.Background()
+	device := pairPasskey(t, svc, u, "Laptop")
+
+	res, err := svc.Login(ctx, "10.0.0.1", "alice", "correcthorse123", false, SessionInfo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// First attempt: answer the wrong challenge, so the assertion is refused.
+	if _, err := svc.BeginPasskeyLogin(ctx, testRP(), res.Token); err != nil {
+		t.Fatal(err)
+	}
+	wrong := device.Assert(t, testRPID, testOrigin, "bm90LXRoZS1jaGFsbGVuZ2UtaXNzdWVk")
+	if _, err := svc.FinishPasskeyLogin(ctx, testRP(), "10.0.0.1", res.Token, webauthntest.Request(wrong), SessionInfo{}); err == nil {
+		t.Fatal("an assertion for the wrong challenge should be refused")
+	}
+
+	// Second attempt with the SAME token, done properly this time. The token is
+	// spent, so it must not produce a session however correct the assertion is.
+	assertion, err := svc.BeginPasskeyLogin(ctx, testRP(), res.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	good := device.Assert(t, testRPID, testOrigin, assertion.Response.Challenge.String())
+	if _, err := svc.FinishPasskeyLogin(ctx, testRP(), "10.0.0.1", res.Token, webauthntest.Request(good), SessionInfo{}); err == nil {
+		t.Error("SECURITY: a spent challenge token funded a second passkey attempt")
+	}
+}
+
+// A ceremony expires. Two minutes is long enough for a person and short enough
+// that an abandoned one is not a challenge waiting to be answered later.
+func TestPasskeyCeremonyExpires(t *testing.T) {
+	c := newCeremonies()
+	c.put("k", webauthn.SessionData{UserID: []byte("u")})
+
+	// Age it past the TTL rather than sleeping through it.
+	c.mu.Lock()
+	entry := c.open["k"]
+	entry.expires = time.Now().Add(-time.Second)
+	c.open["k"] = entry
+	c.mu.Unlock()
+
+	if _, ok := c.take("k"); ok {
+		t.Error("an expired ceremony was still answerable")
+	}
+	// …and a fresh one is not.
+	c.put("k2", webauthn.SessionData{UserID: []byte("u")})
+	if _, ok := c.take("k2"); !ok {
+		t.Error("a live ceremony should be answerable")
 	}
 }

@@ -81,6 +81,16 @@ All notable changes to Docker Commander are documented here. The format follows
   answered from two places, and the honest device and the copy are indistinguishable
   from here.
 
+  Passkeys are offered only where a browser will actually accept one: HTTPS, or
+  `localhost`. An **IP address is not a relying party** — no browser allows a
+  passkey at `https://192.0.2.10/` or `http://127.0.0.1:8470/` — so the option says
+  why it is missing there instead of failing when pressed. Reach the server by a
+  hostname to use them.
+
+  `mfaEnabled` joins `totpEnabled` in the profile and the admin user list, because
+  the two stopped being the same question: an account protected by a passkey alone
+  reported as having no second factor.
+
 - **An account can hold several authenticators.** *Profile → Security* lists every
   paired one by a name you choose, with when it was added and last used, and lets
   you add or remove them. Pairing used to *replace*: the phone in your hand stopped

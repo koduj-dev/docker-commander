@@ -1,4 +1,4 @@
-package auth
+package webauthntest
 
 import (
 	"crypto/ecdsa"
@@ -16,6 +16,13 @@ import (
 	"github.com/fxamacker/cbor/v2"
 )
 
+// Package webauthntest provides a virtual authenticator: enough of a security key
+// to exercise the real thing.
+//
+// It lives in its own package rather than in a _test.go file because both the auth
+// service tests and the HTTP pentests need it, and a harness duplicated in two
+// places is a harness that drifts.
+//
 // A virtual authenticator: enough of a security key to exercise the real thing.
 //
 // WebAuthn cannot be tested by mocking the library — the library IS the check. So
@@ -28,16 +35,16 @@ import (
 //
 // It is deliberately dumb about state: the sign counter is a field the test moves
 // by hand, because moving it backwards is exactly how a cloned key behaves.
-type virtualAuthenticator struct {
+type Device struct {
 	key       *ecdsa.PrivateKey
 	id        []byte
-	signCount uint32
+	SignCount uint32
 	// userVerified controls the UV flag — a fingerprint or PIN, as opposed to mere
 	// possession.
-	userVerified bool
+	UserVerified bool
 }
 
-func newVirtualAuthenticator(t *testing.T) *virtualAuthenticator {
+func New(t *testing.T) *Device {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -47,12 +54,12 @@ func newVirtualAuthenticator(t *testing.T) *virtualAuthenticator {
 	if _, err := rand.Read(id); err != nil {
 		t.Fatal(err)
 	}
-	return &virtualAuthenticator{key: key, id: id, signCount: 1, userVerified: true}
+	return &Device{key: key, id: id, SignCount: 1, UserVerified: true}
 }
 
 // coseKey encodes the public key the way an authenticator does: a COSE_Key map,
 // which is what the server stores and later verifies signatures against.
-func (a *virtualAuthenticator) coseKey(t *testing.T) []byte {
+func (a *Device) coseKey(t *testing.T) []byte {
 	t.Helper()
 	x := make([]byte, 32)
 	y := make([]byte, 32)
@@ -69,13 +76,13 @@ func (a *virtualAuthenticator) coseKey(t *testing.T) []byte {
 
 // authData builds the authenticator data: the RP id hash, the flags, the counter,
 // and (at registration) the attested credential itself.
-func (a *virtualAuthenticator) authData(t *testing.T, rpID string, includeCredential bool) []byte {
+func (a *Device) authData(t *testing.T, rpID string, includeCredential bool) []byte {
 	t.Helper()
 	sum := sha256.Sum256([]byte(rpID))
 	out := append([]byte{}, sum[:]...)
 
 	var flags byte = 0x01 // user present
-	if a.userVerified {
+	if a.UserVerified {
 		flags |= 0x04
 	}
 	if includeCredential {
@@ -84,7 +91,7 @@ func (a *virtualAuthenticator) authData(t *testing.T, rpID string, includeCreden
 	out = append(out, flags)
 
 	counter := make([]byte, 4)
-	binary.BigEndian.PutUint32(counter, a.signCount)
+	binary.BigEndian.PutUint32(counter, a.SignCount)
 	out = append(out, counter...)
 
 	if includeCredential {
@@ -117,7 +124,7 @@ func challengeType(ceremony string) string {
 }
 
 // register produces the JSON a browser posts after navigator.credentials.create.
-func (a *virtualAuthenticator) register(t *testing.T, rpID, origin, challenge string) string {
+func (a *Device) Register(t *testing.T, rpID, origin, challenge string) string {
 	t.Helper()
 	authData := a.authData(t, rpID, true)
 	// "none" attestation: no attestation statement to sign, which is what a passkey
@@ -145,9 +152,9 @@ func (a *virtualAuthenticator) register(t *testing.T, rpID, origin, challenge st
 // The counter moves first, because a real authenticator increments it on every
 // assertion — that movement is the whole clone-detection signal, and a harness
 // that left it still would make an ordinary login look like a cloned key.
-func (a *virtualAuthenticator) assert(t *testing.T, rpID, origin, challenge string) string {
+func (a *Device) Assert(t *testing.T, rpID, origin, challenge string) string {
 	t.Helper()
-	a.signCount++
+	a.SignCount++
 	authData := a.authData(t, rpID, false)
 	clientData := clientDataJSON(t, "get", challenge, origin)
 	clientHash := sha256.Sum256(clientData)
@@ -195,8 +202,8 @@ func mustJSON(t *testing.T, v any) string {
 	return string(blob)
 }
 
-// ceremonyRequest wraps a credential JSON body as the handlers receive it.
-func ceremonyRequest(body string) *http.Request {
+// Request wraps a credential JSON body as the handlers receive it.
+func Request(body string) *http.Request {
 	r, _ := http.NewRequest("POST", "/", strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
 	return r

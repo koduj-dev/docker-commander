@@ -62,8 +62,8 @@ function withPasskeySupport(behaviour: { get?: () => Promise<unknown> } = {}) {
   });
 }
 
-async function reachTheCodeStep(methods: string[] = ["totp"]) {
-  login.mockResolvedValue({ mfaRequired: true, mfaToken: "challenge-1", methods });
+async function reachTheCodeStep(methods: string[] = ["totp"], passkeyReady = methods.includes("passkey")) {
+  login.mockResolvedValue({ mfaRequired: true, mfaToken: "challenge-1", methods, passkeyReady });
   const [user, pass] = [...container.querySelectorAll("input")];
   await act(async () => {
     typeInto(user, "admin");
@@ -75,6 +75,15 @@ async function reachTheCodeStep(methods: string[] = ["totp"]) {
 }
 
 describe("the 2FA step with a passkey", () => {
+  it("explains itself when the account has a passkey this connection cannot use", async () => {
+    // A 2FA screen with no control on it is a lockout that looks like a bug.
+    withPasskeySupport();
+    await reachTheCodeStep(["passkey"], false);
+    expect(container.textContent).not.toContain("Use a passkey");
+    expect(container.textContent).toContain("cannot use one");
+    expect(container.textContent).toContain("HTTPS");
+  });
+
   it("does not offer a passkey to an account without one", async () => {
     withPasskeySupport();
     await reachTheCodeStep(["totp"]);
