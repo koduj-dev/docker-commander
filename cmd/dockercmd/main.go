@@ -415,7 +415,7 @@ func run() error {
 
 	tokens := auth.NewTokenManager(secret, cfg.SessionTTL)
 	authSvc := auth.NewService(st, tokens)
-	mw := auth.NewMiddleware(tokens)
+	mw := auth.NewMiddleware(tokens, st)
 
 	dm := docker.NewManager(st)
 	defer dm.Close()

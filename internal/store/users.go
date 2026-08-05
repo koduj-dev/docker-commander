@@ -42,8 +42,10 @@ type User struct {
 	// repeatedly, so one shoulder-surfed or phished code could be spent several
 	// times — and the challenge token it satisfies lives for five minutes.
 	TOTPLastCounter int64
-	CreatedAt       time.Time
-	LastLoginAt     time.Time
+	// SessionEpoch is bumped when previously issued sessions must stop working.
+	SessionEpoch int64
+	CreatedAt    time.Time
+	LastLoginAt  time.Time
 }
 
 // IsAdmin reports whether the user has the admin role.
@@ -103,7 +105,7 @@ func (s *Store) CreateUser(ctx context.Context, u *User) (int64, error) {
 // ListUsers returns all accounts (without secrets) for the admin user manager.
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, username, password_hash, role, email, totp_secret, totp_enabled, totp_pending, totp_last_counter, read_only, sections, auth_source, created_at, last_login_at
+		SELECT id, username, password_hash, role, email, totp_secret, totp_enabled, totp_pending, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
 		FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
@@ -143,14 +145,14 @@ func (s *Store) UpdateUserAccess(ctx context.Context, id int64, role string, rea
 // UserByUsername looks up a user by their unique username.
 func (s *Store) UserByUsername(ctx context.Context, username string) (*User, error) {
 	return scanUserRow(s.db.QueryRowContext(ctx, `
-		SELECT id, username, password_hash, role, email, totp_secret, totp_enabled, totp_pending, totp_last_counter, read_only, sections, auth_source, created_at, last_login_at
+		SELECT id, username, password_hash, role, email, totp_secret, totp_enabled, totp_pending, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
 		FROM users WHERE username = ?`, username))
 }
 
 // UserByID looks up a user by primary key.
 func (s *Store) UserByID(ctx context.Context, id int64) (*User, error) {
 	return scanUserRow(s.db.QueryRowContext(ctx, `
-		SELECT id, username, password_hash, role, email, totp_secret, totp_enabled, totp_pending, totp_last_counter, read_only, sections, auth_source, created_at, last_login_at
+		SELECT id, username, password_hash, role, email, totp_secret, totp_enabled, totp_pending, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
 		FROM users WHERE id = ?`, id))
 }
 
@@ -201,7 +203,7 @@ func scanUserRow(row scanner) (*User, error) {
 	var enabled, readOnly int
 	var sections, createdAt, lastLogin string
 	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.Email, &u.TOTPSecret, &enabled,
-		&u.TOTPPending, &u.TOTPLastCounter, &readOnly, &sections, &u.AuthSource, &createdAt, &lastLogin)
+		&u.TOTPPending, &u.TOTPLastCounter, &u.SessionEpoch, &readOnly, &sections, &u.AuthSource, &createdAt, &lastLogin)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -299,5 +301,28 @@ func unmarshalIDs(raw string) []int64 {
 func (s *Store) SetTOTPLastCounter(ctx context.Context, userID, counter int64) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE users SET totp_last_counter = ? WHERE id = ? AND totp_last_counter < ?`, counter, userID, counter)
+	return err
+}
+
+// SessionEpoch returns the account's current session generation. A token minted
+// before the last bump is stale and must be refused.
+func (s *Store) SessionEpoch(ctx context.Context, userID int64) (int64, error) {
+	var epoch int64
+	err := s.db.QueryRowContext(ctx, `SELECT session_epoch FROM users WHERE id = ?`, userID).Scan(&epoch)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return epoch, err
+}
+
+// BumpSessionEpoch invalidates every session token already issued for a user.
+//
+// A JWT is self-contained: nothing about changing a password reaches the copy a
+// browser (or a script) already holds, so without this an attacker whose access
+// prompted the reset keeps it until the token expires — up to twelve hours of
+// full Docker control, granted by the very act meant to revoke it.
+func (s *Store) BumpSessionEpoch(ctx context.Context, userID int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET session_epoch = session_epoch + 1 WHERE id = ?`, userID)
 	return err
 }

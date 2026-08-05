@@ -190,7 +190,7 @@ func recordRouteFixture(t *testing.T) (*Server, map[string]int64, func(*http.Req
 		cfg:   config.Config{},
 		store: st,
 		auth:  auth.NewService(st, tokens),
-		mw:    auth.NewMiddleware(tokens),
+		mw:    auth.NewMiddleware(tokens, st),
 	}
 
 	uid, err := st.CreateUser(ctx, &store.User{Username: "scoped", Role: "user"})
@@ -215,7 +215,7 @@ func recordRouteFixture(t *testing.T) (*Server, map[string]int64, func(*http.Req
 		t.Fatal(err)
 	}
 
-	token, _, err := tokens.Issue(uid, "scoped", "user", auth.KindSession)
+	token, _, err := tokens.Issue(uid, "scoped", "user", auth.KindSession, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

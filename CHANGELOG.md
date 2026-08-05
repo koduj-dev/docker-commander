@@ -7,6 +7,16 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Security
+- **Changing a password now ends the sessions issued before it.** A JWT is
+  self-contained, so nothing about a reset reached the copy a browser or a script
+  already held: an attacker whose access prompted the reset kept it for the rest of
+  the token's twelve hours, handed to them by the very act meant to revoke it. Each
+  account carries a session generation, tokens carry the one they were minted with,
+  and a mismatch is refused — so the change takes effect on the next request rather
+  than at the token's expiry. A deleted account's tokens stop working the same way,
+  including on the routes that carry no section and therefore never reloaded the
+  user.
+
 - **A `.tar.gz` upload can no longer be a decompression bomb.** The extraction cap
   was applied only on the `.zip` branch, while the comment claimed it covered
   everything — so a ~10 MiB gzip of repetitive data expanded to ~10 GiB written
