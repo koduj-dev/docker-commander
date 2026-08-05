@@ -129,8 +129,9 @@ func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 		return err
 	}
 	// Their sessions go with them. The middleware already refuses a token whose
-	// account is gone, so this is housekeeping rather than a gate — but leaving
-	// rows behind would mean a recycled user id inherits them.
+	// account is gone, so this is housekeeping rather than a gate: ids are
+	// AUTOINCREMENT and never reused, so what is left behind is dead rows, not a
+	// way in. Nothing else would ever delete them.
 	return s.DeleteUserSessions(ctx, id)
 }
 

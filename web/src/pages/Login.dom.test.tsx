@@ -75,6 +75,24 @@ describe("the 2FA step", () => {
     expect(container.textContent).toContain("Sign in again");
   });
 
+  it("does not blame the code when the request never arrived", async () => {
+    await reachTheCodeStep();
+
+    // A network failure is not an ApiError. Saying "that code was not accepted"
+    // sends the user hunting through their authenticator for a problem that is
+    // in the wire.
+    verify2fa.mockRejectedValue(new TypeError("Failed to fetch"));
+    await act(async () => {
+      typeInto(container.querySelector("input")!, "000000");
+    });
+    await act(async () => {
+      container.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+
+    expect(container.textContent).toContain("Could not reach the server");
+    expect(container.textContent).not.toContain("That code was not accepted");
+  });
+
   it("stays on the code screen while it is still usable", async () => {
     await reachTheCodeStep();
     expect(container.querySelector("input")).toBeTruthy();

@@ -557,3 +557,35 @@ func entryNames(t *testing.T, archive string) []string {
 	}
 	return names
 }
+
+// The reported size must include the database, which is usually the largest
+// single thing in the archive. Counting only the file tree made the CLI's size
+// line quietly mean "everything except the part you care about most".
+func TestBackupReportCountsTheDatabase(t *testing.T) {
+	src := seedDataDir(t)
+	// A database big enough that omitting it cannot hide inside rounding.
+	db := fakeDB{strings.Repeat("D", 4096)}
+
+	rep, err := Create(src, filepath.Join(t.TempDir(), "b.dcbak"), db, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var files int64
+	for _, rel := range []string{
+		filepath.Join("projects", "shop", "compose.yml"),
+		filepath.Join("projects", "shop", "html", "index.html"),
+		filepath.Join("project-templates", "7", "compose.yml"),
+	} {
+		fi, err := os.Stat(filepath.Join(src, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		files += fi.Size()
+	}
+
+	if want := files + 4096; rep.Bytes != want {
+		t.Errorf("report says %d bytes, want %d (%d of files + a %d-byte database)",
+			rep.Bytes, want, files, 4096)
+	}
+}

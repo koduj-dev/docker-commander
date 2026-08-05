@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"sort"
@@ -292,7 +293,11 @@ func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Password string `json:"password"`
 		}
-		if err := decodeJSON(r, &body); err != nil {
+		// An empty body is a missing password, not a malformed request: it is the
+		// shape an older client sends, and answering 400 there would say "your
+		// request was wrong" about something that is simply a failed step-up.
+		// Anything else in the body is still a client bug and still a 400.
+		if err := decodeJSON(r, &body); err != nil && !errors.Is(err, io.EOF) {
 			writeErr(w, http.StatusBadRequest, "invalid body")
 			return
 		}

@@ -180,5 +180,22 @@ describe("Profile → Security → signed-in sessions", () => {
     sessions.mockRejectedValue(new Error("network down"));
     await mount();
     expect(container.textContent).toContain("network down");
+    expect(container.textContent).not.toContain("Loading…");
+  });
+
+  it("clears the failure once a retry succeeds", async () => {
+    sessions.mockRejectedValue(new Error("network down"));
+    await mount();
+    expect(container.textContent).toContain("network down");
+
+    sessions.mockResolvedValue([
+      {
+        id: THIS_ONE, ip: "10.0.0.9", userAgent: "Firefox on Linux",
+        createdAt: "2026-08-05T09:00:00Z", lastSeenAt: "2026-08-05T10:00:00Z", current: true,
+      },
+    ]);
+    await act(async () => button("Try again").click());
+    expect(container.textContent).toContain("Firefox on Linux");
+    expect(container.textContent).not.toContain("network down");
   });
 });

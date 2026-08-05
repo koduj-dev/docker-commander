@@ -51,9 +51,14 @@ export function Login() {
       setMfaToken("");
       setCode("");
       setPassword("");
-      setErr(e instanceof ApiError && e.status === 429
-        ? e.message
-        : "That code was not accepted. Sign in again to get a new one.");
+      // Distinguish "the server said no" from "the request never got there":
+      // telling someone their code was wrong when the network dropped sends them
+      // hunting through their authenticator for a problem that isn't there.
+      setErr(
+        e instanceof ApiError
+          ? (e.status === 429 ? e.message : "That code was not accepted. Sign in again to get a new one.")
+          : "Could not reach the server. Check your connection and sign in again.",
+      );
     } finally {
       setBusy(false);
     }

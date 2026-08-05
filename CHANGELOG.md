@@ -6,6 +6,39 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **A review pass over the last few merges.** None of these were reachable as an
+  attack, but each was a statement the code no longer backed up:
+  - The MFA challenge is now required to carry an expiry. `exp` is optional in a
+    JWT, so a challenge token without one parsed cleanly and was then dereferenced
+    for the one-use window — a nil pointer on the pre-2FA endpoint. It needs the
+    signing secret to reach, which is why this is a guard rather than a hole.
+  - **A successful step-up clears the rate-limit budget**, as a successful login
+    already did. Without it, someone else's wrong guesses from the same address
+    locked the real account holder out of *their own* re-pairing for the rest of
+    the window, even with the right password.
+  - Re-pairing with **no request body** is a failed step-up (403), not a malformed
+    request (400) — it is the shape an older client sends, and the answer should
+    describe what actually happened. A genuinely broken body is still a 400.
+  - **The backup size line counts the database.** It is usually the largest thing
+    in the archive, and leaving it out made "1.2 MiB" mean *everything except the
+    part you care about most*. The units now say `MiB`/`GiB` too, matching the
+    rest of the project instead of dividing by 1024 and printing `MB`.
+  - Saving in **Settings no longer shows a failure in green.** "Save failed" was
+    rendered in the success colour, which said the setting was live when it wasn't;
+    it now carries the reason.
+  - A **2FA code rejected by the network** no longer reads as a rejected code. A
+    dropped request said "That code was not accepted", sending people hunting
+    through an authenticator for a problem in the wire.
+  - The session list clears a stale error when a reload succeeds, and offers
+    **Try again** when the first load fails — previously that was a dead end.
+  - Comment corrections where the prose had drifted from the code: a doc comment
+    that had slid onto the wrong function, a breadcrumb naming a test that does not
+    exist, a rationale about "recycled user ids" (ids are `AUTOINCREMENT` and never
+    reused), a restore note describing symlink *target* checking that is now an
+    outright refusal, and an SMTP test comment that said the opposite of what the
+    test pins.
+
 ### Added
 - **See what is signed in as you, and end it.** *Profile → Security* now lists every
   live session for your account — address, browser, when it was last used, with the

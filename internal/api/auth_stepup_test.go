@@ -71,7 +71,7 @@ func setupTOTP(t *testing.T, srv *Server, authenticate func(*http.Request), body
 
 // PENTEST: pairing a new authenticator replaces the second factor, so a session
 // alone must not be enough. Otherwise any session takeover — a shared machine, a
-// tokenIssued.Token pasted into a URL — becomes a permanent authenticator takeover: the
+// token pasted into a URL — becomes a permanent authenticator takeover: the
 // attacker pairs their own device and satisfies 2FA from then on, while the
 // owner's app quietly stops working.
 func TestPentestTOTPRepair_NeedsThePassword(t *testing.T) {
@@ -85,6 +85,31 @@ func TestPentestTOTPRepair_NeedsThePassword(t *testing.T) {
 	}
 	if code := setupTOTP(t, srv, authenticate, `{"password":"correcthorse123"}`); code != http.StatusOK {
 		t.Errorf("the account's own password must be accepted, got %d", code)
+	}
+}
+
+// An empty body is a missing password, not a malformed request. Older clients
+// sent no body at all, and answering 400 would tell them their request was
+// wrong when what actually happened is that the step-up failed.
+func TestTOTPRepairWithNoBodyIsAStepUpFailure(t *testing.T) {
+	srv, authenticate, _ := stepUpFixture(t, true)
+
+	r := httptest.NewRequest("POST", "/api/auth/totp/setup", nil)
+	authenticate(r)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("re-pairing with no body = %d, want 403", w.Code)
+	}
+
+	// A body that is genuinely malformed is still a client bug.
+	if code := setupTOTP(t, srv, authenticate, `{"password":`); code != http.StatusBadRequest {
+		t.Errorf("a truncated body = %d, want 400", code)
+	}
+	// …and so is one naming fields we do not accept, which is how a typo in a
+	// client stops being silent.
+	if code := setupTOTP(t, srv, authenticate, `{"passwrod":"correcthorse123"}`); code != http.StatusBadRequest {
+		t.Errorf("an unknown field = %d, want 400", code)
 	}
 }
 

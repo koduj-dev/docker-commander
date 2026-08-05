@@ -157,6 +157,12 @@ func writeArchive(out, dataDir, dbSnapshot string, rep *Report) error {
 	if err := addFile(tw, dbSnapshot, dbFileName); err != nil {
 		return err
 	}
+	// The database counts too. It is usually the largest single thing in the
+	// archive, and leaving it out of the total made "1.2 MiB of files" mean the
+	// files that happen not to be the database — a number nobody asked for.
+	if fi, err := os.Stat(dbSnapshot); err == nil {
+		rep.Bytes += fi.Size()
+	}
 	for _, dir := range dataDirEntries {
 		src := filepath.Join(dataDir, dir)
 		if _, err := os.Stat(src); os.IsNotExist(err) {

@@ -212,7 +212,7 @@ func runBackupAction(action, file string, wantPassphrase bool) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("backup written to %s (%s of files)\n", file, humanBytes(rep.Bytes))
+		fmt.Printf("backup written to %s (%s uncompressed)\n", file, humanBytes(rep.Bytes))
 		// Named, not silently dropped: a symlink's contents were never in the
 		// archive — Walk does not follow links — so an operator who pointed
 		// projects/ at another disk has a backup that omits it. Saying so at the
@@ -521,9 +521,9 @@ func run() error {
 	return nil
 }
 
-// loadOrCreateJWTSecret returns a persistent signing secret, generating one on
-// first run. Keeping it stable means sessions survive restarts.
-// humanBytes renders a size the way an operator reads one.
+// humanBytes renders a size the way an operator reads one. Base 1024, labelled
+// as such — the rest of the project quotes MiB/GiB and a "MB" that means 2^20
+// is the sort of small lie that turns into a support question.
 func humanBytes(n int64) string {
 	const unit = 1024
 	if n < unit {
@@ -534,9 +534,11 @@ func humanBytes(n int64) string {
 		div *= unit
 		exp++
 	}
-	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGT"[exp])
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGT"[exp])
 }
 
+// loadOrCreateJWTSecret returns a persistent signing secret, generating one on
+// first run. Keeping it stable means sessions survive restarts.
 func loadOrCreateJWTSecret(ctx context.Context, st *store.Store) ([]byte, error) {
 	return loadOrCreateSecret(ctx, st, "jwt_secret")
 }

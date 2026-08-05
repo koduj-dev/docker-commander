@@ -160,3 +160,23 @@ func TestManPageDocumentsActions(t *testing.T) {
 		}
 	}
 }
+
+// The backup line quotes a size to an operator, and this project writes MiB/GiB
+// everywhere else. Dividing by 1024 while printing "MB" is a small lie that ends
+// up in a support conversation about why two tools disagree.
+func TestHumanBytesLabelsBinaryUnitsAsBinary(t *testing.T) {
+	for _, c := range []struct {
+		in   int64
+		want string
+	}{
+		{512, "512 B"},
+		{1024, "1.0 KiB"},
+		{1536, "1.5 KiB"},
+		{1 << 20, "1.0 MiB"},
+		{3 << 30, "3.0 GiB"},
+	} {
+		if got := humanBytes(c.in); got != c.want {
+			t.Errorf("humanBytes(%d) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

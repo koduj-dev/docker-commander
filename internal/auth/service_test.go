@@ -562,3 +562,36 @@ func TestMFA_EachLoginGetsAUsableChallenge(t *testing.T) {
 		}
 	}
 }
+
+// A successful step-up clears the bucket, exactly as a successful login does.
+//
+// Without that, someone else's wrong guesses from the same address keep the real
+// account holder out of their own step-up for the rest of the window even when
+// they type the right password — a lockout an attacker can buy with failures,
+// against an endpoint that already requires a valid session.
+func TestVerifyUserPasswordResetsTheBudgetOnSuccess(t *testing.T) {
+	svc, ctx := newService(t)
+	u, err := svc.Setup(ctx, "admin", "correcthorse123")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Four wrong guesses: one short of the limit of five.
+	for i := 0; i < 4; i++ {
+		if svc.VerifyUserPassword(ctx, "10.0.0.7", u, "nope") {
+			t.Fatal("a wrong password was accepted")
+		}
+	}
+	if !svc.VerifyUserPassword(ctx, "10.0.0.7", u, "correcthorse123") {
+		t.Fatal("the correct password should still be accepted with budget left")
+	}
+
+	// If the budget survived that success, the fifth failure below would trip the
+	// limiter and the correct password after it would be refused.
+	for i := 0; i < 4; i++ {
+		svc.VerifyUserPassword(ctx, "10.0.0.7", u, "nope")
+	}
+	if !svc.VerifyUserPassword(ctx, "10.0.0.7", u, "correcthorse123") {
+		t.Error("a successful step-up should have reset the rate-limit budget")
+	}
+}

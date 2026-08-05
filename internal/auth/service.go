@@ -218,7 +218,11 @@ func (s *Service) VerifyMFA(ctx context.Context, rlKey, challengeToken, code str
 		return nil, ErrRateLimited
 	}
 	claims, err := s.tokens.Parse(challengeToken)
-	if err != nil || claims.Kind != KindMFAChallenge {
+	// The expiry is required, not merely honoured: it is what bounds how long a
+	// spent id has to be remembered, and `exp` is optional in a JWT, so a token
+	// without one would otherwise be dereferenced here — a nil pointer reachable
+	// from an unauthenticated endpoint.
+	if err != nil || claims.Kind != KindMFAChallenge || claims.ExpiresAt == nil {
 		s.limiter.Fail(rlKey)
 		return nil, ErrInvalidCreds
 	}
@@ -285,8 +289,14 @@ func (s *Service) VerifyUserPassword(ctx context.Context, rlKey string, u *store
 	}
 	if !ok {
 		s.limiter.Fail(rlKey)
+		return false
 	}
-	return ok
+	// Reset on success, exactly as Login does. Without it, someone else's failed
+	// attempts from the same address keep the real account holder locked out of
+	// their own step-up until the window rolls over — a denial of service bought
+	// with wrong guesses.
+	s.limiter.Reset(rlKey)
+	return true
 }
 
 // mfaKey buckets 2FA attempts per account, alongside the per-IP bucket.
