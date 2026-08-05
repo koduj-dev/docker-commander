@@ -217,19 +217,19 @@ func TestPentestMFA_BruteForceIsRateLimited(t *testing.T) {
 	svc, ctx := newService(t)
 	enable2FA(t, svc, ctx)
 
-	res, err := svc.Login(ctx, "10.0.0.9", "admin", "correcthorse123", false)
-	if err != nil || !res.MFARequired {
-		t.Fatalf("expected an MFA challenge: %+v err=%v", res, err)
-	}
-
-	// The limiter allows 5 attempts per window; the 6th must be refused before
-	// the code is even looked at.
+	// A challenge is good for ONE attempt, so each guess costs a fresh login —
+	// which is the point. Five of them exhaust the window.
 	for i := 0; i < 5; i++ {
+		res, err := svc.Login(ctx, "10.0.0.9", "admin", "correcthorse123", false)
+		if err != nil || !res.MFARequired {
+			t.Fatalf("attempt %d: expected an MFA challenge: %+v err=%v", i+1, res, err)
+		}
 		if _, err := svc.VerifyMFA(ctx, "10.0.0.9", res.Token, "000000"); !errors.Is(err, ErrInvalidMFACode) {
 			t.Fatalf("attempt %d: want ErrInvalidMFACode, got %v", i+1, err)
 		}
 	}
-	if _, err := svc.VerifyMFA(ctx, "10.0.0.9", res.Token, "000000"); !errors.Is(err, ErrRateLimited) {
+	// The window is full: even the password step is refused now.
+	if _, err := svc.Login(ctx, "10.0.0.9", "admin", "correcthorse123", false); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("6th attempt: want ErrRateLimited, got %v", err)
 	}
 }
@@ -240,12 +240,20 @@ func TestPentestMFA_RotatingTheClientIPStillHitsTheAccountBucket(t *testing.T) {
 	svc, ctx := newService(t)
 	enable2FA(t, svc, ctx)
 
-	res, _ := svc.Login(ctx, "10.0.0.1", "admin", "correcthorse123", false)
 	for i := 0; i < 5; i++ {
 		ip := "10.0.0." + strconv.Itoa(100+i) // a different address every time
+		res, err := svc.Login(ctx, ip, "admin", "correcthorse123", false)
+		if err != nil || !res.MFARequired {
+			t.Fatalf("attempt %d from %s: expected a challenge: %v", i+1, ip, err)
+		}
 		if _, err := svc.VerifyMFA(ctx, ip, res.Token, "000000"); !errors.Is(err, ErrInvalidMFACode) {
 			t.Fatalf("attempt %d from %s: want ErrInvalidMFACode, got %v", i+1, ip, err)
 		}
+	}
+	// A brand-new address: its own bucket is empty, but the account's is not.
+	res, err := svc.Login(ctx, "10.0.0.200", "admin", "correcthorse123", false)
+	if err != nil {
+		t.Fatalf("login from a fresh IP: %v", err)
 	}
 	if _, err := svc.VerifyMFA(ctx, "10.0.0.200", res.Token, "000000"); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("a fresh IP after 5 failures: want ErrRateLimited, got %v", err)
@@ -288,13 +296,18 @@ func TestMFA_SuccessClearsTheWindow(t *testing.T) {
 	if _, err := svc.VerifyMFA(ctx, "10.0.0.5", res.Token, "000000"); !errors.Is(err, ErrInvalidMFACode) {
 		t.Fatalf("want ErrInvalidMFACode, got %v", err)
 	}
+	// The fumble spent that challenge, so getting it right means logging in again.
+	retry, _ := svc.Login(ctx, "10.0.0.5", "admin", "correcthorse123", false)
 	code, _ := totp.GenerateCode(secret, time.Now())
-	if _, err := svc.VerifyMFA(ctx, "10.0.0.5", res.Token, code); err != nil {
+	if _, err := svc.VerifyMFA(ctx, "10.0.0.5", retry.Token, code); err != nil {
 		t.Fatalf("correct code after a fumble: %v", err)
 	}
 	// Both buckets are clear, so a fresh login + 5 wrong codes are available again.
-	res2, _ := svc.Login(ctx, "10.0.0.5", "admin", "correcthorse123", false)
 	for i := 0; i < 5; i++ {
+		res2, err := svc.Login(ctx, "10.0.0.5", "admin", "correcthorse123", false)
+		if err != nil {
+			t.Fatalf("after a success the window should be clear; login %d gave %v", i+1, err)
+		}
 		if _, err := svc.VerifyMFA(ctx, "10.0.0.5", res2.Token, "000000"); !errors.Is(err, ErrInvalidMFACode) {
 			t.Fatalf("after a success the window should be clear; attempt %d gave %v", i+1, err)
 		}
@@ -479,5 +492,65 @@ func TestPentestSession_DeletedAccountsTokenIsRefused(t *testing.T) {
 	h.ServeHTTP(httptest.NewRecorder(), r)
 	if reached {
 		t.Error("SECURITY: a deleted account's token was accepted")
+	}
+}
+
+// PENTEST: a challenge token buys ONE attempt. The rate limiter bounds guesses
+// per window; this bounds them per password entry — the half an attacker holding
+// the password could otherwise repeat as often as they liked, since a challenge
+// stayed valid for five minutes.
+func TestPentestMFA_ChallengeTokenIsSpentOnFirstUse(t *testing.T) {
+	svc, ctx := newService(t)
+	_, secret := enable2FA(t, svc, ctx)
+
+	res, err := svc.Login(ctx, "10.0.0.4", "admin", "correcthorse123", false)
+	if err != nil || !res.MFARequired {
+		t.Fatalf("expected an MFA challenge: %v", err)
+	}
+	if _, err := svc.VerifyMFA(ctx, "10.0.0.4", res.Token, "000000"); !errors.Is(err, ErrInvalidMFACode) {
+		t.Fatalf("first attempt: want ErrInvalidMFACode, got %v", err)
+	}
+
+	// Same token again — even with the RIGHT code, because the token is spent.
+	code, _ := totp.GenerateCode(secret, time.Now())
+	if _, err := svc.VerifyMFA(ctx, "10.0.0.4", res.Token, code); !errors.Is(err, ErrInvalidCreds) {
+		t.Errorf("SECURITY: a spent challenge token was accepted again: %v", err)
+	}
+}
+
+// And a successful login spends it too, so the token cannot mint a second session.
+func TestPentestMFA_ChallengeTokenCannotMintTwoSessions(t *testing.T) {
+	svc, ctx := newService(t)
+	_, secret := enable2FA(t, svc, ctx)
+
+	res, _ := svc.Login(ctx, "10.0.0.6", "admin", "correcthorse123", false)
+	code, _ := totp.GenerateCode(secret, time.Now())
+	if _, err := svc.VerifyMFA(ctx, "10.0.0.6", res.Token, code); err != nil {
+		t.Fatalf("the first use should succeed: %v", err)
+	}
+	if _, err := svc.VerifyMFA(ctx, "10.0.0.6", res.Token, code); err == nil {
+		t.Error("SECURITY: the same challenge token issued a second session")
+	}
+}
+
+// The counterweight: a fresh challenge always works. One attempt per token must
+// not become "one attempt, ever".
+func TestMFA_EachLoginGetsAUsableChallenge(t *testing.T) {
+	svc, ctx := newService(t)
+	_, secret := enable2FA(t, svc, ctx)
+
+	for i := range 3 {
+		res, err := svc.Login(ctx, "10.0.0.8", "admin", "correcthorse123", false)
+		if err != nil {
+			t.Fatalf("login %d: %v", i+1, err)
+		}
+		// A different time step each round, because the replay guard requires a
+		// strictly newer counter — and inside the skew window, which spans exactly
+		// one step either side of now. (Reaching further is the mistake that made
+		// an earlier version of this test fail against correct code.)
+		code, _ := totp.GenerateCode(secret, time.Now().Add(time.Duration(i-1)*30*time.Second))
+		if _, err := svc.VerifyMFA(ctx, "10.0.0.8", res.Token, code); err != nil {
+			t.Fatalf("login %d should complete: %v", i+1, err)
+		}
 	}
 }

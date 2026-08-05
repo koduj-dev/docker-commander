@@ -7,6 +7,17 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Security
+- **An MFA challenge is good for exactly one attempt.** After a correct password
+  the server hands out a short-lived token, and the code is checked against it —
+  but the token stayed valid for its full five minutes, so one password entry
+  funded a burst of guesses. The token is now spent on the *first* attempt, right
+  or wrong: a rejected code costs another password round trip, which is the
+  expensive half. The rate limiter bounds guesses per window; this bounds them per
+  password entry.
+
+  Signing in reflects that — a rejected code returns you to the password step,
+  rather than leaving you typing into a form that can no longer succeed.
+
 - **Pairing a new authenticator now asks for your password.** Re-pairing replaces
   the second factor, and it needed only a session — so any session takeover (a
   shared machine, a token pasted into a URL) became a permanent authenticator

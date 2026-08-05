@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"time"
 
@@ -58,6 +60,17 @@ func (m *TokenManager) Issue(userID int64, username, role string, kind TokenKind
 	}
 	now := time.Now()
 	exp := now.Add(ttl)
+	// A challenge token is spendable exactly once, which needs something to
+	// identify it by. Session tokens carry no id: they are not consumed, and one
+	// per login would be a value to store for no purpose.
+	var id string
+	if kind == KindMFAChallenge {
+		b := make([]byte, 16)
+		if _, err := rand.Read(b); err != nil {
+			return "", time.Time{}, err
+		}
+		id = hex.EncodeToString(b)
+	}
 	claims := Claims{
 		UserID:   userID,
 		Username: username,
@@ -65,6 +78,7 @@ func (m *TokenManager) Issue(userID int64, username, role string, kind TokenKind
 		Kind:     kind,
 		Epoch:    epoch,
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        id,
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(exp),
 		},
