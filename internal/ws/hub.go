@@ -154,17 +154,17 @@ func (c *connState) subscribe(parent context.Context, msg clientMsg) {
 		switch msg.Channel {
 		case "stats":
 			err = c.docker.StreamStats(ctx, msg.HostID, msg.ContainerID, func(s docker.StatsSample) {
-				c.write(parent, serverMsg{Type: "stats", SubID: msg.SubID, Data: s})
+				c.writeSub(parent, msg.SubID, gen, serverMsg{Type: "stats", SubID: msg.SubID, Data: s})
 			})
 		case "logs":
 			err = c.docker.StreamLogs(ctx, msg.HostID, msg.ContainerID, true, msg.Tail, func(l docker.LogLine) {
-				c.write(parent, serverMsg{Type: "log", SubID: msg.SubID, Data: l})
+				c.writeSub(parent, msg.SubID, gen, serverMsg{Type: "log", SubID: msg.SubID, Data: l})
 			})
 		default:
 			err = errUnknownChannel
 		}
 		if err != nil && ctx.Err() == nil {
-			c.write(parent, serverMsg{Type: "error", SubID: msg.SubID, Message: err.Error()})
+			c.writeSub(parent, msg.SubID, gen, serverMsg{Type: "error", SubID: msg.SubID, Message: err.Error()})
 		}
 	}()
 }
@@ -212,6 +212,31 @@ func (c *connState) closeAll() {
 
 // write serialises a frame to the connection with a short timeout so a slow or
 // dead client can't wedge a streaming goroutine forever.
+// writeSub writes a frame on behalf of one subscription, and only while that
+// subscription is still the current one under its id.
+//
+// A cancelled stream keeps emitting for a moment while it winds down. Those tail
+// frames used to be impossible to observe because cancelling took the whole
+// connection down with it; now that writes survive a cancellation, they would be
+// delivered — and subscription ids are deterministic ("stats:<container>"), so a
+// re-subscribe (leave a container page and come straight back, or React's
+// StrictMode double mount) would hand the OLD stream's tail to the NEW handler:
+// duplicated log lines, or a stats sample from before the reset.
+//
+// The generation check is the same one finish() uses, for the same reason: "mine"
+// has to mean mine. A frame that passes the check and is then replaced can still
+// go out — that race is one frame wide and the client drops unknown ids — but the
+// re-subscribe case, where the id is NOT unknown, is closed.
+func (c *connState) writeSub(ctx context.Context, subID string, gen uint64, msg serverMsg) {
+	c.mu.Lock()
+	sub, ok := c.subs[subID]
+	c.mu.Unlock()
+	if !ok || sub.gen != gen {
+		return
+	}
+	c.write(ctx, msg)
+}
+
 func (c *connState) write(ctx context.Context, msg serverMsg) {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()

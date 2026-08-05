@@ -15,7 +15,10 @@ All notable changes to Docker Commander are documented here. The format follows
   socket with it, and the client saw an abrupt disconnect with no error.
 
   Writes now run under the connection's own context; only the stream itself is
-  cancelled by an unsubscribe. This is what had been failing intermittently in CI as
+  cancelled by an unsubscribe. A cancelled stream's last few frames are dropped
+  rather than delivered: subscription ids are deterministic, so leaving a container
+  page and coming straight back would otherwise hand the old stream's tail to the
+  new subscription — a duplicated log line, or a stats sample from before the reset. This is what had been failing intermittently in CI as
   `TestHubResubscribeDoesNotCancelTheNewSubscription` ("failed to read frame header:
   EOF"): a loaded runner widened the window enough to hit it, and a quiet laptop
   never did in two thousand runs. The new test reproduces it deliberately by

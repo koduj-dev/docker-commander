@@ -2,9 +2,11 @@ package ws
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -111,4 +113,114 @@ func pingSurvives(ctx context.Context, conn *websocket.Conn) error {
 			return nil
 		}
 	}
+}
+
+// …and the tail of a REPLACED subscription must not reach its replacement.
+//
+// Subscription ids are deterministic ("stats:<container>"), so leaving a container
+// page and coming straight back reuses the id. The old stream is still winding down
+// and its last frames now survive the cancellation (they used to be "impossible"
+// only because cancelling killed the socket) — delivered under that id, they would
+// arrive at the new handler as a duplicate log line or a stale sample.
+type replacedStreamer struct {
+	started chan struct{}
+	release chan struct{}
+	mu      sync.Mutex
+	n       int
+}
+
+func (r *replacedStreamer) StreamStats(ctx context.Context, _ int64, _ string, emit func(docker.StatsSample)) error {
+	r.mu.Lock()
+	r.n++
+	mine := r.n
+	r.mu.Unlock()
+
+	// Each stream tags its frames, so the test can tell whose they are.
+	emit(docker.StatsSample{ContainerID: fmt.Sprintf("stream-%d", mine)})
+	if mine == 1 {
+		// Wind down slowly: emit once more only after the test has replaced this
+		// subscription, which is exactly the frame that must be dropped.
+		<-r.release
+		emit(docker.StatsSample{ContainerID: "tail-of-stream-1"})
+		return nil
+	}
+	<-ctx.Done()
+	return nil
+}
+
+func (r *replacedStreamer) StreamLogs(ctx context.Context, _ int64, _ string, _ bool, _ string, _ func(docker.LogLine)) error {
+	<-ctx.Done()
+	return nil
+}
+
+func TestReplacedSubscriptionsTailIsDropped(t *testing.T) {
+	streamer := &replacedStreamer{started: make(chan struct{}), release: make(chan struct{})}
+	hub := NewHub(streamer)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		hub.Serve(r.Context(), c, nil)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	sub := clientMsg{Type: "subscribe", SubID: "stats:c1", Channel: "stats", ContainerID: "c1"}
+	if err := wsjson.Write(ctx, conn, sub); err != nil {
+		t.Fatal(err)
+	}
+	if got := containerOf(t, ctx, conn); got != "stream-1" {
+		t.Fatalf("first frame came from %q", got)
+	}
+
+	// Re-subscribe under the same id, then let the old stream emit its last frame.
+	if err := wsjson.Write(ctx, conn, sub); err != nil {
+		t.Fatal(err)
+	}
+	if got := containerOf(t, ctx, conn); got != "stream-2" {
+		t.Fatalf("after re-subscribing, the frame came from %q", got)
+	}
+	close(streamer.release)
+
+	// Anything that arrives before the pong must belong to the live subscription.
+	if err := wsjson.Write(ctx, conn, clientMsg{Type: "ping", SubID: "alive"}); err != nil {
+		t.Fatal(err)
+	}
+	readCtx, stop := context.WithTimeout(ctx, 5*time.Second)
+	defer stop()
+	for {
+		var msg serverMsg
+		if err := wsjson.Read(readCtx, conn, &msg); err != nil {
+			t.Fatalf("reading after the replacement: %v", err)
+		}
+		if msg.Type == "pong" {
+			return
+		}
+		if data, ok := msg.Data.(map[string]any); ok && data["containerId"] == "tail-of-stream-1" {
+			t.Fatal("the replaced subscription's tail frame was delivered to its replacement")
+		}
+	}
+}
+
+// containerOf reads one frame and returns the container id it carries.
+func containerOf(t *testing.T, ctx context.Context, conn *websocket.Conn) string {
+	t.Helper()
+	var msg serverMsg
+	if err := wsjson.Read(ctx, conn, &msg); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	data, ok := msg.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("frame carried no data: %+v", msg)
+	}
+	id, _ := data["containerId"].(string)
+	return id
 }
