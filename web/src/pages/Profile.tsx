@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, Mail, ShieldCheck, IdCard, KeyRound, Check, RefreshCw, X , SlidersHorizontal} from "lucide-react";
+import { Loader2, Mail, ShieldCheck, IdCard, KeyRound, Check, RefreshCw, X , SlidersHorizontal, Monitor, LogOut } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import type { Enrollment } from "../lib/api";
-import type { MyAccess } from "../lib/types";
+import type { MyAccess, Session } from "../lib/types";
 import { sectionLabel } from "../lib/sections";
 import { PageHeader } from "../layout/Shell";
 import { Tabs } from "../components/Tabs";
 import { getPref, setPref } from "../lib/prefs";
 import { EmptyState, Spinner } from "../components/ui";
 import { useAuth } from "../auth/AuthContext";
+import { useDialogs } from "../components/Dialog";
 
 type Tab = "account" | "security" | "access" | "prefs";
 
@@ -252,6 +253,119 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
         )}
         {!enr && msg && <p className={clsx("text-sm", msg.ok ? "text-ok" : "text-danger")}>{msg.text}</p>}
       </div>
+
+      <SessionsCard />
+    </div>
+  );
+}
+
+// SessionsCard lists what is signed in as this account, and lets the owner end
+// any of it.
+//
+// The point is recognition: a session you do not recognise is the only signal
+// available that someone else is using your account, and until now there was
+// nowhere to look. IP and browser are shown for that reason and no other — this
+// is the account's own view, never an administrator's.
+function SessionsCard() {
+  const [sessions, setSessions] = useState<Session[] | null>(null);
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const dialogs = useDialogs();
+
+  const load = useCallback(() => {
+    api.sessions().then(setSessions).catch((e) => setErr(e instanceof Error ? e.message : "could not load sessions"));
+  }, []);
+  useEffect(() => load(), [load]);
+
+  const revoke = async (s: Session) => {
+    const ok = await dialogs.confirm({
+      title: s.current ? "Sign out here?" : "Sign out that session?",
+      message: s.current
+        ? "This is the session you are using. Signing it out will return you to the login screen."
+        : <>The device using <code className="font-mono text-text">{s.ip || "an unknown address"}</code> will be signed out immediately.</>,
+      danger: true,
+      confirmLabel: "Sign out",
+    });
+    if (!ok) return;
+    setBusy(s.id); setErr("");
+    try {
+      await api.revokeSession(s.id);
+      // Revoking your own session means the next request is unauthorized, so send
+      // the browser somewhere that expects that rather than letting the page
+      // discover it as a random failure.
+      if (s.current) {
+        window.location.assign("/");
+        return;
+      }
+      load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "could not sign that session out");
+    } finally { setBusy(""); }
+  };
+
+  const revokeOthers = async () => {
+    const ok = await dialogs.confirm({
+      title: "Sign out everywhere else?",
+      message: "Every other browser and device signed in as you will be signed out. This session stays.",
+      danger: true,
+      confirmLabel: "Sign out the others",
+    });
+    if (!ok) return;
+    setBusy("others"); setErr("");
+    try {
+      await api.revokeOtherSessions();
+      load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "could not sign the other sessions out");
+    } finally { setBusy(""); }
+  };
+
+  const others = (sessions ?? []).filter((s) => !s.current).length;
+
+  return (
+    <div className="card p-5 space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 font-medium"><Monitor className="h-4 w-4 text-accent" /> Signed in</div>
+        {others > 0 && (
+          <button className="btn-ghost px-3 py-1.5 text-sm" onClick={revokeOthers} disabled={busy !== ""}>
+            {busy === "others" ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
+            Sign out everywhere else
+          </button>
+        )}
+      </div>
+      <p className="text-xs text-muted">
+        Only you can see this. If something here isn&apos;t you, sign it out and change your password —
+        that ends every session, including the one you missed.
+      </p>
+
+      {err && <p className="text-sm text-danger">{err}</p>}
+      {!sessions ? (
+        <div className="flex items-center gap-2 text-muted text-sm"><Spinner /> Loading…</div>
+      ) : (
+        <ul className="divide-y divide-border/60">
+          {sessions.map((s) => (
+            <li key={s.id} className="flex items-center justify-between gap-3 py-2">
+              <div className="min-w-0">
+                <div className="text-sm flex items-center gap-2">
+                  <span className="truncate">{s.userAgent || "unknown browser"}</span>
+                  {s.current && <span className="text-[10px] uppercase tracking-wide text-ok border border-ok/40 rounded px-1">this one</span>}
+                </div>
+                <div className="text-xs text-muted font-mono">
+                  {s.ip || "—"} · last used {new Date(s.lastSeenAt).toLocaleString()}
+                </div>
+              </div>
+              <button
+                className="btn-ghost px-2 py-1 text-danger"
+                onClick={() => revoke(s)}
+                disabled={busy !== ""}
+                title={s.current ? "Sign out here" : "Sign this session out"}
+              >
+                {busy === s.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

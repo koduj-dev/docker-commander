@@ -754,3 +754,14 @@ export interface MyAccess {
   /** Admin only: how many Docker hosts are configured. */
   hostCount?: number;
 }
+
+/** One signed-in browser or client, as shown in Profile → Security. */
+export interface Session {
+  id: string;
+  ip: string;
+  userAgent: string;
+  createdAt: string;
+  lastSeenAt: string;
+  /** The session making the request — never offer to sign this one out silently. */
+  current: boolean;
+}

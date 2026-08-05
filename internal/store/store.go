@@ -226,6 +226,26 @@ CREATE TABLE IF NOT EXISTS registries (
 	created_at TEXT NOT NULL
 );
 
+-- One row per signed-in session, keyed by the token's jti.
+--
+-- A JWT is self-contained, so without a row per session there is nothing to
+-- point at when someone asks "what is signed in as me, and can I stop that one?".
+-- The row is also the revocation: the middleware refuses a token whose id is not
+-- here, so deleting it takes effect on the very next request.
+--
+-- ip/user_agent are recorded for recognition — "that is my laptop, this one I do
+-- not know" — and are visible only to the account itself.
+CREATE TABLE IF NOT EXISTS sessions (
+	id           TEXT PRIMARY KEY,        -- the token's jti
+	user_id      INTEGER NOT NULL,
+	ip           TEXT NOT NULL DEFAULT '',
+	user_agent   TEXT NOT NULL DEFAULT '',
+	created_at   TEXT NOT NULL,
+	last_seen_at TEXT NOT NULL,
+	expires_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
 -- Named bundles of section grants, assignable to users. See internal/store/roles.go.
 CREATE TABLE IF NOT EXISTS roles (
 	id          INTEGER PRIMARY KEY AUTOINCREMENT,

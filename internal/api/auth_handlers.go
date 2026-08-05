@@ -73,7 +73,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	res, err := s.auth.Login(r.Context(), r.RemoteAddr, body.Username, body.Password, s.mfaExempt(r))
+	res, err := s.auth.Login(r.Context(), r.RemoteAddr, body.Username, body.Password, s.mfaExempt(r), sessionInfo(r))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "login after setup failed")
 		return
@@ -90,7 +90,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	res, err := s.auth.Login(r.Context(), r.RemoteAddr, body.Username, body.Password, s.mfaExempt(r))
+	res, err := s.auth.Login(r.Context(), r.RemoteAddr, body.Username, body.Password, s.mfaExempt(r), sessionInfo(r))
 	if err != nil {
 		switch {
 		case errors.Is(err, auth.ErrRateLimited):
@@ -124,7 +124,7 @@ func (s *Server) handleVerify2FA(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	res, err := s.auth.VerifyMFA(r.Context(), r.RemoteAddr, body.MFAToken, body.Code)
+	res, err := s.auth.VerifyMFA(r.Context(), r.RemoteAddr, body.MFAToken, body.Code, sessionInfo(r))
 	if err != nil {
 		// Audited because this is the last factor standing between an attacker
 		// who already has the password and a session: unaudited, a brute-force
@@ -234,13 +234,39 @@ func isLoopback(r *http.Request) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// handleLogout clears the session cookie.
+// sessionInfo describes the client for the session list the account later reads
+// in its own profile. Both fields are attacker-controlled to some degree — the
+// address can be a proxy, the user agent is whatever the client claims — so they
+// are recognition aids, never an authorization input.
+func sessionInfo(r *http.Request) auth.SessionInfo {
+	// RemoteAddr is already the real client by this point: the clientIP middleware
+	// rewrites it from X-Forwarded-For when the peer is a trusted proxy.
+	ip := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(ip); err == nil {
+		ip = host
+	}
+	return auth.SessionInfo{IP: ip, UserAgent: r.UserAgent()}
+}
+
+// handleLogout ends the session: it revokes the row AND clears the cookie.
+//
+// Clearing the cookie alone would only make the browser forget a token that
+// still worked — which is exactly the token someone would have copied.
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if c, ok := auth.ClaimsFrom(r.Context()); ok {
+		_ = s.store.DeleteSession(r.Context(), c.ID, c.UserID)
+	}
+	s.clearSessionCookie(w)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// clearSessionCookie tells the browser to drop the session cookie. Shared by
+// logout and by revoking the session you are currently using.
+func (s *Server) clearSessionCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{
 		Name: auth.SessionCookie, Value: "", Path: "/", MaxAge: -1,
 		HttpOnly: true, SameSite: http.SameSiteStrictMode,
 	})
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // handleTOTPSetup begins 2FA enrollment and returns the QR + secret.

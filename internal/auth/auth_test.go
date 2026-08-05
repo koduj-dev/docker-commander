@@ -48,11 +48,11 @@ func TestTOTPEnrollmentValidates(t *testing.T) {
 
 func TestTokenIssueParse(t *testing.T) {
 	tm := NewTokenManager([]byte("test-secret-test-secret-32bytes!"), time.Hour)
-	tok, _, err := tm.Issue(42, "admin", "admin", KindSession, 0)
+	tokIssued, err := tm.Issue(42, "admin", "admin", KindSession, 0)
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
-	claims, err := tm.Parse(tok)
+	claims, err := tm.Parse(tokIssued.Token)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

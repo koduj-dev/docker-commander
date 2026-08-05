@@ -65,9 +65,12 @@ var hostParamFamilies = map[string]string{
 // for records that carry no host of their own. Anything not listed here, not in a
 // ?host= family, and not exercised by the project sweep below fails the test.
 var recordRouteDecision = map[string]string{
-	// Own tokens: a token can only ever narrow its owner's rights, and the owner
+	// Own tokens: a tokenIssued.Token can only ever narrow its owner's rights, and the owner
 	// comes from the session rather than from the path.
 	"/api/mcp/tokens/{id}": "own tokens only; ownership checked from session claims",
+	// A session belongs to an account, not to a Docker host, and the delete is
+	// scoped by the caller's own user id.
+	"/api/auth/sessions/{id}": "own sessions only; a session names no host",
 	// Fleet-wide MCP administration is admin-only, and admins bypass host scope.
 	"/api/mcp-admin/tokens/{id}":        "admin-only prefix",
 	"/api/mcp-admin/oauth-clients/{id}": "admin-only prefix",
@@ -215,10 +218,11 @@ func recordRouteFixture(t *testing.T) (*Server, map[string]int64, func(*http.Req
 		t.Fatal(err)
 	}
 
-	token, _, err := tokens.Issue(uid, "scoped", "user", auth.KindSession, 0)
+	u, err := st.UserByID(ctx, uid)
 	if err != nil {
 		t.Fatal(err)
 	}
+	token := issueTestSession(t, tokens, st, u)
 
 	projectID, err := st.CreateProject(ctx, &store.Project{Name: "prod-api", Slug: "prod-api", HostID: 8})
 	if err != nil {

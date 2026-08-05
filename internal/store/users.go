@@ -125,7 +125,13 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 // DeleteUser removes an account.
 func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
-	return err
+	if err != nil {
+		return err
+	}
+	// Their sessions go with them. The middleware already refuses a token whose
+	// account is gone, so this is housekeeping rather than a gate — but leaving
+	// rows behind would mean a recycled user id inherits them.
+	return s.DeleteUserSessions(ctx, id)
 }
 
 // CountAdmins returns how many admin accounts exist (to guard the last admin).

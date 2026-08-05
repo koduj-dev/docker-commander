@@ -813,3 +813,20 @@ func TestAPIPermissionEnforcement(t *testing.T) {
 		t.Errorf("viewer me: %d %v", code, me)
 	}
 }
+
+// issueTestSession mints a session token AND records it, which is what the
+// session middleware now requires: a token with no row is refused, because that
+// row is what "revoke this session" deletes.
+func issueTestSession(t *testing.T, tokens *auth.TokenManager, st *store.Store, u *store.User) string {
+	t.Helper()
+	iss, err := tokens.Issue(u.ID, u.Username, u.Role, auth.KindSession, u.SessionEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateSession(t.Context(), &store.Session{
+		ID: iss.ID, UserID: u.ID, ExpiresAt: iss.ExpiresAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return iss.Token
+}

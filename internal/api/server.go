@@ -87,6 +87,10 @@ func (s *Server) Handler() http.Handler {
 
 			r.Get("/auth/me", s.handleMe)
 			r.Post("/auth/logout", s.handleLogout)
+			// Own sessions: list, revoke one, revoke the rest.
+			r.Get("/auth/sessions", s.handleListSessions)
+			r.Delete("/auth/sessions/{id}", s.handleDeleteSession)
+			r.Post("/auth/sessions/revoke-others", s.handleRevokeOtherSessions)
 			// Own alert address + own permission overview: self-service, and both
 			// read/write nothing but the signed-in account.
 			r.Put("/auth/me/email", s.handleSetMyEmail)

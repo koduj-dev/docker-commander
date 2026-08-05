@@ -6,6 +6,25 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **See what is signed in as you, and end it.** *Profile → Security* now lists every
+  live session for your account — address, browser, when it was last used, with the
+  one you are using marked — and lets you sign out any of them, or all the others
+  at once. Until now a session could only be ended by waiting for it to expire or
+  by changing your password, and there was nowhere to look to find out one existed.
+
+  Own sessions only, deliberately: an admin view over everyone's would be a record
+  of when each person works and from where, which is surveillance rather than
+  administration.
+
+  This works because a session is now a **row** as well as a token: the token
+  carries an id, the row is what the middleware checks, and revoking deletes it.
+  Signing out deletes it too — previously logout only cleared the cookie, so the
+  token itself kept working until it expired.
+
+  **Upgrading signs everyone out once.** Tokens issued before this release have no
+  id and therefore no row, so they are refused; one sign-in fixes it per person.
+
 ### Security
 - **Backups no longer carry symbolic links, and say what they skipped.** A link in
   the data dir was stored as a link, while its contents were never included —
