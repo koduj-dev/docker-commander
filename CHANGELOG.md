@@ -61,6 +61,71 @@ All notable changes to Docker Commander are documented here. The format follows
     test pins.
 
 ### Added
+- **An account can hold several authenticators.** *Profile → Security* lists every
+  paired one by a name you choose, with when it was added and last used, and lets
+  you add or remove them. Pairing used to *replace*: the phone in your hand stopped
+  working the moment you set up a new one, which made "add my tablet too" impossible
+  and losing a device a support call.
+
+  **The last one cannot be removed** — 2FA is mandatory here and there is no admin
+  reset, so an account with no authenticator is one that cannot sign in. Pair the
+  replacement first.
+
+  Removing asks for your password, exactly as pairing does: both change what it
+  takes to sign in as you, and a stolen session must not be able to strip an
+  account's factors one at a time.
+
+  The replay guard is now **per authenticator**. It used to be one watermark for the
+  account, which with two paired devices would have let a code from one refuse the
+  same time step on the other.
+
+  An account holds at most ten, and pairing the same secret twice is refused by the
+  database itself: two rows sharing a secret would give that authenticator two
+  independent replay watermarks, so each of its codes could be spent twice.
+
+  Note what this does *not* do: pairing no longer implicitly revokes anything. If
+  you are replacing a lost phone, remove its entry as well — adding the new one is
+  no longer enough.
+
+  Existing installations migrate on start, in one transaction: the single stored
+  authenticator becomes the first entry in the list, keeping the same secret and
+  the same replay watermark, so nobody has to re-pair. Every legacy secret is
+  cleared from the old column in the process — a live secret that nothing reads and
+  nobody can remove is a credential nobody knows exists.
+
+- **Removing a factor, pairing one, and spending a code are each atomic.** Found by
+  an independent adversarial review of the change above, which reproduced all three:
+  sixteen parallel confirmations of one enrolment produced **five** authenticators
+  sharing a single secret (and therefore five replay watermarks); two concurrent
+  removals both passed the "this is your last one" check and left the account with
+  **none** — which is not a lockout but 2FA silently switched off, since it is
+  derived from whether any factor exists; and one TOTP code minted **two or three**
+  sessions when presented simultaneously, because the watermark write reported
+  "nothing to update" as success. The count now lives inside the `DELETE`, pairing
+  claims its enrolment with a compare-and-swap inside a transaction, and a burn that
+  moves no row is an error. Each has a concurrency test that fails without the fix.
+
+  Step-up password checks are bucketed **per session**. Per address (the original)
+  meant anyone holding a session could stop everyone behind that address from
+  signing in for fifteen minutes. Per account — the first attempt at fixing that,
+  and caught by a second review round — merely aimed the same weapon at the victim:
+  a stolen session could burn the budget every fifteen minutes, and the owner's
+  *correct* password would then be refused for exactly the two things they need to
+  recover (removing the attacker's authenticator, pairing a replacement) while
+  logins kept working, so nothing looked broken. Per session, the stolen session
+  spends its own budget and minting another needs the password.
+
+  A spent budget now answers **429**, not "password required" — telling someone
+  their own password is wrong while they are recovering an account is both false
+  and cruel.
+
+  A session token carrying no `jti` is refused outright. `jti` is optional in a
+  JWT, so a signed token without one parsed cleanly and arrived with an empty id —
+  and both the revocation row and the per-session rate-limit bucket key on it, the
+  second of which would have collapsed back to per-account. Minting such a token
+  needs the signing key, so this makes a property that held by accident hold by
+  construction.
+
 - **See what is signed in as you, and end it.** *Profile → Security* now lists every
   live session for your account — the device, the address, when it was last used and
   when it signed in, with the one you are using marked — and lets you sign out any of

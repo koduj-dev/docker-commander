@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, Mail, ShieldCheck, IdCard, KeyRound, Check, RefreshCw, X, SlidersHorizontal, Monitor, LogOut, Smartphone, Tablet, Terminal as TerminalIcon, HelpCircle } from "lucide-react";
+import { Loader2, Mail, ShieldCheck, IdCard, KeyRound, Check, RefreshCw, X, SlidersHorizontal, Monitor, LogOut, Smartphone, Tablet, Terminal as TerminalIcon, HelpCircle, Plus, Trash2 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import type { Enrollment } from "../lib/api";
-import type { MyAccess, Session } from "../lib/types";
+import type { MyAccess, Session, AuthFactor } from "../lib/types";
 import { sectionLabel } from "../lib/sections";
 import { PageHeader } from "../layout/Shell";
 import { Tabs } from "../components/Tabs";
@@ -148,16 +148,26 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
   const { user } = useAuth();
   const [enr, setEnr] = useState<Enrollment | null>(null);
   const [code, setCode] = useState("");
+  const [deviceName, setDeviceName] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState<"" | "start" | "confirm">("");
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [factors, setFactors] = useState<AuthFactor[] | null>(null);
+  const [factorsErr, setFactorsErr] = useState("");
+
+  const loadFactors = useCallback(() => {
+    setFactorsErr("");
+    api.factors().then(setFactors).catch((e) =>
+      setFactorsErr(e instanceof Error ? e.message : "could not load your authenticators"));
+  }, []);
+  useEffect(() => loadFactors(), [loadFactors]);
 
   const start = async (e?: React.FormEvent) => {
     e?.preventDefault();
     setBusy("start"); setMsg(null);
     try {
-      // Re-pairing replaces the second factor, so the server asks for the
-      // password; a first enrolment has no factor to replace and sends none.
+      // Adding an authenticator while one already works is a step-up, so the
+      // server asks for the password; a first enrolment has nothing to protect.
       setEnr(await api.totpSetup(user?.totpEnabled ? password : undefined));
       setCode(""); setPassword("");
     } catch (e) {
@@ -169,10 +179,11 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
     e.preventDefault();
     setBusy("confirm"); setMsg(null);
     try {
-      await api.totpEnable(code.trim());
+      await api.totpEnable(code.trim(), deviceName.trim());
       await onChanged();
-      setEnr(null); setCode("");
-      setMsg({ ok: true, text: "Authenticator paired. Your previous one no longer works." });
+      loadFactors();
+      setEnr(null); setCode(""); setDeviceName("");
+      setMsg({ ok: true, text: "Authenticator paired. Anything you had paired before still works." });
     } catch (err) {
       setMsg({ ok: false, text: err instanceof Error ? err.message : "that code was not accepted" });
     } finally { setBusy(""); }
@@ -185,18 +196,28 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
       <SessionsCard />
 
       <div className="card p-5 space-y-3">
-        <div className="flex items-center gap-2 font-medium"><ShieldCheck className="h-4 w-4 text-accent" /> Two-factor authentication</div>
-        <Field label="Status">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 font-medium"><ShieldCheck className="h-4 w-4 text-accent" /> Two-factor authentication</div>
           {user?.totpEnabled
-            ? <span className="inline-flex items-center gap-1 text-ok"><Check className="h-3.5 w-3.5" /> enabled</span>
-            : <span className="text-warn">not set up</span>}
-        </Field>
+            ? <span className="inline-flex items-center gap-1 text-sm text-ok"><Check className="h-3.5 w-3.5" /> enabled</span>
+            : <span className="text-sm text-warn">not set up</span>}
+        </div>
+
+        <AuthenticatorList
+          factors={factors}
+          error={factorsErr}
+          onRetry={loadFactors}
+          onRemoved={async () => { loadFactors(); await onChanged(); }}
+        />
 
         {!enr && (
           // Button first, hint underneath — the two used to share a flex row, which
           // centred the button against a wrapping two-line sentence and read as a
           // misalignment. This matches how hints sit under controls elsewhere.
-          <form className="space-y-1.5" onSubmit={start}>
+          // Separated from the list above: that list has its own password field
+          // (for removing), and two unlabelled boxes stacked together is how you
+          // type the right password into the wrong form.
+          <form className="space-y-1.5 border-t border-border pt-3" onSubmit={start}>
             {user?.totpEnabled && (
               <div className="max-w-xs space-y-1">
                 <label className="label" htmlFor="repair-password">Your password</label>
@@ -212,14 +233,14 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
               </div>
             )}
             <button className="btn-ghost px-3 py-1.5 text-sm" type="submit" disabled={busy === "start"}>
-              {busy === "start" ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-              {user?.totpEnabled ? "Pair a new authenticator" : "Set up 2FA"}
+              {busy === "start" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+              {user?.totpEnabled ? "Add an authenticator" : "Set up 2FA"}
             </button>
             {user?.totpEnabled && (
               <p className="text-xs text-muted">
-                Your password is required because pairing replaces your second factor — a
-                stolen session alone must not be able to do it. Your current authenticator
-                keeps working until you finish pairing the new one.
+                Your password is required because this changes what it takes to sign in as you —
+                a stolen session alone must not be able to do it. Everything you already have
+                paired keeps working; this adds one.
               </p>
             )}
           </form>
@@ -237,12 +258,19 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
                 <code className="block font-mono text-xs break-all bg-panel2/50 rounded px-2 py-1">{enr.secret}</code>
                 <input className="input font-mono tracking-widest" value={code} inputMode="numeric"
                   placeholder="123456" maxLength={6} onChange={(e) => setCode(e.target.value)} />
+                <div className="space-y-1">
+                  <label className="label" htmlFor="device-name">Name this device (optional)</label>
+                  {/* Only ever shown back to its owner — it exists so "remove the
+                      old phone" is a decision you can make without guessing. */}
+                  <input id="device-name" className="input" value={deviceName} maxLength={64}
+                    placeholder="Phone" onChange={(e) => setDeviceName(e.target.value)} />
+                </div>
               </div>
             </div>
             {user?.totpEnabled && (
               <p className="text-xs text-warn">
-                Nothing has changed yet. Your existing authenticator stays valid until you enter a code
-                from the new one — cancel and it stays as it is.
+                Nothing has changed yet, and nothing you already have paired will change. Cancel and
+                this device simply never gets added.
               </p>
             )}
             {msg && <p className={clsx("text-sm", msg.ok ? "text-ok" : "text-danger")}>{msg.text}</p>}
@@ -380,6 +408,115 @@ function SessionsCard() {
         )}
       </div>
     </div>
+  );
+}
+
+// AuthenticatorList shows what is paired and lets the owner unpair one.
+//
+// The removal asks for the password inline rather than through the shared confirm
+// dialog: that dialog's input is plain text, and a password typed into it would be
+// on screen. It is also the honest shape — this is a step-up, not a yes/no.
+function AuthenticatorList({ factors, error, onRetry, onRemoved }: {
+  factors: AuthFactor[] | null;
+  error: string;
+  onRetry: () => void;
+  onRemoved: () => Promise<void>;
+}) {
+  const [removing, setRemoving] = useState<number | null>(null);
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const cancel = () => { setRemoving(null); setPassword(""); setErr(""); };
+
+  const remove = async (e: React.FormEvent, id: number) => {
+    e.preventDefault();
+    setBusy(true); setErr("");
+    try {
+      await api.removeFactor(id, password);
+      cancel();
+      await onRemoved();
+    } catch (ex) {
+      setErr(ex instanceof Error ? ex.message : "could not remove that authenticator");
+    } finally { setBusy(false); }
+  };
+
+  if (error) {
+    return (
+      <div className="flex items-center gap-3">
+        <p className="text-sm text-danger">{error}</p>
+        <button className="btn-ghost px-2 py-1 text-sm" onClick={onRetry}><RefreshCw className="h-3.5 w-3.5" /> Try again</button>
+      </div>
+    );
+  }
+  if (!factors) return <div className="flex items-center gap-2 text-muted text-sm"><Spinner /> Loading…</div>;
+  if (factors.length === 0) return null; // the "set up 2FA" button below says everything
+
+  const last = factors.length === 1;
+
+  return (
+    <ul className="space-y-2">
+      {factors.map((f) => (
+        <li key={f.id} className="rounded-lg border border-border p-3">
+          <div className="flex items-center gap-3">
+            <Smartphone className="h-5 w-5 shrink-0 text-muted" />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium">{f.name}</div>
+              <div className="mt-0.5 text-xs text-muted">
+                added {sinceLabel(f.createdAt)} ·{" "}
+                {f.lastUsedAt && !f.lastUsedAt.startsWith("0001-01-01")
+                  ? `last used ${sinceLabel(f.lastUsedAt)}`
+                  : "never used"}
+              </div>
+            </div>
+            <button
+              className="btn-ghost shrink-0 px-2 py-1 text-danger disabled:opacity-40"
+              onClick={() => { setRemoving(removing === f.id ? null : f.id); setPassword(""); setErr(""); }}
+              disabled={last}
+              title={last
+                ? "This is your only second factor — add another one before removing it"
+                : "Remove this authenticator"}
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+
+          {removing === f.id && (
+            <form onSubmit={(e) => remove(e, f.id)} className="mt-3 space-y-2 border-t border-border pt-3">
+              <label className="label" htmlFor={`remove-pw-${f.id}`}>Your password</label>
+              <input
+                id={`remove-pw-${f.id}`}
+                className="input max-w-xs"
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+              <p className="text-xs text-muted">
+                Removing an authenticator changes what it takes to sign in as you, so it needs
+                your password — the same reason adding one does.
+              </p>
+              {err && <p className="text-sm text-danger">{err}</p>}
+              <div className="flex justify-end gap-2">
+                <button type="button" className="btn-ghost px-3 py-1.5 text-sm" onClick={cancel}>
+                  <X className="h-4 w-4" /> Cancel
+                </button>
+                <button className="btn-danger px-3 py-1.5 text-sm disabled:opacity-40" disabled={busy || !password}>
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />} Remove
+                </button>
+              </div>
+            </form>
+          )}
+        </li>
+      ))}
+      {last && (
+        <p className="text-xs text-muted">
+          This is your only second factor, so it cannot be removed — an account with none could not
+          sign in at all. Add another one first, then remove this.
+        </p>
+      )}
+    </ul>
   );
 }
 

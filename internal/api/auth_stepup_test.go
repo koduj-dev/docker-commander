@@ -48,7 +48,7 @@ func stepUpFixture(t *testing.T, withTOTP bool) (*Server, func(*http.Request), *
 			t.Fatal(err)
 		}
 		code, _ := totpCode(t, enr.Secret)
-		if err := svc.ConfirmTOTPEnrollment(ctx, u.ID, code); err != nil {
+		if err := svc.ConfirmTOTPEnrollment(ctx, u.ID, code, ""); err != nil {
 			t.Fatal(err)
 		}
 		u, _ = st.UserByID(ctx, u.ID)

@@ -246,6 +246,29 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
+-- One paired second factor. Several per account, because people own more than one
+-- device and losing the only paired one used to mean losing the account.
+--
+-- kind is 'totp' today; the column exists so a passkey can be a row here rather
+-- than a parallel table with its own list, its own "remove" and its own chance of
+-- disagreeing about how many factors an account actually has.
+--
+-- last_counter is the replay guard, per factor: a code is valid for its 30-second
+-- step, so the step it came from is burned. Per factor and not per account, or
+-- pairing a second authenticator would let one device's code invalidate the
+-- other's.
+CREATE TABLE IF NOT EXISTS auth_factors (
+	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	user_id      INTEGER NOT NULL,
+	kind         TEXT NOT NULL DEFAULT 'totp',
+	name         TEXT NOT NULL DEFAULT '',
+	secret       TEXT NOT NULL DEFAULT '',
+	last_counter INTEGER NOT NULL DEFAULT 0,
+	created_at   TEXT NOT NULL,
+	last_used_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_auth_factors_user ON auth_factors(user_id);
+
 -- Named bundles of section grants, assignable to users. See internal/store/roles.go.
 CREATE TABLE IF NOT EXISTS roles (
 	id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -428,9 +451,97 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
 			return err
 		}
 	}
+	if err := s.migrateTOTPToFactors(ctx); err != nil {
+		return err
+	}
+	if err := s.enforceOneFactorPerSecret(ctx); err != nil {
+		return err
+	}
 	// Built-in roles come last: the tables above must exist first, and seeding is
 	// idempotent (an existing row is left untouched).
 	return s.seedBuiltinRoles(ctx)
+}
+
+// enforceOneFactorPerSecret makes "one authenticator, one row" a property of the
+// database rather than of the code that happens to write it.
+//
+// Two rows sharing a secret give that authenticator two independent replay
+// watermarks, so every code it produces becomes spendable twice. The pairing path
+// is written not to allow it; this is the backstop for the paths nobody thought
+// about — a bad migration, a future import, a hand-edited database.
+//
+// Duplicates are collapsed first (keeping the oldest row and the highest watermark
+// among them), because an index that cannot be created would take the whole
+// installation down on start.
+func (s *Store) enforceOneFactorPerSecret(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE auth_factors SET last_counter = (
+			SELECT MAX(d.last_counter) FROM auth_factors d
+			WHERE d.user_id = auth_factors.user_id AND d.secret = auth_factors.secret
+		) WHERE secret != ''`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		DELETE FROM auth_factors WHERE secret != '' AND id NOT IN (
+			SELECT MIN(id) FROM auth_factors WHERE secret != '' GROUP BY user_id, secret
+		)`); err != nil {
+		return err
+	}
+	// Partial, and every statement above is too. A shared secret is what makes two
+	// rows the same authenticator; a factor with NO secret — which is what a passkey
+	// will be, since its credential does not live in this column — shares nothing
+	// with anything. A plain unique index would let an account hold exactly one of
+	// them and silently delete the rest on the next start, which is a trap laid for
+	// the very feature the `kind` column exists to allow.
+	// The earlier name carried a NON-partial index. `CREATE ... IF NOT EXISTS` would
+	// leave it in place — same name, wrong definition — so it goes explicitly.
+	if _, err := s.db.ExecContext(ctx, `DROP INDEX IF EXISTS idx_auth_factors_user_secret`); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_factors_secret_unique
+		ON auth_factors(user_id, secret) WHERE secret != ''`)
+	return err
+}
+
+// migrateTOTPToFactors moves the single per-user authenticator into auth_factors.
+//
+// The secret is CLEARED from users afterwards, on purpose. Leaving it would mean a
+// live second factor sitting in a column nothing reads: remove the authenticator
+// from your profile and the old secret would still be there, no longer visible and
+// no longer removable. Dead credentials are worse than none.
+//
+// Idempotent by the same test that drives it: a user is migrated only while their
+// secret is still in the old column, and the move clears it.
+func (s *Store) migrateTOTPToFactors(ctx context.Context) error {
+	// One transaction, because the two halves are one fact. SQLite autocommits each
+	// statement, so an INSERT that commits and an UPDATE that then fails (BUSY, a
+	// full disk, a kill between them) leaves the secret in BOTH places: startup
+	// aborts, and the next start re-runs the INSERT and pairs the same authenticator
+	// twice. Two factors, one secret, one watermark each — every code from that
+	// device replayable, for every 2FA user in the installation at once.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO auth_factors (user_id, kind, name, secret, last_counter, created_at)
+		SELECT id, 'totp', 'Authenticator', totp_secret, totp_last_counter, ?
+		FROM users WHERE totp_secret != '' AND totp_enabled = 1`, now); err != nil {
+		return err
+	}
+	// Every legacy secret goes, not just the confirmed ones. An unconfirmed
+	// enrolment left behind is a scanned secret sitting in a column nothing reads
+	// and nobody can remove — the same "dead credential" this migration exists to
+	// avoid, minus the excuse.
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE users SET totp_secret = '', totp_last_counter = 0 WHERE totp_secret != ''`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // isDuplicateColumn reports whether err is SQLite's "duplicate column name"

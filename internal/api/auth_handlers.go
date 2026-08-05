@@ -301,7 +301,11 @@ func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "invalid body")
 			return
 		}
-		if !s.auth.VerifyUserPassword(r.Context(), r.RemoteAddr, u, body.Password) {
+		if err := s.auth.VerifyUserPassword(r.Context(), auth.StepUpKey(u.ID, c.ID), u, body.Password); err != nil {
+			if errors.Is(err, auth.ErrRateLimited) {
+				writeErr(w, http.StatusTooManyRequests, err.Error())
+				return
+			}
 			s.audit(r, "auth.2fa.repair.denied", u.Username, "wrong password")
 			writeErr(w, http.StatusForbidden, "password required to pair a new authenticator")
 			return
@@ -321,16 +325,23 @@ func (s *Server) handleTOTPEnable(w http.ResponseWriter, r *http.Request) {
 	c, _ := auth.ClaimsFrom(r.Context())
 	var body struct {
 		Code string `json:"code"`
+		// What the owner calls this device. Theirs to choose, shown only back to
+		// them; the store bounds and defaults it.
+		Name string `json:"name"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if err := s.auth.ConfirmTOTPEnrollment(r.Context(), c.UserID, body.Code); err != nil {
+	if err := s.auth.ConfirmTOTPEnrollment(r.Context(), c.UserID, body.Code, body.Name); err != nil {
+		if errors.Is(err, auth.ErrTooManyFactors) {
+			writeErr(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeErr(w, http.StatusBadRequest, "invalid code")
 		return
 	}
-	s.audit(r, "auth.2fa.enable", c.Username, "totp enabled")
+	s.audit(r, "auth.2fa.enable", c.Username, "authenticator paired")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

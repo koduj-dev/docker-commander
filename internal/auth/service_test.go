@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"github.com/golang-jwt/jwt/v5"
+
 	"context"
 	"crypto/rand"
 	"errors"
@@ -100,7 +102,7 @@ func TestLogin2FAFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, _ := totp.GenerateCode(enr.Secret, time.Now())
-	if err := svc.ConfirmTOTPEnrollment(ctx, u.ID, code); err != nil {
+	if err := svc.ConfirmTOTPEnrollment(ctx, u.ID, code, ""); err != nil {
 		t.Fatalf("ConfirmTOTPEnrollment: %v", err)
 	}
 
@@ -204,7 +206,7 @@ func enable2FA(t *testing.T, svc *Service, ctx context.Context) (*store.User, st
 		t.Fatal(err)
 	}
 	code, _ := totp.GenerateCode(enr.Secret, time.Now())
-	if err := svc.ConfirmTOTPEnrollment(ctx, u.ID, code); err != nil {
+	if err := svc.ConfirmTOTPEnrollment(ctx, u.ID, code, ""); err != nil {
 		t.Fatal(err)
 	}
 	return u, enr.Secret
@@ -576,22 +578,100 @@ func TestVerifyUserPasswordResetsTheBudgetOnSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	key := StepUpKey(u.ID, "session-1")
+
 	// Four wrong guesses: one short of the limit of five.
 	for i := 0; i < 4; i++ {
-		if svc.VerifyUserPassword(ctx, "10.0.0.7", u, "nope") {
-			t.Fatal("a wrong password was accepted")
+		if err := svc.VerifyUserPassword(ctx, key, u, "nope"); !errors.Is(err, ErrInvalidCreds) {
+			t.Fatalf("a wrong password returned %v, want ErrInvalidCreds", err)
 		}
 	}
-	if !svc.VerifyUserPassword(ctx, "10.0.0.7", u, "correcthorse123") {
-		t.Fatal("the correct password should still be accepted with budget left")
+	if err := svc.VerifyUserPassword(ctx, key, u, "correcthorse123"); err != nil {
+		t.Fatalf("the correct password should still be accepted with budget left: %v", err)
 	}
 
 	// If the budget survived that success, the fifth failure below would trip the
 	// limiter and the correct password after it would be refused.
 	for i := 0; i < 4; i++ {
-		svc.VerifyUserPassword(ctx, "10.0.0.7", u, "nope")
+		_ = svc.VerifyUserPassword(ctx, key, u, "nope")
 	}
-	if !svc.VerifyUserPassword(ctx, "10.0.0.7", u, "correcthorse123") {
-		t.Error("a successful step-up should have reset the rate-limit budget")
+	if err := svc.VerifyUserPassword(ctx, key, u, "correcthorse123"); err != nil {
+		t.Errorf("a successful step-up should have reset the rate-limit budget: %v", err)
+	}
+}
+
+// PENTEST: a stolen session must not be able to lock the owner out of recovery.
+//
+// Step-up needs nothing but a session. Bucketing it per ACCOUNT meant an attacker
+// holding one could burn the whole budget every fifteen minutes, and the owner's
+// CORRECT password would then be refused for the two things they need — removing
+// the attacker's authenticator and pairing a replacement — while logins kept
+// working, so nothing looked broken.
+func TestPentestStepUpBudgetIsPerSession(t *testing.T) {
+	svc, ctx := newService(t)
+	u, err := svc.Setup(ctx, "admin", "correcthorse123")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The attacker's stolen session spends its own budget, and then some.
+	stolen := StepUpKey(u.ID, "stolen-session")
+	for i := 0; i < 8; i++ {
+		_ = svc.VerifyUserPassword(ctx, stolen, u, "guess")
+	}
+	if err := svc.VerifyUserPassword(ctx, stolen, u, "correcthorse123"); !errors.Is(err, ErrRateLimited) {
+		t.Errorf("the exhausted session should be rate limited, got %v", err)
+	}
+
+	// The owner, on their own session, is unaffected.
+	if err := svc.VerifyUserPassword(ctx, StepUpKey(u.ID, "owners-session"), u, "correcthorse123"); err != nil {
+		t.Errorf("SECURITY: a stolen session locked the owner out of their own recovery: %v", err)
+	}
+}
+
+// PENTEST: a session token with no id must be refused.
+//
+// `jti` is optional in a JWT, so a correctly-signed token without one parses fine
+// and reaches the handlers with ID == "". Everything that makes a session
+// controllable keys on that id: the row whose deletion revokes it, and the
+// per-session step-up bucket — which with an empty id collapses back to
+// per-account, the exact shape that let a stolen session lock its owner out of
+// recovering their 2FA.
+//
+// Minting one needs the signing secret, so this is defence in depth. It is also
+// one condition, and the alternative is a security property that holds only
+// because no code path happens to produce the input that breaks it.
+func TestPentestSession_TokenWithoutAnIDIsRefused(t *testing.T) {
+	svc, ctx := newService(t)
+	u, err := svc.Setup(ctx, "admin", "correcthorse123")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Signed by us, valid in every way, except that it carries no id.
+	forged, err := jwt.NewWithClaims(jwt.SigningMethodHS256, Claims{
+		UserID: u.ID, Username: u.Username, Role: u.Role, Kind: KindSession, Epoch: u.SessionEpoch,
+		RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))},
+	}).SignedString(svc.tokens.secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// …and a session row under the empty id, so the middleware's existence check
+	// cannot be what refuses it.
+	if err := svc.store.CreateSession(ctx, &store.Session{
+		ID: "", UserID: u.ID, ExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	mw := NewMiddleware(svc.tokens, epochStore{svc})
+	reached := false
+	h := mw.RequireSession(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { reached = true }))
+	r := httptest.NewRequest("GET", "/api/auth/me", nil)
+	r.AddCookie(&http.Cookie{Name: SessionCookie, Value: forged})
+	h.ServeHTTP(httptest.NewRecorder(), r)
+
+	if reached {
+		t.Error("SECURITY: a session token with no id was accepted")
 	}
 }

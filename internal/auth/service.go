@@ -255,29 +255,84 @@ func (s *Service) VerifyMFA(ctx context.Context, rlKey, challengeToken, code str
 	return s.issueSession(ctx, u, info)
 }
 
-// consumeTOTP validates a code and burns the time step it came from, so the same
-// code cannot be presented twice inside its ~90-second window. A code that is
-// valid but not newer than the last one accepted is treated exactly like a wrong
-// one — the caller must not be able to tell a replay from a typo.
+// consumeTOTP validates a code against any of the account's paired authenticators
+// and burns the time step it came from, so the same code cannot be presented twice
+// inside its ~90-second window. A code that is valid but not newer than the last
+// one accepted by THAT authenticator is treated exactly like a wrong one — the
+// caller must not be able to tell a replay from a typo.
+//
+// The loop keeps going after a match only because stopping early would complicate
+// the code, not because it equalises timing — MatchTOTP returns as soon as a step
+// matches, so it does not. Nothing observable leaks either way: the answer is in
+// the response.
 func (s *Service) consumeTOTP(ctx context.Context, u *store.User, code string) bool {
-	counter, ok := MatchTOTP(strings.TrimSpace(code), u.TOTPSecret)
-	if !ok || counter <= u.TOTPLastCounter {
+	factors, err := s.store.ListFactors(ctx, u.ID)
+	if err != nil {
+		return false
+	}
+	code = strings.TrimSpace(code)
+	var matched *store.AuthFactor
+	var matchedCounter int64
+	for i := range factors {
+		if factors[i].Kind != store.FactorKindTOTP {
+			continue
+		}
+		counter, ok := MatchTOTP(code, factors[i].Secret)
+		if ok && counter > factors[i].LastCounter && matched == nil {
+			matched = &factors[i]
+			matchedCounter = counter
+		}
+	}
+	if matched == nil {
 		return false
 	}
 	// A failure to persist the watermark must not hand out a session: it would
-	// leave the code replayable, which is the thing being prevented.
-	return s.store.SetTOTPLastCounter(ctx, u.ID, counter) == nil
+	// leave the code replayable, which is the thing being prevented. That includes
+	// losing the race to another request presenting the SAME code — the store
+	// reports that as an error precisely so both callers cannot be told yes.
+	return s.store.BurnFactorCounter(ctx, matched.ID, matchedCounter) == nil
+}
+
+// ListFactors returns the account's paired factors.
+func (s *Service) ListFactors(ctx context.Context, userID int64) ([]store.AuthFactor, error) {
+	return s.store.ListFactors(ctx, userID)
+}
+
+// ErrLastFactor is returned when removing a factor would leave the account with
+// no second factor at all.
+var ErrLastFactor = store.ErrLastFactor
+
+// RemoveFactor unpairs one of the account's factors.
+//
+// The last one cannot go. 2FA is mandatory here (bar the localhost exemption, which
+// is a property of where you connect from, not of the account), so an account with
+// zero factors is one that cannot sign in from anywhere else — a self-lockout with
+// no admin reset behind it. Pair the replacement first, then remove the old one.
+func (s *Service) RemoveFactor(ctx context.Context, userID, factorID int64) error {
+	// The count and the delete are one statement in the store. Doing it here —
+	// count, decide, delete — is a race that two concurrent removals win together:
+	// both see two factors, both delete, and the account is left with NONE. Which
+	// is not a lockout: 2FA is derived from whether any factor exists, so zero
+	// factors means the password alone signs in, from anywhere. The guard exists to
+	// forbid exactly that, so it has to be atomic.
+	return s.store.DeleteFactor(ctx, factorID, userID)
 }
 
 // VerifyUserPassword checks a password against the account it belongs to, local
-// hash or directory bind, without issuing anything.
+// hash or directory bind, without issuing anything. It returns nil when the
+// password is right, ErrRateLimited when the budget for this key is spent, and
+// ErrInvalidCreds otherwise.
 //
-// Used for step-up on operations a session alone must not authorise. It burns the
-// same rate-limit budget as a login: otherwise it is a password oracle that
-// answers as fast as you can ask, reachable by anyone holding a session.
-func (s *Service) VerifyUserPassword(ctx context.Context, rlKey string, u *store.User, password string) bool {
+// Used for step-up on operations a session alone must not authorise. It burns a
+// rate-limit budget: otherwise it is a password oracle that answers as fast as you
+// can ask, reachable by anyone holding a session.
+//
+// Telling the two failures apart matters. Reporting a spent budget as "wrong
+// password" tells the owner their own password is wrong, which is both false and
+// the exact moment they are trying to recover an account.
+func (s *Service) VerifyUserPassword(ctx context.Context, rlKey string, u *store.User, password string) error {
 	if !s.limiter.Allow(rlKey) {
-		return false
+		return ErrRateLimited
 	}
 	ok := false
 	if u.AuthSource == "ldap" {
@@ -289,18 +344,39 @@ func (s *Service) VerifyUserPassword(ctx context.Context, rlKey string, u *store
 	}
 	if !ok {
 		s.limiter.Fail(rlKey)
-		return false
+		return ErrInvalidCreds
 	}
 	// Reset on success, exactly as Login does. Without it, someone else's failed
 	// attempts from the same address keep the real account holder locked out of
 	// their own step-up until the window rolls over — a denial of service bought
 	// with wrong guesses.
 	s.limiter.Reset(rlKey)
-	return true
+	return nil
 }
 
 // mfaKey buckets 2FA attempts per account, alongside the per-IP bucket.
 func mfaKey(userID int64) string { return "mfa:" + strconv.FormatInt(userID, 10) }
+
+// StepUpKey buckets password re-checks per account AND per session.
+//
+// Not the client address, which is what login uses: keying it there let anyone
+// holding a session spend the address's login budget — five wrong passwords on
+// "remove this authenticator" and nobody at that address could sign in for fifteen
+// minutes.
+//
+// But not the account alone either, which merely moves the damage onto the victim.
+// Step-up is reachable with nothing but a session, so a stolen one could burn the
+// account's whole budget every fifteen minutes: the owner's CORRECT password is
+// then refused for exactly the two things they need to recover — removing the
+// attacker's authenticator and pairing a replacement — while logins keep working,
+// so nothing looks broken.
+//
+// Per session, the attacker's stolen session spends its own budget and the owner's
+// is untouched. Minting more sessions needs the password, which is what the
+// attacker is trying to guess.
+func StepUpKey(userID int64, sessionID string) string {
+	return "stepup:" + strconv.FormatInt(userID, 10) + ":" + sessionID
+}
 
 // ChallengeUsername reports which account an MFA challenge token names, so a
 // failed verification can be audited against it. It validates the token's
@@ -325,46 +401,61 @@ func (s *Service) BeginTOTPEnrollment(ctx context.Context, userID int64) (*Enrol
 	if err != nil {
 		return nil, err
 	}
-	// Re-pairing: an authenticator already works, so the new secret is held aside
-	// until the user proves they can generate codes from it. Overwriting the live
-	// secret here would mean that abandoning the flow silently disables 2FA and
-	// invalidates the authenticator they still have.
-	if u.TOTPEnabled && u.TOTPSecret != "" {
-		if err := s.store.SetTOTPPending(ctx, userID, enr.Secret); err != nil {
-			return nil, err
-		}
-		return enr, nil
-	}
-	// First enrolment: nothing to protect, so the secret goes straight in
-	// (disabled until confirmed), exactly as before.
-	if err := s.store.SetTOTP(ctx, userID, enr.Secret, false); err != nil {
+	// The candidate is always held aside until the user proves they can generate
+	// codes from it, and only then becomes a factor. Nothing that already works is
+	// touched, so abandoning the flow changes nothing — which is what makes "add
+	// another authenticator" safe to click.
+	if err := s.store.SetTOTPPending(ctx, userID, enr.Secret); err != nil {
 		return nil, err
 	}
 	return enr, nil
 }
 
-// ConfirmTOTPEnrollment validates the first code and enables 2FA for the user.
-func (s *Service) ConfirmTOTPEnrollment(ctx context.Context, userID int64, code string) error {
+// ConfirmTOTPEnrollment validates the first code from the candidate authenticator
+// and pairs it. Anything already paired keeps working: this adds a factor, it does
+// not replace one.
+func (s *Service) ConfirmTOTPEnrollment(ctx context.Context, userID int64, code, name string) error {
 	u, err := s.store.UserByID(ctx, userID)
 	if err != nil {
 		return err
 	}
-	// A pending secret means a re-pair: validate against the NEW authenticator and
-	// only then promote it, so a wrong code leaves the working one in place.
-	if u.TOTPPending != "" {
-		if !ValidateTOTP(strings.TrimSpace(code), u.TOTPPending) {
-			return ErrInvalidMFACode
-		}
-		return s.store.PromoteTOTPPending(ctx, userID)
-	}
-	if u.TOTPSecret == "" {
+	if u.TOTPPending == "" {
 		return errors.New("auth: no pending enrollment")
 	}
-	if !ValidateTOTP(strings.TrimSpace(code), u.TOTPSecret) {
+	if !ValidateTOTP(strings.TrimSpace(code), u.TOTPPending) {
 		return ErrInvalidMFACode
 	}
-	return s.store.SetTOTP(ctx, userID, u.TOTPSecret, true)
+	// Bound how many an account may hold. Adding one needs the password, so this is
+	// hygiene rather than a gate — but every verification walks the list, and there
+	// is no reason for it to be unbounded.
+	n, err := s.store.CountFactors(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if n >= maxFactorsPerAccount {
+		return ErrTooManyFactors
+	}
+	// Claiming the pending secret and inserting the factor happen together, in one
+	// transaction, keyed on the secret still being there. Reading it, validating a
+	// code and then inserting is a race that sixteen parallel POSTs win together:
+	// every one of them passes the check and inserts, and one enrolment becomes N
+	// factors holding ONE secret. The watermark is per factor, so each future code
+	// from that authenticator would then be spendable N times.
+	if _, err := s.store.PairPendingFactor(ctx, userID, u.TOTPPending, name); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			// Someone else already completed this enrolment.
+			return ErrInvalidMFACode
+		}
+		return err
+	}
+	return nil
 }
+
+// maxFactorsPerAccount bounds the list. Ten devices is far past anything real.
+const maxFactorsPerAccount = 10
+
+// ErrTooManyFactors is returned when an account already holds the maximum.
+var ErrTooManyFactors = errors.New("auth: this account already has the maximum number of authenticators")
 
 // ldapLogin authenticates against LDAP and provisions a local account on first
 // login (so roles/sections persist). A dummy password verification keeps timing
