@@ -7,6 +7,28 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Security
+- **A `.tar.gz` upload can no longer be a decompression bomb.** The extraction cap
+  was applied only on the `.zip` branch, while the comment claimed it covered
+  everything — so a ~10 MiB gzip of repetitive data expanded to ~10 GiB written
+  into the container, i.e. onto the host's filesystem, where it fills the disk out
+  from under every other container. Every branch is capped now, and the refusal is
+  loud rather than a silent truncation.
+
+- **CRLF in an alert rule's name no longer injects mail headers.** The rule name
+  reaches the `Subject:` line, so a name containing a line break could append a
+  `Reply-To:` pointing elsewhere or a `Content-Type:` that turns the alert into
+  HTML the recipient's client renders. The envelope was never injectable
+  (`net/smtp` refuses CR/LF in `MAIL`/`RCPT`), so this was header and content
+  forgery — enough on its own. Line breaks in header values are flattened to
+  spaces, so the rule name still reads as itself.
+
+- **A file upload is no longer buffered whole in memory.** The tar header needs
+  the size up front, and the answer had been to read the entire body with a 4 GiB
+  ceiling — one request could drive the process into gigabytes of RSS (`io.ReadAll`
+  doubles as it grows) and a few concurrent ones could OOM-kill it on an ordinary
+  host. Uploads now spool to an unlinked temp file and stream out as tar, with a
+  deliberate 2 GiB ceiling instead of an accidental 4.
+
 - **A TOTP code can only be spent once.** It was validated, not consumed, so it
   kept working for its whole ~90-second window — one code observed over a shoulder,
   captured by a phishing proxy or screenshotted by malware could be used more than

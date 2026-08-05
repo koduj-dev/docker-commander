@@ -138,11 +138,26 @@ func SendMail(cfg store.SMTPConfig, subject, body string) error {
 	return c.Quit()
 }
 
+// headerValue strips anything that would end the header and start another one.
+//
+// The subject carries an alert rule's name, which any user with the alerts
+// section chooses. A name containing CR or LF injects arbitrary headers into the
+// message: a Reply-To pointing somewhere else, or a Content-Type that turns the
+// alert into HTML the recipient's client renders. The envelope is safe already —
+// net/smtp rejects CR/LF in MAIL/RCPT arguments — so this is header and content
+// forgery rather than silent redirection, which is quite enough.
+//
+// Replaced with a space rather than dropped, so a name that hits this still reads
+// as itself in the subject line instead of running two words together.
+func headerValue(v string) string {
+	return strings.NewReplacer("\r", " ", "\n", " ").Replace(v)
+}
+
 func buildMessage(from, to, subject, body string) []byte {
 	var b strings.Builder
-	b.WriteString("From: " + from + "\r\n")
-	b.WriteString("To: " + to + "\r\n")
-	b.WriteString("Subject: " + subject + "\r\n")
+	b.WriteString("From: " + headerValue(from) + "\r\n")
+	b.WriteString("To: " + headerValue(to) + "\r\n")
+	b.WriteString("Subject: " + headerValue(subject) + "\r\n")
 	b.WriteString("MIME-Version: 1.0\r\n")
 	b.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
 	b.WriteString("\r\n")
