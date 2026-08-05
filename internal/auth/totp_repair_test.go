@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -10,12 +11,17 @@ import (
 	"github.com/koduj-dev/docker-commander/internal/store"
 )
 
-// Re-pairing an authenticator must never weaken the one that already works.
-// Starting the flow used to overwrite the live secret and set enabled=false, so
-// simply closing the dialog left the account with 2FA off and the authenticator
-// in the user's hand no longer valid. That was harmless while enrolment was the
-// only caller; a "pair another authenticator" button on the profile page makes it
-// an everyday path.
+// Pairing an authenticator must never weaken one that already works.
+//
+// The flow used to overwrite the live secret and set enabled=false, so simply
+// closing the dialog left the account with 2FA off and the authenticator in the
+// user's hand no longer valid. It then became "hold the candidate aside until a
+// code from it arrives", and now the confirmed candidate is ADDED rather than
+// swapped in: an account can hold several authenticators, and pairing the phone
+// you just bought must not brick the one in your drawer.
+//
+// What survives every one of those changes is the invariant these tests exist
+// for: nothing that already works may be affected by an incomplete pairing.
 
 func totpFixture(t *testing.T) (*Service, *store.Store, int64) {
 	t.Helper()
@@ -32,8 +38,8 @@ func totpFixture(t *testing.T) (*Service, *store.Store, int64) {
 	return svc, st, uid
 }
 
-// enrol completes a first-time enrolment and returns the active secret.
-func enrol(t *testing.T, svc *Service, st *store.Store, uid int64) string {
+// pair completes an enrolment and returns the secret the authenticator holds.
+func pair(t *testing.T, svc *Service, st *store.Store, uid int64, name string) string {
 	t.Helper()
 	ctx := context.Background()
 	enr, err := svc.BeginTOTPEnrollment(ctx, uid)
@@ -44,69 +50,82 @@ func enrol(t *testing.T, svc *Service, st *store.Store, uid int64) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.ConfirmTOTPEnrollment(ctx, uid, code); err != nil {
-		t.Fatalf("confirm first enrolment: %v", err)
+	if err := svc.ConfirmTOTPEnrollment(ctx, uid, code, name); err != nil {
+		t.Fatalf("confirm enrolment: %v", err)
 	}
 	u, _ := st.UserByID(ctx, uid)
 	if !u.TOTPEnabled {
-		t.Fatal("setup: 2FA should be enabled after enrolment")
+		t.Fatal("2FA should be enabled once an authenticator is paired")
 	}
 	return enr.Secret
 }
 
-// PENTEST: abandoning a re-pair must leave the existing authenticator working and
-// 2FA enabled — no silent downgrade.
-func TestPentestAbandonedRepairKeepsExisting2FA(t *testing.T) {
+// accepts reports whether a code from this secret would sign the account in,
+// through the real verification path (which is what "still works" means).
+func accepts(t *testing.T, svc *Service, st *store.Store, uid int64, secret string) bool {
+	t.Helper()
+	code, err := currentCode(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := st.UserByID(context.Background(), uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc.consumeTOTP(context.Background(), u, code)
+}
+
+// PENTEST: abandoning a pairing must leave the existing authenticator working and
+// 2FA enabled — no silent downgrade, and no half-paired device.
+func TestPentestAbandonedPairingKeepsExisting2FA(t *testing.T) {
 	svc, st, uid := totpFixture(t)
 	ctx := context.Background()
-	original := enrol(t, svc, st, uid)
+	original := pair(t, svc, st, uid, "Phone")
 
-	// Start a re-pair and walk away.
+	// Start another pairing and walk away.
 	if _, err := svc.BeginTOTPEnrollment(ctx, uid); err != nil {
 		t.Fatal(err)
 	}
 
 	u, _ := st.UserByID(ctx, uid)
 	if !u.TOTPEnabled {
-		t.Error("SECURITY: an abandoned re-pair disabled 2FA")
+		t.Error("SECURITY: an abandoned pairing disabled 2FA")
 	}
-	if u.TOTPSecret != original {
-		t.Error("SECURITY: an abandoned re-pair replaced the working secret")
+	if n, _ := st.CountFactors(ctx, uid); n != 1 {
+		t.Errorf("SECURITY: an abandoned pairing left %d factors, want 1", n)
 	}
-	// The authenticator the user still holds keeps producing valid codes.
-	code, err := currentCode(original)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ValidateTOTP(code, u.TOTPSecret) {
+	if !accepts(t, svc, st, uid, original) {
 		t.Error("SECURITY: the existing authenticator stopped working")
 	}
 }
 
-// PENTEST: a wrong code during a re-pair must not promote the new secret.
-func TestPentestFailedRepairKeepsExisting2FA(t *testing.T) {
+// PENTEST: a wrong code must pair nothing.
+func TestPentestFailedPairingAddsNothing(t *testing.T) {
 	svc, st, uid := totpFixture(t)
 	ctx := context.Background()
-	original := enrol(t, svc, st, uid)
+	original := pair(t, svc, st, uid, "Phone")
 
 	if _, err := svc.BeginTOTPEnrollment(ctx, uid); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.ConfirmTOTPEnrollment(ctx, uid, "000000"); err == nil {
+	if err := svc.ConfirmTOTPEnrollment(ctx, uid, "000000", "Impostor"); err == nil {
 		t.Fatal("a wrong code should be refused")
 	}
-	u, _ := st.UserByID(ctx, uid)
-	if u.TOTPSecret != original || !u.TOTPEnabled {
-		t.Error("SECURITY: a failed re-pair changed the active authenticator")
+	if n, _ := st.CountFactors(ctx, uid); n != 1 {
+		t.Errorf("SECURITY: a failed pairing left %d factors, want 1", n)
+	}
+	if !accepts(t, svc, st, uid, original) {
+		t.Error("SECURITY: a failed pairing disturbed the working authenticator")
 	}
 }
 
-// PENTEST: a code from the OLD authenticator must not confirm a re-pair — that
-// would leave the user believing the new device is paired when it isn't.
-func TestPentestRepairRejectsOldAuthenticatorCode(t *testing.T) {
+// PENTEST: a code from an ALREADY-PAIRED authenticator must not confirm a new
+// pairing — the user would believe the new device is paired when it isn't, and
+// might then throw away the only one that works.
+func TestPentestPairingRejectsAnAlreadyPairedCode(t *testing.T) {
 	svc, st, uid := totpFixture(t)
 	ctx := context.Background()
-	original := enrol(t, svc, st, uid)
+	original := pair(t, svc, st, uid, "Phone")
 
 	enr, err := svc.BeginTOTPEnrollment(ctx, uid)
 	if err != nil {
@@ -116,7 +135,6 @@ func TestPentestRepairRejectsOldAuthenticatorCode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Only meaningful when the two secrets actually produce different codes.
 	newCode, err := currentCode(enr.Secret)
 	if err != nil {
 		t.Fatal(err)
@@ -124,65 +142,130 @@ func TestPentestRepairRejectsOldAuthenticatorCode(t *testing.T) {
 	if oldCode == newCode {
 		t.Skip("the two secrets happened to produce the same code this interval")
 	}
-	if err := svc.ConfirmTOTPEnrollment(ctx, uid, oldCode); err == nil {
-		t.Error("SECURITY: a code from the old authenticator confirmed the re-pair")
+	if err := svc.ConfirmTOTPEnrollment(ctx, uid, oldCode, "Impostor"); err == nil {
+		t.Error("SECURITY: a code from the existing authenticator confirmed the pairing")
 	}
-	u, _ := st.UserByID(ctx, uid)
-	if u.TOTPSecret != original {
-		t.Error("SECURITY: the secret changed despite the failed confirmation")
-	}
-}
-
-// The happy path: confirming with the new authenticator promotes it, and the old
-// one stops working.
-func TestRepairPromotesTheNewAuthenticator(t *testing.T) {
-	svc, st, uid := totpFixture(t)
-	ctx := context.Background()
-	original := enrol(t, svc, st, uid)
-
-	enr, err := svc.BeginTOTPEnrollment(ctx, uid)
-	if err != nil {
-		t.Fatal(err)
-	}
-	code, err := currentCode(enr.Secret)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.ConfirmTOTPEnrollment(ctx, uid, code); err != nil {
-		t.Fatalf("confirm re-pair: %v", err)
-	}
-
-	u, _ := st.UserByID(ctx, uid)
-	if !u.TOTPEnabled {
-		t.Error("2FA should stay enabled after a successful re-pair")
-	}
-	if u.TOTPSecret != enr.Secret {
-		t.Error("the new secret should now be active")
-	}
-	if u.TOTPPending != "" {
-		t.Error("the pending secret should be cleared")
-	}
-	if u.TOTPSecret == original {
-		t.Error("the secret did not actually change")
+	if n, _ := st.CountFactors(ctx, uid); n != 1 {
+		t.Errorf("SECURITY: %d factors after a refused pairing, want 1", n)
 	}
 }
 
-// First-time enrolment is unchanged: the secret goes straight in, disabled until
-// confirmed, with nothing left pending.
-func TestFirstEnrolmentUnchanged(t *testing.T) {
+// The happy path, and the point of the whole change: a second authenticator is
+// ADDED. Both work afterwards — that is what makes a lost phone survivable.
+func TestPairingASecondAuthenticatorKeepsTheFirst(t *testing.T) {
+	svc, st, uid := totpFixture(t)
+	ctx := context.Background()
+	first := pair(t, svc, st, uid, "Phone")
+	second := pair(t, svc, st, uid, "Tablet")
+
+	if first == second {
+		t.Fatal("the two enrolments produced the same secret")
+	}
+	if n, _ := st.CountFactors(ctx, uid); n != 2 {
+		t.Fatalf("want 2 paired factors, got %d", n)
+	}
+	if !accepts(t, svc, st, uid, second) {
+		t.Error("the newly paired authenticator does not work")
+	}
+	if !accepts(t, svc, st, uid, first) {
+		t.Error("pairing a second authenticator broke the first — the bug this exists to prevent")
+	}
+
+	factors, _ := st.ListFactors(ctx, uid)
+	if factors[0].Name != "Phone" || factors[1].Name != "Tablet" {
+		t.Errorf("names should be the owner's own: %q, %q", factors[0].Name, factors[1].Name)
+	}
+	if factors[0].LastUsedAt.IsZero() {
+		t.Error("using an authenticator should record that it was used")
+	}
+}
+
+// Nothing is paired until a code from the candidate arrives — including the very
+// first enrolment, where there is nothing to protect but also no reason to store
+// a secret nobody has proved they hold.
+func TestNothingIsPairedBeforeConfirmation(t *testing.T) {
 	svc, st, uid := totpFixture(t)
 	ctx := context.Background()
 
-	enr, err := svc.BeginTOTPEnrollment(ctx, uid)
-	if err != nil {
+	if _, err := svc.BeginTOTPEnrollment(ctx, uid); err != nil {
 		t.Fatal(err)
 	}
-	u, _ := st.UserByID(ctx, uid)
-	if u.TOTPSecret != enr.Secret || u.TOTPEnabled {
-		t.Errorf("first enrolment should store the secret disabled: enabled=%v", u.TOTPEnabled)
+	if n, _ := st.CountFactors(ctx, uid); n != 0 {
+		t.Errorf("an unconfirmed enrolment paired %d factors", n)
 	}
-	if u.TOTPPending != "" {
-		t.Error("first enrolment should leave nothing pending")
+	u, _ := st.UserByID(ctx, uid)
+	if u.TOTPEnabled {
+		t.Error("2FA must not read as enabled before a code has been accepted")
+	}
+	if u.TOTPPending == "" {
+		t.Error("the candidate secret should be held aside for the confirmation step")
+	}
+}
+
+// Removing the only second factor is refused: 2FA is mandatory here, so an account
+// with none is one that cannot sign in from anywhere but a permitted localhost —
+// a self-lockout with no admin reset behind it.
+func TestRemovingTheLastFactorIsRefused(t *testing.T) {
+	svc, st, uid := totpFixture(t)
+	ctx := context.Background()
+	pair(t, svc, st, uid, "Phone")
+
+	factors, _ := st.ListFactors(ctx, uid)
+	if err := svc.RemoveFactor(ctx, uid, factors[0].ID); !errors.Is(err, ErrLastFactor) {
+		t.Fatalf("removing the last factor: want ErrLastFactor, got %v", err)
+	}
+	if n, _ := st.CountFactors(ctx, uid); n != 1 {
+		t.Error("the refused removal took the factor anyway")
+	}
+
+	// Pair a replacement and the original can go.
+	pair(t, svc, st, uid, "New phone")
+	if err := svc.RemoveFactor(ctx, uid, factors[0].ID); err != nil {
+		t.Fatalf("removing a factor once another exists: %v", err)
+	}
+	if n, _ := st.CountFactors(ctx, uid); n != 1 {
+		t.Errorf("want 1 factor left, got %d", n)
+	}
+}
+
+// A removed authenticator stops working immediately — otherwise "remove" is a
+// label on a button rather than a thing that happened.
+func TestARemovedAuthenticatorStopsWorking(t *testing.T) {
+	svc, st, uid := totpFixture(t)
+	ctx := context.Background()
+	first := pair(t, svc, st, uid, "Old phone")
+	second := pair(t, svc, st, uid, "New phone")
+
+	factors, _ := st.ListFactors(ctx, uid)
+	if err := svc.RemoveFactor(ctx, uid, factors[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if accepts(t, svc, st, uid, first) {
+		t.Error("SECURITY: a removed authenticator still signs the account in")
+	}
+	if !accepts(t, svc, st, uid, second) {
+		t.Error("removing one authenticator broke the other")
+	}
+}
+
+// PENTEST: the replay watermark is per factor. Sharing one across the account
+// would let a code from one device invalidate the same time step on another —
+// two authenticators, and whoever used theirs second is refused.
+func TestPentestReplayGuardIsPerFactor(t *testing.T) {
+	svc, st, uid := totpFixture(t)
+	first := pair(t, svc, st, uid, "Phone")
+	second := pair(t, svc, st, uid, "Tablet")
+
+	if !accepts(t, svc, st, uid, first) {
+		t.Fatal("the first authenticator should be accepted")
+	}
+	// Same time step, different device: must still be accepted.
+	if !accepts(t, svc, st, uid, second) {
+		t.Error("a second authenticator was refused because the first had just been used")
+	}
+	// …and neither code may be replayed.
+	if accepts(t, svc, st, uid, first) {
+		t.Error("SECURITY: a code was accepted twice")
 	}
 }
 

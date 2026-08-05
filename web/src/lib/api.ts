@@ -56,6 +56,7 @@ import type {
   User,
   Webhook,
   NetworkStats,
+  AuthFactor,
 } from "./types";
 import { getHostId, hostParam } from "./host";
 
@@ -218,7 +219,12 @@ export const api = {
   revokeSession: (id: string) => req<{ ok: boolean }>("DELETE", `/api/auth/sessions/${encodeURIComponent(id)}`),
   revokeOtherSessions: () => req<{ revoked: number }>("POST", "/api/auth/sessions/revoke-others"),
   totpSetup: (password?: string) => req<Enrollment>("POST", "/api/auth/totp/setup", password === undefined ? undefined : { password }),
-  totpEnable: (code: string) => req<{ ok: boolean }>("POST", "/api/auth/totp/enable", { code }),
+  totpEnable: (code: string, name?: string) => req<{ ok: boolean }>("POST", "/api/auth/totp/enable", { code, name: name ?? "" }),
+  factors: () => req<AuthFactor[]>("GET", "/api/auth/factors"),
+  // The password travels in the body, not the path: removing a factor is a
+  // step-up, and a URL is the one part of a request that gets logged everywhere.
+  removeFactor: (id: number, password: string) =>
+    req<{ ok: boolean }>("DELETE", `/api/auth/factors/${id}`, { password }),
 
   // Host management
   hosts: () => req<Host[]>("GET", "/api/hosts"),

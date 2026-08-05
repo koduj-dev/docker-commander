@@ -167,12 +167,24 @@ regardless of permissions:
 
 - **Account** — username, account type, whether you sign in locally or through
   LDAP, when the account was created and last used, and your **alert e-mail**.
-- **Security** — 2FA status, and **Pair a new authenticator** for a new phone.
-  Starting that flow is safe: the authenticator you already have keeps working
-  until you enter a code from the new one, so cancelling changes nothing. Once 2FA
-  is on, pairing asks for your **password** — it replaces your second factor, so a
-  session on its own must not be enough to do it. A first-time setup doesn't ask,
-  because there is no factor to replace.
+- **Security** — your **authenticators** and what is signed in as you.
+
+  You can pair **as many authenticators as you like** — a phone and a tablet, or a
+  new phone before you wipe the old one — and each is listed by a name you choose,
+  with when it was added and when it last produced a code. Adding one leaves
+  everything already paired working; there is no "replace".
+
+  Pairing and removing both ask for your **password**. Both change what it takes to
+  sign in as you, so a session on its own must not be enough: otherwise anyone who
+  got hold of one could pair their own device, or strip yours one at a time. A
+  first-time setup doesn't ask, because there is nothing yet to protect.
+
+  **The last one cannot be removed.** 2FA is mandatory here, so an account with no
+  authenticator could not sign in at all, and no admin can reset it for you. Pair
+  the replacement first, then remove the old one.
+
+  Starting a pairing is always safe: nothing changes until you enter a code from
+  the new device, so cancelling leaves things exactly as they were.
 
   It also lists **what is signed in as you** — every browser and device holding a
   live session, named (*Firefox on Linux*, *Safari on iPhone*, *curl*) with the

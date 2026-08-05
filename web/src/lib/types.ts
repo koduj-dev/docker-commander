@@ -756,6 +756,16 @@ export interface MyAccess {
 }
 
 /** One signed-in browser or client, as shown in Profile → Security. */
+/** One paired second factor. The secret is never part of this. */
+export interface AuthFactor {
+  id: number;
+  /** "totp" today; passkeys join the same list later. */
+  kind: string;
+  name: string;
+  createdAt: string;
+  lastUsedAt: string;
+}
+
 export interface Session {
   id: string;
   ip: string;

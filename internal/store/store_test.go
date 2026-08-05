@@ -57,11 +57,12 @@ func TestUsersCRUD(t *testing.T) {
 	if err := s.UpdatePassword(ctx, id, "newhash"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetTOTP(ctx, id, "SECRET", true); err != nil {
+	// 2FA is no longer a flag on the user: it is whether any factor is paired.
+	if _, err := s.CreateFactor(ctx, &AuthFactor{UserID: id, Name: "Phone", Secret: "SECRET"}); err != nil {
 		t.Fatal(err)
 	}
 	u, _ = s.UserByID(ctx, id)
-	if u.PasswordHash != "newhash" || !u.TOTPEnabled || u.TOTPSecret != "SECRET" {
+	if u.PasswordHash != "newhash" || !u.TOTPEnabled {
 		t.Errorf("password/totp not applied: %+v", u)
 	}
 

@@ -39,6 +39,11 @@ var ungatedRoutes = map[string]string{
 	"/api/auth/me":          "own identity",
 	"/api/auth/totp/setup":  "own 2FA enrolment",
 	"/api/auth/totp/enable": "own 2FA enrolment",
+	// Own second factors only: both handlers read the caller's id from their
+	// claims, and removal additionally requires the account's password
+	// (TestPentestFactors_ListIsOwnOnly, TestPentestFactors_RemoveNeedsThePassword).
+	"/api/auth/factors":      "own authenticators only",
+	"/api/auth/factors/{id}": "own authenticators only; DELETE is scoped by user id",
 	// Writes the CALLER's own alert address, taken from their session claims —
 	// it cannot touch another account (TestPentestSetMyEmail_OnlyAffectsTheCaller).
 	"/api/auth/me/email": "own alert address",

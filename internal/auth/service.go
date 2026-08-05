@@ -255,18 +255,69 @@ func (s *Service) VerifyMFA(ctx context.Context, rlKey, challengeToken, code str
 	return s.issueSession(ctx, u, info)
 }
 
-// consumeTOTP validates a code and burns the time step it came from, so the same
-// code cannot be presented twice inside its ~90-second window. A code that is
-// valid but not newer than the last one accepted is treated exactly like a wrong
-// one — the caller must not be able to tell a replay from a typo.
+// consumeTOTP validates a code against any of the account's paired authenticators
+// and burns the time step it came from, so the same code cannot be presented twice
+// inside its ~90-second window. A code that is valid but not newer than the last
+// one accepted by THAT authenticator is treated exactly like a wrong one — the
+// caller must not be able to tell a replay from a typo.
+//
+// Every factor is tried even after a match: a wrong code must cost the same work
+// as a right one, or the time to answer says which device is which.
 func (s *Service) consumeTOTP(ctx context.Context, u *store.User, code string) bool {
-	counter, ok := MatchTOTP(strings.TrimSpace(code), u.TOTPSecret)
-	if !ok || counter <= u.TOTPLastCounter {
+	factors, err := s.store.ListFactors(ctx, u.ID)
+	if err != nil {
+		return false
+	}
+	code = strings.TrimSpace(code)
+	var matched *store.AuthFactor
+	var matchedCounter int64
+	for i := range factors {
+		if factors[i].Kind != store.FactorKindTOTP {
+			continue
+		}
+		counter, ok := MatchTOTP(code, factors[i].Secret)
+		if ok && counter > factors[i].LastCounter && matched == nil {
+			matched = &factors[i]
+			matchedCounter = counter
+		}
+	}
+	if matched == nil {
 		return false
 	}
 	// A failure to persist the watermark must not hand out a session: it would
 	// leave the code replayable, which is the thing being prevented.
-	return s.store.SetTOTPLastCounter(ctx, u.ID, counter) == nil
+	return s.store.BurnFactorCounter(ctx, matched.ID, matchedCounter) == nil
+}
+
+// ListFactors returns the account's paired factors.
+func (s *Service) ListFactors(ctx context.Context, userID int64) ([]store.AuthFactor, error) {
+	return s.store.ListFactors(ctx, userID)
+}
+
+// ErrLastFactor is returned when removing a factor would leave the account with
+// no second factor at all.
+var ErrLastFactor = errors.New("auth: that is the only second factor on this account")
+
+// RemoveFactor unpairs one of the account's factors.
+//
+// The last one cannot go. 2FA is mandatory here (bar the localhost exemption, which
+// is a property of where you connect from, not of the account), so an account with
+// zero factors is one that cannot sign in from anywhere else — a self-lockout with
+// no admin reset behind it. Pair the replacement first, then remove the old one.
+func (s *Service) RemoveFactor(ctx context.Context, userID, factorID int64) error {
+	n, err := s.store.CountFactors(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if n <= 1 {
+		// Check the factor exists first, so "not yours" still reads as not found
+		// rather than leaking through this branch.
+		if _, err := s.store.FactorByID(ctx, factorID, userID); err != nil {
+			return err
+		}
+		return ErrLastFactor
+	}
+	return s.store.DeleteFactor(ctx, factorID, userID)
 }
 
 // VerifyUserPassword checks a password against the account it belongs to, local
@@ -325,45 +376,38 @@ func (s *Service) BeginTOTPEnrollment(ctx context.Context, userID int64) (*Enrol
 	if err != nil {
 		return nil, err
 	}
-	// Re-pairing: an authenticator already works, so the new secret is held aside
-	// until the user proves they can generate codes from it. Overwriting the live
-	// secret here would mean that abandoning the flow silently disables 2FA and
-	// invalidates the authenticator they still have.
-	if u.TOTPEnabled && u.TOTPSecret != "" {
-		if err := s.store.SetTOTPPending(ctx, userID, enr.Secret); err != nil {
-			return nil, err
-		}
-		return enr, nil
-	}
-	// First enrolment: nothing to protect, so the secret goes straight in
-	// (disabled until confirmed), exactly as before.
-	if err := s.store.SetTOTP(ctx, userID, enr.Secret, false); err != nil {
+	// The candidate is always held aside until the user proves they can generate
+	// codes from it, and only then becomes a factor. Nothing that already works is
+	// touched, so abandoning the flow changes nothing — which is what makes "add
+	// another authenticator" safe to click.
+	if err := s.store.SetTOTPPending(ctx, userID, enr.Secret); err != nil {
 		return nil, err
 	}
 	return enr, nil
 }
 
-// ConfirmTOTPEnrollment validates the first code and enables 2FA for the user.
-func (s *Service) ConfirmTOTPEnrollment(ctx context.Context, userID int64, code string) error {
+// ConfirmTOTPEnrollment validates the first code from the candidate authenticator
+// and pairs it. Anything already paired keeps working: this adds a factor, it does
+// not replace one.
+func (s *Service) ConfirmTOTPEnrollment(ctx context.Context, userID int64, code, name string) error {
 	u, err := s.store.UserByID(ctx, userID)
 	if err != nil {
 		return err
 	}
-	// A pending secret means a re-pair: validate against the NEW authenticator and
-	// only then promote it, so a wrong code leaves the working one in place.
-	if u.TOTPPending != "" {
-		if !ValidateTOTP(strings.TrimSpace(code), u.TOTPPending) {
-			return ErrInvalidMFACode
-		}
-		return s.store.PromoteTOTPPending(ctx, userID)
-	}
-	if u.TOTPSecret == "" {
+	if u.TOTPPending == "" {
 		return errors.New("auth: no pending enrollment")
 	}
-	if !ValidateTOTP(strings.TrimSpace(code), u.TOTPSecret) {
+	if !ValidateTOTP(strings.TrimSpace(code), u.TOTPPending) {
 		return ErrInvalidMFACode
 	}
-	return s.store.SetTOTP(ctx, userID, u.TOTPSecret, true)
+	if _, err := s.store.CreateFactor(ctx, &store.AuthFactor{
+		UserID: userID, Kind: store.FactorKindTOTP, Name: name, Secret: u.TOTPPending,
+	}); err != nil {
+		return err
+	}
+	// Clear the candidate only once it is a factor: a failure above must leave the
+	// enrolment resumable rather than losing the secret the user just scanned.
+	return s.store.SetTOTPPending(ctx, userID, "")
 }
 
 // ldapLogin authenticates against LDAP and provisions a local account on first

@@ -100,7 +100,7 @@ func TestLogin2FAFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, _ := totp.GenerateCode(enr.Secret, time.Now())
-	if err := svc.ConfirmTOTPEnrollment(ctx, u.ID, code); err != nil {
+	if err := svc.ConfirmTOTPEnrollment(ctx, u.ID, code, ""); err != nil {
 		t.Fatalf("ConfirmTOTPEnrollment: %v", err)
 	}
 
@@ -204,7 +204,7 @@ func enable2FA(t *testing.T, svc *Service, ctx context.Context) (*store.User, st
 		t.Fatal(err)
 	}
 	code, _ := totp.GenerateCode(enr.Secret, time.Now())
-	if err := svc.ConfirmTOTPEnrollment(ctx, u.ID, code); err != nil {
+	if err := svc.ConfirmTOTPEnrollment(ctx, u.ID, code, ""); err != nil {
 		t.Fatal(err)
 	}
 	return u, enr.Secret

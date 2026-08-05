@@ -246,6 +246,29 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
+-- One paired second factor. Several per account, because people own more than one
+-- device and losing the only paired one used to mean losing the account.
+--
+-- kind is 'totp' today; the column exists so a passkey can be a row here rather
+-- than a parallel table with its own list, its own "remove" and its own chance of
+-- disagreeing about how many factors an account actually has.
+--
+-- last_counter is the replay guard, per factor: a code is valid for its 30-second
+-- step, so the step it came from is burned. Per factor and not per account, or
+-- pairing a second authenticator would let one device's code invalidate the
+-- other's.
+CREATE TABLE IF NOT EXISTS auth_factors (
+	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	user_id      INTEGER NOT NULL,
+	kind         TEXT NOT NULL DEFAULT 'totp',
+	name         TEXT NOT NULL DEFAULT '',
+	secret       TEXT NOT NULL DEFAULT '',
+	last_counter INTEGER NOT NULL DEFAULT 0,
+	created_at   TEXT NOT NULL,
+	last_used_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_auth_factors_user ON auth_factors(user_id);
+
 -- Named bundles of section grants, assignable to users. See internal/store/roles.go.
 CREATE TABLE IF NOT EXISTS roles (
 	id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -428,9 +451,35 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
 			return err
 		}
 	}
+	if err := s.migrateTOTPToFactors(ctx); err != nil {
+		return err
+	}
 	// Built-in roles come last: the tables above must exist first, and seeding is
 	// idempotent (an existing row is left untouched).
 	return s.seedBuiltinRoles(ctx)
+}
+
+// migrateTOTPToFactors moves the single per-user authenticator into auth_factors.
+//
+// The secret is CLEARED from users afterwards, on purpose. Leaving it would mean a
+// live second factor sitting in a column nothing reads: remove the authenticator
+// from your profile and the old secret would still be there, no longer visible and
+// no longer removable. Dead credentials are worse than none.
+//
+// Idempotent by the same test that drives it: a user is migrated only while their
+// secret is still in the old column, and the move clears it.
+func (s *Store) migrateTOTPToFactors(ctx context.Context) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO auth_factors (user_id, kind, name, secret, last_counter, created_at)
+		SELECT id, 'totp', 'Authenticator', totp_secret, totp_last_counter, ?
+		FROM users WHERE totp_secret != '' AND totp_enabled = 1`, now); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE users SET totp_secret = '', totp_last_counter = 0
+		WHERE totp_secret != '' AND totp_enabled = 1`)
+	return err
 }
 
 // isDuplicateColumn reports whether err is SQLite's "duplicate column name"

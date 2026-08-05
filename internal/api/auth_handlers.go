@@ -321,16 +321,19 @@ func (s *Server) handleTOTPEnable(w http.ResponseWriter, r *http.Request) {
 	c, _ := auth.ClaimsFrom(r.Context())
 	var body struct {
 		Code string `json:"code"`
+		// What the owner calls this device. Theirs to choose, shown only back to
+		// them; the store bounds and defaults it.
+		Name string `json:"name"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if err := s.auth.ConfirmTOTPEnrollment(r.Context(), c.UserID, body.Code); err != nil {
+	if err := s.auth.ConfirmTOTPEnrollment(r.Context(), c.UserID, body.Code, body.Name); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid code")
 		return
 	}
-	s.audit(r, "auth.2fa.enable", c.Username, "totp enabled")
+	s.audit(r, "auth.2fa.enable", c.Username, "authenticator paired")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

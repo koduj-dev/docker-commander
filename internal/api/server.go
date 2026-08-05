@@ -97,6 +97,9 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/auth/me/access", s.handleMyAccess)
 			r.Post("/auth/totp/setup", s.handleTOTPSetup)
 			r.Post("/auth/totp/enable", s.handleTOTPEnable)
+			// Own second factors: list them, unpair one (password required).
+			r.Get("/auth/factors", s.handleListFactors)
+			r.Delete("/auth/factors/{id}", s.handleDeleteFactor)
 
 			// MCP access tokens — self-service (each user manages their own).
 			// Ungated: a token can only narrow its owner's rights.

@@ -105,7 +105,9 @@ func (s *Store) CreateUser(ctx context.Context, u *User) (int64, error) {
 // ListUsers returns all accounts (without secrets) for the admin user manager.
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, username, password_hash, role, email, totp_secret, totp_enabled, totp_pending, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
+		SELECT id, username, password_hash, role, email, totp_secret,
+		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id),
+		       totp_pending, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
 		FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
@@ -128,10 +130,13 @@ func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
-	// Their sessions go with them. The middleware already refuses a token whose
+	// Their factors and sessions go with them. The middleware already refuses a token whose
 	// account is gone, so this is housekeeping rather than a gate: ids are
 	// AUTOINCREMENT and never reused, so what is left behind is dead rows, not a
 	// way in. Nothing else would ever delete them.
+	if err := s.DeleteUserFactors(ctx, id); err != nil {
+		return err
+	}
 	return s.DeleteUserSessions(ctx, id)
 }
 
@@ -152,14 +157,18 @@ func (s *Store) UpdateUserAccess(ctx context.Context, id int64, role string, rea
 // UserByUsername looks up a user by their unique username.
 func (s *Store) UserByUsername(ctx context.Context, username string) (*User, error) {
 	return scanUserRow(s.db.QueryRowContext(ctx, `
-		SELECT id, username, password_hash, role, email, totp_secret, totp_enabled, totp_pending, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
+		SELECT id, username, password_hash, role, email, totp_secret,
+		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id),
+		       totp_pending, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
 		FROM users WHERE username = ?`, username))
 }
 
 // UserByID looks up a user by primary key.
 func (s *Store) UserByID(ctx context.Context, id int64) (*User, error) {
 	return scanUserRow(s.db.QueryRowContext(ctx, `
-		SELECT id, username, password_hash, role, email, totp_secret, totp_enabled, totp_pending, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
+		SELECT id, username, password_hash, role, email, totp_secret,
+		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id),
+		       totp_pending, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
 		FROM users WHERE id = ?`, id))
 }
 
@@ -183,13 +192,10 @@ func (s *Store) SetUserPrefs(ctx context.Context, userID int64, prefs string) er
 	return err
 }
 
-// SetTOTP stores the secret and enabled flag for a user (enrollment / disable).
-func (s *Store) SetTOTP(ctx context.Context, userID int64, secret string, enabled bool) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE users SET totp_secret = ?, totp_enabled = ? WHERE id = ?`,
-		secret, boolToInt(enabled), userID)
-	return err
-}
+// SetTOTP is gone: an account's second factors are rows in auth_factors, and
+// "does this account have 2FA" is now derived from whether any exist rather than
+// stored beside them. Two places recording the same fact is how an account ends
+// up flagged as protected while holding no working factor, or the reverse.
 
 // TouchLogin records the timestamp of a successful login.
 func (s *Store) TouchLogin(ctx context.Context, userID int64) error {

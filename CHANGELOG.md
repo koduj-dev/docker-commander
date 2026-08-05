@@ -40,6 +40,29 @@ All notable changes to Docker Commander are documented here. The format follows
     test pins.
 
 ### Added
+- **An account can hold several authenticators.** *Profile → Security* lists every
+  paired one by a name you choose, with when it was added and last used, and lets
+  you add or remove them. Pairing used to *replace*: the phone in your hand stopped
+  working the moment you set up a new one, which made "add my tablet too" impossible
+  and losing a device a support call.
+
+  **The last one cannot be removed** — 2FA is mandatory here and there is no admin
+  reset, so an account with no authenticator is one that cannot sign in. Pair the
+  replacement first.
+
+  Removing asks for your password, exactly as pairing does: both change what it
+  takes to sign in as you, and a stolen session must not be able to strip an
+  account's factors one at a time.
+
+  The replay guard is now **per authenticator**. It used to be one watermark for the
+  account, which with two paired devices would have let a code from one refuse the
+  same time step on the other.
+
+  Existing installations migrate on start: the single stored authenticator becomes
+  the first entry in the list, keeping the same secret, so nobody has to re-pair.
+  The old column is cleared in the process — a live secret that nothing reads and
+  nobody can remove is a credential nobody knows exists.
+
 - **See what is signed in as you, and end it.** *Profile → Security* now lists every
   live session for your account — the device, the address, when it was last used and
   when it signed in, with the one you are using marked — and lets you sign out any of

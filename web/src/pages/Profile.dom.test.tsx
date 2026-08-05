@@ -25,6 +25,9 @@ vi.mock("../lib/api", () => ({
     revokeSession,
     revokeOtherSessions,
     myAccess: () => Promise.resolve({ admin: false, effective: [] }),
+    // The Security tab also renders the authenticator list; it is not under test
+    // here, but it must not explode.
+    factors: () => Promise.resolve([{ id: 1, kind: "totp", name: "Phone", createdAt: "2026-08-01T09:00:00Z", lastUsedAt: "2026-08-05T09:00:00Z" }]),
     hosts: () => Promise.resolve([]),
     version: () => Promise.resolve({ version: "test" }),
   },
