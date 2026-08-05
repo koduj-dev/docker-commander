@@ -246,6 +246,37 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 // handleTOTPSetup begins 2FA enrollment and returns the QR + secret.
 func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
 	c, _ := auth.ClaimsFrom(r.Context())
+	u, err := s.store.UserByID(r.Context(), c.UserID)
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	// Re-pairing needs the password; first-time enrolment does not.
+	//
+	// Pairing a new authenticator replaces the second factor, so a session on its
+	// own must not be enough — otherwise any session takeover (a shared machine, a
+	// token pasted into a URL) becomes a permanent authenticator takeover: the
+	// attacker pairs their own device and satisfies 2FA from then on, while the
+	// owner's app quietly stops working.
+	//
+	// A first enrolment is different: there is no factor to replace, and the
+	// first-run wizard walks straight into it.
+	if u.TOTPEnabled {
+		var body struct {
+			Password string `json:"password"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid body")
+			return
+		}
+		if !s.auth.VerifyUserPassword(r.Context(), r.RemoteAddr, u, body.Password) {
+			s.audit(r, "auth.2fa.repair.denied", u.Username, "wrong password")
+			writeErr(w, http.StatusForbidden, "password required to pair a new authenticator")
+			return
+		}
+	}
+
 	enr, err := s.auth.BeginTOTPEnrollment(r.Context(), c.UserID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not start enrollment")

@@ -241,6 +241,30 @@ func (s *Service) consumeTOTP(ctx context.Context, u *store.User, code string) b
 	return s.store.SetTOTPLastCounter(ctx, u.ID, counter) == nil
 }
 
+// VerifyUserPassword checks a password against the account it belongs to, local
+// hash or directory bind, without issuing anything.
+//
+// Used for step-up on operations a session alone must not authorise. It burns the
+// same rate-limit budget as a login: otherwise it is a password oracle that
+// answers as fast as you can ask, reachable by anyone holding a session.
+func (s *Service) VerifyUserPassword(ctx context.Context, rlKey string, u *store.User, password string) bool {
+	if !s.limiter.Allow(rlKey) {
+		return false
+	}
+	ok := false
+	if u.AuthSource == "ldap" {
+		_, err := s.ldapLogin(ctx, u, u.Username, password)
+		ok = err == nil
+	} else {
+		verified, err := VerifyPassword(password, u.PasswordHash)
+		ok = err == nil && verified
+	}
+	if !ok {
+		s.limiter.Fail(rlKey)
+	}
+	return ok
+}
+
 // mfaKey buckets 2FA attempts per account, alongside the per-IP bucket.
 func mfaKey(userID int64) string { return "mfa:" + strconv.FormatInt(userID, 10) }
 

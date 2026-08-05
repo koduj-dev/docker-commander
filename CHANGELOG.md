@@ -7,6 +7,15 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Security
+- **Pairing a new authenticator now asks for your password.** Re-pairing replaces
+  the second factor, and it needed only a session — so any session takeover (a
+  shared machine, a token pasted into a URL) became a permanent authenticator
+  takeover: the attacker pairs their own device, satisfies 2FA from then on, and
+  the owner's app quietly stops working. The password check burns the same
+  rate-limit budget a login does, so the endpoint can't be used as a password
+  oracle. A first-time enrolment is unchanged — there is no factor to replace, and
+  the first-run wizard walks straight into it.
+
 - **Changing a password now ends the sessions issued before it.** A JWT is
   self-contained, so nothing about a reset reached the copy a browser or a script
   already held: an attacker whose access prompted the reset kept it for the rest of
