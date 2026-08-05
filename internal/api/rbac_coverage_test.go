@@ -47,7 +47,8 @@ var ungatedRoutes = map[string]string{
 	"/api/auth/me/access": "own permissions overview",
 	// Own sessions only: the list is filtered by the caller's id and every
 	// revoke is scoped by it in SQL, so there is nothing here another account
-	// can reach (TestPentestSessions_OnlyOwn).
+	// can reach (TestPentestSessions_ListIsOwnOnly,
+	// TestPentestSessions_CannotRevokeAnothersSession).
 	"/api/auth/sessions":               "own sessions only",
 	"/api/auth/sessions/{id}":          "own sessions only; DELETE is scoped by user id",
 	"/api/auth/sessions/revoke-others": "own sessions only",

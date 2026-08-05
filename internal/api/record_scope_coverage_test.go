@@ -65,7 +65,7 @@ var hostParamFamilies = map[string]string{
 // for records that carry no host of their own. Anything not listed here, not in a
 // ?host= family, and not exercised by the project sweep below fails the test.
 var recordRouteDecision = map[string]string{
-	// Own tokens: a tokenIssued.Token can only ever narrow its owner's rights, and the owner
+	// Own tokens: a token can only ever narrow its owner's rights, and the owner
 	// comes from the session rather than from the path.
 	"/api/mcp/tokens/{id}": "own tokens only; ownership checked from session claims",
 	// A session belongs to an account, not to a Docker host, and the delete is

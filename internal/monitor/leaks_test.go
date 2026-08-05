@@ -70,8 +70,10 @@ func TestSendMailClosesTheConnectionWhenTheGreetingFails(t *testing.T) {
 	tlsDial = func(string, string, *tls.Config) (net.Conn, error) { return ours, nil }
 	t.Cleanup(func() { tlsDial = original })
 
-	// A server that refuses instead of greeting: smtp.NewClient reads this and
-	// gives up, leaving the connection open unless SendMail closes it.
+	// A server that refuses instead of greeting: smtp.NewClient reads this, gives
+	// up, and closes the socket itself on the way out (textproto.Conn.Close).
+	// That ownership is exactly what this pins — a refactor that dials and then
+	// runs its own handshake would own the socket instead, and leak it.
 	served := make(chan error, 1)
 	go func() {
 		if _, err := theirs.Write([]byte("500 go away\r\n")); err != nil {

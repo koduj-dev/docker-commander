@@ -273,6 +273,9 @@ function SessionsCard() {
   const dialogs = useDialogs();
 
   const load = useCallback(() => {
+    // Clear first: an error left over from a failed attempt would otherwise sit
+    // above a list that has since loaded fine, describing nothing.
+    setErr("");
     api.sessions().then(setSessions).catch((e) => setErr(e instanceof Error ? e.message : "could not load sessions"));
   }, []);
   useEffect(() => load(), [load]);
@@ -338,9 +341,14 @@ function SessionsCard() {
         that ends every session, including the one you missed.
       </p>
 
-      {err && <p className="text-sm text-danger">{err}</p>}
+      {err && (
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-danger">{err}</p>
+          <button className="btn-ghost px-2 py-1 text-sm" onClick={load}><RefreshCw className="h-3.5 w-3.5" /> Try again</button>
+        </div>
+      )}
       {!sessions ? (
-        <div className="flex items-center gap-2 text-muted text-sm"><Spinner /> Loading…</div>
+        !err && <div className="flex items-center gap-2 text-muted text-sm"><Spinner /> Loading…</div>
       ) : (
         <ul className="divide-y divide-border/60">
           {sessions.map((s) => (

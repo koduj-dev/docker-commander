@@ -86,6 +86,18 @@ describe("Settings save feedback", () => {
     expect(container.textContent).not.toContain("Saved.");
   });
 
+  it("shows a failed save in the failure colour, not the success one", async () => {
+    setSettings.mockRejectedValue(new Error("server said no"));
+    await act(async () => saveButton().click());
+
+    const msg = [...container.querySelectorAll("span")].find((s) => s.textContent?.includes("Save failed"));
+    expect(msg).toBeTruthy();
+    // Green for a save that did not happen is worse than no message: it tells the
+    // admin the setting is live when it is not.
+    expect(msg!.className).toContain("text-danger");
+    expect(msg!.className).not.toContain("text-ok");
+  });
+
   it("gives Security its own wording, which stays out of Features", async () => {
     await act(async () => tab("Security").click());
     await act(async () => saveButton().click());

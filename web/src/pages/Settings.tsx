@@ -22,7 +22,9 @@ export function Settings() {
   // (one settings payload), so a single message string meant pressing Save under
   // Features also lit up the 2FA card in Security — with Features' wording, which
   // is about nav changes and says nothing true about the exemption.
-  const [msg, setMsg] = useState<{ scope: Tab; text: string } | null>(null);
+  // ok as well as scope: a failure rendered in the success colour is worse than
+  // no message at all — it says the setting was saved when it wasn't.
+  const [msg, setMsg] = useState<{ scope: Tab; ok: boolean; text: string } | null>(null);
   const [tab, setTab] = useState<Tab>("features");
 
   const load = useCallback(() => {
@@ -39,9 +41,9 @@ export function Settings() {
     setBusy(true); setMsg(null);
     try {
       await api.setSettings({ disabledSections: [...disabled], localhostNo2fa: no2fa });
-      setMsg({ scope, text: okText });
-    } catch {
-      setMsg({ scope, text: "Save failed" });
+      setMsg({ scope, ok: true, text: okText });
+    } catch (e) {
+      setMsg({ scope, ok: false, text: e instanceof Error ? `Save failed: ${e.message}` : "Save failed" });
     } finally { setBusy(false); }
   };
 
@@ -83,7 +85,7 @@ export function Settings() {
                 })}
               </div>
               <div className="flex items-center justify-end gap-3 pt-1">
-                {msg?.scope === "features" && <span className="text-sm text-ok">{msg.text}</span>}
+                {msg?.scope === "features" && <span className={clsx("text-sm", msg.ok ? "text-ok" : "text-danger")}>{msg.text}</span>}
                 <button
                   className="btn-primary"
                   onClick={() => save("features", "Saved. Users may need to reload for nav changes to apply.")}
@@ -106,7 +108,7 @@ export function Settings() {
                 </span>
               </label>
               <div className="flex items-center justify-end gap-3 pt-1">
-                {msg?.scope === "security" && <span className="text-sm text-ok">{msg.text}</span>}
+                {msg?.scope === "security" && <span className={clsx("text-sm", msg.ok ? "text-ok" : "text-danger")}>{msg.text}</span>}
                 <button
                   className="btn-primary"
                   onClick={() => save("security", "Saved. It applies to the next sign-in.")}

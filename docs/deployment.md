@@ -342,8 +342,8 @@ wholesale, and nothing enforces this: restoring underneath a live process leaves
 it holding a database that no longer exists. Restore also refuses to overwrite an
 existing installation unless `--force`, so a mistyped path can't destroy an
 instance by accident. Archive entries are jailed to the data dir, so a tampered
-backup can't write elsewhere on the filesystem — including through a **symlink**,
-whose target is checked as well.
+backup can't write elsewhere on the filesystem, and a **symlink** entry is
+refused outright rather than inspected — see below.
 
 > **Symbolic links are not backed up — and the backup says so.** If something in
 > the data dir is a link (`projects/` pointed at a bigger disk, say), neither the
