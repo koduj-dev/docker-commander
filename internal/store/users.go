@@ -37,8 +37,13 @@ type User struct {
 	// nothing, and clearing it eagerly would mean a cancel path that can itself
 	// fail. Do not treat its presence as "a pairing is in progress".
 	TOTPPending string
-	CreatedAt   time.Time
-	LastLoginAt time.Time
+	// TOTPLastCounter is the last 30-second time step whose code was accepted.
+	// A code is only valid once: within its window it would otherwise work
+	// repeatedly, so one shoulder-surfed or phished code could be spent several
+	// times — and the challenge token it satisfies lives for five minutes.
+	TOTPLastCounter int64
+	CreatedAt       time.Time
+	LastLoginAt     time.Time
 }
 
 // IsAdmin reports whether the user has the admin role.
@@ -49,6 +54,36 @@ func (s *Store) CountUsers(ctx context.Context) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n)
 	return n, err
+}
+
+// CreateFirstUser inserts the first account, and only the first.
+//
+// Setup is otherwise a check-then-act: NeedsSetup counts, the handler validates,
+// and the insert happens later — so two requests arriving together can both pass
+// the count and both create an admin. The window is small but the payoff is
+// permanent admin on a fresh instance, and a fresh instance is exactly what is
+// reachable before anyone is watching. The condition therefore lives in the INSERT
+// itself, where SQLite settles it: zero rows affected means somebody else was
+// first.
+func (s *Store) CreateFirstUser(ctx context.Context, u *User) (int64, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := s.db.ExecContext(ctx, `
+		INSERT INTO users (username, password_hash, role, email, totp_secret, totp_enabled, read_only, sections, auth_source, created_at)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+		WHERE NOT EXISTS (SELECT 1 FROM users)`,
+		u.Username, u.PasswordHash, orDefault(u.Role, "admin"), strings.TrimSpace(u.Email), u.TOTPSecret, boolToInt(u.TOTPEnabled),
+		boolToInt(u.ReadOnly), marshalSections(u.Sections), orDefault(u.AuthSource, "local"), now)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if n == 0 {
+		return 0, ErrSetupTaken
+	}
+	return res.LastInsertId()
 }
 
 // CreateUser inserts a new account and returns its assigned ID.
@@ -68,7 +103,7 @@ func (s *Store) CreateUser(ctx context.Context, u *User) (int64, error) {
 // ListUsers returns all accounts (without secrets) for the admin user manager.
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, username, password_hash, role, email, totp_secret, totp_enabled, totp_pending, read_only, sections, auth_source, created_at, last_login_at
+		SELECT id, username, password_hash, role, email, totp_secret, totp_enabled, totp_pending, totp_last_counter, read_only, sections, auth_source, created_at, last_login_at
 		FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
@@ -108,14 +143,14 @@ func (s *Store) UpdateUserAccess(ctx context.Context, id int64, role string, rea
 // UserByUsername looks up a user by their unique username.
 func (s *Store) UserByUsername(ctx context.Context, username string) (*User, error) {
 	return scanUserRow(s.db.QueryRowContext(ctx, `
-		SELECT id, username, password_hash, role, email, totp_secret, totp_enabled, totp_pending, read_only, sections, auth_source, created_at, last_login_at
+		SELECT id, username, password_hash, role, email, totp_secret, totp_enabled, totp_pending, totp_last_counter, read_only, sections, auth_source, created_at, last_login_at
 		FROM users WHERE username = ?`, username))
 }
 
 // UserByID looks up a user by primary key.
 func (s *Store) UserByID(ctx context.Context, id int64) (*User, error) {
 	return scanUserRow(s.db.QueryRowContext(ctx, `
-		SELECT id, username, password_hash, role, email, totp_secret, totp_enabled, totp_pending, read_only, sections, auth_source, created_at, last_login_at
+		SELECT id, username, password_hash, role, email, totp_secret, totp_enabled, totp_pending, totp_last_counter, read_only, sections, auth_source, created_at, last_login_at
 		FROM users WHERE id = ?`, id))
 }
 
@@ -166,7 +201,7 @@ func scanUserRow(row scanner) (*User, error) {
 	var enabled, readOnly int
 	var sections, createdAt, lastLogin string
 	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.Email, &u.TOTPSecret, &enabled,
-		&u.TOTPPending, &readOnly, &sections, &u.AuthSource, &createdAt, &lastLogin)
+		&u.TOTPPending, &u.TOTPLastCounter, &readOnly, &sections, &u.AuthSource, &createdAt, &lastLogin)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -253,4 +288,16 @@ func unmarshalIDs(raw string) []int64 {
 	var out []int64
 	_ = json.Unmarshal([]byte(raw), &out)
 	return out
+}
+
+// SetTOTPLastCounter records the time step whose code was just accepted, so the
+// same code cannot be presented again while it is still inside its window.
+//
+// Written with a `>` guard rather than a plain assignment: two requests carrying
+// the same code can race here, and the loser must not be able to move the
+// watermark backwards.
+func (s *Store) SetTOTPLastCounter(ctx context.Context, userID, counter int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET totp_last_counter = ? WHERE id = ? AND totp_last_counter < ?`, counter, userID, counter)
+	return err
 }

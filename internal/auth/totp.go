@@ -2,6 +2,7 @@ package auth
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"encoding/base64"
 	"image/png"
 	"time"
@@ -48,14 +49,52 @@ func GenerateTOTP(accountName string) (*Enrollment, error) {
 	}, nil
 }
 
+// totpPeriod is the TOTP time step in seconds. A code is valid for one step,
+// plus one either side to tolerate clock drift (see totpSkew).
+const totpPeriod = 30
+
+// totpSkew is how many steps either side of "now" are accepted.
+const totpSkew = 1
+
+var totpOpts = totp.ValidateOpts{
+	Period:    totpPeriod,
+	Skew:      totpSkew,
+	Digits:    otp.DigitsSix,
+	Algorithm: otp.AlgorithmSHA1,
+}
+
 // ValidateTOTP reports whether code is currently valid for secret. A small
 // skew window is allowed to tolerate clock drift between server and device.
+//
+// Prefer MatchTOTP where a replay matters: this answers "is it valid", which
+// stays true for the whole window, so the same code keeps working until it
+// expires.
 func ValidateTOTP(code, secret string) bool {
-	valid, err := totp.ValidateCustom(code, secret, time.Now().UTC(), totp.ValidateOpts{
-		Period:    30,
-		Skew:      1,
-		Digits:    otp.DigitsSix,
-		Algorithm: otp.AlgorithmSHA1,
-	})
+	valid, err := totp.ValidateCustom(code, secret, time.Now().UTC(), totpOpts)
 	return err == nil && valid
+}
+
+// MatchTOTP reports whether code is valid and, if so, which time step produced
+// it — so the caller can refuse to accept that step a second time.
+//
+// The library's own validation only answers yes/no, and "yes" holds for the whole
+// ~90-second window. That makes a single observed code (shoulder-surfed, phished
+// through a proxy, screenshotted by malware) spendable more than once, which is
+// precisely what a one-time password is supposed to prevent.
+//
+// It re-derives the code for each step in the skew window and compares in
+// constant time, so a wrong code leaks nothing about how wrong it was.
+func MatchTOTP(code, secret string) (counter int64, ok bool) {
+	now := time.Now().UTC()
+	for delta := -totpSkew; delta <= totpSkew; delta++ {
+		at := now.Add(time.Duration(delta*totpPeriod) * time.Second)
+		want, err := totp.GenerateCodeCustom(secret, at, totpOpts)
+		if err != nil {
+			continue
+		}
+		if subtle.ConstantTimeCompare([]byte(want), []byte(code)) == 1 {
+			return at.Unix() / totpPeriod, true
+		}
+	}
+	return 0, false
 }
