@@ -146,14 +146,18 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
   const { user } = useAuth();
   const [enr, setEnr] = useState<Enrollment | null>(null);
   const [code, setCode] = useState("");
+  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState<"" | "start" | "confirm">("");
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const start = async () => {
+  const start = async (e?: React.FormEvent) => {
+    e?.preventDefault();
     setBusy("start"); setMsg(null);
     try {
-      setEnr(await api.totpSetup());
-      setCode("");
+      // Re-pairing replaces the second factor, so the server asks for the
+      // password; a first enrolment has no factor to replace and sends none.
+      setEnr(await api.totpSetup(user?.totpEnabled ? password : undefined));
+      setCode(""); setPassword("");
     } catch (e) {
       setMsg({ ok: false, text: e instanceof Error ? e.message : "could not start" });
     } finally { setBusy(""); }
@@ -186,17 +190,33 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
           // Button first, hint underneath — the two used to share a flex row, which
           // centred the button against a wrapping two-line sentence and read as a
           // misalignment. This matches how hints sit under controls elsewhere.
-          <div className="space-y-1.5">
-            <button className="btn-ghost px-3 py-1.5 text-sm" onClick={start} disabled={busy === "start"}>
+          <form className="space-y-1.5" onSubmit={start}>
+            {user?.totpEnabled && (
+              <div className="max-w-xs space-y-1">
+                <label className="label" htmlFor="repair-password">Your password</label>
+                <input
+                  id="repair-password"
+                  className="input"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(ev) => setPassword(ev.target.value)}
+                  required
+                />
+              </div>
+            )}
+            <button className="btn-ghost px-3 py-1.5 text-sm" type="submit" disabled={busy === "start"}>
               {busy === "start" ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               {user?.totpEnabled ? "Pair a new authenticator" : "Set up 2FA"}
             </button>
             {user?.totpEnabled && (
               <p className="text-xs text-muted">
-                Your current authenticator keeps working until you finish pairing the new one.
+                Your password is required because pairing replaces your second factor — a
+                stolen session alone must not be able to do it. Your current authenticator
+                keeps working until you finish pairing the new one.
               </p>
             )}
-          </div>
+          </form>
         )}
 
         {enr && (

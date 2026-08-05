@@ -169,7 +169,10 @@ regardless of permissions:
   LDAP, when the account was created and last used, and your **alert e-mail**.
 - **Security** — 2FA status, and **Pair a new authenticator** for a new phone.
   Starting that flow is safe: the authenticator you already have keeps working
-  until you enter a code from the new one, so cancelling changes nothing.
+  until you enter a code from the new one, so cancelling changes nothing. Once 2FA
+  is on, pairing asks for your **password** — it replaces your second factor, so a
+  session on its own must not be enough to do it. A first-time setup doesn't ask,
+  because there is no factor to replace.
 - **Access** — the roles you hold, plus every section you can reach (**You can**),
   on which hosts (**Where**) and which role granted it (**Granted by**). Handy for
   answering "why can I see this?" — or "why can't I?" — without an admin.

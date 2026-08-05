@@ -211,7 +211,9 @@ export const api = {
   setLdap: (c: LdapConfig & { bindPassword?: string }) => req<{ ok: boolean }>("PUT", "/api/ldap", ldapPayload(c)),
   testLdap: (c: LdapConfig & { bindPassword?: string }) =>
     req<{ ok: boolean; error?: string; entries?: number }>("POST", "/api/ldap/test", ldapPayload(c)),
-  totpSetup: () => req<Enrollment>("POST", "/api/auth/totp/setup"),
+  // password is required only when re-pairing (an authenticator already
+  // works); a first enrolment sends none.
+  totpSetup: (password?: string) => req<Enrollment>("POST", "/api/auth/totp/setup", password === undefined ? undefined : { password }),
   totpEnable: (code: string) => req<{ ok: boolean }>("POST", "/api/auth/totp/enable", { code }),
 
   // Host management
