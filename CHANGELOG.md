@@ -41,9 +41,12 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ### Added
 - **See what is signed in as you, and end it.** *Profile → Security* now lists every
-  live session for your account — address, browser, when it was last used, with the
-  one you are using marked — and lets you sign out any of them, or all the others
-  at once. Until now a session could only be ended by waiting for it to expire or
+  live session for your account — the device, the address, when it was last used and
+  when it signed in, with the one you are using marked — and lets you sign out any of
+  them, or all the others at once. Each row names the client (*Firefox on Linux*,
+  *Safari on iPhone*, *curl*) with an icon for the kind of device, because the
+  question this screen answers is "is that me?" and a raw user-agent string does not
+  answer it. An agent we cannot place is shown verbatim rather than guessed at. Until now a session could only be ended by waiting for it to expire or
   by changing your password, and there was nowhere to look to find out one existed.
 
   Own sessions only, deliberately: an admin view over everyone's would be a record

@@ -40,6 +40,11 @@ vi.mock("../auth/AuthContext", () => ({
 const THIS_ONE = "sess-current";
 const OTHER = "sess-laptop";
 
+// Real agent strings: the card runs them through describeClient, and a made-up
+// "Firefox on Linux" would sail past a parser that does nothing.
+const UA_FIREFOX = "Mozilla/5.0 (X11; Linux x86_64; rv:127.0) Gecko/20100101 Firefox/127.0";
+const UA_IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
+
 let container: HTMLDivElement;
 let root: Root | undefined;
 
@@ -101,11 +106,11 @@ beforeEach(async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   sessions.mockResolvedValue([
     {
-      id: THIS_ONE, ip: "10.0.0.9", userAgent: "Firefox on Linux",
+      id: THIS_ONE, ip: "10.0.0.9", userAgent: UA_FIREFOX,
       createdAt: "2026-08-05T09:00:00Z", lastSeenAt: "2026-08-05T10:00:00Z", current: true,
     },
     {
-      id: OTHER, ip: "203.0.113.7", userAgent: "Safari on iPhone",
+      id: OTHER, ip: "203.0.113.7", userAgent: UA_IPHONE,
       createdAt: "2026-08-01T09:00:00Z", lastSeenAt: "2026-08-04T18:00:00Z", current: false,
     },
   ]);
@@ -127,7 +132,7 @@ describe("Profile → Security → signed-in sessions", () => {
     expect(container.textContent).toContain("Firefox on Linux");
     expect(container.textContent).toContain("Safari on iPhone");
     expect(container.textContent).toContain("203.0.113.7");
-    expect(container.textContent).toContain("this one");
+    expect(container.textContent).toContain("this device");
   });
 
   it("asks before revoking, and does nothing if you say no", async () => {
@@ -168,7 +173,7 @@ describe("Profile → Security → signed-in sessions", () => {
     // One session left: nothing else to sign out, so the button goes away.
     sessions.mockResolvedValue([
       {
-        id: THIS_ONE, ip: "10.0.0.9", userAgent: "Firefox on Linux",
+        id: THIS_ONE, ip: "10.0.0.9", userAgent: UA_FIREFOX,
         createdAt: "2026-08-05T09:00:00Z", lastSeenAt: "2026-08-05T10:00:00Z", current: true,
       },
     ]);
@@ -190,7 +195,7 @@ describe("Profile → Security → signed-in sessions", () => {
 
     sessions.mockResolvedValue([
       {
-        id: THIS_ONE, ip: "10.0.0.9", userAgent: "Firefox on Linux",
+        id: THIS_ONE, ip: "10.0.0.9", userAgent: UA_FIREFOX,
         createdAt: "2026-08-05T09:00:00Z", lastSeenAt: "2026-08-05T10:00:00Z", current: true,
       },
     ]);

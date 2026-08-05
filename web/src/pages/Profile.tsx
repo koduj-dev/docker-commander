@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, Mail, ShieldCheck, IdCard, KeyRound, Check, RefreshCw, X , SlidersHorizontal, Monitor, LogOut } from "lucide-react";
+import { Loader2, Mail, ShieldCheck, IdCard, KeyRound, Check, RefreshCw, X, SlidersHorizontal, Monitor, LogOut, Smartphone, Tablet, Terminal as TerminalIcon, HelpCircle } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import type { Enrollment } from "../lib/api";
@@ -11,6 +11,7 @@ import { getPref, setPref } from "../lib/prefs";
 import { EmptyState, Spinner } from "../components/ui";
 import { useAuth } from "../auth/AuthContext";
 import { useDialogs } from "../components/Dialog";
+import { describeClient, sinceLabel, type ClientKind } from "../lib/userAgent";
 
 type Tab = "account" | "security" | "access" | "prefs";
 
@@ -178,7 +179,11 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
   };
 
   return (
-    <div className="space-y-4 max-w-2xl">
+    // Sessions first: it is the part of this page you come to *read* — the 2FA
+    // card is a control you touch when something changes.
+    <div className="grid gap-4 xl:grid-cols-2 items-start">
+      <SessionsCard />
+
       <div className="card p-5 space-y-3">
         <div className="flex items-center gap-2 font-medium"><ShieldCheck className="h-4 w-4 text-accent" /> Two-factor authentication</div>
         <Field label="Status">
@@ -253,8 +258,6 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
         )}
         {!enr && msg && <p className={clsx("text-sm", msg.ok ? "text-ok" : "text-danger")}>{msg.text}</p>}
       </div>
-
-      <SessionsCard />
     </div>
   );
 }
@@ -326,20 +329,18 @@ function SessionsCard() {
   const others = (sessions ?? []).filter((s) => !s.current).length;
 
   return (
-    <div className="card p-5 space-y-3">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 font-medium"><Monitor className="h-4 w-4 text-accent" /> Signed in</div>
-        {others > 0 && (
-          <button className="btn-ghost px-3 py-1.5 text-sm" onClick={revokeOthers} disabled={busy !== ""}>
-            {busy === "others" ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
-            Sign out everywhere else
-          </button>
-        )}
+    <div className="card p-5 space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2 font-medium"><Monitor className="h-4 w-4 text-accent" /> Signed in</div>
+          <p className="text-xs text-muted mt-1 max-w-md">
+            Every browser and device holding a live session for your account. Only you can see this list.
+          </p>
+        </div>
+        <button className="btn-ghost px-2 py-1.5 text-sm shrink-0" onClick={load} disabled={busy !== ""} title="Refresh">
+          <RefreshCw className="h-4 w-4" />
+        </button>
       </div>
-      <p className="text-xs text-muted">
-        Only you can see this. If something here isn&apos;t you, sign it out and change your password —
-        that ends every session, including the one you missed.
-      </p>
 
       {err && (
         <div className="flex items-center gap-3">
@@ -350,31 +351,96 @@ function SessionsCard() {
       {!sessions ? (
         !err && <div className="flex items-center gap-2 text-muted text-sm"><Spinner /> Loading…</div>
       ) : (
-        <ul className="divide-y divide-border/60">
+        // Capped rather than unbounded: a long-lived account accumulates sessions,
+        // and pushing the "change your password" advice off the bottom of the card
+        // would hide the one instruction that ends all of them.
+        <ul className="space-y-2 max-h-[26rem] overflow-y-auto pr-1">
           {sessions.map((s) => (
-            <li key={s.id} className="flex items-center justify-between gap-3 py-2">
-              <div className="min-w-0">
-                <div className="text-sm flex items-center gap-2">
-                  <span className="truncate">{s.userAgent || "unknown browser"}</span>
-                  {s.current && <span className="text-[10px] uppercase tracking-wide text-ok border border-ok/40 rounded px-1">this one</span>}
-                </div>
-                <div className="text-xs text-muted font-mono">
-                  {s.ip || "—"} · last used {new Date(s.lastSeenAt).toLocaleString()}
-                </div>
-              </div>
-              <button
-                className="btn-ghost px-2 py-1 text-danger"
-                onClick={() => revoke(s)}
-                disabled={busy !== ""}
-                title={s.current ? "Sign out here" : "Sign this session out"}
-              >
-                {busy === s.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
-              </button>
-            </li>
+            <SessionRow
+              key={s.id}
+              session={s}
+              busy={busy === s.id}
+              disabled={busy !== ""}
+              onRevoke={() => revoke(s)}
+            />
           ))}
         </ul>
       )}
+
+      <div className="flex items-center justify-between gap-3 border-t border-border pt-3">
+        <p className="text-xs text-muted max-w-md">
+          If something here isn&apos;t you, sign it out and <strong className="text-text">change your password</strong> —
+          that ends every session at once, including the one you missed.
+        </p>
+        {others > 0 && (
+          <button className="btn-ghost px-3 py-1.5 text-sm shrink-0" onClick={revokeOthers} disabled={busy !== ""}>
+            {busy === "others" ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
+            Sign out everywhere else
+          </button>
+        )}
+      </div>
     </div>
+  );
+}
+
+// deviceIcon picks the glyph for a parsed client. A phone that looks like a phone
+// is the fastest way to answer "is that me?" — the row is scanned, not read.
+function deviceIcon(kind: ClientKind) {
+  const cls = "h-5 w-5";
+  switch (kind) {
+    case "mobile": return <Smartphone className={cls} />;
+    case "tablet": return <Tablet className={cls} />;
+    case "tool": return <TerminalIcon className={cls} />;
+    case "desktop": return <Monitor className={cls} />;
+    default: return <HelpCircle className={cls} />;
+  }
+}
+
+// SessionRow is one signed-in client. Three facts, in the order someone checks
+// them: what it is, where it is, when it was last used.
+function SessionRow({ session, busy, disabled, onRevoke }: {
+  session: Session;
+  busy: boolean;
+  disabled: boolean;
+  onRevoke: () => void;
+}) {
+  const client = describeClient(session.userAgent);
+  return (
+    <li
+      className={clsx(
+        "flex items-center gap-3 rounded-lg border p-3",
+        session.current ? "border-ok/40 bg-ok/5" : "border-border",
+      )}
+    >
+      <div className={clsx("shrink-0", session.current ? "text-ok" : "text-muted")}>{deviceIcon(client.kind)}</div>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          {/* The parse is a summary of a string the client chose; the full value
+              stays available rather than being thrown away. */}
+          <span className="truncate text-sm font-medium" title={client.raw || undefined}>{client.label}</span>
+          {session.current && (
+            <span className="shrink-0 rounded border border-ok/40 px-1 text-[10px] uppercase tracking-wide text-ok">this device</span>
+          )}
+        </div>
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted">
+          <span className="font-mono">{session.ip || "unknown address"}</span>
+          <span aria-hidden>·</span>
+          <span>last used {sinceLabel(session.lastSeenAt)}</span>
+          <span aria-hidden>·</span>
+          <span>signed in {sinceLabel(session.createdAt)}</span>
+        </div>
+      </div>
+
+      <button
+        className="btn-ghost shrink-0 px-2 py-1 text-danger"
+        onClick={onRevoke}
+        disabled={disabled}
+        title={session.current ? "Sign out here" : "Sign this session out"}
+      >
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
+      </button>
+    </li>
   );
 }
 
