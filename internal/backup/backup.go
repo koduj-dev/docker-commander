@@ -74,58 +74,78 @@ type SQLiteBackuper interface {
 	BackupTo(path string) error
 }
 
+// Report describes what a backup did and, more importantly, what it left out.
+type Report struct {
+	// Bytes is the uncompressed size of everything that went in, so an
+	// unexpectedly large data dir is visible rather than discovered later.
+	Bytes int64
+	// SkippedLinks are paths inside the data dir that are symbolic links. Their
+	// CONTENTS are not in the backup, and never were — filepath.Walk does not
+	// follow links, so the old code stored the link and silently left the data
+	// behind. Now they are skipped outright and named here, because a backup that
+	// quietly omits a directory is worse than one that refuses to.
+	SkippedLinks []string
+}
+
 // Create writes a backup of dataDir to out. When passphrase is non-empty the
 // payload is encrypted. db may be nil, in which case the database file is copied
 // as-is — only safe when the app is not running.
-func Create(dataDir, out string, db SQLiteBackuper, passphrase string) error {
+func Create(dataDir, out string, db SQLiteBackuper, passphrase string) (*Report, error) {
 	tmpDir, err := os.MkdirTemp("", "dc-backup-*")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer os.RemoveAll(tmpDir)
+	rep := &Report{}
 
 	// 1. Consistent database snapshot.
 	dbSnapshot := filepath.Join(tmpDir, dbFileName)
 	if db != nil {
 		if err := db.BackupTo(dbSnapshot); err != nil {
-			return fmt.Errorf("snapshot database: %w", err)
+			return nil, fmt.Errorf("snapshot database: %w", err)
 		}
 	} else {
 		if err := copyFile(filepath.Join(dataDir, dbFileName), dbSnapshot); err != nil {
-			return fmt.Errorf("copy database: %w", err)
+			return nil, fmt.Errorf("copy database: %w", err)
 		}
 	}
 
 	// 2. Build the tar.gz payload in memory-free streaming fashion to a temp file.
 	payload := filepath.Join(tmpDir, "payload.tgz")
-	if err := writeArchive(payload, dataDir, dbSnapshot); err != nil {
-		return err
+	if err := writeArchive(payload, dataDir, dbSnapshot, rep); err != nil {
+		return nil, err
 	}
 
 	// 3. Emit, encrypting if asked. 0600 either way: even encrypted, this file is
 	// the whole installation.
 	f, err := os.OpenFile(out, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer f.Close()
 	if _, err := f.Write(magic); err != nil {
-		return err
+		return nil, err
 	}
 	if passphrase == "" {
 		if _, err := f.Write([]byte{flagPlain}); err != nil {
-			return err
+			return nil, err
 		}
-		return streamFile(payload, f)
+		if err := streamFile(payload, f); err != nil {
+			return nil, err
+		}
+		return rep, nil
 	}
 	if _, err := f.Write([]byte{flagEncrypted}); err != nil {
-		return err
+		return nil, err
 	}
-	return encryptTo(payload, f, passphrase)
+	if err := encryptTo(payload, f, passphrase); err != nil {
+		return nil, err
+	}
+	return rep, nil
 }
 
 // writeArchive tars the database snapshot and the data directories.
-func writeArchive(out, dataDir, dbSnapshot string) error {
+func writeArchive(out, dataDir, dbSnapshot string, rep *Report) error {
 	f, err := os.Create(out)
 	if err != nil {
 		return err
@@ -142,7 +162,7 @@ func writeArchive(out, dataDir, dbSnapshot string) error {
 		if _, err := os.Stat(src); os.IsNotExist(err) {
 			continue // nothing created yet
 		}
-		if err := addTree(tw, src, dir); err != nil {
+		if err := addTree(tw, src, dir, rep); err != nil {
 			return err
 		}
 	}
@@ -152,7 +172,7 @@ func writeArchive(out, dataDir, dbSnapshot string) error {
 	return gz.Close()
 }
 
-func addTree(tw *tar.Writer, root, prefix string) error {
+func addTree(tw *tar.Writer, root, prefix string, rep *Report) error {
 	return filepath.Walk(root, func(p string, fi os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -164,7 +184,19 @@ func addTree(tw *tar.Writer, root, prefix string) error {
 		if rel == "." {
 			return nil
 		}
-		return addOne(tw, p, filepath.ToSlash(filepath.Join(prefix, rel)), fi)
+		name := filepath.ToSlash(filepath.Join(prefix, rel))
+		if fi.Mode()&os.ModeSymlink != 0 {
+			// Skipped, not stored. Walk never descends into a link, so its contents
+			// were never in the archive — storing the link itself only made the
+			// backup look complete. Naming it is the useful part: whoever pointed
+			// projects/ at another disk has to back that up themselves.
+			rep.SkippedLinks = append(rep.SkippedLinks, name)
+			return nil
+		}
+		if fi.Mode().IsRegular() {
+			rep.Bytes += fi.Size()
+		}
+		return addOne(tw, p, name, fi)
 	})
 }
 
@@ -176,19 +208,14 @@ func addFile(tw *tar.Writer, path, name string) error {
 	return addOne(tw, path, name, fi)
 }
 
-// addOne writes one entry. Symlinks are stored as links and never followed, so a
-// link inside a project can't pull an arbitrary file into the archive.
+// addOne writes one regular file or directory entry.
 func addOne(tw *tar.Writer, path, name string, fi os.FileInfo) error {
-	var link string
-	if fi.Mode()&os.ModeSymlink != 0 {
-		var err error
-		if link, err = os.Readlink(path); err != nil {
-			return err
-		}
-	} else if !fi.Mode().IsRegular() && !fi.IsDir() {
-		return nil // sockets, devices, fifos: nothing to restore
+	if !fi.Mode().IsRegular() && !fi.IsDir() {
+		// Sockets, devices, fifos: nothing to restore. Symlinks are filtered out
+		// by the caller, which records them in the report.
+		return nil
 	}
-	hdr, err := tar.FileInfoHeader(fi, link)
+	hdr, err := tar.FileInfoHeader(fi, "")
 	if err != nil {
 		return err
 	}
@@ -294,25 +321,13 @@ func extract(r io.Reader, dataDir string) error {
 				return err
 			}
 		case tar.TypeSymlink:
-			// An ABSOLUTE target has to be refused before the join, because
-			// filepath.Join(dir, "/etc/cron.d") is dir/etc/cron.d — Join treats it
-			// as a relative component — so the jailed form looks safe while
-			// os.Symlink below would store the original absolute path.
-			if filepath.IsAbs(hdr.Linkname) || strings.HasPrefix(hdr.Linkname, "/") {
-				return fmt.Errorf("backup: refusing symlink %q → %q: absolute targets are not restorable", hdr.Name, hdr.Linkname)
-			}
-			// The link target is jailed as well: a symlink pointing out of the data
-			// dir would let a later write escape it.
-			if _, err := safeJoin(root, filepath.Join(filepath.Dir(hdr.Name), hdr.Linkname)); err != nil {
-				return fmt.Errorf("backup: refusing symlink %q → %q which escapes the data dir", hdr.Name, hdr.Linkname)
-			}
-			if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
-				return err
-			}
-			_ = os.Remove(dest)
-			if err := os.Symlink(hdr.Linkname, dest); err != nil {
-				return err
-			}
+			// Refused outright. Backups no longer contain symlinks — they are
+			// skipped and reported at creation — so one here is either from an
+			// older archive or from someone crafting it. Either way a symlink is a
+			// write path: restoring one and then writing "through" it is how an
+			// archive escapes the data dir, and the cheapest way not to have that
+			// class of bug is not to create links at all.
+			return fmt.Errorf("backup: refusing symlink entry %q → %q: backups do not carry symlinks", hdr.Name, hdr.Linkname)
 		case tar.TypeReg:
 			if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
 				return err

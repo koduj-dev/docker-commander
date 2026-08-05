@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -53,7 +54,7 @@ func TestBackupRestoreRoundTrip(t *testing.T) {
 	src := seedDataDir(t)
 	archive := filepath.Join(t.TempDir(), "b.tar.gz")
 
-	if err := Create(src, archive, fakeDB{"SNAPSHOT-DB"}, ""); err != nil {
+	if _, err := Create(src, archive, fakeDB{"SNAPSHOT-DB"}, ""); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	dst := filepath.Join(t.TempDir(), "restored")
@@ -81,7 +82,7 @@ func TestBackupRestoreRoundTrip_Encrypted(t *testing.T) {
 	src := seedDataDir(t)
 	archive := filepath.Join(t.TempDir(), "b.enc")
 
-	if err := Create(src, archive, fakeDB{"SNAPSHOT-DB"}, "correct horse battery"); err != nil {
+	if _, err := Create(src, archive, fakeDB{"SNAPSHOT-DB"}, "correct horse battery"); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	// The payload must not be readable without the passphrase.
@@ -107,7 +108,7 @@ func TestBackupRestoreRoundTrip_Encrypted(t *testing.T) {
 func TestPentestWrongPassphraseFails(t *testing.T) {
 	src := seedDataDir(t)
 	archive := filepath.Join(t.TempDir(), "b.enc")
-	if err := Create(src, archive, fakeDB{"DB"}, "right"); err != nil {
+	if _, err := Create(src, archive, fakeDB{"DB"}, "right"); err != nil {
 		t.Fatal(err)
 	}
 	dst := filepath.Join(t.TempDir(), "restored")
@@ -128,7 +129,7 @@ func TestPentestWrongPassphraseFails(t *testing.T) {
 func TestPentestEncryptedArchiveNeedsPassphrase(t *testing.T) {
 	src := seedDataDir(t)
 	archive := filepath.Join(t.TempDir(), "b.enc")
-	if err := Create(src, archive, fakeDB{"DB"}, "pw"); err != nil {
+	if _, err := Create(src, archive, fakeDB{"DB"}, "pw"); err != nil {
 		t.Fatal(err)
 	}
 	if err := Restore(archive, filepath.Join(t.TempDir(), "r"), "", false); !errors.Is(err, ErrPassphraseRequired) {
@@ -140,7 +141,7 @@ func TestPentestEncryptedArchiveNeedsPassphrase(t *testing.T) {
 func TestPentestTamperedArchiveRejected(t *testing.T) {
 	src := seedDataDir(t)
 	archive := filepath.Join(t.TempDir(), "b.enc")
-	if err := Create(src, archive, fakeDB{"DB"}, "pw"); err != nil {
+	if _, err := Create(src, archive, fakeDB{"DB"}, "pw"); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(archive)
@@ -169,7 +170,7 @@ func TestRestoreRefusesUnrelatedFile(t *testing.T) {
 func TestRestoreRefusesExistingInstallation(t *testing.T) {
 	src := seedDataDir(t)
 	archive := filepath.Join(t.TempDir(), "b.tar.gz")
-	if err := Create(src, archive, fakeDB{"NEW"}, ""); err != nil {
+	if _, err := Create(src, archive, fakeDB{"NEW"}, ""); err != nil {
 		t.Fatal(err)
 	}
 	existing := t.TempDir()
@@ -291,7 +292,7 @@ func TestBackupFileIsPrivate(t *testing.T) {
 	src := seedDataDir(t)
 	for _, pass := range []string{"", "pw"} {
 		archive := filepath.Join(t.TempDir(), "b")
-		if err := Create(src, archive, fakeDB{"DB"}, pass); err != nil {
+		if _, err := Create(src, archive, fakeDB{"DB"}, pass); err != nil {
 			t.Fatal(err)
 		}
 		fi, err := os.Stat(archive)
@@ -309,7 +310,7 @@ func TestBackupWithNoProjects(t *testing.T) {
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, dbFileName), "DB")
 	archive := filepath.Join(t.TempDir(), "b.tar.gz")
-	if err := Create(dir, archive, fakeDB{"DB"}, ""); err != nil {
+	if _, err := Create(dir, archive, fakeDB{"DB"}, ""); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	dst := filepath.Join(t.TempDir(), "r")
@@ -325,7 +326,7 @@ func TestBackupWithNoProjects(t *testing.T) {
 func TestArchiveDropsOwnership(t *testing.T) {
 	src := seedDataDir(t)
 	archive := filepath.Join(t.TempDir(), "b.tar.gz")
-	if err := Create(src, archive, fakeDB{"DB"}, ""); err != nil {
+	if _, err := Create(src, archive, fakeDB{"DB"}, ""); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(archive)
@@ -457,4 +458,102 @@ func TestPentestWriteThroughSymlinkIsRefused(t *testing.T) {
 	if _, statErr := os.Stat(filepath.Join(victimDir, "pwn")); statErr == nil {
 		t.Fatal("SECURITY: restore wrote through a relative symlink out of the data dir")
 	}
+}
+
+// A symlink inside the data dir is not backed up, and the caller is told.
+//
+// Walk never descends into a link, so its contents were never in the archive —
+// the old code stored the link itself, which made the backup look complete while
+// quietly omitting whatever it pointed at. Someone who moved projects/ to a
+// bigger disk had a backup without their projects and no way to know.
+func TestBackupSkipsSymlinksAndReportsThem(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	src := seedDataDir(t)
+	elsewhere := t.TempDir()
+	if err := os.WriteFile(filepath.Join(elsewhere, "big.bin"), []byte("not in the backup"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(src, "projects", "moved")); err != nil {
+		t.Fatal(err)
+	}
+
+	archive := filepath.Join(t.TempDir(), "b.dcbak")
+	rep, err := Create(src, archive, fakeDB{"DB"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(rep.SkippedLinks) != 1 || rep.SkippedLinks[0] != "projects/moved" {
+		t.Errorf("the link should be named in the report, got %v", rep.SkippedLinks)
+	}
+	if rep.Bytes <= 0 {
+		t.Error("the report should carry the size of what was included")
+	}
+
+	// And the archive genuinely has no entry for it — neither the link nor the
+	// data behind it.
+	for _, name := range entryNames(t, archive) {
+		if strings.Contains(name, "moved") || strings.Contains(name, "big.bin") {
+			t.Errorf("the archive should not contain %q", name)
+		}
+	}
+}
+
+// PENTEST: backups no longer carry symlinks, so an archive containing one was
+// either crafted or predates that rule. Restoring it would recreate a write path
+// out of the data dir — the class of bug that absolute targets already exploited
+// once — so it is refused outright rather than jailed and hoped about.
+func TestPentestRestoreRefusesAnySymlinkEntry(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	base := t.TempDir()
+	dataDir := filepath.Join(base, "data")
+	archive := filepath.Join(t.TempDir(), "evil.dcbak")
+	// A perfectly well-behaved relative link, entirely inside the data dir: even
+	// this is refused, because the rule is "no links", not "no escaping links".
+	writeOrderedArchive(t, archive, []archiveEntry{
+		{name: "projects/inside", linkname: "sibling"},
+	})
+
+	if err := Restore(archive, dataDir, "", true); err == nil {
+		t.Error("SECURITY: a symlink entry was restored")
+	}
+	if _, err := os.Lstat(filepath.Join(dataDir, "projects", "inside")); err == nil {
+		t.Error("SECURITY: the symlink was created")
+	}
+}
+
+// entryNames lists the tar entries inside a plain (unencrypted) archive.
+func entryNames(t *testing.T, archive string) []string {
+	t.Helper()
+	f, err := os.Open(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	hdr := make([]byte, len(magic)+1)
+	if _, err := io.ReadFull(f, hdr); err != nil {
+		t.Fatal(err)
+	}
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gz.Close()
+	var names []string
+	tr := tar.NewReader(gz)
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		names = append(names, h.Name)
+	}
+	return names
 }
