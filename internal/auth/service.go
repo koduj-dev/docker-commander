@@ -121,7 +121,13 @@ func (s *Service) CreateAccount(ctx context.Context, username, password, role st
 	return u, nil
 }
 
-// SetPassword replaces a user's password (admin reset or self-change).
+// SetPassword replaces a user's password (admin reset or self-change) and
+// invalidates every session already issued for that account.
+//
+// Without the second half the first is half a control: a JWT is self-contained,
+// so nothing about changing the password reaches the copy an attacker already
+// holds. They would keep full access for the rest of the token's twelve hours —
+// granted by the very act meant to take it away.
 func (s *Service) SetPassword(ctx context.Context, userID int64, password string) error {
 	if len(password) < 10 {
 		return ErrWeakPassword
@@ -130,7 +136,10 @@ func (s *Service) SetPassword(ctx context.Context, userID int64, password string
 	if err != nil {
 		return err
 	}
-	return s.store.UpdatePassword(ctx, userID, hash)
+	if err := s.store.UpdatePassword(ctx, userID, hash); err != nil {
+		return err
+	}
+	return s.store.BumpSessionEpoch(ctx, userID)
 }
 
 // Login verifies username+password. If the account has TOTP enabled it returns
@@ -165,7 +174,7 @@ func (s *Service) Login(ctx context.Context, rlKey, username, password string, e
 	// exemptMFA (localhost + admin setting) issues a session straight away,
 	// even for accounts with TOTP enabled.
 	if u.TOTPEnabled && !exemptMFA {
-		tok, exp, err := s.tokens.Issue(u.ID, u.Username, u.Role, KindMFAChallenge)
+		tok, exp, err := s.tokens.Issue(u.ID, u.Username, u.Role, KindMFAChallenge, u.SessionEpoch)
 		if err != nil {
 			return nil, err
 		}
@@ -451,7 +460,7 @@ func sameIDs(a, b []int64) bool {
 }
 
 func (s *Service) issueSession(ctx context.Context, u *store.User) (*LoginResult, error) {
-	tok, exp, err := s.tokens.Issue(u.ID, u.Username, u.Role, KindSession)
+	tok, exp, err := s.tokens.Issue(u.ID, u.Username, u.Role, KindSession, u.SessionEpoch)
 	if err != nil {
 		return nil, err
 	}

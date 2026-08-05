@@ -18,10 +18,23 @@ const claimsKey ctxKey = 0
 // Bearer header (useful for API clients and tooling).
 type Middleware struct {
 	tokens *TokenManager
+	// epochs answers "is this account's session generation still the one this
+	// token was minted with". Nil disables the check, which only the narrowest
+	// unit tests do — production always wires the store.
+	epochs SessionEpochSource
 }
 
-// NewMiddleware builds auth middleware backed by the given token manager.
-func NewMiddleware(tokens *TokenManager) *Middleware { return &Middleware{tokens: tokens} }
+// SessionEpochSource reports an account's current session generation, and
+// ErrNotFound (or any error) if the account is gone.
+type SessionEpochSource interface {
+	SessionEpoch(ctx context.Context, userID int64) (int64, error)
+}
+
+// NewMiddleware builds auth middleware backed by the given token manager and the
+// source of session generations.
+func NewMiddleware(tokens *TokenManager, epochs SessionEpochSource) *Middleware {
+	return &Middleware{tokens: tokens, epochs: epochs}
+}
 
 // RequireSession wraps next, rejecting requests without a valid session token.
 func (m *Middleware) RequireSession(next http.Handler) http.Handler {
@@ -30,6 +43,21 @@ func (m *Middleware) RequireSession(next http.Handler) http.Handler {
 		if err != nil || claims.Kind != KindSession {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
+		}
+		// A JWT is self-contained, so a password change (or a deleted account)
+		// reaches nothing that is already out there. Comparing the token's epoch
+		// with the account's current one is what makes those take effect now
+		// rather than whenever the token happens to expire.
+		//
+		// It costs one indexed read per request. The alternative — trusting the
+		// token until its TTL runs out — is what lets a stolen session survive the
+		// reset performed precisely to end it.
+		if m.epochs != nil {
+			epoch, err := m.epochs.SessionEpoch(r.Context(), claims.UserID)
+			if err != nil || epoch != claims.Epoch {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
 		}
 		ctx := context.WithValue(r.Context(), claimsKey, claims)
 		next.ServeHTTP(w, r.WithContext(ctx))

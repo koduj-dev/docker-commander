@@ -392,6 +392,8 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
 		// The last TOTP counter accepted for this account, so a code cannot be
 		// replayed inside its own validity window.
 		`ALTER TABLE users ADD COLUMN totp_last_counter INTEGER NOT NULL DEFAULT 0`,
+		// Bumped when a credential change must invalidate sessions already issued.
+		`ALTER TABLE users ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 0`,
 		// Per-rule recipients. Empty keeps the previous behaviour: fall back to the
 		// instance-wide SMTP "To" (and the per-host override), so existing rules
 		// deliver exactly as before.

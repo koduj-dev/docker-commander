@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"sync"
 	"testing"
@@ -169,7 +171,7 @@ func TestRateLimiterUnit(t *testing.T) {
 func TestTokenExpiryAndTamper(t *testing.T) {
 	secret := []byte("0123456789abcdef0123456789abcdef")
 	tm := NewTokenManager(secret, time.Hour)
-	tok, _, err := tm.Issue(1, "admin", "admin", KindSession)
+	tok, _, err := tm.Issue(1, "admin", "admin", KindSession, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +186,7 @@ func TestTokenExpiryAndTamper(t *testing.T) {
 	}
 	// An already-expired token is rejected.
 	expTM := NewTokenManager(secret, -time.Hour)
-	expTok, _, _ := expTM.Issue(1, "admin", "admin", KindSession)
+	expTok, _, _ := expTM.Issue(1, "admin", "admin", KindSession, 0)
 	if _, err := tm.Parse(expTok); err == nil {
 		t.Error("expired token should be rejected")
 	}
@@ -402,5 +404,80 @@ func TestPentestSetup_ConcurrentRequestsCreateOnlyOneAdmin(t *testing.T) {
 	}
 	if n, _ := svc.store.CountUsers(ctx); n != 1 {
 		t.Errorf("SECURITY: %d accounts exist after a setup race, want 1", n)
+	}
+}
+
+// epochStore adapts the real store to the middleware's narrow interface.
+type epochStore struct{ svc *Service }
+
+func (e epochStore) SessionEpoch(ctx context.Context, userID int64) (int64, error) {
+	return e.svc.store.SessionEpoch(ctx, userID)
+}
+
+// PENTEST: a JWT is self-contained, so changing a password reaches nothing that
+// is already out there. Without a generation check the attacker whose access
+// prompted the reset keeps it for the rest of the token's twelve hours — handed
+// to them by the very act meant to take it away.
+func TestPentestSession_PasswordChangeInvalidatesIssuedTokens(t *testing.T) {
+	svc, ctx := newService(t)
+	u, err := svc.Setup(ctx, "admin", "correcthorse123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := svc.Login(ctx, "ip", "admin", "correcthorse123", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mw := NewMiddleware(svc.tokens, epochStore{svc})
+	authorized := func(token string) bool {
+		reached := false
+		h := mw.RequireSession(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { reached = true }))
+		r := httptest.NewRequest("GET", "/api/auth/me", nil)
+		r.AddCookie(&http.Cookie{Name: SessionCookie, Value: token})
+		h.ServeHTTP(httptest.NewRecorder(), r)
+		return reached
+	}
+
+	if !authorized(res.Token) {
+		t.Fatal("a fresh session should be accepted")
+	}
+	if err := svc.SetPassword(ctx, u.ID, "a-different-password"); err != nil {
+		t.Fatal(err)
+	}
+	if authorized(res.Token) {
+		t.Error("SECURITY: a session issued before the password change still works")
+	}
+
+	// And the new credentials produce a session that does work — a revocation
+	// that also breaks logging back in would be an outage, not a fix.
+	fresh, err := svc.Login(ctx, "ip", "admin", "a-different-password", false)
+	if err != nil {
+		t.Fatalf("login with the new password: %v", err)
+	}
+	if !authorized(fresh.Token) {
+		t.Error("the session issued after the change must be accepted")
+	}
+}
+
+// PENTEST: deleting an account must stop its tokens too, including on routes
+// that carry no section and therefore never reload the user.
+func TestPentestSession_DeletedAccountsTokenIsRefused(t *testing.T) {
+	svc, ctx := newService(t)
+	u, _ := svc.Setup(ctx, "admin", "correcthorse123")
+	res, _ := svc.Login(ctx, "ip", "admin", "correcthorse123", false)
+
+	mw := NewMiddleware(svc.tokens, epochStore{svc})
+	reached := false
+	h := mw.RequireSession(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { reached = true }))
+
+	if err := svc.store.DeleteUser(ctx, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("GET", "/api/prefs", nil)
+	r.AddCookie(&http.Cookie{Name: SessionCookie, Value: res.Token})
+	h.ServeHTTP(httptest.NewRecorder(), r)
+	if reached {
+		t.Error("SECURITY: a deleted account's token was accepted")
 	}
 }

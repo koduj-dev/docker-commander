@@ -25,6 +25,11 @@ type Claims struct {
 	Username string    `json:"usr"`
 	Role     string    `json:"role"`
 	Kind     TokenKind `json:"knd"`
+	// Epoch is the account's session generation when this token was minted. The
+	// middleware refuses a token whose epoch is behind the account's current one,
+	// which is how a password change takes effect immediately instead of waiting
+	// out the TTL.
+	Epoch int64 `json:"ep,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -46,7 +51,7 @@ func NewTokenManager(secret []byte, sessionTTL time.Duration) *TokenManager {
 }
 
 // Issue creates a signed token for the given user and kind.
-func (m *TokenManager) Issue(userID int64, username, role string, kind TokenKind) (string, time.Time, error) {
+func (m *TokenManager) Issue(userID int64, username, role string, kind TokenKind, epoch int64) (string, time.Time, error) {
 	ttl := m.sessionTTL
 	if kind == KindMFAChallenge {
 		ttl = m.challengeTTL
@@ -58,6 +63,7 @@ func (m *TokenManager) Issue(userID int64, username, role string, kind TokenKind
 		Username: username,
 		Role:     role,
 		Kind:     kind,
+		Epoch:    epoch,
 		RegisteredClaims: jwt.RegisteredClaims{
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(exp),

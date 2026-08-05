@@ -140,7 +140,7 @@ func newAPI(t *testing.T) *apiClient {
 	_, _ = rand.Read(secret)
 	tm := auth.NewTokenManager(secret, time.Hour)
 	dm := docker.NewManager(st)
-	srv := NewServer(config.Config{}, st, auth.NewService(st, tm), auth.NewMiddleware(tm),
+	srv := NewServer(config.Config{}, st, auth.NewService(st, tm), auth.NewMiddleware(tm, st),
 		dm, ws.NewHub(dm), monitor.New(st, dm, nil), history.Open(context.Background(), history.Config{}), nil)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
