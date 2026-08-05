@@ -110,3 +110,60 @@ func TestRedactURLKeepsSecretsOutOfDeliveryRecords(t *testing.T) {
 		t.Errorf("non-URL error = %q, want %q", got, "boom")
 	}
 }
+
+// PENTEST: the subject carries an alert rule's name, chosen by any user holding
+// the alerts section. CR/LF in that name ends the Subject header and starts
+// another one — a Reply-To pointing elsewhere, or a Content-Type that turns the
+// alert into HTML the recipient's client renders.
+//
+// The envelope is not injectable (net/smtp rejects CR/LF in MAIL/RCPT), so this
+// is header and content forgery rather than silent redirection. Quite enough.
+func TestPentestMailHeaderInjectionIsNeutralised(t *testing.T) {
+	msg := string(buildMessage(
+		"alerts@example.com",
+		"ops@example.com",
+		"CPU high\r\nReply-To: attacker@evil.test\r\nContent-Type: text/html",
+		"body text",
+	))
+
+	head, body, ok := strings.Cut(msg, "\r\n\r\n")
+	if !ok {
+		t.Fatal("message has no header/body separator")
+	}
+	// Asserted per LINE, not by substring: the flattened text still mentions
+	// "Reply-To:" inside the subject, which is harmless — what must not exist is
+	// a header line beginning with it. Searching the whole block would fail on
+	// correct output and pass on nothing useful.
+	var replyTo, contentType int
+	for _, line := range strings.Split(head, "\r\n") {
+		switch {
+		case strings.HasPrefix(strings.ToLower(line), "reply-to:"):
+			replyTo++
+		case strings.HasPrefix(strings.ToLower(line), "content-type:"):
+			contentType++
+		}
+	}
+	if replyTo != 0 {
+		t.Errorf("SECURITY: an injected Reply-To header line survived:\n%s", head)
+	}
+	if contentType != 1 {
+		t.Errorf("SECURITY: %d Content-Type header lines, want 1:\n%s", contentType, head)
+	}
+	if body != "body text" {
+		t.Errorf("body should be untouched, got %q", body)
+	}
+	// The rule name still appears, just flattened — the operator must be able to
+	// tell which rule fired.
+	if !strings.Contains(head, "CPU high") {
+		t.Errorf("the rule name should survive as text:\n%s", head)
+	}
+}
+
+// A normal subject must be passed through exactly, otherwise every alert mail
+// pays for the guard.
+func TestMailSubjectPassesThroughUnchanged(t *testing.T) {
+	msg := string(buildMessage("a@example.com", "b@example.com", "MEM critical > 90%", "x"))
+	if !strings.Contains(msg, "Subject: MEM critical > 90%\r\n") {
+		t.Errorf("subject was altered:\n%s", msg)
+	}
+}

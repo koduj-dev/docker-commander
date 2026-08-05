@@ -2,7 +2,7 @@ package api
 
 import (
 	"archive/tar"
-	"bytes"
+	"errors"
 	"io"
 	"net/http"
 	"path"
@@ -84,29 +84,25 @@ func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Buffer the upload so we know its size for the tar header.
-	data, err := io.ReadAll(io.LimitReader(r.Body, 1<<32)) // 4 GiB guard
+	// Spooled to disk rather than buffered in RAM: the tar header needs the size
+	// up front, which is the only reason the whole body was ever held.
+	content, size, err := spoolUpload(w, r, name)
 	if err != nil {
+		if errors.Is(err, errUploadTooBig) {
+			writeErr(w, http.StatusRequestEntityTooLarge, err.Error())
+			return
+		}
 		writeErr(w, http.StatusBadRequest, "read body failed")
 		return
 	}
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
-	if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(data))}); err != nil {
-		writeErr(w, http.StatusInternalServerError, "tar error")
-		return
-	}
-	if _, err := tw.Write(data); err != nil {
-		writeErr(w, http.StatusInternalServerError, "tar error")
-		return
-	}
-	tw.Close()
+	defer content.Close()
 
-	if err := s.docker.CopyTo(r.Context(), hostID, id, destDir, &buf); err != nil {
+	if err := s.docker.CopyTo(r.Context(), hostID, id, destDir, content); err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
 	s.audit(r, "container.cp.upload", id, destDir+"/"+name)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "bytes": len(data)})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "bytes": size})
 }
 
 // handleMakeDir creates a directory inside a container (?path = the new dir).

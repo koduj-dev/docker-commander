@@ -18,10 +18,34 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 )
 
-// maxExtractBytes caps both the buffered .zip upload (it needs random access)
-// and the total uncompressed output, so a small archive can't expand into an
-// unbounded tar stream (zip-bomb). .tar/.tar.gz stream straight through.
+// maxExtractBytes caps the buffered .zip upload (it needs random access) and the
+// total uncompressed output of every branch, so a small archive can't expand into
+// an unbounded write (zip/gzip bomb).
 const maxExtractBytes = 512 << 20 // 512 MiB
+
+// errArchiveTooBig is what a caller sees when an upload expands past the cap.
+var errArchiveTooBig = fmt.Errorf("archive expands beyond the %d MiB limit", maxExtractBytes>>20)
+
+// cappedReader bounds how much a stream may yield, failing loudly at the limit
+// rather than truncating — a half-extracted archive silently missing its tail is
+// worse than a refusal, because it looks like it worked.
+func cappedReader(r io.Reader) io.Reader {
+	return &limitReader{r: io.LimitReader(r, maxExtractBytes+1)}
+}
+
+type limitReader struct {
+	r io.Reader
+	n int64
+}
+
+func (l *limitReader) Read(p []byte) (int, error) {
+	n, err := l.r.Read(p)
+	l.n += int64(n)
+	if l.n > maxExtractBytes {
+		return n, errArchiveTooBig
+	}
+	return n, err
+}
 
 // archiveEntryName sanitises a zip entry path: it must be a relative path that
 // stays within the destination. Returns the cleaned name and false if the entry
@@ -193,7 +217,7 @@ func (m *Manager) UploadExtract(ctx context.Context, hostID int64, id, destDir, 
 	lower := strings.ToLower(filename)
 	switch {
 	case strings.HasSuffix(lower, ".tar"):
-		return cli.CopyToContainer(ctx, id, destDir, body, container.CopyToContainerOptions{})
+		return cli.CopyToContainer(ctx, id, destDir, cappedReader(body), container.CopyToContainerOptions{})
 
 	case strings.HasSuffix(lower, ".tar.gz"), strings.HasSuffix(lower, ".tgz"):
 		gz, err := gzip.NewReader(body)
@@ -201,7 +225,13 @@ func (m *Manager) UploadExtract(ctx context.Context, hostID int64, id, destDir, 
 			return fmt.Errorf("not a valid gzip archive: %w", err)
 		}
 		defer gz.Close()
-		return cli.CopyToContainer(ctx, id, destDir, gz, container.CopyToContainerOptions{})
+		// Capped on the DECOMPRESSED side. The upload itself is bounded, but gzip
+		// of a repetitive payload expands ~1000×, so ~10 MiB on the wire becomes
+		// ~10 GiB written into the container — i.e. onto the host's filesystem,
+		// where it fills the disk out from under every other container on it.
+		// The zip branch has always been capped this way; this one wasn't, while
+		// the comment on maxExtractBytes claimed both were.
+		return cli.CopyToContainer(ctx, id, destDir, cappedReader(gz), container.CopyToContainerOptions{})
 
 	case strings.HasSuffix(lower, ".zip"):
 		data, err := io.ReadAll(io.LimitReader(body, maxExtractBytes))
