@@ -7,6 +7,20 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **Leaving a page mid-stream could drop the whole WebSocket.** Stats and log frames
+  were written under the *subscription's* context, and the websocket library
+  registers a `context.AfterFunc` on the context given to `Write` that closes the
+  entire connection. So unsubscribing while a frame was in flight — clicking away
+  from a container whose stats are streaming — took every other subscription on that
+  socket with it, and the client saw an abrupt disconnect with no error.
+
+  Writes now run under the connection's own context; only the stream itself is
+  cancelled by an unsubscribe. This is what had been failing intermittently in CI as
+  `TestHubResubscribeDoesNotCancelTheNewSubscription` ("failed to read frame header:
+  EOF"): a loaded runner widened the window enough to hit it, and a quiet laptop
+  never did in two thousand runs. The new test reproduces it deliberately by
+  unsubscribing from a stream that never stops emitting.
+
 - **A review pass over the last few merges.** None of these were reachable as an
   attack, but each was a statement the code no longer backed up:
   - The MFA challenge is now required to carry an expiry. `exp` is optional in a

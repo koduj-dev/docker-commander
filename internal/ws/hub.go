@@ -142,20 +142,29 @@ func (c *connState) subscribe(parent context.Context, msg clientMsg) {
 	go func() {
 		defer c.finish(msg.SubID, gen)
 		var err error
+		// The STREAM runs under ctx (cancelling it is how a subscription stops),
+		// but the WRITES run under parent — the connection's own context.
+		//
+		// coder/websocket registers a context.AfterFunc on the context given to
+		// Write, and that function closes the whole connection. Writing under the
+		// subscription's context therefore meant: unsubscribe while a frame is in
+		// flight and every other subscription on that socket dies with it. Leaving a
+		// container page mid-stream is exactly that. A write must only be abortable
+		// by the connection going away, which is what parent means.
 		switch msg.Channel {
 		case "stats":
 			err = c.docker.StreamStats(ctx, msg.HostID, msg.ContainerID, func(s docker.StatsSample) {
-				c.write(ctx, serverMsg{Type: "stats", SubID: msg.SubID, Data: s})
+				c.write(parent, serverMsg{Type: "stats", SubID: msg.SubID, Data: s})
 			})
 		case "logs":
 			err = c.docker.StreamLogs(ctx, msg.HostID, msg.ContainerID, true, msg.Tail, func(l docker.LogLine) {
-				c.write(ctx, serverMsg{Type: "log", SubID: msg.SubID, Data: l})
+				c.write(parent, serverMsg{Type: "log", SubID: msg.SubID, Data: l})
 			})
 		default:
 			err = errUnknownChannel
 		}
 		if err != nil && ctx.Err() == nil {
-			c.write(ctx, serverMsg{Type: "error", SubID: msg.SubID, Message: err.Error()})
+			c.write(parent, serverMsg{Type: "error", SubID: msg.SubID, Message: err.Error()})
 		}
 	}()
 }
