@@ -45,6 +45,12 @@ var ungatedRoutes = map[string]string{
 	// Reads only the caller's own roles and grants
 	// (TestPentestMyAccess_OnlyOwnData).
 	"/api/auth/me/access": "own permissions overview",
+	// Own sessions only: the list is filtered by the caller's id and every
+	// revoke is scoped by it in SQL, so there is nothing here another account
+	// can reach (TestPentestSessions_OnlyOwn).
+	"/api/auth/sessions":               "own sessions only",
+	"/api/auth/sessions/{id}":          "own sessions only; DELETE is scoped by user id",
+	"/api/auth/sessions/revoke-others": "own sessions only",
 	// Self-service MCP tokens: a token can only narrow its owner's own rights.
 	"/api/mcp/status":      "own MCP availability",
 	"/api/mcp/tokens":      "own tokens only",

@@ -25,9 +25,13 @@ type Middleware struct {
 }
 
 // SessionEpochSource reports an account's current session generation, and
-// ErrNotFound (or any error) if the account is gone.
+// ErrNotFound (or any error) if the account is gone. It also answers whether a
+// particular session is still recorded, which is what makes revoking one from
+// the profile take effect against a self-contained token.
 type SessionEpochSource interface {
 	SessionEpoch(ctx context.Context, userID int64) (int64, error)
+	SessionExists(ctx context.Context, id string, userID int64) (bool, error)
+	TouchSession(ctx context.Context, id string) error
 }
 
 // NewMiddleware builds auth middleware backed by the given token manager and the
@@ -58,6 +62,21 @@ func (m *Middleware) RequireSession(next http.Handler) http.Handler {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
+			// And the session itself must still exist. Revoking one from the
+			// profile deletes its row, which is what stops the token — there is
+			// nothing else to stop, since the token is self-contained.
+			//
+			// A token minted before sessions were recorded has no row and is
+			// refused: everyone signs in once after the upgrade, which is the
+			// honest cost of being able to say what is signed in.
+			live, err := m.epochs.SessionExists(r.Context(), claims.ID, claims.UserID)
+			if err != nil || !live {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			// Best-effort: the store writes only when the value is a minute stale,
+			// and a failure here must not cost the user their request.
+			_ = m.epochs.TouchSession(r.Context(), claims.ID)
 		}
 		ctx := context.WithValue(r.Context(), claimsKey, claims)
 		next.ServeHTTP(w, r.WithContext(ctx))

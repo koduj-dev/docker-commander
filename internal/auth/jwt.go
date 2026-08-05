@@ -52,25 +52,30 @@ func NewTokenManager(secret []byte, sessionTTL time.Duration) *TokenManager {
 	}
 }
 
+// Issued is a freshly minted token and the facts about it a caller needs: its id
+// (for the session row, or for spending a challenge) and when it expires.
+type Issued struct {
+	Token     string
+	ID        string
+	ExpiresAt time.Time
+}
+
 // Issue creates a signed token for the given user and kind.
-func (m *TokenManager) Issue(userID int64, username, role string, kind TokenKind, epoch int64) (string, time.Time, error) {
+func (m *TokenManager) Issue(userID int64, username, role string, kind TokenKind, epoch int64) (Issued, error) {
 	ttl := m.sessionTTL
 	if kind == KindMFAChallenge {
 		ttl = m.challengeTTL
 	}
 	now := time.Now()
 	exp := now.Add(ttl)
-	// A challenge token is spendable exactly once, which needs something to
-	// identify it by. Session tokens carry no id: they are not consumed, and one
-	// per login would be a value to store for no purpose.
-	var id string
-	if kind == KindMFAChallenge {
-		b := make([]byte, 16)
-		if _, err := rand.Read(b); err != nil {
-			return "", time.Time{}, err
-		}
-		id = hex.EncodeToString(b)
+	// Both kinds carry a unique id now: a challenge is spendable once and needs
+	// something to mark as spent, and a session needs something the owner can
+	// point at to say "not that one, this one".
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return Issued{}, err
 	}
+	id := hex.EncodeToString(b)
 	claims := Claims{
 		UserID:   userID,
 		Username: username,
@@ -85,7 +90,10 @@ func (m *TokenManager) Issue(userID int64, username, role string, kind TokenKind
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	signed, err := tok.SignedString(m.secret)
-	return signed, exp, err
+	if err != nil {
+		return Issued{}, err
+	}
+	return Issued{Token: signed, ID: id, ExpiresAt: exp}, nil
 }
 
 // Parse validates the signature and expiry and returns the claims.

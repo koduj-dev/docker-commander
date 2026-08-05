@@ -2,6 +2,7 @@
 // just send credentials and never touch the token in JS.
 
 import type {
+  Session,
   AlertEvent,
   AlertRule,
   AppSettings,
@@ -213,6 +214,9 @@ export const api = {
     req<{ ok: boolean; error?: string; entries?: number }>("POST", "/api/ldap/test", ldapPayload(c)),
   // password is required only when re-pairing (an authenticator already
   // works); a first enrolment sends none.
+  sessions: () => req<Session[]>("GET", "/api/auth/sessions"),
+  revokeSession: (id: string) => req<{ ok: boolean }>("DELETE", `/api/auth/sessions/${encodeURIComponent(id)}`),
+  revokeOtherSessions: () => req<{ revoked: number }>("POST", "/api/auth/sessions/revoke-others"),
   totpSetup: (password?: string) => req<Enrollment>("POST", "/api/auth/totp/setup", password === undefined ? undefined : { password }),
   totpEnable: (code: string) => req<{ ok: boolean }>("POST", "/api/auth/totp/enable", { code }),
 

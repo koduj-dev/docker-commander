@@ -46,6 +46,13 @@ func NewService(s *store.Store, tm *TokenManager) *Service {
 	}
 }
 
+// SessionInfo is what a login knows about the client asking for one. Recorded on
+// the session so its owner can recognise it later.
+type SessionInfo struct {
+	IP        string
+	UserAgent string
+}
+
 // LoginResult is returned from Login: either a finished session, or an MFA
 // challenge the caller must satisfy via VerifyMFA.
 type LoginResult struct {
@@ -142,6 +149,11 @@ func (s *Service) SetPassword(ctx context.Context, userID int64, password string
 	if err := s.store.UpdatePassword(ctx, userID, hash); err != nil {
 		return err
 	}
+	// Both: the epoch voids anything already issued (including tokens whose row
+	// is gone), and dropping the rows keeps the session list honest.
+	if err := s.store.DeleteUserSessions(ctx, userID); err != nil {
+		return err
+	}
 	return s.store.BumpSessionEpoch(ctx, userID)
 }
 
@@ -149,7 +161,7 @@ func (s *Service) SetPassword(ctx context.Context, userID int64, password string
 // an MFA challenge token; otherwise a full session token. rlKey is the rate
 // limit bucket (typically the client IP). exemptMFA skips the 2FA step (used
 // for localhost when the admin has allowed it).
-func (s *Service) Login(ctx context.Context, rlKey, username, password string, exemptMFA bool) (*LoginResult, error) {
+func (s *Service) Login(ctx context.Context, rlKey, username, password string, exemptMFA bool, info SessionInfo) (*LoginResult, error) {
 	if !s.limiter.Allow(rlKey) {
 		return nil, ErrRateLimited
 	}
@@ -177,17 +189,17 @@ func (s *Service) Login(ctx context.Context, rlKey, username, password string, e
 	// exemptMFA (localhost + admin setting) issues a session straight away,
 	// even for accounts with TOTP enabled.
 	if u.TOTPEnabled && !exemptMFA {
-		tok, exp, err := s.tokens.Issue(u.ID, u.Username, u.Role, KindMFAChallenge, u.SessionEpoch)
+		iss, err := s.tokens.Issue(u.ID, u.Username, u.Role, KindMFAChallenge, u.SessionEpoch)
 		if err != nil {
 			return nil, err
 		}
 		// The window is deliberately NOT reset here: the login is not finished,
 		// and resetting would hand an attacker who has the password a fresh
 		// budget for guessing codes — repeatable every time they re-authenticate.
-		return &LoginResult{MFARequired: true, Token: tok, ExpiresAt: exp, User: u}, nil
+		return &LoginResult{MFARequired: true, Token: iss.Token, ExpiresAt: iss.ExpiresAt, User: u}, nil
 	}
 	s.limiter.Reset(rlKey)
-	return s.issueSession(ctx, u)
+	return s.issueSession(ctx, u, info)
 }
 
 // VerifyMFA completes login by validating a TOTP code against the MFA-challenge
@@ -201,7 +213,7 @@ func (s *Service) Login(ctx context.Context, rlKey, username, password string, e
 //
 // It is keyed on the client IP *and* on the account, so rotating source
 // addresses doesn't buy a fresh budget: the account bucket keeps counting.
-func (s *Service) VerifyMFA(ctx context.Context, rlKey, challengeToken, code string) (*LoginResult, error) {
+func (s *Service) VerifyMFA(ctx context.Context, rlKey, challengeToken, code string, info SessionInfo) (*LoginResult, error) {
 	if !s.limiter.Allow(rlKey) {
 		return nil, ErrRateLimited
 	}
@@ -236,7 +248,7 @@ func (s *Service) VerifyMFA(ctx context.Context, rlKey, challengeToken, code str
 	}
 	s.limiter.Reset(rlKey)
 	s.limiter.Reset(userKey)
-	return s.issueSession(ctx, u)
+	return s.issueSession(ctx, u, info)
 }
 
 // consumeTOTP validates a code and burns the time step it came from, so the same
@@ -495,13 +507,25 @@ func sameIDs(a, b []int64) bool {
 	return true
 }
 
-func (s *Service) issueSession(ctx context.Context, u *store.User) (*LoginResult, error) {
-	tok, exp, err := s.tokens.Issue(u.ID, u.Username, u.Role, KindSession, u.SessionEpoch)
+func (s *Service) issueSession(ctx context.Context, u *store.User, info SessionInfo) (*LoginResult, error) {
+	iss, err := s.tokens.Issue(u.ID, u.Username, u.Role, KindSession, u.SessionEpoch)
 	if err != nil {
 		return nil, err
 	}
+	// Sessions are only ever added here, so this is the one place that will
+	// notice the table growing. Expired rows can no longer authenticate anything
+	// — they would just be clutter in someone's profile list.
+	_ = s.store.PurgeExpiredSessions(ctx)
+	// The row IS the session: the middleware refuses a token with no matching one,
+	// so failing to record it must fail the login rather than hand out a token
+	// nothing can revoke.
+	if err := s.store.CreateSession(ctx, &store.Session{
+		ID: iss.ID, UserID: u.ID, IP: info.IP, UserAgent: info.UserAgent, ExpiresAt: iss.ExpiresAt,
+	}); err != nil {
+		return nil, err
+	}
 	_ = s.store.TouchLogin(ctx, u.ID)
-	return &LoginResult{Token: tok, ExpiresAt: exp, User: u}, nil
+	return &LoginResult{Token: iss.Token, ExpiresAt: iss.ExpiresAt, User: u}, nil
 }
 
 func validateUsername(u string) error {

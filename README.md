@@ -67,7 +67,7 @@ level filters, regex search and structured parsing.
 - Authenticate with a **bearer API token** (self-service page) or **OAuth 2.1** (PKCE, dynamic client registration). Every call reuses the app's **RBAC**, and a token can only **narrow** your rights (a subset of your sections and of the **hosts** you reach, plus **read-only**). New tokens **expire after 30 days** by default (admin-configurable, with never-expiring tokens off unless enabled). **Changes are rate limited** (30/min per user; reads are not) so a model stuck in a loop — or a stolen token — is bounded to a few containers rather than your whole estate, and hitting that ceiling is audited. Deliberately **no exec / image export / file read / prune / remove**. See [MCP](docs/mcp.md).
 
 **Security & administration**
-- **Argon2id** passwords + **TOTP 2FA** (optionally exempt for localhost), rate limiting, strict headers, signed `HttpOnly` cookies.
+- **Argon2id** passwords + **TOTP 2FA** (optionally exempt for localhost), rate limiting, strict headers, signed `HttpOnly` cookies. Everyone can see **what is signed in as their account** — address, browser, last used — and sign out any of it, or everything else, from their profile.
 - **Multi-user** with **roles**, **per-section permissions**, **read-only** mode, global **feature flags**, and an **audit log**. Per-user UI preferences (filters) follow the account across browsers.
 - Optional **LDAP / Active Directory** login with auto-provisioning and **group mapping** — a directory group grants **named roles** (or raw sections), re-derived on every login, so membership drives permissions. Registry / SMTP / LDAP secrets **and host TLS private keys** are **encrypted at rest** (AES-256-GCM).
 
@@ -357,6 +357,7 @@ notify webhooks (Go-template bodies) and/or email. **Prometheus:** scrape
 
 - Local-by-default (binds to loopback). Behind a server, terminate TLS at a reverse proxy.
 - **2FA is enforced everywhere** unless an admin enables the *localhost exemption* (Settings), which applies only to a **direct** loopback connection — a proxied request never qualifies, however it presents itself. Failed 2FA attempts are rate limited and audited, so the second factor can't be brute-forced by someone who already has the password.
+- **Sessions are revocable.** A session is a recorded row, not just a signed token: signing out, revoking one from your profile, or changing your password takes effect on the **next request** rather than whenever the token would have expired.
 - **SSH hosts** verify the daemon host key (known_hosts / trust-on-first-use); a changed key is refused as a possible MITM.
 - Signing key and at-rest encryption key are generated on first run and stored in the data dir; stored secrets are never returned by the API.
 - The **MCP server is off by default** (`DC_MCP_ENABLED`); when on, it's bearer/OAuth-authenticated, reuses the app's RBAC (with per-token **read-only** / section scope), and exposes only reads + *safe* control — no exec, image export, file reads or prune/remove. Control calls are additionally **rate limited per user** to bound the damage a runaway or stolen token can do. See [MCP](docs/mcp.md).

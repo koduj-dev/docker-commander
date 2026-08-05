@@ -53,10 +53,7 @@ func stepUpFixture(t *testing.T, withTOTP bool) (*Server, func(*http.Request), *
 		}
 		u, _ = st.UserByID(ctx, u.ID)
 	}
-	token, _, err := tokens.Issue(u.ID, u.Username, u.Role, auth.KindSession, u.SessionEpoch)
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := issueTestSession(t, tokens, st, u)
 	return srv, func(r *http.Request) {
 		r.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: token})
 	}, u
@@ -74,7 +71,7 @@ func setupTOTP(t *testing.T, srv *Server, authenticate func(*http.Request), body
 
 // PENTEST: pairing a new authenticator replaces the second factor, so a session
 // alone must not be enough. Otherwise any session takeover — a shared machine, a
-// token pasted into a URL — becomes a permanent authenticator takeover: the
+// tokenIssued.Token pasted into a URL — becomes a permanent authenticator takeover: the
 // attacker pairs their own device and satisfies 2FA from then on, while the
 // owner's app quietly stops working.
 func TestPentestTOTPRepair_NeedsThePassword(t *testing.T) {

@@ -103,7 +103,11 @@ publishing a per-network number that looks authoritative and is wrong.
   container, the way LDAP is already tested against OpenLDAP. Only provider-specific
   quirks — Azure's `iss` shape, Google not returning `groups` without Directory API
   — need a real tenant, and those are the last mile rather than the blocker.
-- **Passkeys / WebAuthn**, and an **active sessions** view with revocation.
+- **Passkeys / WebAuthn** as a second factor (and eventually a first): the private
+  key never leaves the device's secure element and the signature is bound to the
+  origin, which is what makes it phishing-proof in a way TOTP is not. It needs a
+  secure context — HTTPS, or localhost — so it lands as an **option** alongside
+  TOTP rather than a replacement.
 
 ### Configuration and secrets
 

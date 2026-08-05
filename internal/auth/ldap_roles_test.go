@@ -98,7 +98,7 @@ func ldapFixture(t *testing.T, mappings []store.LDAPGroupMapping, groups []strin
 
 func login(t *testing.T, svc *Service, username string) *store.User {
 	t.Helper()
-	res, err := svc.Login(context.Background(), "k", username, "pw", false)
+	res, err := svc.Login(context.Background(), "k", username, "pw", false, SessionInfo{})
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestPentestStaleRoleIDGrantsNothing(t *testing.T) {
 	if err := st.DeleteRole(ctx, roleID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Login(ctx, "k2", "alice", "pw", false); err != nil {
+	if _, err := svc.Login(ctx, "k2", "alice", "pw", false, SessionInfo{}); err != nil {
 		t.Fatalf("SECURITY: a deleted role in a mapping locked the user out: %v", err)
 	}
 	if got := roleNames(t, st, u.ID); len(got) != 0 {
