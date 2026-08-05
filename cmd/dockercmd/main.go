@@ -208,10 +208,22 @@ func runBackupAction(action, file string, wantPassphrase bool) error {
 			return err
 		}
 		defer st.Close()
-		if err := backup.Create(dataDir, file, storeBackuper{st}, passphrase); err != nil {
+		rep, err := backup.Create(dataDir, file, storeBackuper{st}, passphrase)
+		if err != nil {
 			return err
 		}
-		fmt.Printf("backup written to %s\n", file)
+		fmt.Printf("backup written to %s (%s of files)\n", file, humanBytes(rep.Bytes))
+		// Named, not silently dropped: a symlink's contents were never in the
+		// archive — Walk does not follow links — so an operator who pointed
+		// projects/ at another disk has a backup that omits it. Saying so at the
+		// moment the backup is taken is the only time it is cheap to learn.
+		if len(rep.SkippedLinks) > 0 {
+			fmt.Println("NOTE: these paths are symbolic links. They are NOT part of this backup, and")
+			fmt.Println("      neither is anything they point at — back those up yourself:")
+			for _, l := range rep.SkippedLinks {
+				fmt.Printf("        %s\n", l)
+			}
+		}
 		if passphrase == "" {
 			fmt.Println("WARNING: this archive is NOT encrypted and contains the encryption key alongside")
 			fmt.Println("         every stored secret (host TLS keys, SMTP and LDAP passwords, registry")
@@ -511,6 +523,20 @@ func run() error {
 
 // loadOrCreateJWTSecret returns a persistent signing secret, generating one on
 // first run. Keeping it stable means sessions survive restarts.
+// humanBytes renders a size the way an operator reads one.
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for n/div >= unit && exp < 3 {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGT"[exp])
+}
+
 func loadOrCreateJWTSecret(ctx context.Context, st *store.Store) ([]byte, error) {
 	return loadOrCreateSecret(ctx, st, "jwt_secret")
 }

@@ -345,10 +345,14 @@ instance by accident. Archive entries are jailed to the data dir, so a tampered
 backup can't write elsewhere on the filesystem — including through a **symlink**,
 whose target is checked as well.
 
-> **Symlinks in the data dir must be relative.** An archive containing one with an
-> absolute target is refused outright rather than restored: a symlink is a write
-> path, and once it points out of the data dir every later entry can follow it.
-> This matters if you have pointed something like `projects/` at a bigger disk —
-> note that such a link is *already* a poor idea, because the backup stores the
-> link rather than what it points at, so its contents were never in the archive to
-> begin with. Use a bind mount instead.
+> **Symbolic links are not backed up — and the backup says so.** If something in
+> the data dir is a link (`projects/` pointed at a bigger disk, say), neither the
+> link nor anything behind it goes into the archive, and `--backup` prints the
+> paths it skipped. That was always true of the contents — the backup never
+> followed links — but it used to happen silently, which is the worst version of
+> it: a backup that looks complete and isn't. **Back those paths up yourself, or
+> use a bind mount instead of a symlink.**
+>
+> Restoring an archive that contains a symlink entry is refused outright. Hard
+> links are a different thing: a hard link *is* the file, so its data is included
+> like any other file's.

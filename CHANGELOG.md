@@ -7,6 +7,19 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Security
+- **Backups no longer carry symbolic links, and say what they skipped.** A link in
+  the data dir was stored as a link, while its contents were never included —
+  `filepath.Walk` does not follow links — so anyone who had pointed `projects/` at
+  another disk held a backup that quietly omitted it. Links are now skipped
+  outright and **named in the output**, next to the total size of what did go in,
+  because the moment the backup is taken is the only cheap time to learn this.
+
+  Restoring an archive that contains a symlink entry is refused. A symlink is a
+  write path out of the data dir, and the class of bug that exploits one has
+  already shown up here once; not creating them at all is cheaper than jailing
+  them correctly. (Hard links are unaffected: a hard link *is* the file, so its
+  data is backed up like any other file's.)
+
 - **An MFA challenge is good for exactly one attempt.** After a correct password
   the server hands out a short-lived token, and the code is checked against it —
   but the token stayed valid for its full five minutes, so one password entry
