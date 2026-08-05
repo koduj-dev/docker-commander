@@ -77,8 +77,15 @@ func (s *Service) Setup(ctx context.Context, username, password string) (*store.
 	if err != nil {
 		return nil, err
 	}
+	// The count above is advisory — it makes the common case fail with a clear
+	// error — but the decision is made by the insert, which refuses to run once
+	// any account exists. Two concurrent setups would otherwise both pass the
+	// count and both create an admin.
 	u := &store.User{Username: username, PasswordHash: hash, Role: "admin"}
-	id, err := s.store.CreateUser(ctx, u)
+	id, err := s.store.CreateFirstUser(ctx, u)
+	if errors.Is(err, store.ErrSetupTaken) {
+		return nil, ErrSetupDone
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +208,7 @@ func (s *Service) VerifyMFA(ctx context.Context, rlKey, challengeToken, code str
 		s.limiter.Fail(userKey)
 		return nil, ErrInvalidCreds
 	}
-	if !u.TOTPEnabled || !ValidateTOTP(strings.TrimSpace(code), u.TOTPSecret) {
+	if !u.TOTPEnabled || !s.consumeTOTP(ctx, u, code) {
 		s.limiter.Fail(rlKey)
 		s.limiter.Fail(userKey)
 		return nil, ErrInvalidMFACode
@@ -209,6 +216,20 @@ func (s *Service) VerifyMFA(ctx context.Context, rlKey, challengeToken, code str
 	s.limiter.Reset(rlKey)
 	s.limiter.Reset(userKey)
 	return s.issueSession(ctx, u)
+}
+
+// consumeTOTP validates a code and burns the time step it came from, so the same
+// code cannot be presented twice inside its ~90-second window. A code that is
+// valid but not newer than the last one accepted is treated exactly like a wrong
+// one — the caller must not be able to tell a replay from a typo.
+func (s *Service) consumeTOTP(ctx context.Context, u *store.User, code string) bool {
+	counter, ok := MatchTOTP(strings.TrimSpace(code), u.TOTPSecret)
+	if !ok || counter <= u.TOTPLastCounter {
+		return false
+	}
+	// A failure to persist the watermark must not hand out a session: it would
+	// leave the code replayable, which is the thing being prevented.
+	return s.store.SetTOTPLastCounter(ctx, u.ID, counter) == nil
 }
 
 // mfaKey buckets 2FA attempts per account, alongside the per-IP bucket.

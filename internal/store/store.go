@@ -30,6 +30,10 @@ var ErrDuplicate = errors.New("store: duplicate")
 // the known-good baseline; the UI offers Duplicate to customise instead.
 var ErrBuiltinRole = errors.New("store: built-in roles cannot be modified")
 
+// ErrSetupTaken means the first account already existed by the time this insert
+// ran — two setup requests raced and this one lost.
+var ErrSetupTaken = errors.New("store: setup already completed")
+
 // ErrRoleInUseAsFallback is returned when deleting the role configured as the
 // LDAP fallback. Allowing it would leave the fallback itself dangling — the one
 // thing the fallback exists to prevent.
@@ -385,6 +389,9 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
 		`ALTER TABLE projects ADD COLUMN allow_remote_host_paths INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN totp_pending TEXT NOT NULL DEFAULT ''`,
+		// The last TOTP counter accepted for this account, so a code cannot be
+		// replayed inside its own validity window.
+		`ALTER TABLE users ADD COLUMN totp_last_counter INTEGER NOT NULL DEFAULT 0`,
 		// Per-rule recipients. Empty keeps the previous behaviour: fall back to the
 		// instance-wide SMTP "To" (and the per-host override), so existing rules
 		// deliver exactly as before.

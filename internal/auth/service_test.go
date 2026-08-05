@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -315,5 +316,91 @@ func TestChallengeUsername(t *testing.T) {
 	full, _ := svc.Login(ctx, "ip2", "admin", "correcthorse123", true)
 	if got := svc.ChallengeUsername(full.Token); got != "" {
 		t.Errorf("session token accepted as a challenge → %q", got)
+	}
+}
+
+// PENTEST: a TOTP code is a ONE-time password. Valid for ~90 seconds is not the
+// same as usable for ~90 seconds — an observed code (shoulder-surfed, captured by
+// a phishing proxy, screenshotted by malware) must be spendable once.
+func TestPentestMFA_CodeCannotBeReplayed(t *testing.T) {
+	svc, ctx := newService(t)
+	_, secret := enable2FA(t, svc, ctx)
+
+	res, _ := svc.Login(ctx, "10.0.0.3", "admin", "correcthorse123", false)
+	code, _ := totp.GenerateCode(secret, time.Now())
+	if _, err := svc.VerifyMFA(ctx, "10.0.0.3", res.Token, code); err != nil {
+		t.Fatalf("first use of a valid code: %v", err)
+	}
+
+	// Same code, still inside its window, fresh challenge: must be refused, and
+	// refused the same way a wrong code is — a distinguishable error would tell an
+	// attacker their capture was genuine.
+	again, _ := svc.Login(ctx, "10.0.0.3", "admin", "correcthorse123", false)
+	if _, err := svc.VerifyMFA(ctx, "10.0.0.3", again.Token, code); !errors.Is(err, ErrInvalidMFACode) {
+		t.Errorf("SECURITY: replayed code gave %v, want ErrInvalidMFACode", err)
+	}
+}
+
+// The counterweight: burning a step must not lock the account out of the NEXT
+// one. A replay guard that also rejects fresh codes is an outage, not a fix.
+func TestMFA_NextCodeStillWorksAfterAReplayIsRefused(t *testing.T) {
+	svc, ctx := newService(t)
+	_, secret := enable2FA(t, svc, ctx)
+
+	now := time.Now()
+	first, _ := totp.GenerateCode(secret, now)
+	res, _ := svc.Login(ctx, "ip", "admin", "correcthorse123", false)
+	if _, err := svc.VerifyMFA(ctx, "ip", res.Token, first); err != nil {
+		t.Fatalf("first code: %v", err)
+	}
+
+	// The NEXT time step — one period ahead, so it is still inside the skew
+	// window the server accepts, but a different one-time password.
+	next, _ := totp.GenerateCode(secret, now.Add(30*time.Second))
+	if next == first {
+		t.Skip("the clock landed such that both steps render the same code")
+	}
+	res2, _ := svc.Login(ctx, "ip", "admin", "correcthorse123", false)
+	if _, err := svc.VerifyMFA(ctx, "ip", res2.Token, next); err != nil {
+		t.Errorf("a code from the next step must still be accepted: %v", err)
+	}
+}
+
+// PENTEST: setup creates the FIRST admin. Two requests arriving together must not
+// both win — the loser would hold permanent admin on a fresh instance, and a
+// fresh instance is exactly the one nobody is watching yet.
+func TestPentestSetup_ConcurrentRequestsCreateOnlyOneAdmin(t *testing.T) {
+	svc, ctx := newService(t)
+
+	const racers = 8
+	var wg sync.WaitGroup
+	errs := make([]error, racers)
+	start := make(chan struct{})
+	for i := range racers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start // widen the window: everyone counts before anyone inserts
+			_, errs[i] = svc.Setup(ctx, "admin"+strconv.Itoa(i), "correcthorse123")
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	won := 0
+	for i, err := range errs {
+		switch {
+		case err == nil:
+			won++
+		case errors.Is(err, ErrSetupDone):
+		default:
+			t.Errorf("racer %d: unexpected error %v", i, err)
+		}
+	}
+	if won != 1 {
+		t.Errorf("SECURITY: %d concurrent setups succeeded, want exactly 1", won)
+	}
+	if n, _ := svc.store.CountUsers(ctx); n != 1 {
+		t.Errorf("SECURITY: %d accounts exist after a setup race, want 1", n)
 	}
 }

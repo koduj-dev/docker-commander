@@ -7,6 +7,25 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Security
+- **A TOTP code can only be spent once.** It was validated, not consumed, so it
+  kept working for its whole ~90-second window — one code observed over a shoulder,
+  captured by a phishing proxy or screenshotted by malware could be used more than
+  once, and the challenge token it satisfies lives for five minutes. The time step
+  a code came from is now recorded and anything at or below it is refused, with the
+  same answer a wrong code gets so a replay can't be told from a typo.
+
+- **First-run setup can no longer be raced into two admins.** It was check-then-act
+  — count the users, validate, insert later — so two requests arriving together
+  both passed the count and both created an administrator. The condition now lives
+  in the INSERT, where SQLite settles it. Small window, permanent payoff, and a
+  fresh instance is precisely the one nobody is watching yet.
+
+- **The login rate limiter no longer grows without bound.** Entries were removed
+  only when the same key returned, so every distinct client address left one behind
+  for good — a botnet, an IPv6 /64, or simply uptime. The same limiter backs the
+  MCP OAuth throttle, whose keys are unauthenticated client IPs. Expired windows
+  are now swept, in bounded batches, on the path that creates them.
+
 - **The dashboard's data endpoints now require the `dashboard` section.**
   `/api/stats/overview`, `/api/stats/ports` and `/api/system/df` were deliberately
   ungated "for the shell", which meant an account with **no sections at all** could
