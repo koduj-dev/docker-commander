@@ -1,3 +1,7 @@
+/** @vitest-environment happy-dom */
+// Needs a DOM: the round-trip tests stub navigator.credentials, and without this
+// the file runs under node — where `navigator` exists only on newer versions, so
+// it passes on a modern laptop and fails on the CI runner.
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { createPasskey, describePasskeyError, passkeysSupported } from "./webauthn";
 
@@ -29,6 +33,14 @@ afterEach(() => {
 });
 
 describe("base64url", () => {
+  // Pins the environment rather than assuming it. `navigator` is a global on Node
+  // 21+ and absent on Node 20, which is what CI runs — so without the DOM these
+  // tests pass on a modern laptop and fail on the runner, which is exactly what
+  // happened. `window` is the part node never provides.
+  it("runs in a DOM", () => {
+    expect(typeof window).not.toBe("undefined");
+  });
+
   // Vectors chosen for the two things that break: the URL-safe alphabet (- and _
   // where base64 has + and /) and the stripped padding. A decoder that forgets
   // either produces the wrong bytes without complaining.
