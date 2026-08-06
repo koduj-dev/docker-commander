@@ -65,6 +65,13 @@ All notable changes to Docker Commander are documented here. The format follows
   factor" stays true.
 
 ### Fixed
+- **The events feed said "Live" over a dead connection.** Its WebSocket had no
+  reconnect at all — unlike the stats/logs socket next door — so a server restart,
+  a proxy idle timeout or a laptop waking from sleep left the page showing a
+  pulsing green badge above a list that would never move again. That is the worst
+  shape for the bug: an empty feed reads as "nothing is happening", so nobody looks
+  closer. It now reconnects, and the badge reports the *connection* rather than
+  just the pause toggle — it says **Reconnecting…** when it is not live.
 - **The admin user list called a passkey-protected account "off".** The 2FA column
   answers "is this account protected?", and an admin auditing their users acts on
   it — but it read *"does this account have an authenticator app?"*, which stopped

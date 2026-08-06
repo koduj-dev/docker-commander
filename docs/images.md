@@ -33,8 +33,10 @@ credentials from [Registries](registries.md).
 
 ## Build
 Upload a **tar of your build context** (the directory containing the
-Dockerfile), set one or more tags, an optional Dockerfile path and build args;
-the daemon's build output streams live.
+Dockerfile), set one or more tags, an optional Dockerfile path, and tick **No
+cache** to rebuild every layer; the daemon's build output streams live.
+
+Build arguments are supported by the API but have no field in the dialog yet.
 
 ## Push
 Enter a registry-qualified target (e.g. `registry.example.com/team/app:tag`).
