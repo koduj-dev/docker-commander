@@ -347,6 +347,7 @@ Standalone actions:
   --self-upgrade [--check]     upgrade to the latest GitHub release (--check only reports)
   --backup <file>              write a full backup of the data dir (add --passphrase to encrypt)
   --restore <file>             restore a backup into the data dir (server must be stopped)
+  --reset-password <user>      set a new password from this machine when it is lost
   --install-service            install as a systemd (Linux) / launchd (macOS) service
   --uninstall-service          remove the service
   --service-status             show the service status
@@ -383,6 +384,16 @@ func run() error {
 		return service.Uninstall(os.Stdout)
 	case "status":
 		return service.Status(os.Stdout)
+	}
+	if wantsResetPassword() {
+		// Offline, against the data directory, instead of starting the server. The
+		// data dir is read by hand for the same reason --backup does it: config.Load
+		// parses the server flag set, which does not know this flag.
+		dataDir := flagValue("-data-dir", "--data-dir")
+		if dataDir == "" {
+			dataDir = config.ResolveDataDir()
+		}
+		return runResetPassword(dataDir, resetPasswordUser())
 	}
 	if act, file, wantPass := backupAction(); act != "" {
 		return runBackupAction(act, file, wantPass)

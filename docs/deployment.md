@@ -304,6 +304,43 @@ permissions). The binary must be writable by the invoking user; **restart** the
 service afterwards to run the new version. (Installed from a package manager?
 Update through that instead.)
 
+## Locked out
+
+If the password for the only admin account is gone, reset it from the machine the
+instance runs on:
+
+```bash
+sudo dockercmd --data-dir /var/lib/dockercmd --reset-password admin   # packaged install
+dockercmd --reset-password admin                                     # running it yourself
+```
+
+`--data-dir` matters on a packaged install: the service reads its path from
+`/etc/docker-commander/commander.conf`, and standalone actions do not, so without
+it the command looks in *your* config directory. It refuses to create a database
+rather than answering "no such account" from an empty one.
+
+It prompts at the terminal — the password is never an argument, so it stays out of
+shell history and `/proc/<pid>/cmdline` — ends **every browser session** for that account,
+and writes the reset to the audit log.
+
+Two things it deliberately does *not* do. The **second factor is not touched** — you
+will still be asked for your code or passkey afterwards, unless this instance has
+the localhost 2FA exemption on and you sign in from the machine itself. And **API
+and MCP tokens are not revoked**: they are not sessions. If you are resetting
+because of a suspected compromise, review those in the UI as well.
+
+**You do not have to stop the service.** It writes through SQLite the same way the
+server does, and the server re-reads both the password and the session epoch on
+every request — so the old sessions stop working and the new password starts
+working immediately, with no restart. (Verified: an active session answers 401 the
+moment the reset lands.)
+
+It needs no server either; it works directly on the data dir, and `--data-dir`
+applies as usual. That access is the only authorisation it has, which is defensible for the
+same reason the warning under *Backup & restore* is true: the session signing
+secret is a row inside that database, so anyone who can run this could already
+mint themselves an admin session. Guard the data dir accordingly.
+
 ## Backup & restore
 
 Everything the installation needs lives under the **data dir**: the SQLite
