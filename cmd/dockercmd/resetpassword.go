@@ -29,7 +29,10 @@ import (
 //
 // That argument is what the design has to protect, so:
 //
-//   - it works only against the data directory, never over HTTP;
+//   - it works only against the data directory, never over HTTP. That does not mean
+//     the server has to be stopped: SQLite takes the write either way, and the
+//     server re-reads the password and the session epoch per request, so a running
+//     instance honours the reset immediately;
 //   - the password is read from the terminal, never taken as an argument — an
 //     argument lands in shell history and in /proc/<pid>/cmdline, which on most
 //     systems any local user can read, and that WOULD be a new leak;

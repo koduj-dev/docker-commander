@@ -318,8 +318,14 @@ shell history and `/proc/<pid>/cmdline` — ends **every session** for that acco
 and writes the reset to the audit log. The **second factor is not touched**: you
 will still be asked for your code or passkey afterwards.
 
-It needs no server; it works directly on the data dir, and `--data-dir` applies as
-usual. That access is the only authorisation it has, which is defensible for the
+**You do not have to stop the service.** It writes through SQLite the same way the
+server does, and the server re-reads both the password and the session epoch on
+every request — so the old sessions stop working and the new password starts
+working immediately, with no restart. (Verified: an active session answers 401 the
+moment the reset lands.)
+
+It needs no server either; it works directly on the data dir, and `--data-dir`
+applies as usual. That access is the only authorisation it has, which is defensible for the
 same reason the warning under *Backup & restore* is true: the session signing
 secret is a row inside that database, so anyone who can run this could already
 mint themselves an admin session. Guard the data dir accordingly.
