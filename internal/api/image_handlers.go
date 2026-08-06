@@ -284,7 +284,7 @@ func (s *Server) handleLoadImage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "no host configured")
 		return
 	}
-	out, err := s.docker.LoadImage(r.Context(), hostID, r.Body)
+	out, err := s.docker.LoadImage(r.Context(), hostID, streamingBody(w, r))
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -305,7 +305,7 @@ func (s *Server) handleImportImage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "ref is required")
 		return
 	}
-	out, err := s.docker.ImportImage(r.Context(), hostID, r.Body, ref)
+	out, err := s.docker.ImportImage(r.Context(), hostID, streamingBody(w, r), ref)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -351,7 +351,7 @@ func (s *Server) handleBuildImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.audit(r, "image.build", strings.Join(opts.Tags, ","), "")
-	err = s.docker.BuildImage(r.Context(), hostID, r.Body, opts, func(m docker.BuildMessage) { send(m) })
+	err = s.docker.BuildImage(r.Context(), hostID, streamingBody(w, r), opts, func(m docker.BuildMessage) { send(m) })
 	if err != nil {
 		send(map[string]any{"error": err.Error()})
 		return
