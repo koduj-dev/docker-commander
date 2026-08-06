@@ -102,8 +102,39 @@ worth naming because they all look fine in review:
   host. A guard needs a test for what it must still **allow**, not only for what it
   must deny.
 
+Five more, from the passkey and read-timeout work — all of them tests written by
+someone who had already read the list above, which is the point:
+
+- **The assertion asked a neighbouring question.** A relying-party normalisation
+  test checked whether passkeys were *available* on that host. A different code
+  path decides that, so removing the normalisation changed nothing the test looked
+  at. Assert on the thing under test — here, the relying-party id the ceremony
+  actually hands the browser.
+- **A coarser limit fired first.** A rolling-deadline test ran against the
+  production two-minute idle window, so one generous deadline satisfied it and the
+  *rolling* part was never exercised. The interval is a `var` so a test can shorten
+  it below the total; that is what makes "extends on data" distinguishable from
+  "set once".
+- **The test framing skipped the code under test.** A stalled-upload reproduction
+  sent `Connection: close`, and net/http skips its inline body drain when the
+  response will close the connection — so the bug only appeared with keep-alive.
+  The first attempt at reproducing a real finding "disproved" it.
+- **The environment made it pass.** A frontend test stubbed
+  `navigator.credentials` without an `@vitest-environment` docblock: green on a
+  local Node 24, red on CI's Node 20, which has no global `navigator`. Pin the
+  environment *and* assert it (`typeof window`), so the next person does not debug
+  the symptom.
+- **The test built its own instance, so it pinned the type and not the wiring.**
+  Constructing `newCeremonies(limit)` or `newHTTPServer(...)` inside the test proves
+  the constructor behaves; it says nothing about what production passes. Where the
+  wiring is the guard — `main` must not hand-roll an `http.Server` without the read
+  timeouts — the test reads the package's own source and refuses a second literal.
+  That test then needed its own guard: it passed when the parse found no files, so
+  it now counts the literal it expects and fails on zero.
+
 If you cannot make a test fail by breaking the thing it names, it is not testing
-that thing.
+that thing. And if the test is new, break it *before* believing it — the list above
+is what happens when that step is skipped by someone in a hurry.
 
 ### Fixture hygiene for daemon-backed tests
 
@@ -223,6 +254,27 @@ of *finding out what to test*, not a substitute for testing. So the rule is:
 > A finding counts as handled when it lands as a **fix plus a test that fails
 > without the fix** — and, where the finding is an instance of a class, plus the
 > sweep that enumerates the class (see *Sweeps, not spot checks* above).
+
+**Review the fix, not just the finding.** This is the expensive lesson from the
+1.6.0 authentication work: across two pull requests, **four consecutive rounds each
+found a new defect inside the previous round's fix**. Closing a slow-body hole
+cancelled every long `docker build`; fixing *that* left a stalled upload pinning a
+connection forever; a rate limit that only read its budget was replaced by one that
+only wrote it; and moving a charge later to spare honest users made the endpoint
+free precisely while under attack. None was caught by the person writing the fix.
+
+A fix is the least-reviewed code in a pull request — everyone has already read the
+surrounding lines, and it is written under the pressure of a known defect. So it
+gets its own round, and before that a hand check of the **inverse question**, which
+each of those four would have answered:
+
+- added a check — is there a matching record? (a limiter's `Allow` needs a `Fail`)
+- added a record — does anything read it? (a `Fail` needs an `Allow`)
+- cleared state on failure — should it be only the *clean* case?
+- deferred work to be kind to honest users — is it now free under attack?
+
+And the question that outranks all of them: **what does this fix make worse?**
+Trading a memory exhaustion for a lockout is not a fix.
 
 **Treat every finding as a claim, not a verdict.** Machine reviewers produce
 confident, well-written findings that describe code which does not exist; the

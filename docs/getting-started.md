@@ -14,6 +14,15 @@
 
 After that you log in with username + password + the current TOTP code.
 
+![Sign in](images/login.png)
+
+A **passkey** is the other kind of second factor, paired later from
+*Profile → Security*. Where the account has one, the second step offers it beside
+the code box; where the account has *only* a passkey, the code box is not shown at
+all, because asking for a code it cannot produce would be a dead end.
+
+![Two-factor step](images/login_2fa.png)
+
 ## The layout
 
 - A left **sidebar** groups the agendas (Compute, Network, Observability,
@@ -34,8 +43,14 @@ After that you log in with username + password + the current TOTP code.
 ## Security model in one minute
 
 - Passwords are hashed with Argon2id; sessions are `HttpOnly` cookies.
-- **2FA (TOTP)** is enforced for everyone unless an admin enables the localhost
-  exemption.
+- **A second factor** is enforced for everyone unless an admin enables the
+  localhost exemption. That can be an authenticator app (**TOTP**) or a
+  **passkey** — an account may hold several of either, and the last one cannot be
+  removed.
+- A passkey that verifies you with a PIN, fingerprint or face can also sign you in
+  **on its own**, once you turn that on per account. Your password keeps working:
+  it is the way back if the key is lost, since no admin can reset another
+  account's second factor. See [Users & roles](users.md#your-own-profile).
 - **Account type**: `admin` (full access + administration) or `user`. A `user`
   reaches only what they are granted — through **named roles** (a reusable bundle
   of sections, each read or write, optionally limited to specific **hosts**)
