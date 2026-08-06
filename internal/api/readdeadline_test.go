@@ -176,6 +176,53 @@ func TestRequestContextSurvivesTheBodyEnding(t *testing.T) {
 	}
 }
 
+// A stalled upload has to be answered and let go of, not merely refused.
+//
+// When a handler returns without draining the body, net/http drains the remainder
+// itself — inline, before the response headers go out. Clearing the read deadline
+// when the body FAILS leaves that drain unbounded, so a client that declares a
+// body, sends two bytes and goes quiet without closing pins a connection goroutine
+// and its descriptor forever, and never sees the timeout the handler wrote. That is
+// worse than the hole this file exists to close: unbounded rather than 60 seconds.
+//
+// Keep-alive matters here: net/http skips the drain entirely when the response will
+// close the connection, so a "Connection: close" version of this test passes
+// against the broken code and proves nothing.
+func TestStalledUploadIsAnsweredAndReleased(t *testing.T) {
+	restore := streamIdle
+	streamIdle = 200 * time.Millisecond
+	t.Cleanup(func() { streamIdle = restore })
+
+	addr := deadlineServer(t, 300*time.Millisecond, func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.ReadAll(streamingBody(w, r)); err != nil {
+			writeErr(w, http.StatusRequestTimeout, "stalled")
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	// A body that is promised, barely started, and then abandoned without closing.
+	head := "POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: 1000\r\n\r\n"
+	if _, err := conn.Write([]byte(head + "xy")); err != nil {
+		t.Fatal(err)
+	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("the connection was never answered or released: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestTimeout {
+		t.Errorf("a stalled upload returned %d, want 408", resp.StatusCode)
+	}
+}
+
 // A WebSocket must not be on the read-timeout clock.
 //
 // ReadTimeout arms a deadline on the connection for the whole request, and a

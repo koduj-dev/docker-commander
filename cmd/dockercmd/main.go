@@ -558,10 +558,6 @@ func loadOrCreateSecret(ctx context.Context, st *store.Store, key string) ([]byt
 	return buf, nil
 }
 
-// startPProf serves the profiling endpoints on a dedicated loopback-only
-// listener (DC_PPROF=1). Binding to 127.0.0.1 — rather than gating by client IP
-// on the main router — is what makes it safe: the main router sits behind chi's
-// RealIP middleware, whose r.RemoteAddr is spoofable via X-Forwarded-For, so a
 // newHTTPServer builds the public listener.
 //
 // A function rather than a literal in main so the timeouts can be asserted: they
@@ -584,15 +580,18 @@ func newHTTPServer(addr string, h http.Handler) *http.Server {
 	}
 }
 
+// startPProf serves the profiling endpoints on a dedicated loopback-only
+// listener (DC_PPROF=1). Binding to 127.0.0.1 — rather than gating by client IP
+// on the main router — is what makes it safe: the main router sits behind chi's
+// RealIP middleware, whose r.RemoteAddr is spoofable via X-Forwarded-For, so a
 // separate physically-loopback listener is the only reliable boundary. It is
 // never reachable off-box; capture profiles through an SSH tunnel.
 func startPProf(ctx context.Context) {
 	const addr = "127.0.0.1:6060"
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           api.PProfHandler(),
-		ReadHeaderTimeout: 10 * time.Second,
-	}
+	// Same timeouts as the public listener. Loopback-only and opt-in, so the risk is
+	// small — but nothing here streams, and "it is only reachable locally" is a
+	// reason to bound it cheaply rather than a reason to skip it.
+	srv := newHTTPServer(addr, api.PProfHandler())
 	go func() {
 		<-ctx.Done()
 		sctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

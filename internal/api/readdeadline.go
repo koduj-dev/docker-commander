@@ -2,6 +2,7 @@ package api
 
 import (
 	"io"
+	"log"
 	"net/http"
 	"time"
 )
@@ -37,12 +38,23 @@ var streamIdle = 2 * time.Minute
 // breaks visibly in testing, where a route that had to opt IN to a deadline would
 // silently keep the hole.
 func streamingBody(w http.ResponseWriter, r *http.Request) io.ReadCloser {
+	// Nothing to wait for, so nothing to arm. net/http has already disarmed the
+	// deadline for a bodyless request and started its background read; arming one
+	// here would time that read out and cancel the request — for a handler that may
+	// never read the body at all, and so never reach the clear below.
+	if r.Body == nil || r.Body == http.NoBody || r.ContentLength == 0 {
+		return r.Body
+	}
 	rc := http.NewResponseController(w)
 	if err := rc.SetReadDeadline(time.Now().Add(streamIdle)); err != nil {
 		// No deadline support under this ResponseWriter (an httptest recorder, or a
 		// wrapper that does not Unwrap). The server's own ReadTimeout still applies,
 		// so this errs towards refusing a slow upload rather than allowing a stalled
-		// one.
+		// one — but that means large uploads start failing at 60 seconds with
+		// nothing to explain why. Unreachable in production today; said out loud so
+		// that the middleware change which makes it reachable is not silent.
+		log.Printf("streaming upload on %s cannot set a read deadline (%v); "+
+			"large uploads will be bounded by the server's ReadTimeout", r.URL.Path, err)
 		return r.Body
 	}
 	return &idleBody{body: r.Body, rc: rc}
@@ -74,8 +86,18 @@ type idleBody struct {
 func (b *idleBody) Read(p []byte) (int, error) {
 	n, err := b.body.Read(p)
 	switch {
-	case err != nil:
+	case err == io.EOF:
 		_ = b.rc.SetReadDeadline(time.Time{})
+	case err != nil:
+		// Any OTHER failure leaves the deadline exactly where it is, and that is
+		// deliberate. When a handler returns without having drained the body,
+		// net/http drains the remainder itself — inline, inside
+		// chunkWriter.writeHeader, BEFORE the response headers go out. Clearing the
+		// deadline here would leave that drain unbounded: a client that declares a
+		// body, sends two bytes and then goes quiet without closing would pin a
+		// connection goroutine and its file descriptor for the life of the process,
+		// and never receive the timeout the handler wrote. That is the very
+		// resource reservation this file exists to refuse, made permanent.
 	case n > 0:
 		_ = b.rc.SetReadDeadline(time.Now().Add(streamIdle))
 	}
