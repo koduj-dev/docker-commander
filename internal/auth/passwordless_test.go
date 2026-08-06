@@ -533,3 +533,77 @@ func TestPentestPasswordlessFinishIsMeteredOnItsOwn(t *testing.T) {
 		t.Errorf("SECURITY: the answering address was never refused (%v)", err)
 	}
 }
+
+// PENTEST: a refused start still costs the caller.
+//
+// The meter has to apply hardest when the endpoint is under pressure. Charging only
+// once a ceremony exists sounds considerate — it spares the users a flood turned
+// away — but it makes the endpoint free exactly while it is being flooded.
+func TestPentestRefusedStartsAreStillMetered(t *testing.T) {
+	svc, _, _, _ := passwordlessFixture(t)
+
+	// Fill the public store so every start is refused.
+	for i := 0; i < maxPublicCeremonies; i++ {
+		svc.publicCeremonies.put(passwordlessKey(fmt.Sprintf("flood-%d", i)), webauthn.SessionData{}, true)
+	}
+
+	for i := 0; i < passkeyAttempts; i++ {
+		if _, _, err := svc.BeginPasswordlessLogin("10.0.0.50", testRP()); !errors.Is(err, ErrTooBusy) {
+			t.Fatalf("start %d: want ErrTooBusy, got %v", i+1, err)
+		}
+	}
+	if _, _, err := svc.BeginPasswordlessLogin("10.0.0.50", testRP()); !errors.Is(err, ErrRateLimited) {
+		t.Errorf("SECURITY: refused starts were free (%v)", err)
+	}
+}
+
+// PENTEST: completing a sign-in must not refill the budget for STARTING one.
+//
+// That bucket is keyed on the address, not the account, so a refill on success is
+// an unlimited supply to anyone holding a working credential — and to whoever
+// shares their address.
+func TestPentestSuccessDoesNotRefillTheStartBudget(t *testing.T) {
+	svc, _, _, device := passwordlessFixture(t)
+	const addr = "10.0.0.51"
+
+	// Burn all but one start, then spend the last one on a real sign-in.
+	for i := 0; i < passkeyAttempts-1; i++ {
+		if _, _, err := svc.BeginPasswordlessLogin(addr, testRP()); err != nil {
+			t.Fatalf("start %d: %v", i+1, err)
+		}
+	}
+	if _, err := signInPasswordless(t, svc, device, addr); err != nil {
+		t.Fatalf("the sign-in itself should work: %v", err)
+	}
+
+	if _, _, err := svc.BeginPasswordlessLogin(addr, testRP()); !errors.Is(err, ErrRateLimited) {
+		t.Errorf("SECURITY: a successful sign-in handed back a fresh start budget (%v)", err)
+	}
+}
+
+// The production ceremony demands user verification.
+//
+// Lock 2 (the check on the returned flag) has its own test and would catch this —
+// but "two independent locks" means both are pinned, or the claim decays into one
+// lock and a comment.
+func TestPasswordlessCeremonyDemandsUserVerification(t *testing.T) {
+	svc, _, _, _ := passwordlessFixture(t)
+
+	assertion, _, err := svc.BeginPasswordlessLogin("10.0.0.52", testRP())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := assertion.Response.UserVerification; got != protocol.VerificationRequired {
+		t.Errorf("the ceremony asks for user verification %q, want %q", got, protocol.VerificationRequired)
+	}
+}
+
+// The budget is sized for a button, and the size is part of the guard: a limit of
+// four hundred is a limit in name only. Pinned as a range rather than a number so
+// tuning stays possible without the test becoming a copy of the constant.
+func TestPasskeyAttemptBudgetIsSane(t *testing.T) {
+	if passkeyAttempts < 10 || passkeyAttempts > 60 {
+		t.Errorf("passkeyAttempts = %d; outside the range that both tolerates a few "+
+			"dismissed prompts and still bounds a flood", passkeyAttempts)
+	}
+}

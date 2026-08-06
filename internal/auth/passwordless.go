@@ -82,10 +82,19 @@ func (s *Service) BeginPasswordlessLogin(rlKey string, rp RelyingParty) (*protoc
 	// Its own bucket, not the login one: starting a sign-in is not a guess at a
 	// password, and a stranger doing this must not be able to lock the people behind
 	// a shared address out of the password form.
+	// Spent up front, on every call — including the ones that go on to fail.
+	//
+	// An earlier version charged only after the ceremony existed, so that a flood
+	// filling the store would not also burn the budget of the users it turned away.
+	// That is a kind thought with a bad consequence: it made the endpoint free
+	// precisely while it was under attack, which is the one moment a meter is for.
+	// Under load everyone is degraded either way; the choice is whether the attacker
+	// is degraded too.
 	begin := "begin:" + rlKey
 	if !s.passkeyLimiter.Allow(begin) {
 		return nil, "", ErrRateLimited
 	}
+	s.passkeyLimiter.Fail(begin)
 	// Required, not preferred. The whole argument for signing in without a password
 	// is that the authenticator checked a PIN or a fingerprint; asking politely and
 	// accepting "no" would leave possession alone standing in for both factors.
@@ -113,10 +122,6 @@ func (s *Service) beginPasswordlessLogin(rlKey string, rp RelyingParty, uv proto
 	if !s.publicCeremonies.put(passwordlessKey(id), *session, true) {
 		return nil, "", ErrTooBusy
 	}
-	// Spent only now that there is something to show for it. Charging before would
-	// mean a flood that fills the store also burns the budget of everyone it turned
-	// away, leaving them refused for the window after the flood stops.
-	s.passkeyLimiter.Fail("begin:" + rlKey)
 	return assertion, id, nil
 }
 
@@ -251,9 +256,10 @@ func (s *Service) FinishPasswordlessLogin(ctx context.Context, rp RelyingParty, 
 		return nil, fmt.Errorf("passkey verified but its counter could not be stored: %w", err)
 	}
 
-	// A completed sign-in clears both: the attempts and the button presses that led
-	// here were evidently honest.
+	// A completed sign-in clears the attempt budget. NOT the begin budget: that one
+	// is keyed on the address rather than the account, so refilling it on success
+	// lets anyone holding a working credential loop "29 starts, one sign-in" for an
+	// unlimited supply — and hands the same refill to whoever shares their address.
 	s.passkeyLimiter.Reset(rlKey)
-	s.passkeyLimiter.Reset("begin:" + rlKey)
 	return s.issueSession(ctx, account, info)
 }

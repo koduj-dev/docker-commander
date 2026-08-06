@@ -376,3 +376,10 @@ func (s *Store) SetPasswordless(ctx context.Context, userID int64, on bool) erro
 		`UPDATE users SET passwordless = ? WHERE id = ?`, boolToInt(on), userID)
 	return err
 }
+
+// SetAuthSource records which authority owns this account's password. Used by the
+// LDAP provisioning path, and by tests that need an account this app does not own.
+func (s *Store) SetAuthSource(ctx context.Context, userID int64, source string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET auth_source = ? WHERE id = ?`, source, userID)
+	return err
+}
