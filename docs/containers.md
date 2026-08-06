@@ -7,7 +7,9 @@
 ## The list
 Filter by **state** (running / stopped / all), search by name / image / id /
 state, choose a page size (10–100), and act on a
-row: **start**, **stop**, **restart**, **pause/unpause**. Click a name
+row: **start**, **stop**, **restart**, **pause/unpause**, and **kill**. Kill sends
+SIGKILL immediately — no shutdown handler runs and nothing in flight is flushed —
+so it asks first, and is for a container that has stopped responding to Stop. Click a name
 to open the detail page.
 
 ### Create / run
