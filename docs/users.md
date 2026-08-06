@@ -201,6 +201,12 @@ regardless of permissions:
   the button says why rather than failing when you press it. See
   [Deployment](deployment.md) for TLS.
 
+  **Reach the app by one hostname.** A passkey is bound to the name you paired it
+  under, and the browser will only offer it back under that same name. Capitalisation
+  does not matter, but a trailing dot does: `dc.example.com.` is a different name to
+  the browser than `dc.example.com`, so a key paired under one will not be offered
+  under the other. Pick one spelling and stay with it.
+
   A passkey counts as a second factor like any other: it appears in the same list,
   it can be removed the same way, and it cannot be the one you remove last. At
   sign-in you get whichever of the two your account actually has — the code box,

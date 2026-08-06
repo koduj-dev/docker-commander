@@ -69,7 +69,11 @@ func (s *Server) relyingParty(r *http.Request) (auth.RelyingParty, bool) {
 	// http://127.0.0.1:8470/ cannot do passkeys, however secure the context is.
 	// Saying so here is the difference between an explanation and a button that
 	// fails when pressed.
-	if net.ParseIP(strings.Trim(hostname, "[]")) != nil {
+	//
+	// The trailing dot has to come off for THIS question even though it is kept for
+	// the id: net.ParseIP("127.0.0.1.") is nil, so a dotted literal would otherwise
+	// walk straight past a check that exists to catch it.
+	if net.ParseIP(strings.TrimSuffix(strings.Trim(hostname, "[]"), ".")) != nil {
 		return auth.RelyingParty{}, false
 	}
 	return auth.RelyingParty{
