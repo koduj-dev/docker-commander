@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"flag"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -178,5 +179,30 @@ func TestHumanBytesLabelsBinaryUnitsAsBinary(t *testing.T) {
 		if got := humanBytes(c.in); got != c.want {
 			t.Errorf("humanBytes(%d) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+// The listener's timeouts are security-relevant, and both were deletable with the
+// whole suite still green — the read timeout is the only thing stopping a client
+// from holding a handler open by dribbling out a body, and nothing noticed its
+// absence. Asserting the values is crude; it is also the difference between a
+// guard and a comment.
+func TestHTTPServerHasReadTimeouts(t *testing.T) {
+	srv := newHTTPServer(":0", http.NotFoundHandler())
+
+	if srv.ReadHeaderTimeout <= 0 {
+		t.Error("SECURITY: no ReadHeaderTimeout; slow headers can hold a connection open")
+	}
+	if srv.ReadTimeout <= 0 {
+		t.Error("SECURITY: no ReadTimeout; a dribbled body can hold a handler open indefinitely")
+	}
+	if srv.ReadTimeout < srv.ReadHeaderTimeout {
+		t.Errorf("ReadTimeout (%s) is shorter than ReadHeaderTimeout (%s), so the body gets no time at all",
+			srv.ReadTimeout, srv.ReadHeaderTimeout)
+	}
+	// Deliberately absent: WebSocket streams are long-lived and a write deadline
+	// would cut them off. Asserted so that adding one is a decision, not a reflex.
+	if srv.WriteTimeout != 0 {
+		t.Errorf("WriteTimeout is set (%s); this would break WebSocket streams", srv.WriteTimeout)
 	}
 }

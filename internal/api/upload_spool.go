@@ -19,6 +19,12 @@ const maxUploadBytes = 2 << 30 // 2 GiB
 // errUploadTooBig is returned when the body exceeds maxUploadBytes.
 var errUploadTooBig = errors.New("upload exceeds the size limit")
 
+// errUploadStalled is returned when the body stopped arriving for long enough that
+// the connection was given up on. Distinguished from a generic read failure because
+// the two need opposite responses: retry on a better connection, versus something
+// is wrong with the request.
+var errUploadStalled = errors.New("the upload stopped sending data and timed out")
+
 // spoolUpload streams a request body to a temporary file and wraps it in a tar
 // stream, ready to hand to the Docker copy API.
 //
@@ -48,6 +54,9 @@ func spoolUpload(w http.ResponseWriter, r *http.Request, name string) (io.ReadCl
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
 			return nil, 0, errUploadTooBig
+		}
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			return nil, 0, errUploadStalled
 		}
 		return nil, 0, err
 	}

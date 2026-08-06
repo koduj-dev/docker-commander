@@ -474,18 +474,7 @@ func run() error {
 		})
 	}
 
-	httpServer := &http.Server{
-		Addr:              cfg.Addr,
-		Handler:           srv.Handler(),
-		ReadHeaderTimeout: 10 * time.Second,
-		// A client does not get to hold a handler open by dribbling out a body.
-		// Routes that legitimately stream for minutes — image load, build context,
-		// file upload — swap this for a rolling idle deadline; see streamingBody.
-		// Hijacked connections are unaffected: net/http clears deadlines on hijack,
-		// so WebSocket streams are not on this clock.
-		ReadTimeout: 60 * time.Second,
-		// No WriteTimeout: WebSocket streams are long-lived.
-	}
+	httpServer := newHTTPServer(cfg.Addr, srv.Handler())
 	tlsEnabled := cfg.TLSCert != "" && cfg.TLSKey != ""
 	if tlsEnabled {
 		httpServer.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
@@ -573,6 +562,28 @@ func loadOrCreateSecret(ctx context.Context, st *store.Store, key string) ([]byt
 // listener (DC_PPROF=1). Binding to 127.0.0.1 — rather than gating by client IP
 // on the main router — is what makes it safe: the main router sits behind chi's
 // RealIP middleware, whose r.RemoteAddr is spoofable via X-Forwarded-For, so a
+// newHTTPServer builds the public listener.
+//
+// A function rather than a literal in main so the timeouts can be asserted: they
+// are security-relevant and were previously deletable with every test still green.
+func newHTTPServer(addr string, h http.Handler) *http.Server {
+	return &http.Server{
+		Addr:    addr,
+		Handler: h,
+		// Headers, then the body. Without the second a client can send its headers
+		// and dribble out the body forever, holding a handler open — Go runs the
+		// handler from the moment the headers land.
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		// No WriteTimeout: WebSocket streams are long-lived.
+		//
+		// Routes that legitimately stream for minutes — image load, build context,
+		// file upload — replace the read deadline with a rolling one that measures
+		// silence instead of duration; see api.streamingBody. Hijacked connections
+		// are off this clock entirely: net/http clears deadlines on hijack.
+	}
+}
+
 // separate physically-loopback listener is the only reliable boundary. It is
 // never reachable off-box; capture profiles through an SSH tunnel.
 func startPProf(ctx context.Context) {

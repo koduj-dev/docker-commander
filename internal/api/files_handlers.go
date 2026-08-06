@@ -92,6 +92,10 @@ func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusRequestEntityTooLarge, err.Error())
 			return
 		}
+		if errors.Is(err, errUploadStalled) {
+			writeErr(w, http.StatusRequestTimeout, err.Error())
+			return
+		}
 		writeErr(w, http.StatusBadRequest, "read body failed")
 		return
 	}

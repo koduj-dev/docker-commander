@@ -139,6 +139,43 @@ func TestStreamingBodyFallsBackWhenDeadlinesAreUnsupported(t *testing.T) {
 	}
 }
 
+// The work these routes exist for happens AFTER the body arrives: a build compiles,
+// an image loads, a file is copied into a container. So the deadline must be gone by
+// then — net/http starts a background read on the connection once the handler
+// finishes reading, and any failure of that read is taken as "the client is gone"
+// and cancels the request context.
+//
+// Left armed, this turned every long build into "context canceled" a couple of
+// minutes after its upload finished. Nothing else in this file covers the window
+// after the last byte, which is exactly where that hid.
+func TestRequestContextSurvivesTheBodyEnding(t *testing.T) {
+	restore := streamIdle
+	streamIdle = 300 * time.Millisecond
+	t.Cleanup(func() { streamIdle = restore })
+
+	ctxErr := make(chan error, 1)
+	addr := deadlineServer(t, 500*time.Millisecond, func(w http.ResponseWriter, r *http.Request) {
+		body := streamingBody(w, r)
+		defer body.Close()
+		if _, err := io.Copy(io.Discard, body); err != nil {
+			ctxErr <- err
+			return
+		}
+		// Stand in for the build. Well past the idle window, with nothing more to
+		// read — which is the whole point: silence here is not a stalled client.
+		time.Sleep(4 * streamIdle)
+		ctxErr <- r.Context().Err()
+		w.WriteHeader(http.StatusOK)
+	})
+
+	if resp, err := sendSlowBody(t, addr, 3, 50*time.Millisecond); err == nil {
+		resp.Body.Close()
+	}
+	if err := <-ctxErr; err != nil {
+		t.Fatalf("the request was cancelled after its body finished: %v", err)
+	}
+}
+
 // A WebSocket must not be on the read-timeout clock.
 //
 // ReadTimeout arms a deadline on the connection for the whole request, and a

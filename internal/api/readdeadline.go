@@ -57,9 +57,26 @@ type idleBody struct {
 // Read extends the deadline AFTER a successful read, arming the next one — the
 // deadline has to already be in place before a read blocks, which is what
 // streamingBody sets up.
+//
+// The deadline is CLEARED the moment the body ends, and that is not tidiness. When
+// a handler finishes reading, net/http clears the read deadline itself and starts a
+// background read on the connection to notice the client going away
+// (server.go, startBackgroundRead). If a deadline is left armed, that background
+// read times out, and net/http reads any background-read failure as "the client is
+// gone" — it cancels the request context (handleReadErrorLocked).
+//
+// For these routes that is catastrophic rather than cosmetic: the work happens
+// AFTER the body arrives. A docker build whose context uploaded in seconds and then
+// compiles for three minutes would die with "context canceled", and so would an
+// image load, and so would a file copy into a container. With Content-Length the
+// final read returns bytes AND io.EOF together, so this has to be checked before
+// the extension, not after.
 func (b *idleBody) Read(p []byte) (int, error) {
 	n, err := b.body.Read(p)
-	if n > 0 {
+	switch {
+	case err != nil:
+		_ = b.rc.SetReadDeadline(time.Time{})
+	case n > 0:
 		_ = b.rc.SetReadDeadline(time.Now().Add(streamIdle))
 	}
 	return n, err
