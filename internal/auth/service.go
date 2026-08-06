@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -17,7 +18,7 @@ var (
 	ErrRateLimited     = errors.New("auth: too many attempts, try again later")
 	ErrMFARequired     = errors.New("auth: 2fa code required")
 	ErrInvalidMFACode  = errors.New("auth: invalid 2fa code")
-	ErrWeakPassword    = errors.New("auth: password must be at least 10 characters")
+	ErrWeakPassword    = fmt.Errorf("auth: password must be at least %d characters", MinPasswordLength)
 	ErrInvalidUsername = errors.New("auth: username must be 3-32 characters")
 )
 

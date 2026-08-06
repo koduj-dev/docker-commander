@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -119,21 +120,75 @@ func TestResetPasswordReplacesTheCredential(t *testing.T) {
 func TestResetPasswordLeavesTheSecondFactorAlone(t *testing.T) {
 	dir, st, u := resetFixture(t)
 	ctx := context.Background()
+	before, err := st.ListFactors(ctx, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before) != 1 {
+		t.Fatalf("the fixture holds %d factors, want 1", len(before))
+	}
 
 	if err := resetFor(t, dir, "locked-out", "a-brand-new-password"); err != nil {
 		t.Fatal(err)
 	}
 
-	factors, err := st.ListFactors(ctx, u.ID)
+	after, err := st.ListFactors(ctx, u.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(factors) != 1 {
-		t.Fatalf("the account holds %d factors, want the one it started with", len(factors))
+	if len(after) != 1 {
+		t.Fatalf("the account holds %d factors, want the one it started with", len(after))
+	}
+	// Identity, not the count. Counting alone passes a SWAP — delete the owner's
+	// factor, insert your own — which is the single worst thing this command could
+	// do and exactly what "nobody resets another account's second factor" promises
+	// it does not.
+	if after[0].ID != before[0].ID || after[0].Secret != before[0].Secret {
+		t.Errorf("SECURITY: the second factor was replaced (id %d→%d)", before[0].ID, after[0].ID)
+	}
+	u2, _ := st.UserByID(ctx, u.ID)
+	if !u2.MFAEnabled {
+		t.Error("the reset disabled the second factor")
+	}
+}
+
+// The floor applies where the write happens, not only at the prompt — a caller
+// that skips the prompt must not be able to write a one-character password.
+func TestResetPasswordEnforcesTheMinimumLength(t *testing.T) {
+	dir, st, u := resetFixture(t)
+	ctx := context.Background()
+	before, _ := st.UserByID(ctx, u.ID)
+
+	short := strings.Repeat("x", auth.MinPasswordLength-1)
+	if err := resetFor(t, dir, "locked-out", short); err == nil {
+		t.Error("SECURITY: a password below the minimum was accepted")
 	}
 	after, _ := st.UserByID(ctx, u.ID)
-	if !after.MFAEnabled {
-		t.Error("the reset disabled the second factor")
+	if after.PasswordHash != before.PasswordHash {
+		t.Error("SECURITY: the credential changed despite the refusal")
+	}
+
+	// …and exactly the minimum is fine: the guard is a floor, not an off-by-one.
+	if err := resetFor(t, dir, "locked-out", strings.Repeat("y", auth.MinPasswordLength)); err != nil {
+		t.Errorf("a password at the minimum should be accepted: %v", err)
+	}
+}
+
+// It must never create a database. On a packaged install the data dir comes from a
+// config file this path does not read, so a wrong guess would otherwise answer "no
+// account called admin" from a directory that was empty a moment ago.
+func TestResetPasswordRefusesToCreateADatabase(t *testing.T) {
+	dir := t.TempDir()
+
+	err := resetFor(t, dir, "admin", "a-brand-new-password")
+	if err == nil {
+		t.Fatal("an empty directory should be refused")
+	}
+	if !strings.Contains(err.Error(), "--data-dir") {
+		t.Errorf("the error should point at --data-dir, got %q", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "docker-commander.db")); statErr == nil {
+		t.Error("a database was created in a directory that had none")
 	}
 }
 

@@ -347,6 +347,7 @@ Standalone actions:
   --self-upgrade [--check]     upgrade to the latest GitHub release (--check only reports)
   --backup <file>              write a full backup of the data dir (add --passphrase to encrypt)
   --restore <file>             restore a backup into the data dir (server must be stopped)
+  --reset-password <user>      set a new password from this machine when it is lost
   --install-service            install as a systemd (Linux) / launchd (macOS) service
   --uninstall-service          remove the service
   --service-status             show the service status

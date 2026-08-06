@@ -86,30 +86,53 @@ func runResetPassword(dataDir, username string) error {
 	if username == "" {
 		return errors.New("usage: dockercmd --reset-password <username>")
 	}
+	// The prompt comes FIRST, before the database is opened. Opening it creates
+	// -wal and -shm files, and this prompt waits for a human — a Ctrl-C at it would
+	// otherwise leave those behind owned by whoever ran the command. On a packaged
+	// install that is root, in a directory owned by the service user, and the
+	// service can then no longer write its own database. A failed recovery attempt
+	// must not be worse than no attempt.
+	fmt.Printf("Resetting a password in %s\n", dataDir)
+	pw, err := readNewPassword()
+	if err != nil {
+		return err
+	}
+
 	u, st, err := openForReset(dataDir, username)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
 
-	fmt.Printf("Resetting the password for %q in %s\n", u.Username, dataDir)
-	pw, err := readNewPassword()
-	if err != nil {
-		return err
-	}
 	if err := applyResetTo(st, u, pw); err != nil {
 		return err
 	}
-	fmt.Println("Done. Every session for that account has been signed out.")
+	fmt.Printf("Done — %q now has the new password.\n", u.Username)
+	fmt.Println("Every browser session for that account has been signed out.")
+	// Deliberately named rather than folded into "every session": API and MCP
+	// tokens are not sessions and are NOT revoked by this, and somebody running
+	// this while recovering from a suspected compromise needs to know that.
+	fmt.Println("API and MCP tokens are NOT revoked — review them in the UI if this was a compromise.")
 	if u.MFAEnabled {
-		fmt.Println("Its second factor is unchanged — you will still be asked for it when signing in.")
+		fmt.Println("Its second factor is unchanged, so signing in still asks for it —")
+		fmt.Println("unless this instance has the localhost 2FA exemption on and you sign in from the machine itself.")
 	}
 	return nil
 }
 
 // openForReset resolves the account and returns the open store with it.
 func openForReset(dataDir, username string) (*store.User, *store.Store, error) {
-	st, err := store.Open(filepath.Join(dataDir, "docker-commander.db"))
+	db := filepath.Join(dataDir, "docker-commander.db")
+	// store.Open would happily CREATE one. On a packaged install the data dir comes
+	// from /etc/docker-commander/commander.conf, which this path does not read — so
+	// `sudo dockercmd --reset-password admin` lands in root's own config directory,
+	// and creating an empty database there answers "no account called admin",
+	// which is a lie told to someone who is locked out and in a hurry.
+	if _, err := os.Stat(db); err != nil {
+		return nil, nil, fmt.Errorf("no database at %s — point at the right one with --data-dir "+
+			"(a packaged install uses /var/lib/dockercmd)", db)
+	}
+	st, err := store.Open(db)
 	if err != nil {
 		return nil, nil, fmt.Errorf("opening the database in %s: %w", dataDir, err)
 	}
@@ -138,6 +161,12 @@ func openForReset(dataDir, username string) (*store.User, *store.Store, error) {
 
 // applyResetTo writes the new password and ends the account's sessions.
 func applyResetTo(st *store.Store, u *store.User, pw string) error {
+	// Enforced HERE, not only in the prompt: the prompt is one caller, and a floor
+	// that lives only in the part a test bypasses is a floor the next caller does
+	// not have. The same minimum the UI applies.
+	if len(pw) < auth.MinPasswordLength {
+		return fmt.Errorf("a password must be at least %d characters", auth.MinPasswordLength)
+	}
 	ctx := context.Background()
 	hash, err := auth.HashPassword(pw)
 	if err != nil {
@@ -174,7 +203,8 @@ func readNewPassword() (string, error) {
 	if !term.IsTerminal(fd) {
 		// Reading from a pipe would mean the password came from somewhere it can be
 		// recovered from — a script, a history file, a CI log.
-		return "", errors.New("this needs a terminal: run it directly, not through a pipe")
+		return "", errors.New("this needs a terminal so the password is never in a pipe, a script or a log — " +
+			"use `ssh -t host dockercmd --reset-password …` or `docker exec -it <container> dockercmd …`")
 	}
 	fmt.Print("New password: ")
 	first, err := term.ReadPassword(fd)

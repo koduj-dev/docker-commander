@@ -37,6 +37,24 @@ GitHub release. With
 .B \-\-check
 it only reports whether an update is available and exits.
 .TP
+.BI \-\-reset-password " <user>"
+Set a new password for a local account, from the machine the instance runs on,
+when the password is lost and no other admin can reset it. Prompts at the
+terminal \(em the password is never an argument, so it stays out of shell history
+and
+.IR /proc/<pid>/cmdline .
+Ends every browser session for that account and writes the reset to the audit
+log. The second factor is
+.B not
+touched, and API/MCP tokens are
+.B not
+revoked. Needs access to the data dir, which is already equivalent to being an
+administrator; pass
+.B \-\-data-dir
+if the instance does not use the default (a packaged install uses
+.IR /var/lib/dockercmd ).
+The server does not need to be stopped.
+.TP
 .B \-\-install-service
 Install Docker Commander as a background service: a hardened
 .BR systemd (1)

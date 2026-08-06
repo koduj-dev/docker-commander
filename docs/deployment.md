@@ -310,13 +310,24 @@ If the password for the only admin account is gone, reset it from the machine th
 instance runs on:
 
 ```bash
-dockercmd --reset-password admin
+sudo dockercmd --data-dir /var/lib/dockercmd --reset-password admin   # packaged install
+dockercmd --reset-password admin                                     # running it yourself
 ```
 
+`--data-dir` matters on a packaged install: the service reads its path from
+`/etc/docker-commander/commander.conf`, and standalone actions do not, so without
+it the command looks in *your* config directory. It refuses to create a database
+rather than answering "no such account" from an empty one.
+
 It prompts at the terminal — the password is never an argument, so it stays out of
-shell history and `/proc/<pid>/cmdline` — ends **every session** for that account,
-and writes the reset to the audit log. The **second factor is not touched**: you
-will still be asked for your code or passkey afterwards.
+shell history and `/proc/<pid>/cmdline` — ends **every browser session** for that account,
+and writes the reset to the audit log.
+
+Two things it deliberately does *not* do. The **second factor is not touched** — you
+will still be asked for your code or passkey afterwards, unless this instance has
+the localhost 2FA exemption on and you sign in from the machine itself. And **API
+and MCP tokens are not revoked**: they are not sessions. If you are resetting
+because of a suspected compromise, review those in the UI as well.
 
 **You do not have to stop the service.** It writes through SQLite the same way the
 server does, and the server re-reads both the password and the session epoch on
