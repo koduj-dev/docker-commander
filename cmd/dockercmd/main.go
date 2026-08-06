@@ -474,12 +474,7 @@ func run() error {
 		})
 	}
 
-	httpServer := &http.Server{
-		Addr:              cfg.Addr,
-		Handler:           srv.Handler(),
-		ReadHeaderTimeout: 10 * time.Second,
-		// No WriteTimeout: WebSocket streams are long-lived.
-	}
+	httpServer := newHTTPServer(cfg.Addr, srv.Handler())
 	tlsEnabled := cfg.TLSCert != "" && cfg.TLSKey != ""
 	if tlsEnabled {
 		httpServer.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
@@ -563,6 +558,34 @@ func loadOrCreateSecret(ctx context.Context, st *store.Store, key string) ([]byt
 	return buf, nil
 }
 
+// newHTTPServer builds the public listener.
+//
+// A function rather than a literal in main so the timeouts can be asserted: they
+// are security-relevant and were previously deletable with every test still green.
+func newHTTPServer(addr string, h http.Handler) *http.Server {
+	return &http.Server{
+		Addr:    addr,
+		Handler: h,
+		// Headers, then the body. Without the second a client can send its headers
+		// and dribble out the body forever, holding a handler open — Go runs the
+		// handler from the moment the headers land.
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		// No WriteTimeout: WebSocket streams are long-lived.
+		//
+		// Routes that legitimately stream for minutes — image load and import, build
+		// context, container and volume uploads, project import — replace the read
+		// deadline with a rolling one that measures silence instead of duration; see
+		// api.streamingBody. Hijacked connections are off this clock entirely:
+		// net/http clears deadlines on hijack.
+		//
+		// Side effect worth knowing: Server.idleTimeout() falls back to ReadTimeout
+		// when IdleTimeout is unset, so an idle keep-alive connection now closes
+		// after 60s where it previously stayed open. Harmless — the client reconnects
+		// — but it is a change, not an accident.
+	}
+}
+
 // startPProf serves the profiling endpoints on a dedicated loopback-only
 // listener (DC_PPROF=1). Binding to 127.0.0.1 — rather than gating by client IP
 // on the main router — is what makes it safe: the main router sits behind chi's
@@ -571,11 +594,10 @@ func loadOrCreateSecret(ctx context.Context, st *store.Store, key string) ([]byt
 // never reachable off-box; capture profiles through an SSH tunnel.
 func startPProf(ctx context.Context) {
 	const addr = "127.0.0.1:6060"
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           api.PProfHandler(),
-		ReadHeaderTimeout: 10 * time.Second,
-	}
+	// Same timeouts as the public listener. Loopback-only and opt-in, so the risk is
+	// small — but nothing here streams, and "it is only reachable locally" is a
+	// reason to bound it cheaply rather than a reason to skip it.
+	srv := newHTTPServer(addr, api.PProfHandler())
 	go func() {
 		<-ctx.Done()
 		sctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

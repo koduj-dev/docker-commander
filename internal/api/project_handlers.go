@@ -239,7 +239,10 @@ func (s *Server) handleImportProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	data, err := io.ReadAll(io.LimitReader(r.Body, maxImportBytes))
+	// 32 MiB of zip. Fitting that inside the server's whole-request timeout would
+	// demand a sustained half a megabyte a second, which a modest upstream or a VPN
+	// does not have — so this measures silence like the other upload routes.
+	data, err := io.ReadAll(io.LimitReader(streamingBody(w, r), maxImportBytes))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "could not read upload")
 		return
