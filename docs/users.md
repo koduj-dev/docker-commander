@@ -207,6 +207,14 @@ regardless of permissions:
   the browser than `dc.example.com`, so a key paired under one will not be offered
   under the other. Pick one spelling and stay with it.
 
+  **Signing in with a passkey alone** is offered on the login screen, beside the
+  password. It works when the passkey can verify *you* — a PIN, a fingerprint, a
+  face — because that is what makes the key two factors rather than one; a passkey
+  that only proves possession is refused for this and says so. Your password still
+  works and always will: it is what gets you back in if the key is lost, since no
+  admin can reset another account's second factor. LDAP accounts sign in with their
+  directory password.
+
   A passkey counts as a second factor like any other: it appears in the same list,
   it can be removed the same way, and it cannot be the one you remove last. At
   sign-in you get whichever of the two your account actually has — the code box,

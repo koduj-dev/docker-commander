@@ -42,6 +42,10 @@ type Device struct {
 	// userVerified controls the UV flag — a fingerprint or PIN, as opposed to mere
 	// possession.
 	UserVerified bool
+	// UserHandle is what a DISCOVERABLE credential reports back: the account the
+	// authenticator stored beside the key. Empty for a second-factor assertion,
+	// where the server already knows whose login it is.
+	UserHandle []byte
 }
 
 func New(t *testing.T) *Device {
@@ -173,7 +177,7 @@ func (a *Device) Assert(t *testing.T, rpID, origin, challenge string) string {
 			"authenticatorData": base64.RawURLEncoding.EncodeToString(authData),
 			"clientDataJSON":    base64.RawURLEncoding.EncodeToString(clientData),
 			"signature":         base64.RawURLEncoding.EncodeToString(derSignature(t, r, s)),
-			"userHandle":        "",
+			"userHandle":        base64.RawURLEncoding.EncodeToString(a.UserHandle),
 		},
 	}
 	return mustJSON(t, body)

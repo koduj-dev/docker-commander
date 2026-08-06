@@ -6,6 +6,32 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Sign in with a passkey alone.** The login screen offers it next to the password
+  form: no username, no password — the browser finds a credential for this server
+  and that assertion is the whole login.
+
+  This is defensible only because such a passkey is *itself* two factors: possession
+  of the authenticator, and the PIN or fingerprint that unlocks it. That second half
+  is **user verification**, and it is demanded of the browser *and* checked on the
+  assertion that comes back — an authenticator may ignore the request, so the answer
+  is what decides. Without it the key proves possession only, and that is refused
+  with an explanation rather than a generic failure.
+
+  **The password still works.** This is an addition, not a replacement, and
+  deliberately so: this app gives admins no way to reset someone else's second
+  factor, so if a passkey were the only way in, a lost phone would be a lost
+  account. Signing in with a password and a second factor remains a valid route, and
+  is the recovery path.
+
+  Newly paired passkeys ask to be *discoverable* so the browser can offer them
+  before anyone has said who they are. Keys paired before this, and hardware with no
+  room to store one, keep working as second factors — they simply will not appear
+  for passwordless sign-in.
+
+  Accounts backed by **LDAP cannot use it**: the directory is their authority — what
+  they may do, whether they are still enabled — and a passkey answers none of that.
+
 ### Fixed
 - **Leaving a page mid-stream could drop the whole WebSocket.** Stats and log frames
   were written under the *subscription's* context, and the websocket library

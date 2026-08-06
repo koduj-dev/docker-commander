@@ -244,6 +244,12 @@ export const api = {
     req<CreationOptions>("POST", "/api/auth/webauthn/register/begin", password === undefined ? undefined : { password }),
   passkeyRegisterFinish: (name: string, credential: unknown) =>
     req<{ ok: boolean }>("POST", `/api/auth/webauthn/register/finish?name=${encodeURIComponent(name)}`, credential),
+  // Signing in with a passkey alone. No username and no password: the browser
+  // finds a discoverable credential for this site and the assertion is the claim.
+  passwordlessBegin: () =>
+    req<{ ceremonyId: string; publicKey: RequestOptions["publicKey"] }>("POST", "/api/auth/passkey/begin"),
+  passwordlessFinish: (ceremonyId: string, credential: unknown) =>
+    req<LoginResult>("POST", "/api/auth/passkey/finish", credential, { "X-Passkey-Ceremony": ceremonyId }),
   passkeyLoginBegin: (mfaToken: string) =>
     req<RequestOptions>("POST", "/api/auth/2fa/webauthn/begin", { mfaToken }),
   // The body is the credential, which the server's WebAuthn library parses itself,

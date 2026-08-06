@@ -52,7 +52,12 @@ var ungatedRoutes = map[string]string{
 	"/api/auth/2fa/webauthn/begin":       "2FA challenge (passkey)",
 	"/api/auth/2fa/webauthn/finish":      "2FA challenge (passkey)",
 	"/api/auth/webauthn/support":         "whether this connection can do WebAuthn",
-	"/api/auth/factors/{id}":             "own authenticators only; DELETE is scoped by user id",
+	// Signing in, so necessarily reachable without a session. Gated by the
+	// assertion itself: a signature over a challenge this server issued, from a
+	// credential it already holds, with user verification.
+	"/api/auth/passkey/begin":  "passwordless sign-in challenge",
+	"/api/auth/passkey/finish": "passwordless sign-in",
+	"/api/auth/factors/{id}":   "own authenticators only; DELETE is scoped by user id",
 	// Writes the CALLER's own alert address, taken from their session claims —
 	// it cannot touch another account (TestPentestSetMyEmail_OnlyAffectsTheCaller).
 	"/api/auth/me/email": "own alert address",

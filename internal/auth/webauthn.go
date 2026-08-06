@@ -70,8 +70,16 @@ func (rp RelyingParty) webauthnAPI() (*webauthn.WebAuthn, error) {
 			// A second factor should prove possession of the device. Asking for user
 			// verification as well (a PIN or a fingerprint) would be a stronger claim,
 			// but "preferred" is what keeps a plain security key usable.
+			//
+			// Preferred rather than required for the resident key too. A discoverable
+			// credential is what lets the authenticator offer itself before anyone has
+			// said who they are, which is the whole of passwordless sign-in — but
+			// demanding one would turn "add a passkey" into an error on hardware with
+			// no room to store it, and as a second factor it does not need to be
+			// discoverable at all. So: ask, use it if we get it, and let the
+			// passwordless button simply find nothing on keys that could not.
 			UserVerification: protocol.VerificationPreferred,
-			ResidentKey:      protocol.ResidentKeyRequirementDiscouraged,
+			ResidentKey:      protocol.ResidentKeyRequirementPreferred,
 		},
 	})
 }

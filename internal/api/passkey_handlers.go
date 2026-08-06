@@ -276,3 +276,68 @@ func (s *Server) handlePasskeySupport(w http.ResponseWriter, r *http.Request) {
 		"reason":    map[bool]string{true: "", false: auth.ErrPasskeyUnavailable.Error()}[ok],
 	})
 }
+
+// handlePasswordlessBegin issues a discoverable-credential challenge.
+//
+// Public, and deliberately says nothing: it is asked before anyone has claimed an
+// identity, so there is no account to leak and no username to confirm. The reply is
+// the same whether or not this server has a single passkey on it.
+func (s *Server) handlePasswordlessBegin(w http.ResponseWriter, r *http.Request) {
+	rp, ok := s.relyingParty(r)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, auth.ErrPasskeyUnavailable.Error())
+		return
+	}
+	assertion, id, err := s.auth.BeginPasswordlessLogin(rp)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not start")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ceremonyId": id, "publicKey": assertion.Response})
+}
+
+// handlePasswordlessFinish verifies the assertion and signs the account in.
+func (s *Server) handlePasswordlessFinish(w http.ResponseWriter, r *http.Request) {
+	rp, ok := s.relyingParty(r)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, auth.ErrPasskeyUnavailable.Error())
+		return
+	}
+	// The body is the credential, which the library parses itself, so the ceremony
+	// id rides in a header — not the URL, which is the part of a request that gets
+	// logged. Capped for the same reason the other finish endpoints are.
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+	id := r.Header.Get("X-Passkey-Ceremony")
+
+	res, err := s.auth.FinishPasswordlessLogin(r.Context(), rp, r.RemoteAddr, id, r, sessionInfo(r))
+	switch {
+	case err == nil:
+	case errors.Is(err, auth.ErrRateLimited):
+		writeErr(w, http.StatusTooManyRequests, err.Error())
+		return
+	case errors.Is(err, auth.ErrUserVerificationRequired):
+		// Worth saying plainly: the key worked, and the account is fine. What is
+		// missing is the PIN or fingerprint, and the fix is either to set one up or
+		// to sign in with the password.
+		writeErr(w, http.StatusUnauthorized, err.Error())
+		return
+	case errors.Is(err, auth.ErrPasswordlessNotAllowed):
+		writeErr(w, http.StatusForbidden, err.Error())
+		return
+	case errors.Is(err, auth.ErrClonedAuthenticator):
+		writeErr(w, http.StatusUnauthorized, err.Error())
+		return
+	case errors.Is(err, auth.ErrInvalidCreds):
+		writeErr(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	default:
+		// Past the signature check and then failed on our side. Reporting it as a
+		// rejected passkey would blame the user for our outage.
+		writeErr(w, http.StatusInternalServerError, "the passkey verified, but the login could not be completed")
+		return
+	}
+
+	s.audit(r, "auth.login", res.User.Username, "passkey (passwordless)")
+	s.setSessionCookie(w, r, res.Token, res.ExpiresAt)
+	writeJSON(w, http.StatusOK, s.loginResponse(r, res))
+}

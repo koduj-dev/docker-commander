@@ -45,6 +45,26 @@ export function Login() {
     }
   };
 
+  // Signing in with the passkey alone. Offered alongside the password, never
+  // instead of it: a lost key must not be a lost account, and this app gives
+  // admins no way to reset someone else's second factor.
+  const submitPasswordless = async () => {
+    setErr("");
+    setBusy(true);
+    try {
+      const { ceremonyId, publicKey } = await api.passwordlessBegin();
+      const credential = await usePasskey({ publicKey });
+      const res = await api.passwordlessFinish(ceremonyId, credential);
+      if (res.user) {
+        await refresh();
+      }
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : describePasskeyError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const submitCode = async (e: React.FormEvent) => {
     e.preventDefault();
     setErr("");
@@ -180,6 +200,22 @@ export function Login() {
           {busy ? "Signing in…" : "Sign in"}
         </button>
       </form>
+
+      {passkeysSupported() && (
+        <div className="mt-4 space-y-4">
+          <div className="flex items-center gap-3 text-xs text-muted">
+            <span className="h-px flex-1 bg-border" /> or <span className="h-px flex-1 bg-border" />
+          </div>
+          <button
+            type="button"
+            className="btn-ghost w-full justify-center"
+            onClick={submitPasswordless}
+            disabled={busy}
+          >
+            Sign in with a passkey
+          </button>
+        </div>
+      )}
     </AuthShell>
   );
 }

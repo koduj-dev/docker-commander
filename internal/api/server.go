@@ -85,6 +85,11 @@ func (s *Server) Handler() http.Handler {
 			// Whether this connection is a secure context at all, so the login screen
 			// can explain the absence instead of showing a button that cannot work.
 			r.Get("/auth/webauthn/support", s.handlePasskeySupport)
+			// Signing in with a passkey alone. No session and no challenge token:
+			// the assertion IS the claim, and user verification is what makes it
+			// two factors rather than one.
+			r.Post("/auth/passkey/begin", s.handlePasswordlessBegin)
+			r.Post("/auth/passkey/finish", s.handlePasswordlessFinish)
 		})
 
 		// Authenticated endpoints.
