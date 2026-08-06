@@ -15,13 +15,17 @@ All notable changes to Docker Commander are documented here. The format follows
   straddle a change in the account's protection.
 
   Requests now have a 60-second read timeout. The routes that legitimately take
-  minutes — loading an image, sending a build context, uploading a file into a
-  container or a volume — swap it for a *rolling* one, extended each time data
-  arrives, so the limit is "this upload went quiet", not "this upload took a while".
-  A multi-gigabyte upload over a slow link is unaffected; a stalled one is dropped.
+  minutes — loading or importing an image, sending a build context, uploading and
+  extracting a file into a container or a volume, importing a project — swap it for
+  a *rolling* one, extended each time data arrives, so the limit is "this upload
+  went quiet", not "this upload took a while". A multi-gigabyte upload over a slow
+  link is unaffected; a stalled one is dropped, and answered with a 408 that says
+  so. The profiling listener gets the same treatment.
 
   WebSocket streams are not on this clock: `net/http` clears deadlines when a
-  handler hijacks the connection.
+  handler hijacks the connection. One side effect worth knowing: an idle
+  keep-alive connection now closes after 60 seconds where it previously stayed
+  open, because Go falls back to the read timeout when no idle timeout is set.
 
 - **Leaving a page mid-stream could drop the whole WebSocket.** Stats and log frames
   were written under the *subscription's* context, and the websocket library

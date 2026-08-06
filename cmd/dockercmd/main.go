@@ -573,10 +573,16 @@ func newHTTPServer(addr string, h http.Handler) *http.Server {
 		ReadTimeout:       60 * time.Second,
 		// No WriteTimeout: WebSocket streams are long-lived.
 		//
-		// Routes that legitimately stream for minutes — image load, build context,
-		// file upload — replace the read deadline with a rolling one that measures
-		// silence instead of duration; see api.streamingBody. Hijacked connections
-		// are off this clock entirely: net/http clears deadlines on hijack.
+		// Routes that legitimately stream for minutes — image load and import, build
+		// context, container and volume uploads, project import — replace the read
+		// deadline with a rolling one that measures silence instead of duration; see
+		// api.streamingBody. Hijacked connections are off this clock entirely:
+		// net/http clears deadlines on hijack.
+		//
+		// Side effect worth knowing: Server.idleTimeout() falls back to ReadTimeout
+		// when IdleTimeout is unset, so an idle keep-alive connection now closes
+		// after 60s where it previously stayed open. Harmless — the client reconnects
+		// — but it is a change, not an accident.
 	}
 }
 

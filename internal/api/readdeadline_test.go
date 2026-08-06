@@ -270,3 +270,37 @@ func TestWebSocketOutlivesTheReadTimeout(t *testing.T) {
 		t.Errorf("got %v %q", typ, msg)
 	}
 }
+
+// A request with no body must be left alone.
+//
+// net/http disarms the read deadline and starts its background read BEFORE such a
+// handler runs, so arming one here times that read out and cancels the request —
+// for a handler that may never read the body at all, and so never reach the clear.
+// Reproduced as `context canceled` mid-handler on a Content-Length: 0 POST.
+func TestBodylessRequestIsLeftAlone(t *testing.T) {
+	restore := streamIdle
+	streamIdle = 200 * time.Millisecond
+	t.Cleanup(func() { streamIdle = restore })
+
+	ctxErr := make(chan error, 1)
+	addr := deadlineServer(t, 500*time.Millisecond, func(w http.ResponseWriter, r *http.Request) {
+		// Asks for the rolling deadline and then never reads — the shape of a
+		// handler that hands the body to a library which returns early.
+		_ = streamingBody(w, r)
+		time.Sleep(3 * streamIdle)
+		ctxErr <- r.Context().Err()
+		w.WriteHeader(http.StatusOK)
+	})
+
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte("POST /x HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-ctxErr; err != nil {
+		t.Fatalf("a bodyless request was cancelled: %v", err)
+	}
+}

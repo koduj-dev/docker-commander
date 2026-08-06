@@ -43,6 +43,9 @@ func streamingBody(w http.ResponseWriter, r *http.Request) io.ReadCloser {
 	// here would time that read out and cancel the request — for a handler that may
 	// never read the body at all, and so never reach the clear below.
 	if r.Body == nil || r.Body == http.NoBody || r.ContentLength == 0 {
+		if r.Body == nil {
+			return http.NoBody
+		}
 		return r.Body
 	}
 	rc := http.NewResponseController(w)
@@ -53,7 +56,9 @@ func streamingBody(w http.ResponseWriter, r *http.Request) io.ReadCloser {
 		// one — but that means large uploads start failing at 60 seconds with
 		// nothing to explain why. Unreachable in production today; said out loud so
 		// that the middleware change which makes it reachable is not silent.
-		log.Printf("streaming upload on %s cannot set a read deadline (%v); "+
+		// %q, not %s: the path is decoded, so a route parameter can carry a newline
+		// and forge a log line.
+		log.Printf("streaming upload on %q cannot set a read deadline (%v); "+
 			"large uploads will be bounded by the server's ReadTimeout", r.URL.Path, err)
 		return r.Body
 	}

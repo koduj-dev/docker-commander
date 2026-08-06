@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"flag"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net/http"
 	"os"
 	"strings"
@@ -205,4 +208,61 @@ func TestHTTPServerHasReadTimeouts(t *testing.T) {
 	if srv.WriteTimeout != 0 {
 		t.Errorf("WriteTimeout is set (%s); this would break WebSocket streams", srv.WriteTimeout)
 	}
+}
+
+// …and that the listener main actually runs is the one the constructor builds.
+//
+// The test above pins newHTTPServer. It does not pin that anything USES it: a
+// literal &http.Server{} written back into run() keeps every test green, which is
+// precisely how the timeouts came to be missing in the first place. So this reads
+// the package's own source and refuses a second http.Server literal.
+//
+// Crude, and worth it — the alternative is a guard that only guards a function
+// nobody is obliged to call.
+func TestNoHandRolledHTTPServerInMain(t *testing.T) {
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pkg := range pkgs {
+		for path, file := range pkg.Files {
+			if strings.HasSuffix(path, "_test.go") {
+				continue
+			}
+			ast.Inspect(file, func(n ast.Node) bool {
+				lit, ok := n.(*ast.CompositeLit)
+				if !ok {
+					return true
+				}
+				sel, ok := lit.Type.(*ast.SelectorExpr)
+				if !ok || sel.Sel.Name != "Server" {
+					return true
+				}
+				if ident, ok := sel.X.(*ast.Ident); !ok || ident.Name != "http" {
+					return true
+				}
+				// The one inside newHTTPServer is the point; anything else is a
+				// listener built without the timeouts.
+				if fn := enclosingFunc(file, lit.Pos()); fn != "newHTTPServer" {
+					t.Errorf("%s builds an http.Server by hand in %s; use newHTTPServer so it gets the read timeouts",
+						fset.Position(lit.Pos()), fn)
+				}
+				return true
+			})
+		}
+	}
+}
+
+// enclosingFunc names the function a position falls inside, or "" at file scope.
+func enclosingFunc(file *ast.File, pos token.Pos) string {
+	name := ""
+	ast.Inspect(file, func(n ast.Node) bool {
+		fn, ok := n.(*ast.FuncDecl)
+		if ok && fn.Pos() <= pos && pos <= fn.End() {
+			name = fn.Name.Name
+		}
+		return true
+	})
+	return name
 }
