@@ -63,9 +63,27 @@ Stated plainly, so nobody infers more than is there:
 A few things worth knowing when assessing a report:
 
 - **The Docker daemon socket is root-equivalent.** Docker Commander is intended
-  to run behind authentication (Argon2id + optional TOTP 2FA), RBAC and — for
-  anything public — TLS (native or a reverse proxy). It binds to **loopback by
-  default**.
+  to run behind authentication (Argon2id + a second factor: TOTP or a passkey),
+  RBAC and — for anything public — TLS (native or a reverse proxy). It binds to
+  **loopback by default**.
+- **Signing in with a passkey alone rests on user verification, and is off by
+  default.** A passkey used as the whole login is treated as two factors —
+  possession of the authenticator plus the PIN, fingerprint or face that unlocks
+  it — so the assertion must carry the user-verification flag. That is demanded of
+  the ceremony *and* re-checked on what comes back, because an authenticator may
+  answer without it.
+
+  It is **opt-in per account** and enabling it requires the account's password.
+  That is deliberate: for a passkey that **syncs** between devices (iCloud
+  Keychain, Google Password Manager) the verification can be satisfied on any
+  device the credential reaches, so the account then rests on that platform account
+  too. A passkey as a *second* factor keeps the password in front of it; as the
+  whole login it does not. Accounts backed by a directory (LDAP) cannot use it at
+  all — the directory is their authority.
+
+  The password plus a second factor always remains a valid way in. This is the
+  recovery story: no admin can reset another account's second factor, so a passkey
+  that could be the *only* way in would make a lost device a lost account.
 - Stored secrets (registry / SMTP / LDAP passwords) are **encrypted at rest**
   (AES-256-GCM) with a per-install key in the data directory.
 - Reaching remote daemons over **plain TCP without TLS** is insecure by design;
@@ -88,6 +106,29 @@ A few things worth knowing when assessing a report:
   is bounded. The tool set is an allow-list of reads + *safe* control — no `exec`,
   image export, volume-content reads, `prune` or `remove`. See
   [docs/mcp.md](docs/mcp.md).
+
+## Invariants worth knowing before changing auth code
+
+Three rules the authentication code depends on. Each exists because breaking it
+produced a real, exploitable defect that a green test suite did not notice.
+
+- **Authorisation is decided by the write, not by a check before it.** Adding a
+  second factor to an account that already has one needs the password; adding the
+  first does not. Those are decided minutes apart, and the gap belongs to the
+  client — the WebAuthn library reads the request body, and a request whose body
+  arrives slowly holds a handler open across it. So the condition lives in the
+  `INSERT` (`store.CreateFactor`), the way `PairPendingFactor` claims a pending
+  enrolment with a compare-and-swap.
+- **What a ceremony demands must be re-checked on what comes back.** Asking the
+  browser for user verification is a preference an authenticator may ignore. Both
+  layers are kept, and the second is deliberately testable on its own — with the
+  first in place the library refuses first, so the second would otherwise rot
+  untested.
+- **Ceremonies reachable without credentials get their own bounded store.** They
+  used to share one with registration and the 2FA step, so flooding the public
+  endpoint — which needs no account — meant nobody could pair a passkey and
+  accounts whose only second factor is a passkey could not finish signing in.
+  Trading memory exhaustion for a lockout is not a fix.
 
 Generally **out of scope:** issues that require an already-compromised host or
 data directory, exposing the app without the documented protections, or

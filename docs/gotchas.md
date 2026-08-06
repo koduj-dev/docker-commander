@@ -63,6 +63,34 @@ every guard and the fixture traps that come with a real Docker daemon.
   said `exited`. The app polls, so it is only a problem for tests that assume
   instantaneous consistency.
 
+## HTTP timeouts and streaming
+
+- **A handler runs from the moment the HEADERS arrive, not the body.** With no
+  `ReadTimeout` a client can send headers and dribble the body indefinitely,
+  holding a handler open — and any check the handler makes *before* reading the
+  body is made against a state the client can then outlive. That is why the
+  authorisation for pairing a second factor lives in the `INSERT` rather than in a
+  check above it.
+- **Re-arming a read deadline after the body ends cancels the request.** When a
+  handler finishes reading, `net/http` clears the deadline itself and starts a
+  background read to notice the client leaving (`startBackgroundRead`); any failure
+  of that read is taken as "client gone" and cancels the request context. With
+  `Content-Length`, the final read returns bytes **and** `io.EOF` together, so a
+  naive "extend on n > 0" re-arms it at exactly the wrong moment. Every long
+  `docker build` died two minutes after its context finished uploading.
+- **Clearing that deadline on *any* error is the opposite mistake.** If the handler
+  returns without draining the body, `net/http` drains the remainder inline, inside
+  `chunkWriter.writeHeader`, *before* the response headers go out — unbounded if the
+  deadline is gone. A client that declares a body, sends two bytes and goes quiet
+  without closing pins a goroutine and an fd for the life of the process, and never
+  receives the timeout the handler wrote. Clear on `io.EOF` only.
+- **`Connection: close` skips that drain**, so a reproduction that closes the
+  connection will not show the bug. Test stalled-body behaviour over keep-alive.
+- **Hijacked connections are off the clock**: `net/http` clears deadlines on
+  hijack, so WebSocket streams are unaffected by `ReadTimeout` — but an idle
+  keep-alive connection now closes after it, because `Server.idleTimeout()` falls
+  back to `ReadTimeout` when `IdleTimeout` is unset.
+
 ## Authorization
 
 - **A sequential id is not an access control.** Any endpoint or tool that takes an
