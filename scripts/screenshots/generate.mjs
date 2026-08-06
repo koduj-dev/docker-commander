@@ -190,9 +190,16 @@ async function main() {
       await page.locator('form button[type=submit], form button').first().click().catch(() => {});
       await page.waitForTimeout(1400);
       const onSecondStep = await page.locator('text=/two-factor/i').count().catch(() => 0);
+      const stillOnSignIn = await page.locator('text=/sign in to continue/i').count().catch(() => 0);
       if (onSecondStep) {
         await page.screenshot({ path: `${OUT}/login_2fa.png` });
         console.log('✓ login_2fa  →  login_2fa.png');
+      } else if (stillOnSignIn) {
+        // The credentials were refused. Saying "no second factor" here would blame
+        // the instance for what is a wrong DC_PASS, which is exactly the sort of
+        // misleading status this script should not produce — the API login below
+        // will fail next with the real reason.
+        console.warn('• skip login_2fa: the sign-in was refused; check DC_USER / DC_PASS');
       } else {
         console.warn('• skip login_2fa: this instance signed in without a second factor');
       }
