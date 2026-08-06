@@ -107,8 +107,9 @@ func (u passkeyUser) WebAuthnCredentials() []webauthn.Credential { return u.cred
 // door. Held in memory on purpose: it is worthless after ~2 minutes, and writing it
 // to the database would mean a row per abandoned tap of a button.
 type ceremonies struct {
-	mu   sync.Mutex
-	open map[string]ceremony
+	mu    sync.Mutex
+	open  map[string]ceremony
+	limit int
 }
 
 type ceremony struct {
@@ -120,21 +121,29 @@ type ceremony struct {
 	stepUp bool
 }
 
-func newCeremonies() *ceremonies {
-	return &ceremonies{open: make(map[string]ceremony)}
+func newCeremonies(limit int) *ceremonies {
+	return &ceremonies{open: make(map[string]ceremony), limit: limit}
 }
 
 const ceremonyTTL = 2 * time.Minute
 
-// maxOpenCeremonies bounds the map.
+// The two ceremony stores are separate on purpose.
 //
 // Registration and the 2FA step overwrite a key per user or per challenge token and
-// both need credentials first, so neither can grow this. Passwordless sign-in can:
-// it is reachable by anyone, and every call mints a FRESH random key. At a couple of
-// hundred bytes each and a two-minute life, a sustained flood is an out-of-memory
-// condition on the small machine this app tends to run on. Refusing new ceremonies
-// is a bad minute; being killed is a bad day.
-const maxOpenCeremonies = 4096
+// both need credentials first, so neither can be grown by a stranger. Passwordless
+// sign-in can: it is reachable by anyone, and every call mints a FRESH random key.
+//
+// One shared map would mean a flood of anonymous sign-in attempts filling it and
+// then refusing everybody else — nobody able to pair a passkey, and an account whose
+// only second factor IS a passkey unable to finish logging in. Trading a memory
+// exhaustion for a lockout is not a fix. With two, the public one can be emptied by
+// anyone and it costs them nothing else.
+const (
+	maxOpenCeremonies = 4096
+	// The public store. Smaller because it is the one strangers can fill, and
+	// because a real user occupies a slot for seconds.
+	maxPublicCeremonies = 512
+)
 
 // put records a ceremony. It reports false when the server is already holding as
 // many as it will.
@@ -144,7 +153,7 @@ func (c *ceremonies) put(key string, data webauthn.SessionData, stepUp bool) boo
 	c.sweep(time.Now())
 	// Replacing an existing key is always allowed: it frees as much as it takes, and
 	// refusing it would let a flood block someone's own second attempt.
-	if _, existing := c.open[key]; !existing && len(c.open) >= maxOpenCeremonies {
+	if _, existing := c.open[key]; !existing && len(c.open) >= c.limit {
 		return false
 	}
 	c.open[key] = ceremony{data: data, expires: time.Now().Add(ceremonyTTL), stepUp: stepUp}

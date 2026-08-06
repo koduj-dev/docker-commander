@@ -31,6 +31,8 @@ type Service struct {
 	challenges *usedChallenges
 	// ceremonies holds the server half of an in-flight WebAuthn exchange.
 	ceremonies *ceremonies
+	// publicCeremonies holds the ones anyone can start: passwordless sign-in.
+	publicCeremonies *ceremonies
 	// ldapAuth is the directory bind, swappable so the provisioning rules below
 	// (what a login is allowed to grant) can be tested without a directory.
 	// Production always uses LDAPAuthenticate.
@@ -44,8 +46,11 @@ func NewService(s *store.Store, tm *TokenManager) *Service {
 		tokens:     tm,
 		limiter:    NewLoginLimiter(5, 15*time.Minute),
 		challenges: newUsedChallenges(),
-		ceremonies: newCeremonies(),
-		ldapAuth:   LDAPAuthenticate,
+		ceremonies: newCeremonies(maxOpenCeremonies),
+		// Reachable without credentials, so it gets its own bounded store; see the
+		// comment on maxPublicCeremonies.
+		publicCeremonies: newCeremonies(maxPublicCeremonies),
+		ldapAuth:         LDAPAuthenticate,
 	}
 }
 

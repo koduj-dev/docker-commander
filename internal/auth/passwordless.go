@@ -74,12 +74,19 @@ func passwordlessKey(id string) string { return "passwordless:" + id }
 // what ties the answer back to this challenge — an opaque, single-use handle, since
 // there is no session and no half-finished login to key it on.
 func (s *Service) BeginPasswordlessLogin(rlKey string, rp RelyingParty) (*protocol.CredentialAssertion, string, error) {
-	// Unauthenticated and it allocates, so it is metered like an attempt. Failures
-	// are not recorded against the caller — this is not a guess at anything — but the
-	// budget still has to be there to spend.
-	if !s.limiter.Allow(rlKey) {
+	// Unauthenticated and it allocates, so it is metered — and metering means
+	// SPENDING, not asking. Allow only reads the budget; a check without a matching
+	// Fail bounds nothing, which is what made an earlier version of this a limit in
+	// name only.
+	//
+	// Its own bucket, not the login one: starting a sign-in is not a guess at a
+	// password, and a stranger doing this must not be able to lock the people behind
+	// a shared address out of the password form.
+	begin := "pwl-begin:" + rlKey
+	if !s.limiter.Allow(begin) {
 		return nil, "", ErrRateLimited
 	}
+	s.limiter.Fail(begin)
 	// Required, not preferred. The whole argument for signing in without a password
 	// is that the authenticator checked a PIN or a fingerprint; asking politely and
 	// accepting "no" would leave possession alone standing in for both factors.
@@ -104,7 +111,7 @@ func (s *Service) beginPasswordlessLogin(rlKey string, rp RelyingParty, uv proto
 		return nil, "", err
 	}
 	id := base64.RawURLEncoding.EncodeToString(raw)
-	if !s.ceremonies.put(passwordlessKey(id), *session, true) {
+	if !s.publicCeremonies.put(passwordlessKey(id), *session, true) {
 		return nil, "", ErrTooBusy
 	}
 	return assertion, id, nil
@@ -127,7 +134,7 @@ func (s *Service) FinishPasswordlessLogin(ctx context.Context, rp RelyingParty, 
 		s.limiter.Fail(rlKey)
 		return nil, ErrInvalidCreds
 	}
-	cer, ok := s.ceremonies.take(passwordlessKey(ceremonyID))
+	cer, ok := s.publicCeremonies.take(passwordlessKey(ceremonyID))
 	if !ok {
 		s.limiter.Fail(rlKey)
 		return nil, ErrInvalidCreds
@@ -169,9 +176,10 @@ func (s *Service) FinishPasswordlessLogin(ctx context.Context, rp RelyingParty, 
 	_, credential, err := api.ValidatePasskeyLogin(handler, cer.data, parsed)
 	if err != nil || account == nil {
 		s.limiter.Fail(rlKey)
-		if !uvClaimed && account != nil {
-			return nil, named(account, ErrUserVerificationRequired)
-		}
+		// Deliberately NOT named: the library calls the handler that resolves the
+		// account before it checks the signature, so at this point the account is
+		// whoever the unsigned bytes pointed at. Auditing that would let anyone
+		// write "failed sign-in" lines against a name they guessed.
 		if !uvClaimed {
 			return nil, ErrUserVerificationRequired
 		}
@@ -183,12 +191,18 @@ func (s *Service) FinishPasswordlessLogin(ctx context.Context, rp RelyingParty, 
 	// locks — but it is the one that does not depend on the ceremony having been set
 	// up correctly. Without UV the assertion proves possession only, which is one
 	// factor, and one factor is not a login.
+	// From here the signature has already verified, so these are not guesses and
+	// must not spend the password-login budget — the button is offered to everyone,
+	// and the ordinary "try it and find out it is off" costs five taps. Behind a
+	// shared address that would lock a whole office out of the password form. They
+	// are still bounded, in a bucket of their own.
+	refused := "pwl:" + rlKey
 	if !credential.Flags.UserVerified {
-		s.limiter.Fail(rlKey)
+		s.limiter.Fail(refused)
 		return nil, named(account, ErrUserVerificationRequired)
 	}
 	if credential.Authenticator.CloneWarning {
-		s.limiter.Fail(rlKey)
+		s.limiter.Fail(refused)
 		return nil, named(account, ErrClonedAuthenticator)
 	}
 	// An LDAP account's authority is the directory: whether it still exists, whether
@@ -198,7 +212,7 @@ func (s *Service) FinishPasswordlessLogin(ctx context.Context, rp RelyingParty, 
 	// An allowlist, not a denylist: a future auth source should have to be added
 	// deliberately rather than inherit this by default.
 	if account.AuthSource != "" && account.AuthSource != "local" {
-		s.limiter.Fail(rlKey)
+		s.limiter.Fail(refused)
 		return nil, named(account, ErrPasswordlessNotAllowed)
 	}
 	// The owner has to have asked for this. Turning a passkey from a second factor
@@ -206,7 +220,7 @@ func (s *Service) FinishPasswordlessLogin(ctx context.Context, rp RelyingParty, 
 	// it moves that to the platform account the key syncs through — not a change to
 	// make on someone's behalf.
 	if !account.Passwordless {
-		s.limiter.Fail(rlKey)
+		s.limiter.Fail(refused)
 		return nil, named(account, ErrPasswordlessNotAllowed)
 	}
 

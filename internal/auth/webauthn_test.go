@@ -406,7 +406,7 @@ func TestPentestPasskeyChallengeTokenIsSpentOnFirstAttempt(t *testing.T) {
 // A ceremony expires. Two minutes is long enough for a person and short enough
 // that an abandoned one is not a challenge waiting to be answered later.
 func TestPasskeyCeremonyExpires(t *testing.T) {
-	c := newCeremonies()
+	c := newCeremonies(maxOpenCeremonies)
 	c.put("k", webauthn.SessionData{UserID: []byte("u")}, true)
 
 	// Age it past the TTL rather than sleeping through it.

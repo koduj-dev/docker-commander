@@ -140,6 +140,9 @@ func (s *Server) handlePasskeyRegisterBegin(w http.ResponseWriter, r *http.Reque
 	creation, err := s.auth.BeginPasskeyRegistration(r.Context(), rp, c.UserID, stepUp)
 	switch {
 	case err == nil:
+	case errors.Is(err, auth.ErrTooBusy):
+		writeErr(w, http.StatusServiceUnavailable, err.Error())
+		return
 	case errors.Is(err, auth.ErrTooManyFactors):
 		writeErr(w, http.StatusConflict, err.Error())
 		return
@@ -209,6 +212,11 @@ func (s *Server) handlePasskeyLoginBegin(w http.ResponseWriter, r *http.Request)
 	assertion, err := s.auth.BeginPasskeyLogin(r.Context(), rp, body.MFAToken)
 	switch {
 	case err == nil:
+	case errors.Is(err, auth.ErrTooBusy):
+		// Not "invalid credentials": the password was right and the challenge is
+		// valid. Saying otherwise sends someone to reset a password that works.
+		writeErr(w, http.StatusServiceUnavailable, err.Error())
+		return
 	case errors.Is(err, auth.ErrNoPasskeys):
 		writeErr(w, http.StatusConflict, err.Error())
 		return
