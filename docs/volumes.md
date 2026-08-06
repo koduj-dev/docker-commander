@@ -16,8 +16,10 @@ and paginate as elsewhere.
 - **Browse files** — see below.
 - **Inspect** — raw JSON (driver options, labels, mountpoint…).
 - **Remove** — delete a volume; a **force** fallback appears if the daemon
-  refuses it (e.g. still referenced). The daemon will not remove a volume that
-  is actively mounted by a running container.
+  refuses it. Force is not a way past "volume is in use": the daemon rejects that
+  immediately whether or not force is set. What it helps with is a volume whose
+  last container has just gone away — teardown is asynchronous, so a removal can
+  fail a moment before it would have succeeded.
 - **Prune unused** (header) — remove all volumes not used by any container.
 
 ## File browser
