@@ -3,9 +3,11 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/go-webauthn/webauthn/protocol"
+	"github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/koduj-dev/docker-commander/internal/store"
 	"github.com/koduj-dev/docker-commander/internal/webauthntest"
@@ -23,13 +25,22 @@ func passwordlessFixture(t *testing.T) (*Service, *store.Store, *store.User, *we
 		t.Fatal(err)
 	}
 	device.UserHandle = handle
+	// The owner asked for this. It is off until they do — see
+	// TestPentestPasswordlessIsOffUntilTheOwnerAsks.
+	if err := st.SetPasswordless(context.Background(), u.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	u, err = st.UserByID(context.Background(), u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return svc, st, u, device
 }
 
 // signInPasswordless runs the whole exchange and returns what the service said.
 func signInPasswordless(t *testing.T, svc *Service, device *webauthntest.Device, rlKey string) (*LoginResult, error) {
 	t.Helper()
-	assertion, id, err := svc.BeginPasswordlessLogin(testRP())
+	assertion, id, err := svc.BeginPasswordlessLogin("10.0.0.99", testRP())
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
@@ -91,7 +102,7 @@ func TestPentestPasswordlessCeremonyIsSingleUse(t *testing.T) {
 	svc, _, _, device := passwordlessFixture(t)
 	ctx := context.Background()
 
-	assertion, id, err := svc.BeginPasswordlessLogin(testRP())
+	assertion, id, err := svc.BeginPasswordlessLogin("10.0.0.99", testRP())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +121,7 @@ func TestPentestPasswordlessRejectsAnUnknownCeremony(t *testing.T) {
 	svc, _, _, device := passwordlessFixture(t)
 	ctx := context.Background()
 
-	assertion, _, err := svc.BeginPasswordlessLogin(testRP())
+	assertion, _, err := svc.BeginPasswordlessLogin("10.0.0.99", testRP())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +189,7 @@ func TestPentestPasswordlessIsRateLimited(t *testing.T) {
 	// An authenticator this server has never seen.
 	impostor := webauthntest.New(t)
 	for i := 0; i < 5; i++ {
-		assertion, id, err := svc.BeginPasswordlessLogin(testRP())
+		assertion, id, err := svc.BeginPasswordlessLogin("10.0.0.99", testRP())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -188,7 +199,7 @@ func TestPentestPasswordlessIsRateLimited(t *testing.T) {
 		}
 	}
 
-	assertion, id, err := svc.BeginPasswordlessLogin(testRP())
+	assertion, id, err := svc.BeginPasswordlessLogin("10.0.0.99", testRP())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +221,7 @@ func TestPentestPasswordlessFlagCheckStandsAlone(t *testing.T) {
 	ctx := context.Background()
 	device.UserVerified = false
 
-	assertion, id, err := svc.beginPasswordlessLogin(testRP(), protocol.VerificationPreferred)
+	assertion, id, err := svc.beginPasswordlessLogin("10.0.0.99", testRP(), protocol.VerificationPreferred)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,5 +233,85 @@ func TestPentestPasswordlessFlagCheckStandsAlone(t *testing.T) {
 	}
 	if res != nil {
 		t.Error("SECURITY: a session was issued for an unverified assertion")
+	}
+}
+
+// PENTEST: it is off until the account holder turns it on.
+//
+// A passkey paired as a SECOND factor was accepted on the understanding that the
+// password still stood in front of it. Letting it become a whole login because the
+// app was updated would change what the account rests on without anybody deciding
+// to — and for a synced passkey it moves that to the platform account the key syncs
+// through, which is a different threat model, not a smaller one.
+func TestPentestPasswordlessIsOffUntilTheOwnerAsks(t *testing.T) {
+	svc, st, u := passkeyFixture(t)
+	ctx := context.Background()
+	device := pairPasskey(t, svc, u, "Laptop")
+	handle, err := st.WebAuthnHandle(ctx, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device.UserHandle = handle
+
+	// Freshly paired, nothing opted into: the default.
+	fresh, err := st.UserByID(ctx, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.Passwordless {
+		t.Fatal("SECURITY: a new account defaults to passwordless sign-in")
+	}
+	if _, err := signInPasswordless(t, svc, device, "10.0.0.20"); !errors.Is(err, ErrPasswordlessNotAllowed) {
+		t.Errorf("SECURITY: a passkey signed in an account that never asked for it (%v)", err)
+	}
+
+	// …and once asked for, it works. The guard is consent, not a ban.
+	if err := st.SetPasswordless(ctx, u.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := signInPasswordless(t, svc, device, "10.0.0.21"); err != nil {
+		t.Errorf("an account that opted in should sign in: %v", err)
+	}
+}
+
+// A refusal that happens AFTER the assertion verified knows whose account it was,
+// and has to say so — a cloned-key detection that reaches no audit log is a warning
+// nobody receives.
+func TestPasswordlessRefusalsCarryTheAccount(t *testing.T) {
+	svc, _, u, device := passwordlessFixture(t)
+
+	if _, err := signInPasswordless(t, svc, device, "10.0.0.22"); err != nil {
+		t.Fatalf("first sign-in: %v", err)
+	}
+	device.SignCount = 0
+
+	_, err := signInPasswordless(t, svc, device, "10.0.0.23")
+	var named *PasswordlessError
+	if !errors.As(err, &named) {
+		t.Fatalf("a cloned key returned %v, which names no account", err)
+	}
+	if named.Username != u.Username {
+		t.Errorf("the failure names %q, want %q", named.Username, u.Username)
+	}
+	if !errors.Is(err, ErrClonedAuthenticator) {
+		t.Errorf("wrapping lost the cause: %v", err)
+	}
+}
+
+// The ceremony map is bounded: this endpoint is public and allocates.
+func TestPasswordlessCeremoniesAreBounded(t *testing.T) {
+	c := newCeremonies()
+	for i := 0; i < maxOpenCeremonies; i++ {
+		if !c.put(fmt.Sprintf("k%d", i), webauthn.SessionData{}, true) {
+			t.Fatalf("refused at %d, below the cap", i)
+		}
+	}
+	if c.put("one-too-many", webauthn.SessionData{}, true) {
+		t.Error("SECURITY: the ceremony map grew past its cap")
+	}
+	// Replacing an existing key still works, so a flood cannot block someone's own
+	// second attempt at a ceremony they already own.
+	if !c.put("k0", webauthn.SessionData{}, true) {
+		t.Error("replacing an existing ceremony was refused")
 	}
 }

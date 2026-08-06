@@ -290,6 +290,10 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
                   : passkeys?.reason || "Checking whether this connection supports passkeys…"}
               </p>
             </div>
+
+            {user?.mfaEnabled && user?.authSource !== "ldap" && (
+              <PasswordlessToggle enabled={!!user.passwordless} onChanged={onChanged} />
+            )}
           </form>
         )}
 
@@ -800,6 +804,88 @@ function PrefsTab() {
           </span>
         </span>
       </label>
+    </div>
+  );
+}
+
+// PasswordlessToggle lets the owner decide whether a passkey may be the WHOLE
+// login, rather than the second half of one.
+//
+// Off unless asked for, and asking costs the password — the same rule as pairing,
+// for a stronger reason. A passkey accepted as a second factor was accepted while
+// the password still stood in front of it; this removes that. For a passkey that
+// syncs (iCloud Keychain, Google Password Manager) it also moves the account onto
+// whatever platform account it syncs through, because the PIN or fingerprint can be
+// satisfied on any device that credential reaches. That is a reasonable trade for
+// many people and a bad one for others, which is exactly why it is a choice.
+function PasswordlessToggle({ enabled, onChanged }: { enabled: boolean; onChanged: () => Promise<void> }) {
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [open, setOpen] = useState(false);
+
+  const apply = async (next: boolean) => {
+    setBusy(true); setErr("");
+    try {
+      await api.setPasswordless(next, password);
+      setPassword(""); setOpen(false);
+      await onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "could not save");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="border-t border-border pt-3">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-sm font-medium">Sign in with a passkey alone</p>
+          <p className="text-xs text-muted mt-1">
+            {enabled
+              ? "On. Your passkey can sign you in without your password, as long as it verifies you with a PIN, fingerprint or face. Your password still works."
+              : "Off. Your passkey is a second factor: your password comes first. Turning this on lets the passkey be the whole login."}
+          </p>
+        </div>
+        <button type="button" className="btn-ghost px-3 py-1.5 text-sm shrink-0" onClick={() => setOpen((v) => !v)}>
+          {enabled ? "Turn off" : "Turn on"}
+        </button>
+      </div>
+
+      {open && (
+        <div className="mt-3 space-y-2">
+          {!enabled && (
+            <p className="text-xs text-muted">
+              Worth knowing: if your passkey syncs between your devices, whoever controls that
+              account can use it. Your password stays valid either way — it is how you get back
+              in if the key is lost.
+            </p>
+          )}
+          <input
+            className="input"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Your password"
+            autoComplete="current-password"
+          />
+          <div className="flex gap-2">
+            <button
+              type="button"
+              className="btn-primary px-3 py-1.5 text-sm"
+              onClick={() => apply(!enabled)}
+              disabled={busy || !password}
+            >
+              {busy ? "Saving…" : enabled ? "Turn off" : "Turn on"}
+            </button>
+            <button type="button" className="btn-ghost px-3 py-1.5 text-sm" onClick={() => { setOpen(false); setPassword(""); setErr(""); }}>
+              Cancel
+            </button>
+          </div>
+          {err && <p className="text-xs text-danger">{err}</p>}
+        </div>
+      )}
     </div>
   );
 }

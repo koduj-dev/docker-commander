@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, ApiError } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { AuthShell } from "./AuthShell";
@@ -22,6 +22,16 @@ export function Login() {
   const [passkeyReason, setPasskeyReason] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  // Whether this CONNECTION can do WebAuthn at all — a secure context, and a host
+  // that is a domain rather than an IP. The browser having the API is not enough:
+  // over plain HTTP to a remote host the ceremony is refused, and a button that
+  // fails when pressed is worse than no button.
+  const [passkeyPossible, setPasskeyPossible] = useState(false);
+
+  useEffect(() => {
+    if (!passkeysSupported()) return;
+    api.passkeySupport().then((s) => setPasskeyPossible(s.available)).catch(() => setPasskeyPossible(false));
+  }, []);
 
   const submitPassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -201,7 +211,7 @@ export function Login() {
         </button>
       </form>
 
-      {passkeysSupported() && (
+      {passkeysSupported() && passkeyPossible && (
         <div className="mt-4 space-y-4">
           <div className="flex items-center gap-3 text-xs text-muted">
             <span className="h-px flex-1 bg-border" /> or <span className="h-px flex-1 bg-border" />

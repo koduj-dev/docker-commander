@@ -50,6 +50,10 @@ type User struct {
 	// requires this to be true — the check belongs at the moment the factor is
 	// created, not only at the moment the enrolment begins.
 	TOTPPendingStepUp bool
+	// Passwordless says a passkey alone may sign this account in. Off unless the
+	// owner turned it on with their password: it changes what the account rests on,
+	// and for a synced passkey it moves that to the platform account.
+	Passwordless bool
 	// TOTPLastCounter is the last 30-second time step whose code was accepted.
 	// A code is only valid once: within its window it would otherwise work
 	// repeatedly, so one shoulder-surfed or phished code could be spent several
@@ -121,7 +125,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 		SELECT id, username, password_hash, role, email, totp_secret,
 		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id AND f.kind = 'totp'),
 		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id),
-		       totp_pending, totp_pending_stepup, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
+		       totp_pending, totp_pending_stepup, passwordless, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
 		FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
@@ -174,7 +178,7 @@ func (s *Store) UserByUsername(ctx context.Context, username string) (*User, err
 		SELECT id, username, password_hash, role, email, totp_secret,
 		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id AND f.kind = 'totp'),
 		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id),
-		       totp_pending, totp_pending_stepup, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
+		       totp_pending, totp_pending_stepup, passwordless, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
 		FROM users WHERE username = ?`, username))
 }
 
@@ -184,7 +188,7 @@ func (s *Store) UserByID(ctx context.Context, id int64) (*User, error) {
 		SELECT id, username, password_hash, role, email, totp_secret,
 		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id AND f.kind = 'totp'),
 		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id),
-		       totp_pending, totp_pending_stepup, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
+		       totp_pending, totp_pending_stepup, passwordless, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
 		FROM users WHERE id = ?`, id))
 }
 
@@ -231,9 +235,9 @@ func scanUserRow(row scanner) (*User, error) {
 	var u User
 	var enabled, readOnly int
 	var sections, createdAt, lastLogin string
-	var mfa, pendingStepUp int
+	var mfa, pendingStepUp, passwordless int
 	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.Email, &u.TOTPSecret, &enabled, &mfa,
-		&u.TOTPPending, &pendingStepUp, &u.TOTPLastCounter, &u.SessionEpoch, &readOnly, &sections, &u.AuthSource, &createdAt, &lastLogin)
+		&u.TOTPPending, &pendingStepUp, &passwordless, &u.TOTPLastCounter, &u.SessionEpoch, &readOnly, &sections, &u.AuthSource, &createdAt, &lastLogin)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -243,6 +247,7 @@ func scanUserRow(row scanner) (*User, error) {
 	u.TOTPEnabled = enabled != 0
 	u.MFAEnabled = mfa != 0
 	u.TOTPPendingStepUp = pendingStepUp != 0
+	u.Passwordless = passwordless != 0
 	u.ReadOnly = readOnly != 0
 	u.Sections = unmarshalSections(sections)
 	u.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
@@ -362,5 +367,12 @@ func (s *Store) SessionEpoch(ctx context.Context, userID int64) (int64, error) {
 func (s *Store) BumpSessionEpoch(ctx context.Context, userID int64) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE users SET session_epoch = session_epoch + 1 WHERE id = ?`, userID)
+	return err
+}
+
+// SetPasswordless turns signing in with a passkey alone on or off for one account.
+func (s *Store) SetPasswordless(ctx context.Context, userID int64, on bool) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET passwordless = ? WHERE id = ?`, boolToInt(on), userID)
 	return err
 }

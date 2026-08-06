@@ -207,13 +207,18 @@ regardless of permissions:
   the browser than `dc.example.com`, so a key paired under one will not be offered
   under the other. Pick one spelling and stay with it.
 
-  **Signing in with a passkey alone** is offered on the login screen, beside the
-  password. It works when the passkey can verify *you* — a PIN, a fingerprint, a
-  face — because that is what makes the key two factors rather than one; a passkey
-  that only proves possession is refused for this and says so. Your password still
-  works and always will: it is what gets you back in if the key is lost, since no
-  admin can reset another account's second factor. LDAP accounts sign in with their
-  directory password.
+  **Signing in with a passkey alone** is off until you turn it on, in *Profile →
+  Security*, and turning it on asks for your password. It works when the passkey can
+  verify *you* — a PIN, a fingerprint, a face — because that is what makes the key
+  two factors rather than one; a passkey that only proves possession is refused and
+  says so.
+
+  Worth knowing before you turn it on: if your passkey **syncs** between your devices
+  (iCloud Keychain, Google Password Manager), the PIN or fingerprint can be satisfied
+  on any device it reaches — so your account rests on that platform account too. Your
+  password still works and always will: it is what gets you back in if the key is
+  lost, since no admin can reset another account's second factor. LDAP accounts sign
+  in with their directory password.
 
   A passkey counts as a second factor like any other: it appears in the same list,
   it can be removed the same way, and it cannot be the one you remove last. At

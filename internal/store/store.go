@@ -97,6 +97,8 @@ CREATE TABLE IF NOT EXISTS users (
 	-- checks this against the account's protection at that moment; see
 	-- totp_pending_stepup in the migration list.
 	totp_pending_stepup INTEGER NOT NULL DEFAULT 0,
+	-- Opt-in: may a passkey alone sign this account in? See the migration list.
+	passwordless  INTEGER NOT NULL DEFAULT 0,
 	created_at    TEXT NOT NULL,
 	last_login_at TEXT NOT NULL DEFAULT ''
 );
@@ -462,6 +464,14 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
 		// was started before this existed, and if the account is protected it must not
 		// be redeemable without the password.
 		`ALTER TABLE users ADD COLUMN totp_pending_stepup INTEGER NOT NULL DEFAULT 0`,
+		// Whether this account may be signed into by a passkey alone.
+		//
+		// Off by default, including on upgrade, and that is the point: turning a
+		// passkey from a second factor into a whole login changes what the account
+		// rests on, and for a SYNCED passkey it moves that to the platform account
+		// the key syncs through. Nobody's security model should change because they
+		// updated the app.
+		`ALTER TABLE users ADD COLUMN passwordless INTEGER NOT NULL DEFAULT 0`,
 		// The last TOTP counter accepted for this account, so a code cannot be
 		// replayed inside its own validity window.
 		`ALTER TABLE users ADD COLUMN totp_last_counter INTEGER NOT NULL DEFAULT 0`,

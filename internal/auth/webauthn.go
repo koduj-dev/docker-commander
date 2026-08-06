@@ -126,11 +126,29 @@ func newCeremonies() *ceremonies {
 
 const ceremonyTTL = 2 * time.Minute
 
-func (c *ceremonies) put(key string, data webauthn.SessionData, stepUp bool) {
+// maxOpenCeremonies bounds the map.
+//
+// Registration and the 2FA step overwrite a key per user or per challenge token and
+// both need credentials first, so neither can grow this. Passwordless sign-in can:
+// it is reachable by anyone, and every call mints a FRESH random key. At a couple of
+// hundred bytes each and a two-minute life, a sustained flood is an out-of-memory
+// condition on the small machine this app tends to run on. Refusing new ceremonies
+// is a bad minute; being killed is a bad day.
+const maxOpenCeremonies = 4096
+
+// put records a ceremony. It reports false when the server is already holding as
+// many as it will.
+func (c *ceremonies) put(key string, data webauthn.SessionData, stepUp bool) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.sweep(time.Now())
+	// Replacing an existing key is always allowed: it frees as much as it takes, and
+	// refusing it would let a flood block someone's own second attempt.
+	if _, existing := c.open[key]; !existing && len(c.open) >= maxOpenCeremonies {
+		return false
+	}
 	c.open[key] = ceremony{data: data, expires: time.Now().Add(ceremonyTTL), stepUp: stepUp}
+	return true
 }
 
 // take returns the ceremony and removes it: one begin, one finish. A challenge
@@ -198,7 +216,9 @@ func (s *Service) BeginPasskeyRegistration(ctx context.Context, rp RelyingParty,
 	if err != nil {
 		return nil, err
 	}
-	s.ceremonies.put(registrationKey(userID), *session, stepUp)
+	if !s.ceremonies.put(registrationKey(userID), *session, stepUp) {
+		return nil, ErrTooBusy
+	}
 	return creation, nil
 }
 
@@ -301,7 +321,9 @@ func (s *Service) BeginPasskeyLogin(ctx context.Context, rp RelyingParty, challe
 	// ceremony — the same rule the TOTP path follows.
 	// A login ceremony has no step-up to carry: the password is what minted the
 	// challenge token this is keyed on.
-	s.ceremonies.put(loginKey(claims.ID), *session, true)
+	if !s.ceremonies.put(loginKey(claims.ID), *session, true) {
+		return nil, ErrTooBusy
+	}
 	return assertion, nil
 }
 

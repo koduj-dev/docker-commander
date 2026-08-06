@@ -288,8 +288,16 @@ func (s *Server) handlePasswordlessBegin(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, auth.ErrPasskeyUnavailable.Error())
 		return
 	}
-	assertion, id, err := s.auth.BeginPasswordlessLogin(rp)
-	if err != nil {
+	assertion, id, err := s.auth.BeginPasswordlessLogin(r.RemoteAddr, rp)
+	switch {
+	case err == nil:
+	case errors.Is(err, auth.ErrRateLimited):
+		writeErr(w, http.StatusTooManyRequests, err.Error())
+		return
+	case errors.Is(err, auth.ErrTooBusy):
+		writeErr(w, http.StatusServiceUnavailable, err.Error())
+		return
+	default:
 		writeErr(w, http.StatusInternalServerError, "could not start")
 		return
 	}
@@ -310,10 +318,27 @@ func (s *Server) handlePasswordlessFinish(w http.ResponseWriter, r *http.Request
 	id := r.Header.Get("X-Passkey-Ceremony")
 
 	res, err := s.auth.FinishPasswordlessLogin(r.Context(), rp, r.RemoteAddr, id, r, sessionInfo(r))
+	// Once the assertion verifies, the account is known — and these are the failures
+	// worth writing down. This is the only thing between the network and a full
+	// session, so a refusal that leaves no trace is a refusal nobody can investigate.
+	var named *auth.PasswordlessError
+	if errors.As(err, &named) {
+		switch {
+		case errors.Is(err, auth.ErrClonedAuthenticator):
+			s.audit(r, "auth.passkey.cloned", named.Username, "signature counter went backwards")
+		case errors.Is(err, auth.ErrUserVerificationRequired):
+			s.audit(r, "auth.login.failed", named.Username, "passkey did not verify the user")
+		case errors.Is(err, auth.ErrPasswordlessNotAllowed):
+			s.audit(r, "auth.login.failed", named.Username, "passwordless sign-in is not enabled for this account")
+		}
+	}
 	switch {
 	case err == nil:
 	case errors.Is(err, auth.ErrRateLimited):
 		writeErr(w, http.StatusTooManyRequests, err.Error())
+		return
+	case errors.Is(err, auth.ErrTooBusy):
+		writeErr(w, http.StatusServiceUnavailable, err.Error())
 		return
 	case errors.Is(err, auth.ErrUserVerificationRequired):
 		// Worth saying plainly: the key worked, and the account is fine. What is
@@ -340,4 +365,51 @@ func (s *Server) handlePasswordlessFinish(w http.ResponseWriter, r *http.Request
 	s.audit(r, "auth.login", res.User.Username, "passkey (passwordless)")
 	s.setSessionCookie(w, r, res.Token, res.ExpiresAt)
 	writeJSON(w, http.StatusOK, s.loginResponse(r, res))
+}
+
+// handlePasswordlessSetting turns signing in with a passkey alone on or off for the
+// caller's own account.
+//
+// Needs the password, like every other change to what it takes to sign in as you.
+// Turning it ON is the significant direction: it makes a passkey a whole login
+// rather than a second factor, and for a synced passkey that moves the account onto
+// whatever platform account the key syncs through. A stolen session must not be able
+// to make that change and then use it.
+func (s *Server) handlePasswordlessSetting(w http.ResponseWriter, r *http.Request) {
+	c, _ := auth.ClaimsFrom(r.Context())
+	u, err := s.store.UserByID(r.Context(), c.UserID)
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var body struct {
+		Enabled  bool   `json:"enabled"`
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if err := s.auth.VerifyUserPassword(r.Context(), auth.StepUpKey(u.ID, c.ID), u, body.Password); err != nil {
+		if errors.Is(err, auth.ErrRateLimited) {
+			writeErr(w, http.StatusTooManyRequests, err.Error())
+			return
+		}
+		s.audit(r, "auth.passwordless.denied", u.Username, "wrong password")
+		writeErr(w, http.StatusForbidden, "password required")
+		return
+	}
+	// Only accounts this server owns the password for. An LDAP account's authority
+	// is the directory, and the sign-in path refuses it anyway — offering the switch
+	// would be a promise this cannot keep.
+	if body.Enabled && u.AuthSource != "" && u.AuthSource != "local" {
+		writeErr(w, http.StatusForbidden, auth.ErrPasswordlessNotAllowed.Error())
+		return
+	}
+	if err := s.store.SetPasswordless(r.Context(), u.ID, body.Enabled); err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not save")
+		return
+	}
+	s.audit(r, "auth.passwordless", u.Username, map[bool]string{true: "enabled", false: "disabled"}[body.Enabled])
+	writeJSON(w, http.StatusOK, map[string]bool{"enabled": body.Enabled})
 }

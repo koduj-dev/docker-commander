@@ -18,6 +18,15 @@ All notable changes to Docker Commander are documented here. The format follows
   is what decides. Without it the key proves possession only, and that is refused
   with an explanation rather than a generic failure.
 
+  **Off until you ask for it**, in *Profile → Security*, and turning it on costs
+  your password. A passkey you paired as a *second* factor was accepted while the
+  password still stood in front of it; making it the whole login changes what the
+  account rests on, and that is not a change to make on your behalf because the app
+  was updated. It matters most for a passkey that **syncs** between your devices:
+  the PIN or fingerprint can then be satisfied wherever that credential reaches, so
+  the account effectively rests on the platform account it syncs through. Reasonable
+  for many people, wrong for others — hence a choice.
+
   **The password still works.** This is an addition, not a replacement, and
   deliberately so: this app gives admins no way to reset someone else's second
   factor, so if a passkey were the only way in, a lost phone would be a lost
@@ -25,9 +34,8 @@ All notable changes to Docker Commander are documented here. The format follows
   is the recovery path.
 
   Newly paired passkeys ask to be *discoverable* so the browser can offer them
-  before anyone has said who they are. Keys paired before this, and hardware with no
-  room to store one, keep working as second factors — they simply will not appear
-  for passwordless sign-in.
+  before anyone has said who they are. Hardware with no room to store one keeps
+  working as a second factor and simply will not appear for passwordless sign-in.
 
   Accounts backed by **LDAP cannot use it**: the directory is their authority — what
   they may do, whether they are still enabled — and a passkey answers none of that.

@@ -16,10 +16,11 @@ const passkeyLoginBegin = vi.hoisted(() => vi.fn());
 const passkeyLoginFinish = vi.hoisted(() => vi.fn());
 const passwordlessBegin = vi.hoisted(() => vi.fn());
 const passwordlessFinish = vi.hoisted(() => vi.fn());
+const passkeySupport = vi.hoisted(() => vi.fn());
 
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
-  return { ...actual, api: { login, verify2fa, passkeyLoginBegin, passkeyLoginFinish, passwordlessBegin, passwordlessFinish } };
+  return { ...actual, api: { login, verify2fa, passkeyLoginBegin, passkeyLoginFinish, passwordlessBegin, passwordlessFinish, passkeySupport } };
 });
 vi.mock("../auth/AuthContext", () => ({
   useAuth: () => ({ refresh: () => Promise.resolve() }),
@@ -36,6 +37,9 @@ beforeEach(async () => {
   passkeyLoginFinish.mockReset();
   passwordlessBegin.mockReset();
   passwordlessFinish.mockReset();
+  // The connection can do WebAuthn unless a test says otherwise.
+  passkeySupport.mockReset();
+  passkeySupport.mockResolvedValue({ available: true, reason: "" });
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -196,7 +200,10 @@ describe("the 2FA step", () => {
 describe("passwordless sign-in", () => {
   it("offers a passkey alongside the password form", async () => {
     withPasskeySupport();
-    await act(async () => root.render(<Login />));
+    // A fresh key forces a remount: re-rendering the same instance would not re-run
+    // the connection probe, and the probe is what decides whether the button exists.
+    await act(async () => root.render(<Login key="a" />));
+    await act(async () => {}); // the probe resolves a tick later
 
     const buttons = [...container.querySelectorAll("button")].map((b) => b.textContent);
     expect(buttons).toContain("Sign in with a passkey");
@@ -206,7 +213,8 @@ describe("passwordless sign-in", () => {
 
   it("stays quiet where the browser cannot do passkeys", async () => {
     delete (globalThis as Record<string, unknown>).PublicKeyCredential;
-    await act(async () => root.render(<Login />));
+    await act(async () => root.render(<Login key="b" />));
+    await act(async () => {});
 
     const buttons = [...container.querySelectorAll("button")].map((b) => b.textContent);
     expect(buttons).not.toContain("Sign in with a passkey");
@@ -221,11 +229,13 @@ describe("passwordless sign-in", () => {
     });
     passwordlessFinish.mockResolvedValue({ user: { id: 1, username: "admin" } });
 
-    await act(async () => root.render(<Login />));
+    await act(async () => root.render(<Login key="c" />));
+    await act(async () => {}); // the probe resolves a tick later
     const button = [...container.querySelectorAll("button")].find(
       (b) => b.textContent === "Sign in with a passkey",
     );
-    await act(async () => button?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    if (!button) throw new Error("the passkey button was not rendered");
+    await act(async () => button.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 
     expect(passwordlessBegin).toHaveBeenCalled();
     // The ceremony id has to travel back, or the server cannot tie the answer to
@@ -242,11 +252,13 @@ describe("passwordless sign-in", () => {
       new ApiError(401, "auth: this passkey did not verify who you are; use your password"),
     );
 
-    await act(async () => root.render(<Login />));
+    await act(async () => root.render(<Login key="d" />));
+    await act(async () => {}); // the probe resolves a tick later
     const button = [...container.querySelectorAll("button")].find(
       (b) => b.textContent === "Sign in with a passkey",
     );
-    await act(async () => button?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    if (!button) throw new Error("the passkey button was not rendered");
+    await act(async () => button.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 
     expect(container.textContent).toContain("did not verify who you are");
   });

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/go-webauthn/webauthn/protocol"
@@ -35,8 +36,33 @@ import (
 // the login.
 var ErrUserVerificationRequired = errors.New("auth: this passkey did not verify who you are; use your password")
 
-// ErrPasswordlessNotAllowed means the account is not one this may sign in.
+// ErrPasswordlessNotAllowed means the account has not turned this on, or is one
+// that may never use it.
 var ErrPasswordlessNotAllowed = errors.New("auth: this account must sign in with its password")
+
+// ErrTooBusy means the server is holding as many half-finished ceremonies as it is
+// willing to. Reachable without a session, so it must be bounded.
+var ErrTooBusy = errors.New("auth: too many sign-ins in flight, try again")
+
+// PasswordlessError carries the account a failed attempt was for.
+//
+// Once the assertion has verified, the account is known — and the failures after
+// that point are the ones worth writing down: a cloned key, a missing PIN, an
+// account that has not opted in. Without the username the audit log cannot say who
+// any of it happened to, and a cloned-authenticator detection is the last thing that
+// should vanish silently.
+type PasswordlessError struct {
+	Username string
+	Err      error
+}
+
+func (e *PasswordlessError) Error() string { return e.Err.Error() }
+func (e *PasswordlessError) Unwrap() error { return e.Err }
+
+// named wraps err with the account it happened to.
+func named(u *store.User, err error) error {
+	return &PasswordlessError{Username: u.Username, Err: err}
+}
 
 // passwordlessKey names a ceremony that no session and no token identifies yet.
 func passwordlessKey(id string) string { return "passwordless:" + id }
@@ -47,18 +73,24 @@ func passwordlessKey(id string) string { return "passwordless:" + id }
 // authenticator is asked what it holds for this relying party. The returned id is
 // what ties the answer back to this challenge — an opaque, single-use handle, since
 // there is no session and no half-finished login to key it on.
-func (s *Service) BeginPasswordlessLogin(rp RelyingParty) (*protocol.CredentialAssertion, string, error) {
+func (s *Service) BeginPasswordlessLogin(rlKey string, rp RelyingParty) (*protocol.CredentialAssertion, string, error) {
+	// Unauthenticated and it allocates, so it is metered like an attempt. Failures
+	// are not recorded against the caller — this is not a guess at anything — but the
+	// budget still has to be there to spend.
+	if !s.limiter.Allow(rlKey) {
+		return nil, "", ErrRateLimited
+	}
 	// Required, not preferred. The whole argument for signing in without a password
 	// is that the authenticator checked a PIN or a fingerprint; asking politely and
 	// accepting "no" would leave possession alone standing in for both factors.
-	return s.beginPasswordlessLogin(rp, protocol.VerificationRequired)
+	return s.beginPasswordlessLogin(rlKey, rp, protocol.VerificationRequired)
 }
 
 // beginPasswordlessLogin takes the user-verification requirement as a parameter so
 // a test can weaken it. That is not a knob for production: it exists to prove that
 // the check on the RETURNED flag stands on its own, because with the requirement in
 // place the library refuses first and the second layer is never reached.
-func (s *Service) beginPasswordlessLogin(rp RelyingParty, uv protocol.UserVerificationRequirement) (*protocol.CredentialAssertion, string, error) {
+func (s *Service) beginPasswordlessLogin(rlKey string, rp RelyingParty, uv protocol.UserVerificationRequirement) (*protocol.CredentialAssertion, string, error) {
 	api, err := rp.webauthnAPI()
 	if err != nil {
 		return nil, "", err
@@ -72,7 +104,9 @@ func (s *Service) beginPasswordlessLogin(rp RelyingParty, uv protocol.UserVerifi
 		return nil, "", err
 	}
 	id := base64.RawURLEncoding.EncodeToString(raw)
-	s.ceremonies.put(passwordlessKey(id), *session, true)
+	if !s.ceremonies.put(passwordlessKey(id), *session, true) {
+		return nil, "", ErrTooBusy
+	}
 	return assertion, id, nil
 }
 
@@ -113,31 +147,67 @@ func (s *Service) FinishPasswordlessLogin(ctx context.Context, rp RelyingParty, 
 		return s.passkeyUser(ctx, u)
 	}
 
-	credential, err := api.FinishDiscoverableLogin(handler, cer.data, r)
-	if err != nil || account == nil {
+	// Parsed here rather than handed to the library as a request, so that a missing
+	// user verification can be told apart from a bad signature. The library refuses
+	// an unverified assertion itself — correctly — but only with a generic error,
+	// and "invalid credentials" sends someone with a PIN-less key hunting a problem
+	// that is not theirs.
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
 		s.limiter.Fail(rlKey)
 		return nil, ErrInvalidCreds
 	}
+	parsed, err := protocol.ParseCredentialRequestResponseBytes(raw)
+	if err != nil {
+		s.limiter.Fail(rlKey)
+		return nil, ErrInvalidCreds
+	}
+	// Unsigned at this point — anyone can claim anything in these bytes — so it is
+	// only ever used to choose the WORDING of a refusal, never to allow anything.
+	uvClaimed := parsed.Response.AuthenticatorData.Flags.HasUserVerified()
 
-	// The flag, not the request. The ceremony above demands user verification and
-	// the library enforces that, so in production this is the second of two locks —
-	// but it is the one that does not depend on the ceremony having been set up
-	// correctly. Without UV the assertion proves possession only, which is one
+	_, credential, err := api.ValidatePasskeyLogin(handler, cer.data, parsed)
+	if err != nil || account == nil {
+		s.limiter.Fail(rlKey)
+		if !uvClaimed && account != nil {
+			return nil, named(account, ErrUserVerificationRequired)
+		}
+		if !uvClaimed {
+			return nil, ErrUserVerificationRequired
+		}
+		return nil, ErrInvalidCreds
+	}
+
+	// The flag on the VERIFIED credential. The ceremony demands user verification
+	// and the library enforces that, so in production this is the second of two
+	// locks — but it is the one that does not depend on the ceremony having been set
+	// up correctly. Without UV the assertion proves possession only, which is one
 	// factor, and one factor is not a login.
 	if !credential.Flags.UserVerified {
 		s.limiter.Fail(rlKey)
-		return nil, ErrUserVerificationRequired
+		return nil, named(account, ErrUserVerificationRequired)
 	}
 	if credential.Authenticator.CloneWarning {
 		s.limiter.Fail(rlKey)
-		return nil, ErrClonedAuthenticator
+		return nil, named(account, ErrClonedAuthenticator)
 	}
 	// An LDAP account's authority is the directory: whether it still exists, whether
 	// it is disabled, what it may do. A passkey here would answer none of those and
 	// would keep working after the directory said no.
-	if account.AuthSource == "ldap" {
+	//
+	// An allowlist, not a denylist: a future auth source should have to be added
+	// deliberately rather than inherit this by default.
+	if account.AuthSource != "" && account.AuthSource != "local" {
 		s.limiter.Fail(rlKey)
-		return nil, ErrPasswordlessNotAllowed
+		return nil, named(account, ErrPasswordlessNotAllowed)
+	}
+	// The owner has to have asked for this. Turning a passkey from a second factor
+	// into a whole login changes what the account rests on, and for a synced passkey
+	// it moves that to the platform account the key syncs through — not a change to
+	// make on someone's behalf.
+	if !account.Passwordless {
+		s.limiter.Fail(rlKey)
+		return nil, named(account, ErrPasswordlessNotAllowed)
 	}
 
 	// Same as the second-factor path: the counter moves forward or the login fails,

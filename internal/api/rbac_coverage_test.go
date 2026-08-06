@@ -57,7 +57,10 @@ var ungatedRoutes = map[string]string{
 	// credential it already holds, with user verification.
 	"/api/auth/passkey/begin":  "passwordless sign-in challenge",
 	"/api/auth/passkey/finish": "passwordless sign-in",
-	"/api/auth/factors/{id}":   "own authenticators only; DELETE is scoped by user id",
+	// The caller's own account only: the id comes from their claims, and the change
+	// needs their password.
+	"/api/auth/passwordless": "own sign-in policy; requires the password",
+	"/api/auth/factors/{id}": "own authenticators only; DELETE is scoped by user id",
 	// Writes the CALLER's own alert address, taken from their session claims —
 	// it cannot touch another account (TestPentestSetMyEmail_OnlyAffectsTheCaller).
 	"/api/auth/me/email": "own alert address",
