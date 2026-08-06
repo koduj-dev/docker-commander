@@ -1,0 +1,188 @@
+package api
+
+import (
+	"bufio"
+	"context"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/coder/websocket"
+)
+
+// The read deadline has two jobs that pull in opposite directions: refuse a client
+// that holds a handler open by sending nothing, and leave alone an upload that
+// legitimately takes minutes. These tests pin both, because a change that satisfies
+// only one of them looks correct from wherever you happen to be standing.
+
+// deadlineServer runs one handler under the same timeouts main.go uses, with the
+// clock scaled down so the test does not take a minute.
+func deadlineServer(t *testing.T, readTimeout time.Duration, h http.HandlerFunc) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{
+		Handler:           h,
+		ReadHeaderTimeout: time.Second,
+		ReadTimeout:       readTimeout,
+	}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	return ln.Addr().String()
+}
+
+// sendSlowBody writes a body one byte at a time with a gap between bytes, on a raw
+// connection, and returns what the server said (or the error it gave up with).
+func sendSlowBody(t *testing.T, addr string, total int, gap time.Duration) (*http.Response, error) {
+	t.Helper()
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	head := fmt.Sprintf("POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", total)
+	if _, err := conn.Write([]byte(head)); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for i := 0; i < total; i++ {
+			time.Sleep(gap)
+			if _, err := conn.Write([]byte("x")); err != nil {
+				return
+			}
+		}
+	}()
+	_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
+	return http.ReadResponse(bufio.NewReader(conn), nil)
+}
+
+// A handler that does NOT opt into streaming is bounded by the whole-request
+// deadline: a body delivered slowly enough is refused, however long it would
+// eventually have taken.
+func TestSlowBodyIsRefusedOnAnOrdinaryRoute(t *testing.T) {
+	addr := deadlineServer(t, 500*time.Millisecond, func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.ReadAll(r.Body); err != nil {
+			w.WriteHeader(http.StatusRequestTimeout)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	resp, err := sendSlowBody(t, addr, 20, 100*time.Millisecond) // 2s of dribbling
+	if err != nil {
+		return // the server hung up mid-request, which is the refusal
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		t.Errorf("SECURITY: a body dribbled out past the read timeout was accepted (%d)", resp.StatusCode)
+	}
+}
+
+// …and a handler that DOES opt in is not, as long as the data keeps coming. This
+// is the half that a blanket timeout gets wrong: the same traffic pattern, over a
+// route where taking a while is the point.
+func TestSlowButProgressingUploadSurvives(t *testing.T) {
+	addr := deadlineServer(t, 500*time.Millisecond, func(w http.ResponseWriter, r *http.Request) {
+		body := streamingBody(w, r)
+		defer body.Close()
+		n, err := io.Copy(io.Discard, body)
+		if err != nil {
+			w.WriteHeader(http.StatusRequestTimeout)
+			return
+		}
+		fmt.Fprintf(w, "read %d", n)
+	})
+
+	// The idle window is shortened so this can distinguish a deadline that MOVES
+	// from one merely set once and generously. The upload runs for 2s — ten times
+	// the window — while never going quiet for longer than half of it.
+	restore := streamIdle
+	streamIdle = 200 * time.Millisecond
+	t.Cleanup(func() { streamIdle = restore })
+
+	resp, err := sendSlowBody(t, addr, 20, 100*time.Millisecond)
+	if err != nil {
+		t.Fatalf("a progressing upload was cut off: %v", err)
+	}
+	defer resp.Body.Close()
+	got, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("a progressing upload returned %d: %s", resp.StatusCode, got)
+	}
+	if !strings.Contains(string(got), "read 20") {
+		t.Errorf("the whole body should have arrived, got %q", got)
+	}
+}
+
+// streamingBody must not pretend to have set a deadline it could not set. Under a
+// ResponseWriter with no deadline support it hands back the body unchanged, so the
+// server's own timeout still governs — refusing a slow upload rather than
+// silently allowing a stalled one.
+func TestStreamingBodyFallsBackWhenDeadlinesAreUnsupported(t *testing.T) {
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/upload", strings.NewReader("hello"))
+	body := streamingBody(rec, r)
+	got, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "hello" {
+		t.Errorf("body = %q, want hello", got)
+	}
+}
+
+// A WebSocket must not be on the read-timeout clock.
+//
+// ReadTimeout arms a deadline on the connection for the whole request, and a
+// WebSocket is a request that never ends — so if the deadline survived the upgrade,
+// every stream in the app would die a minute in. It does not: net/http clears
+// deadlines when a handler hijacks the connection (server.go, hijackLocked).
+//
+// Honest about what this proves: it passes trivially today, and it cannot be
+// mutation-tested from here — setting a deadline before the upgrade is cleared by
+// the same hijack, so there is no way to make it fail on purpose without editing
+// the standard library. It is a canary for that stdlib behaviour changing, not a
+// guard over code in this repo. Worth keeping anyway: a silently dropped stream is
+// a failure this project has already shipped once, in #145.
+func TestWebSocketOutlivesTheReadTimeout(t *testing.T) {
+	const readTimeout = 300 * time.Millisecond
+
+	addr := deadlineServer(t, readTimeout, func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		defer c.CloseNow()
+		// Sit well past the deadline, then speak. If the upgrade inherited it, the
+		// connection is already gone by now.
+		time.Sleep(3 * readTimeout)
+		if err := c.Write(r.Context(), websocket.MessageText, []byte("still here")); err != nil {
+			return
+		}
+		<-r.Context().Done()
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, _, err := websocket.Dial(ctx, "ws://"+addr+"/stream", nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.CloseNow()
+
+	typ, msg, err := c.Read(ctx)
+	if err != nil {
+		t.Fatalf("the stream died after the read timeout: %v", err)
+	}
+	if typ != websocket.MessageText || string(msg) != "still here" {
+		t.Errorf("got %v %q", typ, msg)
+	}
+}

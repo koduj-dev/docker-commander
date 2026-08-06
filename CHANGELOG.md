@@ -7,6 +7,22 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **A request body can no longer be dribbled out to hold a handler open.** The
+  server set `ReadHeaderTimeout` but no `ReadTimeout`, so once the headers arrived a
+  client could take as long as it liked over the body — and Go runs the handler from
+  the moment the headers land, not the moment the body finishes. That is a resource
+  anyone could reserve for free, and it was what let a stalled WebAuthn registration
+  straddle a change in the account's protection.
+
+  Requests now have a 60-second read timeout. The routes that legitimately take
+  minutes — loading an image, sending a build context, uploading a file into a
+  container or a volume — swap it for a *rolling* one, extended each time data
+  arrives, so the limit is "this upload went quiet", not "this upload took a while".
+  A multi-gigabyte upload over a slow link is unaffected; a stalled one is dropped.
+
+  WebSocket streams are not on this clock: `net/http` clears deadlines when a
+  handler hijacks the connection.
+
 - **Leaving a page mid-stream could drop the whole WebSocket.** Stats and log frames
   were written under the *subscription's* context, and the websocket library
   registers a `context.AfterFunc` on the context given to `Write` that closes the

@@ -478,6 +478,12 @@ func run() error {
 		Addr:              cfg.Addr,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+		// A client does not get to hold a handler open by dribbling out a body.
+		// Routes that legitimately stream for minutes — image load, build context,
+		// file upload — swap this for a rolling idle deadline; see streamingBody.
+		// Hijacked connections are unaffected: net/http clears deadlines on hijack,
+		// so WebSocket streams are not on this clock.
+		ReadTimeout: 60 * time.Second,
 		// No WriteTimeout: WebSocket streams are long-lived.
 	}
 	tlsEnabled := cfg.TLSCert != "" && cfg.TLSKey != ""

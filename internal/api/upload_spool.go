@@ -39,7 +39,9 @@ func spoolUpload(w http.ResponseWriter, r *http.Request, name string) (io.ReadCl
 	// is left behind if the process dies mid-upload.
 	_ = os.Remove(f.Name())
 
-	body := http.MaxBytesReader(w, r.Body, maxUploadBytes)
+	// A real upload can run for minutes, so it trades the whole-request deadline
+	// for a rolling one; see streamingBody.
+	body := http.MaxBytesReader(w, streamingBody(w, r), maxUploadBytes)
 	size, err := io.Copy(f, body)
 	if err != nil {
 		f.Close()
