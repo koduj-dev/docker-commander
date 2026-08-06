@@ -40,6 +40,27 @@ All notable changes to Docker Commander are documented here. The format follows
   Accounts backed by **LDAP cannot use it**: the directory is their authority — what
   they may do, whether they are still enabled — and a passkey answers none of that.
 
+### Added
+- **`dockercmd --reset-password <user>`** — a way back into an instance whose
+  password is lost. An admin can reset someone else's from the UI, but the *last*
+  admin locking themselves out had nobody to ask, and this app deliberately gives
+  nobody a way to reset another account's second factor. That state used to be
+  terminal.
+
+  It is offline, against the data directory, and never over HTTP. The password is
+  read from the terminal rather than taken as an argument, because an argument
+  lands in shell history and in `/proc/<pid>/cmdline` where any local user can read
+  it. Every session for the account is ended — a reset that leaves a stolen session
+  alive is the opposite of what someone reaching for this needs — and the reset is
+  written to the audit log.
+
+  **The second factor is left alone.** Whoever holds the files can bypass it
+  anyway: the token signing secret is a row in the same database, so anyone who can
+  run this command could already mint an admin session directly. That is also why
+  offering it costs nothing — the capability is the filesystem, not the command.
+  But it should not do it for them, so "nobody resets another account's second
+  factor" stays true.
+
 ### Fixed
 - **A request body can no longer be dribbled out to hold a handler open.** The
   server set `ReadHeaderTimeout` but no `ReadTimeout`, so once the headers arrived a

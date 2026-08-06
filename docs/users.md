@@ -255,6 +255,13 @@ regardless of permissions:
 
   If something there is not you, sign it out **and change your password**: that
   ends every session at once, including the one you didn't spot.
+
+  **Locked out entirely?** If you are the only admin and the password is gone,
+  `dockercmd --reset-password <user>` sets a new one from the machine the instance
+  runs on. It asks for the password at the terminal, ends every session for that
+  account, and leaves the second factor in place — you will still be asked for your
+  code or passkey. It needs access to the data directory, which is already
+  equivalent to being an admin, so it grants nothing that access did not.
 - **Access** — the roles you hold, plus every section you can reach (**You can**),
   on which hosts (**Where**) and which role granted it (**Granted by**). Handy for
   answering "why can I see this?" — or "why can't I?" — without an admin.

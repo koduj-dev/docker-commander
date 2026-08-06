@@ -304,6 +304,26 @@ permissions). The binary must be writable by the invoking user; **restart** the
 service afterwards to run the new version. (Installed from a package manager?
 Update through that instead.)
 
+## Locked out
+
+If the password for the only admin account is gone, reset it from the machine the
+instance runs on:
+
+```bash
+dockercmd --reset-password admin
+```
+
+It prompts at the terminal — the password is never an argument, so it stays out of
+shell history and `/proc/<pid>/cmdline` — ends **every session** for that account,
+and writes the reset to the audit log. The **second factor is not touched**: you
+will still be asked for your code or passkey afterwards.
+
+It needs no server; it works directly on the data dir, and `--data-dir` applies as
+usual. That access is the only authorisation it has, which is defensible for the
+same reason the warning under *Backup & restore* is true: the session signing
+secret is a row inside that database, so anyone who can run this could already
+mint themselves an admin session. Guard the data dir accordingly.
+
 ## Backup & restore
 
 Everything the installation needs lives under the **data dir**: the SQLite

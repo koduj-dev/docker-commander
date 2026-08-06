@@ -21,6 +21,11 @@ var (
 	ErrInvalidUsername = errors.New("auth: username must be 3-32 characters")
 )
 
+// MinPasswordLength is the floor for every path that sets one — setup, account
+// creation, a change from the UI, and the offline reset. Named so the offline path
+// cannot quietly disagree with the online one.
+const MinPasswordLength = 10
+
 // Service orchestrates the authentication flows on top of the store and the
 // crypto/token primitives in this package.
 type Service struct {
@@ -103,7 +108,7 @@ func (s *Service) Setup(ctx context.Context, username, password string) (*store.
 	if err := validateUsername(username); err != nil {
 		return nil, err
 	}
-	if len(password) < 10 {
+	if len(password) < MinPasswordLength {
 		return nil, ErrWeakPassword
 	}
 	hash, err := HashPassword(password)
@@ -132,7 +137,7 @@ func (s *Service) CreateAccount(ctx context.Context, username, password, role st
 	if err := validateUsername(username); err != nil {
 		return nil, err
 	}
-	if len(password) < 10 {
+	if len(password) < MinPasswordLength {
 		return nil, ErrWeakPassword
 	}
 	if existing, _ := s.store.UserByUsername(ctx, username); existing != nil {
@@ -162,7 +167,7 @@ func (s *Service) CreateAccount(ctx context.Context, username, password, role st
 // holds. They would keep full access for the rest of the token's twelve hours —
 // granted by the very act meant to take it away.
 func (s *Service) SetPassword(ctx context.Context, userID int64, password string) error {
-	if len(password) < 10 {
+	if len(password) < MinPasswordLength {
 		return ErrWeakPassword
 	}
 	hash, err := HashPassword(password)

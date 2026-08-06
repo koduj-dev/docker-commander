@@ -384,6 +384,16 @@ func run() error {
 	case "status":
 		return service.Status(os.Stdout)
 	}
+	if wantsResetPassword() {
+		// Offline, against the data directory, instead of starting the server. The
+		// data dir is read by hand for the same reason --backup does it: config.Load
+		// parses the server flag set, which does not know this flag.
+		dataDir := flagValue("-data-dir", "--data-dir")
+		if dataDir == "" {
+			dataDir = config.ResolveDataDir()
+		}
+		return runResetPassword(dataDir, resetPasswordUser())
+	}
 	if act, file, wantPass := backupAction(); act != "" {
 		return runBackupAction(act, file, wantPass)
 	}
