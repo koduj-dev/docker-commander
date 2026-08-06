@@ -137,7 +137,16 @@ export function Users() {
                           )}
                         </td>
                         <td className="px-4 py-2.5 text-xs text-muted max-w-[24rem]">{describeAccess(u, roles)}</td>
-                        <td className="px-4 py-2.5 hidden lg:table-cell text-xs">{u.totpEnabled ? <span className="text-ok">enabled</span> : <span className="text-muted">off</span>}</td>
+                        {/* "Is this account protected?", which is not the same
+                            question as "does it have an authenticator app": an
+                            account holding only a passkey has totpEnabled=false
+                            and is protected. Reading the wrong field told an
+                            admin auditing their users that it was off. */}
+                        <td className="px-4 py-2.5 hidden lg:table-cell text-xs">
+                          {u.mfaEnabled ?? u.totpEnabled
+                            ? <span className="text-ok">{u.totpEnabled ? "enabled" : "passkey"}</span>
+                            : <span className="text-muted">off</span>}
+                        </td>
                         <td className="px-4 py-2.5">
                           <div className="flex items-center justify-end gap-1">
                             <button className="btn-ghost px-2 py-1" title="Edit access" onClick={() => { setShowForm(false); setEdit(u); }}><Pencil className="h-4 w-4" /></button>

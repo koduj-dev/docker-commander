@@ -41,6 +41,14 @@ All notable changes to Docker Commander are documented here. The format follows
   they may do, whether they are still enabled — and a passkey answers none of that.
 
 ### Fixed
+- **The admin user list called a passkey-protected account "off".** The 2FA column
+  answers "is this account protected?", and an admin auditing their users acts on
+  it — but it read *"does this account have an authenticator app?"*, which stopped
+  being the same question the moment passkeys existed. The server had been sending
+  the right field since passkeys landed; the table was not reading it. It now shows
+  `enabled` for an authenticator app, `passkey` for an account protected by one,
+  and `off` only when there is genuinely no second factor.
+
 - **Error messages no longer start with `auth:`.** Go puts a package prefix on every
   error, which is right for a log line and wrong on a screen — it reached one as
   `auth: passkeys need HTTPS (or localhost)` under a greyed-out button. Stripped on
