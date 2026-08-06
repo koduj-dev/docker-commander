@@ -320,6 +320,7 @@ func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
 	// without the password, and from then on the passkey was no longer what
 	// protected the account. That is the exact takeover the paragraph above says
 	// must not be possible.
+	stepUp := false
 	if u.MFAEnabled {
 		var body struct {
 			Password string `json:"password"`
@@ -341,9 +342,10 @@ func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusForbidden, "password required to pair a new authenticator")
 			return
 		}
+		stepUp = true
 	}
 
-	enr, err := s.auth.BeginTOTPEnrollment(r.Context(), c.UserID)
+	enr, err := s.auth.BeginTOTPEnrollment(r.Context(), c.UserID, stepUp)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not start enrollment")
 		return
@@ -367,6 +369,15 @@ func (s *Server) handleTOTPEnable(w http.ResponseWriter, r *http.Request) {
 	if err := s.auth.ConfirmTOTPEnrollment(r.Context(), c.UserID, body.Code, body.Name); err != nil {
 		if errors.Is(err, auth.ErrTooManyFactors) {
 			writeErr(w, http.StatusConflict, err.Error())
+			return
+		}
+		// The account gained a second factor while this enrolment was in flight, so
+		// the enrolment no longer carries enough authority to land. Says so plainly:
+		// "invalid code" would send the owner hunting a clock-skew problem, and it is
+		// worth auditing because the other way to arrive here is an attempt.
+		if errors.Is(err, auth.ErrEnrollmentStale) {
+			s.audit(r, "auth.2fa.repair.denied", c.Username, "enrolment predates the account's second factor")
+			writeErr(w, http.StatusForbidden, err.Error())
 			return
 		}
 		writeErr(w, http.StatusBadRequest, "invalid code")

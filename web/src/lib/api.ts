@@ -69,11 +69,19 @@ export class ApiError extends Error {
   }
 }
 
-async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function req<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  extraHeaders?: Record<string, string>,
+): Promise<T> {
   const res = await fetch(path, {
     method,
     credentials: "same-origin",
-    headers: body ? { "Content-Type": "application/json" } : undefined,
+    headers: {
+      ...(body ? { "Content-Type": "application/json" } : {}),
+      ...(extraHeaders ?? {}),
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
@@ -238,8 +246,10 @@ export const api = {
     req<{ ok: boolean }>("POST", `/api/auth/webauthn/register/finish?name=${encodeURIComponent(name)}`, credential),
   passkeyLoginBegin: (mfaToken: string) =>
     req<RequestOptions>("POST", "/api/auth/2fa/webauthn/begin", { mfaToken }),
+  // The body is the credential, which the server's WebAuthn library parses itself,
+  // so the challenge token rides in a header — not the URL, which gets logged.
   passkeyLoginFinish: (mfaToken: string, credential: unknown) =>
-    req<LoginResult>("POST", `/api/auth/2fa/webauthn/finish?mfaToken=${encodeURIComponent(mfaToken)}`, credential),
+    req<LoginResult>("POST", "/api/auth/2fa/webauthn/finish", credential, { "X-MFA-Token": mfaToken }),
   // The password travels in the body, not the path: removing a factor is a
   // step-up, and a URL is the one part of a request that gets logged everywhere.
   removeFactor: (id: number, password: string) =>

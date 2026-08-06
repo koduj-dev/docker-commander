@@ -45,7 +45,7 @@ func totpFixture(t *testing.T) (*Service, *store.Store, int64) {
 func pair(t *testing.T, svc *Service, st *store.Store, uid int64, name string) string {
 	t.Helper()
 	ctx := context.Background()
-	enr, err := svc.BeginTOTPEnrollment(ctx, uid)
+	enr, err := svc.BeginTOTPEnrollment(ctx, uid, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestPentestAbandonedPairingKeepsExisting2FA(t *testing.T) {
 	original := pair(t, svc, st, uid, "Phone")
 
 	// Start another pairing and walk away.
-	if _, err := svc.BeginTOTPEnrollment(ctx, uid); err != nil {
+	if _, err := svc.BeginTOTPEnrollment(ctx, uid, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -108,7 +108,7 @@ func TestPentestFailedPairingAddsNothing(t *testing.T) {
 	ctx := context.Background()
 	original := pair(t, svc, st, uid, "Phone")
 
-	if _, err := svc.BeginTOTPEnrollment(ctx, uid); err != nil {
+	if _, err := svc.BeginTOTPEnrollment(ctx, uid, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.ConfirmTOTPEnrollment(ctx, uid, "000000", "Impostor"); err == nil {
@@ -130,7 +130,7 @@ func TestPentestPairingRejectsAnAlreadyPairedCode(t *testing.T) {
 	ctx := context.Background()
 	original := pair(t, svc, st, uid, "Phone")
 
-	enr, err := svc.BeginTOTPEnrollment(ctx, uid)
+	enr, err := svc.BeginTOTPEnrollment(ctx, uid, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func TestNothingIsPairedBeforeConfirmation(t *testing.T) {
 	svc, st, uid := totpFixture(t)
 	ctx := context.Background()
 
-	if _, err := svc.BeginTOTPEnrollment(ctx, uid); err != nil {
+	if _, err := svc.BeginTOTPEnrollment(ctx, uid, true); err != nil {
 		t.Fatal(err)
 	}
 	if n, _ := st.CountFactors(ctx, uid); n != 0 {
@@ -324,7 +324,7 @@ func TestPentestParallelConfirmationsPairOnce(t *testing.T) {
 	svc, st, uid := totpFixture(t)
 	ctx := context.Background()
 
-	enr, err := svc.BeginTOTPEnrollment(ctx, uid)
+	enr, err := svc.BeginTOTPEnrollment(ctx, uid, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +397,7 @@ func TestFactorsPerAccountAreCapped(t *testing.T) {
 		pair(t, svc, st, uid, fmt.Sprintf("Device %d", i))
 	}
 
-	enr, err := svc.BeginTOTPEnrollment(ctx, uid)
+	enr, err := svc.BeginTOTPEnrollment(ctx, uid, true)
 	if err != nil {
 		t.Fatal(err)
 	}

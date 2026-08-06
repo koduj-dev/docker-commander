@@ -30,9 +30,26 @@ func (s *Server) relyingParty(r *http.Request) (auth.RelyingParty, bool) {
 	if host == "" {
 		return auth.RelyingParty{}, false
 	}
-	hostname := host
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		hostname = h
+	hostname, port := host, ""
+	if h, p, err := net.SplitHostPort(host); err == nil {
+		hostname, port = h, p
+	}
+	// Normalise before it becomes an identity. A host is case-insensitive and a
+	// trailing dot is the same name written fully qualified, but an RP id is compared
+	// as a string: reaching the app as "DC.Example.com" or "dc.example.com." would
+	// mint a credential that the browser then refuses to match against the ordinary
+	// spelling. That fails closed — nothing is forgeable — but it fails as "your
+	// passkey stopped working", which is the outcome worth avoiding.
+	//
+	// The dot is stripped from the hostname rather than the host, because in
+	// "example.com.:8443" it does not sit at the end of the string.
+	hostname = strings.ToLower(strings.TrimSuffix(hostname, "."))
+	if hostname == "" {
+		return auth.RelyingParty{}, false
+	}
+	host = hostname
+	if port != "" {
+		host = net.JoinHostPort(hostname, port)
 	}
 	scheme := "http"
 	if s.cookieSecure(r) {
@@ -91,6 +108,7 @@ func (s *Server) handlePasskeyRegisterBegin(w http.ResponseWriter, r *http.Reque
 	// Pairing changes what it takes to sign in as this account, so it needs the
 	// password once the account already has a factor — the same rule an
 	// authenticator app follows, and for the same reason.
+	stepUp := false
 	if u.MFAEnabled {
 		var body struct {
 			Password string `json:"password"`
@@ -108,9 +126,10 @@ func (s *Server) handlePasskeyRegisterBegin(w http.ResponseWriter, r *http.Reque
 			writeErr(w, http.StatusForbidden, "password required to add a passkey")
 			return
 		}
+		stepUp = true
 	}
 
-	creation, err := s.auth.BeginPasskeyRegistration(r.Context(), rp, c.UserID)
+	creation, err := s.auth.BeginPasskeyRegistration(r.Context(), rp, c.UserID, stepUp)
 	switch {
 	case err == nil:
 	case errors.Is(err, auth.ErrTooManyFactors):
@@ -138,12 +157,20 @@ func (s *Server) handlePasskeyRegisterFinish(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	name := r.URL.Query().Get("name")
+	// The library's decoder reads this body itself, so it never passes through
+	// decodeJSON and never inherits its cap. Any signed-in account can open a
+	// ceremony, so an uncapped read here is a memory cost anyone can impose.
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 
 	err := s.auth.FinishPasskeyRegistration(r.Context(), rp, c.UserID, name, r)
 	switch {
 	case err == nil:
 	case errors.Is(err, auth.ErrTooManyFactors):
 		writeErr(w, http.StatusConflict, err.Error())
+		return
+	case errors.Is(err, auth.ErrEnrollmentStale):
+		s.audit(r, "auth.passkey.add.denied", c.Username, "ceremony predates the account's second factor")
+		writeErr(w, http.StatusForbidden, err.Error())
 		return
 	default:
 		writeErr(w, http.StatusBadRequest, "that passkey was not accepted")
@@ -191,10 +218,13 @@ func (s *Server) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Request
 		writeErr(w, http.StatusBadRequest, auth.ErrPasskeyUnavailable.Error())
 		return
 	}
-	// The library reads the credential from the body, so the challenge token comes
-	// in as a query parameter. It is a bearer value either way: short-lived, single
-	// use, and already spent by the time this returns.
-	token := r.URL.Query().Get("mfaToken")
+	// The library reads the credential from the body, so the challenge token cannot
+	// share it — and it must not travel in the URL, which is the one part of a
+	// request that proxies and access logs record by default. It is normally spent by
+	// the time this returns, but not always: a tripped rate limit refuses before the
+	// spend, which would leave a live token sitting in a log file. So: a header.
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+	token := r.Header.Get("X-MFA-Token")
 
 	res, err := s.auth.FinishPasskeyLogin(r.Context(), rp, r.RemoteAddr, token, r, sessionInfo(r))
 	switch {

@@ -93,6 +93,10 @@ CREATE TABLE IF NOT EXISTS users (
 	-- A re-pair in progress. Kept separate so abandoning it can never disable the
 	-- authenticator that already works.
 	totp_pending  TEXT NOT NULL DEFAULT '',
+	-- Whether the password was proved when this enrolment was started. Redeeming it
+	-- checks this against the account's protection at that moment; see
+	-- totp_pending_stepup in the migration list.
+	totp_pending_stepup INTEGER NOT NULL DEFAULT 0,
 	created_at    TEXT NOT NULL,
 	last_login_at TEXT NOT NULL DEFAULT ''
 );
@@ -445,6 +449,19 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
 		`ALTER TABLE projects ADD COLUMN allow_remote_host_paths INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN totp_pending TEXT NOT NULL DEFAULT ''`,
+		// Whether the password was proved when the pending enrolment was started.
+		//
+		// A pending secret is a capability created under one authorization state and
+		// redeemed later, possibly under another: an enrolment begun while the account
+		// had no second factor needs no password, and if it could still be confirmed
+		// after the account gained one, a stolen session could stash a secret, wait for
+		// the owner to pair a passkey, and then quietly add its own authenticator to a
+		// now-protected account. So the authorization travels with the enrolment.
+		//
+		// Existing rows default to 0, which is correct: whatever is pending on upgrade
+		// was started before this existed, and if the account is protected it must not
+		// be redeemable without the password.
+		`ALTER TABLE users ADD COLUMN totp_pending_stepup INTEGER NOT NULL DEFAULT 0`,
 		// The last TOTP counter accepted for this account, so a code cannot be
 		// replayed inside its own validity window.
 		`ALTER TABLE users ADD COLUMN totp_last_counter INTEGER NOT NULL DEFAULT 0`,

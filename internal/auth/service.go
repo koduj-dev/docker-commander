@@ -399,7 +399,11 @@ func (s *Service) ChallengeUsername(challengeToken string) string {
 
 // BeginTOTPEnrollment generates a new secret + QR for the user. The secret is
 // stored but not yet enabled until confirmed via ConfirmTOTPEnrollment.
-func (s *Service) BeginTOTPEnrollment(ctx context.Context, userID int64) (*Enrollment, error) {
+//
+// stepUp says whether the caller proved the password to get here. It is stored
+// with the candidate so that confirming it can be judged against the account's
+// protection at the time the enrolment began — see ConfirmTOTPEnrollment.
+func (s *Service) BeginTOTPEnrollment(ctx context.Context, userID int64, stepUp bool) (*Enrollment, error) {
 	u, err := s.store.UserByID(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -412,7 +416,7 @@ func (s *Service) BeginTOTPEnrollment(ctx context.Context, userID int64) (*Enrol
 	// codes from it, and only then becomes a factor. Nothing that already works is
 	// touched, so abandoning the flow changes nothing — which is what makes "add
 	// another authenticator" safe to click.
-	if err := s.store.SetTOTPPending(ctx, userID, enr.Secret); err != nil {
+	if err := s.store.SetTOTPPending(ctx, userID, enr.Secret, stepUp); err != nil {
 		return nil, err
 	}
 	return enr, nil
@@ -428,6 +432,16 @@ func (s *Service) ConfirmTOTPEnrollment(ctx context.Context, userID int64, code,
 	}
 	if u.TOTPPending == "" {
 		return errors.New("auth: no pending enrollment")
+	}
+	// The password is what authorises adding a factor to an account that already has
+	// one, and this is the moment the factor is actually created — so this is where
+	// that has to hold. Checking it only when the enrolment starts leaves the
+	// candidate redeemable across a change in the account's protection: a stolen
+	// session on an account with no second factor can begin an enrolment (rightly,
+	// nothing to protect), sit on the secret while the owner pairs a passkey, and
+	// confirm it afterwards against an account that is now protected.
+	if u.MFAEnabled && !u.TOTPPendingStepUp {
+		return ErrEnrollmentStale
 	}
 	if !ValidateTOTP(strings.TrimSpace(code), u.TOTPPending) {
 		return ErrInvalidMFACode
@@ -463,6 +477,11 @@ const maxFactorsPerAccount = 10
 
 // ErrTooManyFactors is returned when an account already holds the maximum.
 var ErrTooManyFactors = errors.New("auth: this account already has the maximum number of authenticators")
+
+// ErrEnrollmentStale is returned when a pending enrolment was started before the
+// account had any second factor and so was never authorised with the password,
+// but the account has gained one since. Starting over asks for the password.
+var ErrEnrollmentStale = errors.New("auth: this account is protected now — start again and confirm with your password")
 
 // ldapLogin authenticates against LDAP and provisions a local account on first
 // login (so roles/sections persist). A dummy password verification keeps timing

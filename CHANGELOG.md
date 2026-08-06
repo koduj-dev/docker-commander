@@ -91,6 +91,15 @@ All notable changes to Docker Commander are documented here. The format follows
   the two stopped being the same question: an account protected by a passkey alone
   reported as having no second factor.
 
+  **Pairing is authorised where the factor is created, not where the flow starts.**
+  Adding a factor to an account that already has one needs the password; adding the
+  first needs nothing, because there is nothing yet to protect. Those are decided
+  minutes apart, so a half-finished enrolment now carries the authority it was begun
+  under, and is refused if the account gained protection in the meantime — it says
+  so, rather than reporting a wrong code. In practice: start pairing an
+  authenticator, pair a passkey in another tab, and the first flow asks you to begin
+  again with your password.
+
 - **An account can hold several authenticators.** *Profile → Security* lists every
   paired one by a name you choose, with when it was added and last used, and lets
   you add or remove them. Pairing used to *replace*: the phone in your hand stopped

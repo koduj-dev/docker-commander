@@ -259,7 +259,7 @@ func TestFactorsWithoutASecretAreNotDeduplicated(t *testing.T) {
 func TestPairPendingFactorRefusesAStaleEnrolment(t *testing.T) {
 	st, uid := factorStore(t)
 	ctx := context.Background()
-	if err := st.SetTOTPPending(ctx, uid, "NEWSECRET"); err != nil {
+	if err := st.SetTOTPPending(ctx, uid, "NEWSECRET", false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -286,7 +286,7 @@ func TestPairPendingFactorRefusesAStaleEnrolment(t *testing.T) {
 func TestPairPendingFactorClaimsTheEnrolmentOnce(t *testing.T) {
 	st, uid := factorStore(t)
 	ctx := context.Background()
-	if err := st.SetTOTPPending(ctx, uid, "PENDINGSECRET"); err != nil {
+	if err := st.SetTOTPPending(ctx, uid, "PENDINGSECRET", false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -589,5 +589,55 @@ func TestCredentialIDIsUniqueAcrossAccounts(t *testing.T) {
 	}
 	if _, err := st.FactorByCredentialID(ctx, ""); err != ErrNotFound {
 		t.Errorf("an empty credential id should resolve to nothing, got %v", err)
+	}
+}
+
+// The user handle is created on first use, and concurrent creations must converge
+// on ONE value. Two registrations racing to a different handle each would leave the
+// first passkey pointing at a handle the account no longer has — the key still
+// exists, the account still exists, and they no longer recognise each other.
+//
+// This is why the write is a compare-and-swap rather than a plain UPDATE. Nothing
+// else pins it: the read-back hides the race unless the handles are compared.
+func TestWebAuthnHandleIsCreatedOnce(t *testing.T) {
+	st, uid := factorStore(t)
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+	handles := make(chan string, 16)
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			h, err := st.WebAuthnHandle(ctx, uid)
+			if err != nil {
+				return
+			}
+			handles <- string(h)
+		}()
+	}
+	wg.Wait()
+	close(handles)
+
+	seen := map[string]bool{}
+	for h := range handles {
+		seen[h] = true
+	}
+	if len(seen) != 1 {
+		t.Errorf("SECURITY: concurrent registrations produced %d different user handles, want 1", len(seen))
+	}
+	for h := range seen {
+		if len(h) != 32 {
+			t.Errorf("handle is %d bytes, want 32", len(h))
+		}
+	}
+
+	// And it is stable afterwards.
+	again, err := st.WebAuthnHandle(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !seen[string(again)] {
+		t.Error("the handle changed after it was created")
 	}
 }

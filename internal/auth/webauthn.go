@@ -106,6 +106,10 @@ type ceremonies struct {
 type ceremony struct {
 	data    webauthn.SessionData
 	expires time.Time
+	// stepUp records whether the password was proved to open this ceremony. The
+	// account's protection can change while a ceremony is open, and what authorises
+	// finishing it is the state it was opened under — see FinishPasskeyRegistration.
+	stepUp bool
 }
 
 func newCeremonies() *ceremonies {
@@ -114,24 +118,24 @@ func newCeremonies() *ceremonies {
 
 const ceremonyTTL = 2 * time.Minute
 
-func (c *ceremonies) put(key string, data webauthn.SessionData) {
+func (c *ceremonies) put(key string, data webauthn.SessionData, stepUp bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.sweep(time.Now())
-	c.open[key] = ceremony{data: data, expires: time.Now().Add(ceremonyTTL)}
+	c.open[key] = ceremony{data: data, expires: time.Now().Add(ceremonyTTL), stepUp: stepUp}
 }
 
 // take returns the ceremony and removes it: one begin, one finish. A challenge
 // that survived its answer could be replayed with a captured assertion.
-func (c *ceremonies) take(key string) (webauthn.SessionData, bool) {
+func (c *ceremonies) take(key string) (ceremony, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	found, ok := c.open[key]
 	delete(c.open, key)
 	if !ok || time.Now().After(found.expires) {
-		return webauthn.SessionData{}, false
+		return ceremony{}, false
 	}
-	return found.data, true
+	return found, true
 }
 
 // sweep drops expired ceremonies. Bounded per call, for the same reason the rate
@@ -150,7 +154,10 @@ func (c *ceremonies) sweep(now time.Time) {
 }
 
 // BeginPasskeyRegistration starts pairing a passkey for an account.
-func (s *Service) BeginPasskeyRegistration(ctx context.Context, rp RelyingParty, userID int64) (*protocol.CredentialCreation, error) {
+//
+// stepUp says whether the caller proved the password. It is remembered with the
+// ceremony rather than re-derived at the end; see FinishPasskeyRegistration.
+func (s *Service) BeginPasskeyRegistration(ctx context.Context, rp RelyingParty, userID int64, stepUp bool) (*protocol.CredentialCreation, error) {
 	api, err := rp.webauthnAPI()
 	if err != nil {
 		return nil, err
@@ -183,17 +190,24 @@ func (s *Service) BeginPasskeyRegistration(ctx context.Context, rp RelyingParty,
 	if err != nil {
 		return nil, err
 	}
-	s.ceremonies.put(registrationKey(userID), *session)
+	s.ceremonies.put(registrationKey(userID), *session, stepUp)
 	return creation, nil
 }
 
 // FinishPasskeyRegistration completes pairing and stores the credential.
+//
+// The password check lives in "begin", but the factor is created here, and the two
+// are minutes apart. An account with no second factor may open a ceremony without a
+// password — there is nothing to protect yet — so if it gained one in the meantime,
+// finishing would add an authenticator to a now-protected account on the strength
+// of a session alone. What authorised the ceremony has to still be enough when it
+// lands.
 func (s *Service) FinishPasskeyRegistration(ctx context.Context, rp RelyingParty, userID int64, name string, r *http.Request) error {
 	api, err := rp.webauthnAPI()
 	if err != nil {
 		return err
 	}
-	session, ok := s.ceremonies.take(registrationKey(userID))
+	cer, ok := s.ceremonies.take(registrationKey(userID))
 	if !ok {
 		return ErrInvalidCreds
 	}
@@ -201,12 +215,15 @@ func (s *Service) FinishPasskeyRegistration(ctx context.Context, rp RelyingParty
 	if err != nil {
 		return err
 	}
+	if u.MFAEnabled && !cer.stepUp {
+		return ErrEnrollmentStale
+	}
 	pu, err := s.passkeyUser(ctx, u)
 	if err != nil {
 		return err
 	}
 
-	credential, err := api.FinishRegistration(pu, session, r)
+	credential, err := api.FinishRegistration(pu, cer.data, r)
 	if err != nil {
 		return ErrInvalidCreds
 	}
@@ -263,7 +280,9 @@ func (s *Service) BeginPasskeyLogin(ctx context.Context, rp RelyingParty, challe
 	}
 	// Keyed on the challenge token's own id, so one password entry funds one
 	// ceremony — the same rule the TOTP path follows.
-	s.ceremonies.put(loginKey(claims.ID), *session)
+	// A login ceremony has no step-up to carry: the password is what minted the
+	// challenge token this is keyed on.
+	s.ceremonies.put(loginKey(claims.ID), *session, true)
 	return assertion, nil
 }
 
@@ -295,7 +314,7 @@ func (s *Service) FinishPasskeyLogin(ctx context.Context, rp RelyingParty, rlKey
 		s.limiter.Fail(userKey)
 		return nil, ErrInvalidCreds
 	}
-	session, ok := s.ceremonies.take(loginKey(claims.ID))
+	cer, ok := s.ceremonies.take(loginKey(claims.ID))
 	if !ok {
 		s.limiter.Fail(rlKey)
 		s.limiter.Fail(userKey)
@@ -311,7 +330,7 @@ func (s *Service) FinishPasskeyLogin(ctx context.Context, rp RelyingParty, rlKey
 		return nil, err
 	}
 
-	credential, err := api.FinishLogin(pu, session, r)
+	credential, err := api.FinishLogin(pu, cer.data, r)
 	if err != nil {
 		s.limiter.Fail(rlKey)
 		s.limiter.Fail(userKey)

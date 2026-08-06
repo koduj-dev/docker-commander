@@ -37,7 +37,7 @@ func passkeyFixture(t *testing.T) (*Service, *store.Store, *store.User) {
 func pairPasskey(t *testing.T, svc *Service, u *store.User, name string) *webauthntest.Device {
 	t.Helper()
 	ctx := context.Background()
-	creation, err := svc.BeginPasskeyRegistration(ctx, testRP(), u.ID)
+	creation, err := svc.BeginPasskeyRegistration(ctx, testRP(), u.ID, true)
 	if err != nil {
 		t.Fatalf("begin registration: %v", err)
 	}
@@ -294,7 +294,7 @@ func TestPasskeyCounterIsPersisted(t *testing.T) {
 func TestPasskeysNeedARelyingParty(t *testing.T) {
 	svc, _, u := passkeyFixture(t)
 	ctx := context.Background()
-	if _, err := svc.BeginPasskeyRegistration(ctx, RelyingParty{}, u.ID); !errors.Is(err, ErrPasskeyUnavailable) {
+	if _, err := svc.BeginPasskeyRegistration(ctx, RelyingParty{}, u.ID, true); !errors.Is(err, ErrPasskeyUnavailable) {
 		t.Errorf("registration without a relying party: want ErrPasskeyUnavailable, got %v", err)
 	}
 }
@@ -305,7 +305,7 @@ func TestPasskeyLoginNeedsAPairedKey(t *testing.T) {
 	svc, _, u := passkeyFixture(t)
 	ctx := context.Background()
 	// Give the account a TOTP factor so login reaches the 2FA step at all.
-	enr, err := svc.BeginTOTPEnrollment(ctx, u.ID)
+	enr, err := svc.BeginTOTPEnrollment(ctx, u.ID, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,7 +342,7 @@ func TestPasskeyRegistrationCeremonyIsSingleUse(t *testing.T) {
 	svc, st, u := passkeyFixture(t)
 	ctx := context.Background()
 
-	creation, err := svc.BeginPasskeyRegistration(ctx, testRP(), u.ID)
+	creation, err := svc.BeginPasskeyRegistration(ctx, testRP(), u.ID, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +407,7 @@ func TestPentestPasskeyChallengeTokenIsSpentOnFirstAttempt(t *testing.T) {
 // that an abandoned one is not a challenge waiting to be answered later.
 func TestPasskeyCeremonyExpires(t *testing.T) {
 	c := newCeremonies()
-	c.put("k", webauthn.SessionData{UserID: []byte("u")})
+	c.put("k", webauthn.SessionData{UserID: []byte("u")}, true)
 
 	// Age it past the TTL rather than sleeping through it.
 	c.mu.Lock()
@@ -420,7 +420,7 @@ func TestPasskeyCeremonyExpires(t *testing.T) {
 		t.Error("an expired ceremony was still answerable")
 	}
 	// …and a fresh one is not.
-	c.put("k2", webauthn.SessionData{UserID: []byte("u")})
+	c.put("k2", webauthn.SessionData{UserID: []byte("u")}, true)
 	if _, ok := c.take("k2"); !ok {
 		t.Error("a live ceremony should be answerable")
 	}

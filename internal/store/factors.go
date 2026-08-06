@@ -57,9 +57,22 @@ func factorName(name string) string {
 }
 
 // CreateFactor pairs a new factor and returns its id.
+// Creating a factor also drops any half-finished TOTP enrolment.
+//
+// That enrolment is a live capability: it was authorised against an account with
+// nothing to protect, and it stays redeemable until something clears it. Pairing a
+// passkey is exactly the moment the account stops being unprotected, so leaving a
+// stashed secret behind would let whoever started it add their own authenticator
+// afterwards, with no password. The two writes go together or not at all.
 func (s *Store) CreateFactor(ctx context.Context, f *AuthFactor) (int64, error) {
 	name := factorName(f.Name)
-	res, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx, `
 		INSERT INTO auth_factors (user_id, kind, name, secret, credential_id, credential, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		f.UserID, orDefault(f.Kind, FactorKindTOTP), name, f.Secret, f.CredentialID, f.Credential,
@@ -67,7 +80,18 @@ func (s *Store) CreateFactor(ctx context.Context, f *AuthFactor) (int64, error) 
 	if err != nil {
 		return 0, err
 	}
-	return res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE users SET totp_pending = '', totp_pending_stepup = 0 WHERE id = ?`, f.UserID); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 // ListFactors returns a user's paired factors, oldest first — the order they were
@@ -209,7 +233,7 @@ func (s *Store) PairPendingFactor(ctx context.Context, userID int64, pending, na
 	defer func() { _ = tx.Rollback() }()
 
 	res, err := tx.ExecContext(ctx,
-		`UPDATE users SET totp_pending = '' WHERE id = ? AND totp_pending = ?`, userID, pending)
+		`UPDATE users SET totp_pending = '', totp_pending_stepup = 0 WHERE id = ? AND totp_pending = ?`, userID, pending)
 	if err != nil {
 		return 0, err
 	}
