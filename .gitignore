@@ -12,6 +12,10 @@ deploy/packaging/dockercmd.service
 
 # Frontend
 web/node_modules/
+# Anywhere, not just web/: running a frontend tool from the repo root (vitest, say)
+# creates a node_modules/.vite cache here, and a path-specific rule let one of those
+# files get committed once already.
+node_modules/
 # Screenshot generator deps (see scripts/screenshots/README.md)
 scripts/screenshots/node_modules/
 scripts/screenshots/package-lock.json
@@ -34,3 +38,7 @@ web/tsconfig.tsbuildinfo
 
 # Scratch folder for screenshots waiting to be sorted into docs/images/.
 .screens/
+
+# Throwaway git worktrees. .claude/skills/ IS tracked; this is transient scaffolding
+# that would otherwise be swept up by `git add -A`.
+.claude/worktrees/
