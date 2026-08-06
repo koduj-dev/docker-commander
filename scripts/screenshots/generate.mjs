@@ -39,6 +39,16 @@ if (!PASS) {
   process.exit(2);
 }
 
+// openTab clicks a tab by its label. Tab text is lowercase in the DOM and shown
+// capitalised via CSS, so every match here is case-insensitive.
+async function openTab(page, label) {
+  const tab = page.locator('button', { hasText: label }).first();
+  if (!(await tab.count().catch(() => 0))) return false;
+  await tab.click().catch(() => {});
+  await page.waitForTimeout(900);
+  return true;
+}
+
 // Each agenda: the route to visit, the output filename, and an optional `prep`
 // that opens a drawer/detail before the shot. `pick` resolves a dynamic id from
 // the API for routes that need one (container detail, …).
@@ -72,6 +82,11 @@ const SHOTS = [
   { name: 'registries', path: '/registries' },
   { name: 'users', path: '/users' },
   { name: 'settings', path: '/settings' },
+  // The Settings tabs each get their own picture; they are separate agendas in
+  // the manual even though they share a route.
+  { name: 'settings_security', path: '/settings', prep: (page) => openTab(page, /^security$/i) },
+  { name: 'settings_ldap', path: '/settings', prep: (page) => openTab(page, /^ldap$/i) },
+  { name: 'settings_email', path: '/settings', prep: (page) => openTab(page, /^e-?mail$/i) },
   { name: 'audit', path: '/audit' },
   { name: 'templates', path: '/templates' },
   { name: 'mcp', path: '/mcp-tokens' },
@@ -105,6 +120,29 @@ const SHOTS = [
     name: 'network_detail',
     path: '/networks',
     prep: async (page) => openFirstRow(page, ['elastic', 'bridge']),
+  },
+  {
+    // …and the same drawer switched to its graph view.
+    name: 'network_detail_graph',
+    path: '/networks',
+    prep: async (page) => {
+      await openFirstRow(page, ['elastic', 'bridge']);
+      await openTab(page, /^graph$/i);
+    },
+  },
+  {
+    // The new-project dialog, opened from the Projects list.
+    name: 'project_new',
+    path: '/projects',
+    prep: async (page) => {
+      const btn = page.locator('button', { hasText: /new project/i }).first();
+      if (await btn.count().catch(() => 0)) {
+        await btn.click().catch(() => {});
+        await page.waitForTimeout(900);
+        return true;
+      }
+      return false;
+    },
   },
   {
     // The project editor opens as a full drawer from the Projects list, via the
