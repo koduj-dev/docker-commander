@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -130,10 +131,10 @@ func TestListFactorsIsScopedToItsOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Name: "Alice phone", Secret: "ALICE"}); err != nil {
+	if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Name: "Alice phone", Secret: "ALICE"}, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: other, Name: "Mallory phone", Secret: "MALLORY"}); err != nil {
+	if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: other, Name: "Mallory phone", Secret: "MALLORY"}, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -154,15 +155,15 @@ func TestListFactorsIsScopedToItsOwner(t *testing.T) {
 func TestOneFactorPerSecret(t *testing.T) {
 	st, uid := factorStore(t)
 	ctx := context.Background()
-	if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Name: "Phone", Secret: "SAME"}); err != nil {
+	if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Name: "Phone", Secret: "SAME"}, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Name: "Phone again", Secret: "SAME"}); err == nil {
+	if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Name: "Phone again", Secret: "SAME"}, true); err == nil {
 		t.Error("SECURITY: the same secret was paired twice for one account")
 	}
 	// A different account may of course hold its own.
 	other, _ := st.CreateUser(ctx, &User{Username: "bob", Role: "user"})
-	if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: other, Name: "Phone", Secret: "SAME"}); err != nil {
+	if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: other, Name: "Phone", Secret: "SAME"}, true); err != nil {
 		t.Errorf("a different account should be able to hold its own secret: %v", err)
 	}
 }
@@ -192,7 +193,7 @@ func TestDuplicateFactorsAreCollapsedOnStart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: bob, Name: "Bob", Secret: "DUP"}); err != nil {
+	if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: bob, Name: "Bob", Secret: "DUP"}, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.BurnFactorCounter(ctx, mustFactorID(t, st, bob), 5); err != nil {
@@ -238,7 +239,7 @@ func TestFactorsWithoutASecretAreNotDeduplicated(t *testing.T) {
 	st, uid := factorStore(t)
 	ctx := context.Background()
 	for _, name := range []string{"Laptop passkey", "Phone passkey", "Security key"} {
-		if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Kind: "webauthn", Name: name}); err != nil {
+		if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Kind: "webauthn", Name: name}, true); err != nil {
 			t.Fatalf("pairing %q: %v", name, err)
 		}
 	}
@@ -322,11 +323,11 @@ func TestPairPendingFactorClaimsTheEnrolmentOnce(t *testing.T) {
 func TestConcurrentRemovalsCannotEmptyTheAccount(t *testing.T) {
 	st, uid := factorStore(t)
 	ctx := context.Background()
-	a, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Name: "Phone", Secret: "A"})
+	a, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Name: "Phone", Secret: "A"}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Name: "Tablet", Secret: "B"})
+	b, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Name: "Tablet", Secret: "B"}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +360,7 @@ func TestConcurrentRemovalsCannotEmptyTheAccount(t *testing.T) {
 func TestBurnFactorCounterOnlyMovesForward(t *testing.T) {
 	st, uid := factorStore(t)
 	ctx := context.Background()
-	id, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Name: "Phone", Secret: "S"})
+	id, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Name: "Phone", Secret: "S"}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,7 +394,7 @@ func TestFactorByIDIsScopedToItsOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Name: "Phone", Secret: "S"})
+	id, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Name: "Phone", Secret: "S"}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,10 +415,10 @@ func TestFactorNameIsBoundedAndDefaulted(t *testing.T) {
 	st, uid := factorStore(t)
 	ctx := context.Background()
 	// Distinct secrets: one authenticator is one row, so two rows need two secrets.
-	if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Name: "   ", Secret: "S1"}); err != nil {
+	if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Name: "   ", Secret: "S1"}, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Name: strings.Repeat("N", 500), Secret: "S2"}); err != nil {
+	if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Name: strings.Repeat("N", 500), Secret: "S2"}, true); err != nil {
 		t.Fatal(err)
 	}
 	factors, _ := st.ListFactors(ctx, uid)
@@ -434,7 +435,7 @@ func TestFactorNameIsBoundedAndDefaulted(t *testing.T) {
 func TestDeleteUserTakesItsFactors(t *testing.T) {
 	st, uid := factorStore(t)
 	ctx := context.Background()
-	if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Name: "Phone", Secret: "S"}); err != nil {
+	if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Name: "Phone", Secret: "S"}, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.DeleteUser(ctx, uid); err != nil {
@@ -450,7 +451,7 @@ func TestDeleteUserTakesItsFactors(t *testing.T) {
 func TestFactorCreatedAtIsSet(t *testing.T) {
 	st, uid := factorStore(t)
 	ctx := context.Background()
-	if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Name: "Phone", Secret: "S"}); err != nil {
+	if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Name: "Phone", Secret: "S"}, true); err != nil {
 		t.Fatal(err)
 	}
 	factors, _ := st.ListFactors(ctx, uid)
@@ -469,7 +470,7 @@ func TestTOTPEnabledCountsOnlyAuthenticatorApps(t *testing.T) {
 	ctx := context.Background()
 	if _, err := st.CreateFactor(ctx, &AuthFactor{
 		UserID: uid, Kind: "webauthn", Name: "Passkey", Secret: "CREDENTIAL",
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -482,7 +483,7 @@ func TestTOTPEnabledCountsOnlyAuthenticatorApps(t *testing.T) {
 	}
 
 	// …and adding a real authenticator does set it.
-	if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Name: "Phone", Secret: "S"}); err != nil {
+	if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Name: "Phone", Secret: "S"}, true); err != nil {
 		t.Fatal(err)
 	}
 	u, _ = st.UserByID(ctx, uid)
@@ -543,7 +544,7 @@ func TestUpgradeDropsTheOldNonPartialIndex(t *testing.T) {
 	// The consequence, stated as behaviour rather than as schema: two factors that
 	// carry no secret can coexist.
 	for _, name := range []string{"Laptop passkey", "Phone passkey"} {
-		if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Kind: "webauthn", Name: name}); err != nil {
+		if _, err := st.CreateFactor(ctx, &AuthFactor{UserID: uid, Kind: "webauthn", Name: name}, true); err != nil {
 			t.Fatalf("pairing %q on an upgraded database: %v", name, err)
 		}
 	}
@@ -569,13 +570,13 @@ func TestCredentialIDIsUniqueAcrossAccounts(t *testing.T) {
 	if _, err := st.CreateFactor(ctx, &AuthFactor{
 		UserID: alice, Kind: FactorKindPasskey, Name: "Alice laptop",
 		CredentialID: "CRED-1", Credential: `{"id":"x"}`,
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.CreateFactor(ctx, &AuthFactor{
 		UserID: bob, Kind: FactorKindPasskey, Name: "Bob laptop",
 		CredentialID: "CRED-1", Credential: `{"id":"x"}`,
-	}); err == nil {
+	}, true); err == nil {
 		t.Error("SECURITY: two accounts hold the same credential id — an assertion naming it is ambiguous")
 	}
 
@@ -639,5 +640,78 @@ func TestWebAuthnHandleIsCreatedOnce(t *testing.T) {
 	}
 	if !seen[string(again)] {
 		t.Error("the handle changed after it was created")
+	}
+}
+
+// An unauthorised pairing is one that relies on "this account has nothing to
+// protect yet". That condition is part of the INSERT, so concurrent attempts
+// cannot all pass it: exactly one may land on an empty account, and the rest must
+// be refused.
+//
+// Checking first and inserting second is a race N callers win together — and here
+// the loser is not a duplicate row but an account that ends up holding a factor
+// nobody proved a password for.
+func TestUnauthorisedFactorsCannotRaceOntoOneAccount(t *testing.T) {
+	st, uid := factorStore(t)
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	won, refused := 0, 0
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, err := st.CreateFactor(ctx, &AuthFactor{
+				UserID:       uid,
+				Kind:         FactorKindPasskey,
+				Name:         fmt.Sprintf("Key %d", i),
+				CredentialID: fmt.Sprintf("cred-%d", i),
+				Credential:   "{}",
+			}, false)
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err == nil:
+				won++
+			case errors.Is(err, ErrNotFirstFactor):
+				refused++
+			default:
+				t.Errorf("unexpected error: %v", err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	if won != 1 {
+		t.Errorf("SECURITY: %d unauthorised pairings landed on one account, want 1", won)
+	}
+	if refused != 15 {
+		t.Errorf("%d were refused, want 15", refused)
+	}
+	if n, _ := st.CountFactors(ctx, uid); n != 1 {
+		t.Errorf("SECURITY: the account holds %d factors, want 1", n)
+	}
+}
+
+// …and an authorised one is not subject to that condition: it is how a second
+// authenticator gets added at all.
+func TestAuthorisedFactorsAreNotLimitedToTheFirst(t *testing.T) {
+	st, uid := factorStore(t)
+	ctx := context.Background()
+
+	for i := 0; i < 3; i++ {
+		if _, err := st.CreateFactor(ctx, &AuthFactor{
+			UserID:       uid,
+			Kind:         FactorKindPasskey,
+			Name:         fmt.Sprintf("Key %d", i),
+			CredentialID: fmt.Sprintf("cred-%d", i),
+			Credential:   "{}",
+		}, true); err != nil {
+			t.Fatalf("authorised pairing %d: %v", i, err)
+		}
+	}
+	if n, _ := st.CountFactors(ctx, uid); n != 3 {
+		t.Errorf("the account holds %d factors, want 3", n)
 	}
 }

@@ -58,7 +58,7 @@ func TestUsersCRUD(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 2FA is no longer a flag on the user: it is whether any factor is paired.
-	if _, err := s.CreateFactor(ctx, &AuthFactor{UserID: id, Name: "Phone", Secret: "SECRET"}); err != nil {
+	if _, err := s.CreateFactor(ctx, &AuthFactor{UserID: id, Name: "Phone", Secret: "SECRET"}, true); err != nil {
 		t.Fatal(err)
 	}
 	u, _ = s.UserByID(ctx, id)

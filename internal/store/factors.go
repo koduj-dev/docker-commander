@@ -56,15 +56,30 @@ func factorName(name string) string {
 	return name
 }
 
+// ErrNotFirstFactor means an unauthorised pairing arrived at an account that
+// already has a factor. Adding the first needs no password; adding another does.
+var ErrNotFirstFactor = errors.New("store: this account already has a second factor")
+
 // CreateFactor pairs a new factor and returns its id.
-// Creating a factor also drops any half-finished TOTP enrolment.
 //
-// That enrolment is a live capability: it was authorised against an account with
-// nothing to protect, and it stays redeemable until something clears it. Pairing a
-// passkey is exactly the moment the account stops being unprotected, so leaving a
-// stashed secret behind would let whoever started it add their own authenticator
-// afterwards, with no password. The two writes go together or not at all.
-func (s *Store) CreateFactor(ctx context.Context, f *AuthFactor) (int64, error) {
+// authorised says the password was proved. When it is false the caller is relying
+// on "this account has nothing to protect yet", and THAT is checked here, as part
+// of the INSERT — not by the caller beforehand.
+//
+// The distinction matters because the gap between a caller's check and this write
+// is attacker-controlled. The WebAuthn library reads the request body, so a client
+// that sends its headers and then stalls holds the handler open between the two for
+// as long as it likes: the check runs against an unprotected account, the owner
+// pairs their real factor, and the insert lands afterwards. Making the condition
+// part of the write closes that, and the plain race with it — the same reason
+// PairPendingFactor claims its enrolment with a compare-and-swap instead of a read.
+//
+// Creating a factor also drops any half-finished TOTP enrolment. That enrolment is
+// a live capability authorised against an account with nothing to protect, and this
+// is the moment the account stops being unprotected — leaving it behind would let
+// whoever started it add their own authenticator afterwards, with no password. All
+// of it goes together or not at all.
+func (s *Store) CreateFactor(ctx context.Context, f *AuthFactor, authorised bool) (int64, error) {
 	name := factorName(f.Name)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -74,11 +89,19 @@ func (s *Store) CreateFactor(ctx context.Context, f *AuthFactor) (int64, error) 
 
 	res, err := tx.ExecContext(ctx, `
 		INSERT INTO auth_factors (user_id, kind, name, secret, credential_id, credential, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		SELECT ?, ?, ?, ?, ?, ?, ?
+		WHERE ? OR NOT EXISTS (SELECT 1 FROM auth_factors WHERE user_id = ?)`,
 		f.UserID, orDefault(f.Kind, FactorKindTOTP), name, f.Secret, f.CredentialID, f.Credential,
-		time.Now().UTC().Format(time.RFC3339))
+		time.Now().UTC().Format(time.RFC3339), authorised, f.UserID)
 	if err != nil {
 		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if n == 0 {
+		return 0, ErrNotFirstFactor
 	}
 	id, err := res.LastInsertId()
 	if err != nil {

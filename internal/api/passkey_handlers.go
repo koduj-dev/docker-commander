@@ -34,16 +34,20 @@ func (s *Server) relyingParty(r *http.Request) (auth.RelyingParty, bool) {
 	if h, p, err := net.SplitHostPort(host); err == nil {
 		hostname, port = h, p
 	}
-	// Normalise before it becomes an identity. A host is case-insensitive and a
-	// trailing dot is the same name written fully qualified, but an RP id is compared
-	// as a string: reaching the app as "DC.Example.com" or "dc.example.com." would
-	// mint a credential that the browser then refuses to match against the ordinary
+	// Lowercase before this becomes an identity: a host is case-insensitive, but an
+	// RP id is compared as a string, so reaching the app as "DC.Example.com" would
+	// otherwise mint a credential the browser will not match against the ordinary
 	// spelling. That fails closed — nothing is forgeable — but it fails as "your
 	// passkey stopped working", which is the outcome worth avoiding.
 	//
-	// The dot is stripped from the hostname rather than the host, because in
-	// "example.com.:8443" it does not sit at the end of the string.
-	hostname = strings.ToLower(strings.TrimSuffix(hostname, "."))
+	// A trailing dot is deliberately KEPT. It denotes the same name, so stripping it
+	// looks like the same tidying — but the origin has to be spelled the way the
+	// browser will send it, and a browser on "http://host.:8470/" sends exactly that.
+	// Stripping the dot from the id alone splits the two, and the library compares
+	// origins by string: every registration from such a host then fails. Keeping it
+	// leaves id and origin consistent. isSecureLocalHost still ignores the dot,
+	// because "is this a secure context" is a different question about the same name.
+	hostname = strings.ToLower(hostname)
 	if hostname == "" {
 		return auth.RelyingParty{}, false
 	}

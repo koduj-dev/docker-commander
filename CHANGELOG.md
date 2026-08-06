@@ -91,14 +91,18 @@ All notable changes to Docker Commander are documented here. The format follows
   the two stopped being the same question: an account protected by a passkey alone
   reported as having no second factor.
 
-  **Pairing is authorised where the factor is created, not where the flow starts.**
-  Adding a factor to an account that already has one needs the password; adding the
-  first needs nothing, because there is nothing yet to protect. Those are decided
-  minutes apart, so a half-finished enrolment now carries the authority it was begun
-  under, and is refused if the account gained protection in the meantime — it says
-  so, rather than reporting a wrong code. In practice: start pairing an
-  authenticator, pair a passkey in another tab, and the first flow asks you to begin
-  again with your password.
+  **Pairing is authorised by the write that creates the factor, not by a check
+  before it.** Adding a factor to an account that already has one needs the
+  password; adding the first needs nothing, because there is nothing yet to protect.
+  Those are decided minutes apart, so a half-finished enrolment carries the
+  authority it was begun under, and an unauthorised one is admitted by the insert
+  itself, conditional on the account still having no factor. Anything else leaves a
+  gap the client controls — the WebAuthn library reads the request body, and a
+  request whose body arrives slowly holds a handler open across it.
+
+  In practice: start pairing an authenticator, pair a passkey in another tab, and
+  the first flow asks you to begin again with your password rather than reporting a
+  wrong code.
 
 - **An account can hold several authenticators.** *Profile → Security* lists every
   paired one by a name you choose, with when it was added and last used, and lets

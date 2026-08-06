@@ -26,7 +26,7 @@ func fillFactors(t *testing.T, st *store.Store, userID int64, n int) {
 			Name:         fmt.Sprintf("Key %d", i),
 			CredentialID: fmt.Sprintf("cred-%d", i),
 			Credential:   "{}",
-		}); err != nil {
+		}, true); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -61,7 +61,7 @@ func TestPasskeyRegistrationRefusedWhenTheAccountFillsUpMidCeremony(t *testing.T
 	// The last slot goes to something else while this ceremony is open.
 	if _, err := st.CreateFactor(ctx, &store.AuthFactor{
 		UserID: u.ID, Kind: store.FactorKindTOTP, Name: "Phone", Secret: "JBSWY3DPEHPK3PXP",
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatal(err)
 	}
 

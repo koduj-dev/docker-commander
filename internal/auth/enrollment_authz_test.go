@@ -67,7 +67,7 @@ func TestUnauthorisedEnrolmentIsRefusedOnceTheAccountIsProtected(t *testing.T) {
 	// A factor exists...
 	if _, err := st.CreateFactor(ctx, &store.AuthFactor{
 		UserID: u.ID, Kind: store.FactorKindPasskey, Name: "Laptop", CredentialID: "cred-1", Credential: "{}",
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatal(err)
 	}
 	// ...and a pending enrolment that nobody proved the password for.
@@ -115,7 +115,7 @@ func TestPentestPasskeyCeremonyCannotOutliveTheAccountBecomingProtected(t *testi
 	// different places, which is what makes this reachable.
 	if _, err := st.CreateFactor(ctx, &store.AuthFactor{
 		UserID: u.ID, Kind: store.FactorKindTOTP, Name: "Owner's phone", Secret: "JBSWY3DPEHPK3PXP",
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -144,7 +144,7 @@ func TestAuthorisedPasskeyCeremonySurvivesTheAccountGainingAFactor(t *testing.T)
 
 	if _, err := st.CreateFactor(ctx, &store.AuthFactor{
 		UserID: u.ID, Kind: store.FactorKindTOTP, Name: "Phone", Secret: "JBSWY3DPEHPK3PXP",
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatal(err)
 	}
 

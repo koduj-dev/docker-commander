@@ -215,6 +215,10 @@ func (s *Service) FinishPasskeyRegistration(ctx context.Context, rp RelyingParty
 	if err != nil {
 		return err
 	}
+	// A cheap early answer, so an unauthorised ceremony is refused before the body is
+	// parsed and with an error that says why. It is NOT the guard: the body is read
+	// below, which hands the client control of how long this takes. The decision that
+	// counts is made inside the insert.
 	if u.MFAEnabled && !cer.stepUp {
 		return ErrEnrollmentStale
 	}
@@ -240,13 +244,20 @@ func (s *Service) FinishPasskeyRegistration(ctx context.Context, rp RelyingParty
 	if n >= maxFactorsPerAccount {
 		return ErrTooManyFactors
 	}
+	// cer.stepUp is what authorises this. Passing it down rather than acting on the
+	// check above is the point: between that check and here the request body was
+	// read, and a client that stalls it decides how long that takes. The store
+	// settles "was this account still unprotected?" at the moment of the write.
 	_, err = s.store.CreateFactor(ctx, &store.AuthFactor{
 		UserID:       userID,
 		Kind:         store.FactorKindPasskey,
 		Name:         name,
 		CredentialID: base64.RawURLEncoding.EncodeToString(credential.ID),
 		Credential:   string(blob),
-	})
+	}, cer.stepUp)
+	if errors.Is(err, store.ErrNotFirstFactor) {
+		return ErrEnrollmentStale
+	}
 	return err
 }
 
