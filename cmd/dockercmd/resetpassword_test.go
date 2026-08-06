@@ -184,6 +184,51 @@ func TestResetPasswordRefusesADirectoryAccount(t *testing.T) {
 	}
 }
 
+// …and any other directory too. The rule is "accounts whose password this app
+// owns", not "not LDAP" — a denylist would accept the next auth source added.
+func TestResetPasswordRefusesAnyDirectoryAccount(t *testing.T) {
+	for _, source := range []string{"ldap", "oidc", "saml"} {
+		dir := t.TempDir()
+		st, err := store.Open(filepath.Join(dir, "docker-commander.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.CreateUser(context.Background(), &store.User{
+			Username: "federated", Role: "user", AuthSource: source, PasswordHash: "x",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		st.Close()
+
+		if err := resetFor(t, dir, "federated", "a-brand-new-password"); err == nil {
+			t.Errorf("SECURITY: a %q account was reset locally", source)
+		}
+	}
+}
+
+// A local account is not refused by that rule — the guard is about which authority
+// owns the password, not a ban.
+func TestResetPasswordAllowsBothLocalSpellings(t *testing.T) {
+	for _, source := range []string{"", "local"} {
+		dir := t.TempDir()
+		st, err := store.Open(filepath.Join(dir, "docker-commander.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		hash, _ := auth.HashPassword("the-old-password")
+		if _, err := st.CreateUser(context.Background(), &store.User{
+			Username: "local-user", Role: "admin", AuthSource: source, PasswordHash: hash,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		st.Close()
+
+		if err := resetFor(t, dir, "local-user", "a-brand-new-password"); err != nil {
+			t.Errorf("auth_source %q should be resettable: %v", source, err)
+		}
+	}
+}
+
 // …and an unknown name says so rather than failing obscurely.
 func TestResetPasswordUnknownAccount(t *testing.T) {
 	dir, _, _ := resetFixture(t)

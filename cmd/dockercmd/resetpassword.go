@@ -123,11 +123,15 @@ func openForReset(dataDir, username string) (*store.User, *store.Store, error) {
 		st.Close()
 		return nil, nil, err
 	}
-	// An LDAP account's password lives in the directory; setting a local one here
-	// would write a credential the login path never consults.
-	if u.AuthSource == "ldap" {
+	// Only accounts whose password this app owns. An allowlist, matching the
+	// passwordless sign-in path: a directory account's password lives in the
+	// directory, and writing a local one would store a credential the login path
+	// never consults. A denylist of "ldap" would silently accept the next auth
+	// source somebody adds.
+	if u.AuthSource != "" && u.AuthSource != "local" {
 		st.Close()
-		return nil, nil, fmt.Errorf("%q is an LDAP account — its password belongs to the directory", username)
+		return nil, nil, fmt.Errorf("%q is a %s account — its password belongs to that directory, not here",
+			username, u.AuthSource)
 	}
 	return u, st, nil
 }
