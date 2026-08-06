@@ -169,41 +169,20 @@ async function main() {
 
   // --- The sign-in screen, shot while still logged out.
   //
-  // Both steps are worth a picture: the first shows the passkey option beside the
-  // password, the second shows that an account is offered only the factors it
-  // actually has. Driven through the UI rather than the API precisely because the
-  // rendering is the subject.
+  // Only the first step is taken here. Submitting the form for the second-step
+  // shot happens AFTER the API login below has confirmed the credentials — a
+  // wrong password would otherwise cost two attempts per run instead of one, and
+  // the server allows five per fifteen minutes before it stops answering. Two
+  // runs with a typo used to be enough to lock the operator out of their own
+  // instance, which is a poor thing for a screenshot tool to do.
   const wantsLogin = !ONLY.length || ONLY.includes('login') || ONLY.includes('login_2fa');
   if (wantsLogin) {
-    // Deliberately NOT swallowed: a refused connection here would otherwise be
+    // Deliberately NOT swallowed: a refused connection would otherwise be
     // screenshotted as a blank page and committed as documentation.
     await page.goto(BASE + '/', { waitUntil: 'networkidle' });
     await page.waitForTimeout(1200); // the passkey button waits on /webauthn/support
     await page.screenshot({ path: `${OUT}/login.png` });
     console.log('✓ login  →  login.png');
-
-    // …then the second step, if this instance asks for one.
-    const inputs = page.locator('form input');
-    if (await inputs.count().catch(() => 0) >= 2) {
-      await inputs.nth(0).fill(USER).catch(() => {});
-      await inputs.nth(1).fill(PASS).catch(() => {});
-      await page.locator('form button[type=submit], form button').first().click().catch(() => {});
-      await page.waitForTimeout(1400);
-      const onSecondStep = await page.locator('text=/two-factor/i').count().catch(() => 0);
-      const stillOnSignIn = await page.locator('text=/sign in to continue/i').count().catch(() => 0);
-      if (onSecondStep) {
-        await page.screenshot({ path: `${OUT}/login_2fa.png` });
-        console.log('✓ login_2fa  →  login_2fa.png');
-      } else if (stillOnSignIn) {
-        // The credentials were refused. Saying "no second factor" here would blame
-        // the instance for what is a wrong DC_PASS, which is exactly the sort of
-        // misleading status this script should not produce — the API login below
-        // will fail next with the real reason.
-        console.warn('• skip login_2fa: the sign-in was refused; check DC_USER / DC_PASS');
-      } else {
-        console.warn('• skip login_2fa: this instance signed in without a second factor');
-      }
-    }
   }
 
   // --- Authenticate via the JSON API so the session cookie lands in the context.
@@ -220,10 +199,30 @@ async function main() {
     { user: USER, pass: PASS },
   );
   if (login.status !== 200) {
-    throw new Error(`login failed (${login.status}): ${JSON.stringify(login.body)}`);
+    const hint = login.status === 429
+      ? ' — the attempt budget is spent; restart the instance to clear it (the limiter is in memory)'
+      : ' — check DC_USER / DC_PASS';
+    throw new Error(`login failed (${login.status})${hint}: ${JSON.stringify(login.body)}`);
   }
   if (login.body.mfaRequired) {
     if (!TOTP) throw new Error('2FA required — set DC_TOTP (or enable the localhost exemption).');
+    // The credentials are known good now, so driving the form costs a *successful*
+    // login — which resets the attempt budget rather than spending it.
+    if (wantsLogin) {
+      const inputs = page.locator('form input');
+      if (await inputs.count().catch(() => 0) >= 2) {
+        await inputs.nth(0).fill(USER).catch(() => {});
+        await inputs.nth(1).fill(PASS).catch(() => {});
+        await page.locator('form button[type=submit], form button').first().click().catch(() => {});
+        await page.waitForTimeout(1400);
+        if (await page.locator('text=/two-factor/i').count().catch(() => 0)) {
+          await page.screenshot({ path: `${OUT}/login_2fa.png` });
+          console.log('✓ login_2fa  →  login_2fa.png');
+        } else {
+          console.warn('• skip login_2fa: the second step did not render');
+        }
+      }
+    }
     const v = await page.evaluate(
       async ({ token, code }) => {
         const r = await fetch('/api/auth/2fa', {
