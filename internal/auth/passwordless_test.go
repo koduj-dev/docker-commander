@@ -40,7 +40,7 @@ func passwordlessFixture(t *testing.T) (*Service, *store.Store, *store.User, *we
 // signInPasswordless runs the whole exchange and returns what the service said.
 func signInPasswordless(t *testing.T, svc *Service, device *webauthntest.Device, rlKey string) (*LoginResult, error) {
 	t.Helper()
-	assertion, id, err := svc.BeginPasswordlessLogin("10.0.0.99", testRP())
+	assertion, id, err := svc.BeginPasswordlessLogin(rlKey, testRP())
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
@@ -111,8 +111,11 @@ func TestPentestPasswordlessCeremonyIsSingleUse(t *testing.T) {
 	if _, err := svc.FinishPasswordlessLogin(ctx, testRP(), "10.0.0.4", id, webauthntest.Request(body), SessionInfo{}); err != nil {
 		t.Fatalf("first attempt: %v", err)
 	}
-	if _, err := svc.FinishPasswordlessLogin(ctx, testRP(), "10.0.0.4", id, webauthntest.Request(body), SessionInfo{}); err == nil {
-		t.Error("SECURITY: a captured assertion was replayed")
+	// ErrInvalidCreds specifically: "any error" passes even when the ceremony is
+	// never spent, because the signature-counter clone check catches the replay a
+	// step later. That would leave single-use pinned by something else entirely.
+	if _, err := svc.FinishPasswordlessLogin(ctx, testRP(), "10.0.0.4", id, webauthntest.Request(body), SessionInfo{}); !errors.Is(err, ErrInvalidCreds) {
+		t.Errorf("SECURITY: a replayed assertion returned %v, want ErrInvalidCreds", err)
 	}
 }
 
@@ -183,17 +186,19 @@ func TestPentestPasswordlessRefusesAnLDAPAccount(t *testing.T) {
 // PENTEST: starting a sign-in is metered, and metering means spending.
 //
 // This endpoint is public and allocates, so a check that only READS the budget
-// bounds nothing — which is exactly what an earlier version of this did.
+// bounds nothing — which is exactly what an earlier version of this did. The budget
+// is sized for a button, not for password guessing: its commonest outcome is the
+// browser prompt being dismissed, and a success costs a slot too.
 func TestPentestPasswordlessBeginIsMetered(t *testing.T) {
 	svc, _, _, _ := passwordlessFixture(t)
 
-	for i := 0; i < 5; i++ {
+	for i := 0; i < passkeyAttempts; i++ {
 		if _, _, err := svc.BeginPasswordlessLogin("10.0.0.9", testRP()); err != nil {
 			t.Fatalf("attempt %d: %v", i+1, err)
 		}
 	}
 	if _, _, err := svc.BeginPasswordlessLogin("10.0.0.9", testRP()); !errors.Is(err, ErrRateLimited) {
-		t.Errorf("SECURITY: the 6th start was not metered (%v)", err)
+		t.Errorf("SECURITY: start %d was not metered (%v)", passkeyAttempts+1, err)
 	}
 	// A different address is unaffected: the bucket is per client.
 	if _, _, err := svc.BeginPasswordlessLogin("10.0.0.10", testRP()); err != nil {
@@ -201,27 +206,39 @@ func TestPentestPasswordlessBeginIsMetered(t *testing.T) {
 	}
 }
 
-// PENTEST: a junk assertion costs the caller login budget. Without it the endpoint
-// is a free oracle.
-func TestPentestPasswordlessJunkAssertionsBurnBudget(t *testing.T) {
+// PENTEST: junk assertions are metered too — and in the passkey bucket, not the
+// password one.
+//
+// A written bucket nobody reads bounds nothing. This is the same mistake as the
+// begin limiter's, mirrored, so it gets the same test: spend the budget, then show
+// the next attempt is refused.
+func TestPentestPasswordlessJunkAssertionsAreMetered(t *testing.T) {
 	svc, _, _, _ := passwordlessFixture(t)
 	ctx := context.Background()
 	impostor := webauthntest.New(t)
 
-	for i := 0; i < 5; i++ {
+	junk := func(i int) error {
 		assertion, id, err := svc.BeginPasswordlessLogin("10.0.0.11", testRP())
 		if err != nil {
-			t.Fatalf("attempt %d: %v", i+1, err)
+			return err
 		}
 		body := impostor.Assert(t, testRPID, testOrigin, assertion.Response.Challenge.String())
-		if _, err := svc.FinishPasswordlessLogin(ctx, testRP(), "10.0.0.11", id, webauthntest.Request(body), SessionInfo{}); !errors.Is(err, ErrInvalidCreds) {
+		_, err = svc.FinishPasswordlessLogin(ctx, testRP(), "10.0.0.11", id, webauthntest.Request(body), SessionInfo{})
+		return err
+	}
+	for i := 0; i < passkeyAttempts; i++ {
+		if err := junk(i); !errors.Is(err, ErrInvalidCreds) {
 			t.Fatalf("attempt %d: want ErrInvalidCreds, got %v", i+1, err)
 		}
 	}
-	// The password form from the same address is now refused too — a junk assertion
-	// is an attack, and attacks share the login budget.
-	if _, err := svc.Login(ctx, "10.0.0.11", "alice", "correcthorse123", false, SessionInfo{}); !errors.Is(err, ErrRateLimited) {
-		t.Errorf("SECURITY: junk assertions did not cost the login budget (%v)", err)
+	if err := junk(passkeyAttempts); !errors.Is(err, ErrRateLimited) {
+		t.Errorf("SECURITY: junk assertions were not metered (%v)", err)
+	}
+
+	// …and the password form on that address is untouched. A signature is not a
+	// guess at a password, and behind a shared address this would be everyone.
+	if _, err := svc.Login(ctx, "10.0.0.11", "alice", "correcthorse123", false, SessionInfo{}); errors.Is(err, ErrRateLimited) {
+		t.Error("SECURITY: passkey attempts closed the password form")
 	}
 }
 
@@ -419,5 +436,100 @@ func TestPasswordlessDoesNotNameAnAccountBeforeVerifying(t *testing.T) {
 	var named *PasswordlessError
 	if errors.As(err, &named) {
 		t.Errorf("SECURITY: an unsigned attempt named %q in an auditable error", named.Username)
+	}
+}
+
+// PENTEST: a flood of anonymous sign-in attempts must not stop anyone else.
+//
+// This is the whole reason the public ceremonies live in their own store. With one
+// shared map, filling it — which needs no credentials at all — meant nobody could
+// pair a passkey, and an account whose only second factor IS a passkey could not
+// finish logging in. That is a lockout traded for a memory limit, which is not a
+// trade worth making.
+func TestPentestFloodingPublicCeremoniesDoesNotBlockAnyoneElse(t *testing.T) {
+	svc, st, u := passkeyFixture(t)
+	ctx := context.Background()
+	device := pairPasskey(t, svc, u, "Laptop")
+
+	// Fill the public store to its cap, the way a stranger would.
+	for i := 0; i < maxPublicCeremonies; i++ {
+		if !svc.publicCeremonies.put(passwordlessKey(fmt.Sprintf("flood-%d", i)), webauthn.SessionData{}, true) {
+			t.Fatalf("the public store refused at %d, below its cap", i)
+		}
+	}
+	if _, _, err := svc.BeginPasswordlessLogin("10.0.0.30", testRP()); !errors.Is(err, ErrTooBusy) {
+		t.Fatalf("a full public store should refuse a new sign-in, got %v", err)
+	}
+
+	// Pairing a passkey still works…
+	if _, err := svc.BeginPasskeyRegistration(ctx, testRP(), u.ID, true); err != nil {
+		t.Errorf("SECURITY: a flood of anonymous sign-ins blocked passkey pairing: %v", err)
+	}
+
+	// …and so does finishing a login with the second factor, which is the one that
+	// would otherwise leave an account with no way in at all.
+	res, err := svc.Login(ctx, "10.0.0.31", "alice", "correcthorse123", false, SessionInfo{})
+	if err != nil || !res.MFARequired {
+		t.Fatalf("expected an MFA challenge: %+v err=%v", res, err)
+	}
+	assertion, err := svc.BeginPasskeyLogin(ctx, testRP(), res.Token)
+	if err != nil {
+		t.Fatalf("SECURITY: a flood of anonymous sign-ins blocked the passkey 2FA step: %v", err)
+	}
+	body := device.Assert(t, testRPID, testOrigin, assertion.Response.Challenge.String())
+	if _, err := svc.FinishPasskeyLogin(ctx, testRP(), "10.0.0.31", res.Token, webauthntest.Request(body), SessionInfo{}); err != nil {
+		t.Errorf("SECURITY: the passkey 2FA step could not complete during a flood: %v", err)
+	}
+	_ = st
+}
+
+// The public store is the smaller one. Pinning the wiring, not the type: a test
+// that builds its own ceremonies proves nothing about which limit the service gave
+// the store strangers can fill.
+func TestPublicCeremonyStoreIsTheSmallOne(t *testing.T) {
+	svc, _ := newService(t)
+
+	if svc.publicCeremonies.limit != maxPublicCeremonies {
+		t.Errorf("public store limit = %d, want %d", svc.publicCeremonies.limit, maxPublicCeremonies)
+	}
+	if svc.ceremonies.limit != maxOpenCeremonies {
+		t.Errorf("authenticated store limit = %d, want %d", svc.ceremonies.limit, maxOpenCeremonies)
+	}
+	if svc.publicCeremonies == svc.ceremonies {
+		t.Error("SECURITY: the public and authenticated ceremonies share one store")
+	}
+}
+
+// PENTEST: the finish half is metered in its own right.
+//
+// Isolated deliberately: the begin and finish buckets are keyed differently, so a
+// test that walks the whole flow exhausts both together and cannot tell which one
+// refused. Here the challenges are started from one address and answered from
+// another, so only the answering side runs out — which is the check that would
+// otherwise be a Fail with nobody reading it.
+func TestPentestPasswordlessFinishIsMeteredOnItsOwn(t *testing.T) {
+	svc, _, _, _ := passwordlessFixture(t)
+	ctx := context.Background()
+	impostor := webauthntest.New(t)
+
+	// A fresh starting address each time, so the begin budget never runs out and
+	// the only thing that can refuse is the answering side.
+	attempt := func(i int) error {
+		assertion, id, err := svc.BeginPasswordlessLogin(fmt.Sprintf("10.0.1.%d", i), testRP())
+		if err != nil {
+			t.Fatalf("begin %d: %v", i, err)
+		}
+		body := impostor.Assert(t, testRPID, testOrigin, assertion.Response.Challenge.String())
+		_, err = svc.FinishPasswordlessLogin(ctx, testRP(), "10.0.0.41", id, webauthntest.Request(body), SessionInfo{})
+		return err
+	}
+
+	for i := 0; i < passkeyAttempts; i++ {
+		if err := attempt(i); !errors.Is(err, ErrInvalidCreds) {
+			t.Fatalf("attempt %d: want ErrInvalidCreds, got %v", i+1, err)
+		}
+	}
+	if err := attempt(passkeyAttempts); !errors.Is(err, ErrRateLimited) {
+		t.Errorf("SECURITY: the answering address was never refused (%v)", err)
 	}
 }

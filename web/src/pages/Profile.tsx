@@ -291,7 +291,10 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
               </p>
             </div>
 
-            {user?.mfaEnabled && user?.authSource !== "ldap" && (
+            {/* Allowlist, matching the server: only accounts whose password this
+                app owns. The server enforces it; this keeps the switch from
+                appearing where pressing it would be refused. */}
+            {user?.mfaEnabled && (!user.authSource || user.authSource === "local") && (
               <PasswordlessToggle enabled={!!user.passwordless} onChanged={onChanged} />
             )}
           </form>

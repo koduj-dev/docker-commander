@@ -410,6 +410,8 @@ func (s *Server) handlePasswordlessSetting(w http.ResponseWriter, r *http.Reques
 	// Only accounts this server owns the password for. An LDAP account's authority
 	// is the directory, and the sign-in path refuses it anyway — offering the switch
 	// would be a promise this cannot keep.
+	// Allowlist, matching the sign-in path: a future auth source has to be added
+	// deliberately rather than inherit this.
 	if body.Enabled && u.AuthSource != "" && u.AuthSource != "local" {
 		writeErr(w, http.StatusForbidden, auth.ErrPasswordlessNotAllowed.Error())
 		return

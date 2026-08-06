@@ -220,6 +220,10 @@ regardless of permissions:
   lost, since no admin can reset another account's second factor. LDAP accounts sign
   in with their directory password.
 
+  Starting a passkey sign-in is rate limited per address, so repeatedly opening and
+  cancelling the browser prompt will eventually ask you to wait a few minutes. Your
+  password is unaffected — it has its own budget.
+
   A passkey counts as a second factor like any other: it appears in the same list,
   it can be removed the same way, and it cannot be the one you remove last. At
   sign-in you get whichever of the two your account actually has — the code box,
