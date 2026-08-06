@@ -218,13 +218,23 @@ func TestHTTPServerHasReadTimeouts(t *testing.T) {
 // the package's own source and refuses a second http.Server literal.
 //
 // Crude, and worth it — the alternative is a guard that only guards a function
-// nobody is obliged to call.
+// nobody is obliged to call. It catches the realistic regression (a literal written
+// back into run() or startPProf, including behind a build tag or inside a closure);
+// it does not catch deliberate evasion via new(http.Server), a var declaration or an
+// import alias, which are not shapes anyone reaches for by accident.
 func TestNoHandRolledHTTPServerInMain(t *testing.T) {
+	// parser.ParseDir is deprecated for not honouring build tags. Here that is the
+	// point: it reads reexec_windows.go from Linux too, so a literal hidden behind a
+	// build tag is still caught.
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, ".", nil, 0)
+	pkgs, err := parser.ParseDir(fset, ".", nil, 0) //nolint:staticcheck // see above
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A test that inspects nothing passes. Counting the one literal we DO expect is
+	// what stops this from silently becoming a no-op if the files move, the parse
+	// yields nothing, or run() ends up in another package.
+	found := 0
 	for _, pkg := range pkgs {
 		for path, file := range pkg.Files {
 			if strings.HasSuffix(path, "_test.go") {
@@ -247,10 +257,15 @@ func TestNoHandRolledHTTPServerInMain(t *testing.T) {
 				if fn := enclosingFunc(file, lit.Pos()); fn != "newHTTPServer" {
 					t.Errorf("%s builds an http.Server by hand in %s; use newHTTPServer so it gets the read timeouts",
 						fset.Position(lit.Pos()), fn)
+				} else {
+					found++
 				}
 				return true
 			})
 		}
+	}
+	if found == 0 {
+		t.Fatal("no http.Server literal found at all; this test inspected nothing and would pass whatever main did")
 	}
 }
 

@@ -19,8 +19,9 @@ All notable changes to Docker Commander are documented here. The format follows
   extracting a file into a container or a volume, importing a project — swap it for
   a *rolling* one, extended each time data arrives, so the limit is "this upload
   went quiet", not "this upload took a while". A multi-gigabyte upload over a slow
-  link is unaffected; a stalled one is dropped, and answered with a 408 that says
-  so. The profiling listener gets the same treatment.
+  link is unaffected; a stalled one is dropped — the two file-upload routes answer
+  it with a 408 that says so, the rest report it the way they report any other
+  failed upload. The profiling listener gets the same treatment.
 
   WebSocket streams are not on this clock: `net/http` clears deadlines when a
   handler hijacks the connection. One side effect worth knowing: an idle

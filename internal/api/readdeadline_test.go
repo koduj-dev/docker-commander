@@ -3,6 +3,7 @@ package api
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -276,7 +277,11 @@ func TestWebSocketOutlivesTheReadTimeout(t *testing.T) {
 // net/http disarms the read deadline and starts its background read BEFORE such a
 // handler runs, so arming one here times that read out and cancels the request —
 // for a handler that may never read the body at all, and so never reach the clear.
-// Reproduced as `context canceled` mid-handler on a Content-Length: 0 POST.
+//
+// Defence in depth rather than a fix for a route that exists: every current caller
+// reads the body, and the first read of an empty one returns io.EOF, which clears
+// the deadline. It bites a handler that asks for the rolling deadline and then
+// returns before touching the body — an early failure dialling a remote daemon, say.
 func TestBodylessRequestIsLeftAlone(t *testing.T) {
 	restore := streamIdle
 	streamIdle = 200 * time.Millisecond
@@ -302,5 +307,53 @@ func TestBodylessRequestIsLeftAlone(t *testing.T) {
 	}
 	if err := <-ctxErr; err != nil {
 		t.Fatalf("a bodyless request was cancelled: %v", err)
+	}
+}
+
+// The 408 the changelog promises is a promise nothing was keeping.
+//
+// Deleting any of the three hunks that produce it — the errUploadStalled mapping
+// in spoolUpload, and the two handlers that translate it — left the whole suite
+// green. It works today; what was missing is anything that would notice if a
+// change to the error wrapping quietly turned it back into "400 read body failed".
+func TestStalledUploadAnswersWithATimeout(t *testing.T) {
+	restore := streamIdle
+	streamIdle = 200 * time.Millisecond
+	t.Cleanup(func() { streamIdle = restore })
+
+	addr := deadlineServer(t, 300*time.Millisecond, func(w http.ResponseWriter, r *http.Request) {
+		_, _, err := spoolUpload(w, r, "payload.tar")
+		switch {
+		case err == nil:
+			w.WriteHeader(http.StatusOK)
+		case errors.Is(err, errUploadStalled):
+			writeErr(w, http.StatusRequestTimeout, err.Error())
+		default:
+			writeErr(w, http.StatusBadRequest, "read body failed")
+		}
+	})
+
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	head := "POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: 4096\r\n\r\n"
+	if _, err := conn.Write([]byte(head + "start")); err != nil {
+		t.Fatal(err)
+	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("the stalled upload was never answered: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestTimeout {
+		t.Fatalf("a stalled upload returned %d, want 408", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "timed out") {
+		t.Errorf("the answer should say what went wrong, got %s", body)
 	}
 }
