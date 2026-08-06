@@ -34,6 +34,12 @@ export interface ManagedUser {
    */
   effectiveSections?: string[] | null;
   totpEnabled: boolean;
+  /**
+   * Any second factor at all — an authenticator app OR a passkey. An account
+   * protected only by a passkey has totpEnabled=false, so this is the one an
+   * admin auditing "who is protected?" needs.
+   */
+  mfaEnabled?: boolean;
   lastLoginAt: string;
 }
 
