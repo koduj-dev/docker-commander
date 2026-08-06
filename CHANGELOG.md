@@ -49,6 +49,12 @@ All notable changes to Docker Commander are documented here. The format follows
   `enabled` for an authenticator app, `passkey` for an account protected by one,
   and `off` only when there is genuinely no second factor.
 
+- **Error messages no longer start with `auth:`.** Go puts a package prefix on every
+  error, which is right for a log line and wrong on a screen — it reached one as
+  `auth: passkeys need HTTPS (or localhost)` under a greyed-out button. Stripped on
+  the way out, by an allowlist of this app's own prefixes rather than "everything
+  before the first colon", because messages legitimately contain colons.
+
 - **A request body can no longer be dribbled out to hold a handler open.** The
   server set `ReadHeaderTimeout` but no `ReadTimeout`, so once the headers arrived a
   client could take as long as it liked over the body — and Go runs the handler from

@@ -207,6 +207,8 @@ regardless of permissions:
   the browser than `dc.example.com`, so a key paired under one will not be offered
   under the other. Pick one spelling and stay with it.
 
+  ![Profile → Security](images/profile_security.png)
+
   **Signing in with a passkey alone** is off until you turn it on, in *Profile →
   Security*, and turning it on asks for your password. It works when the passkey can
   verify *you* — a PIN, a fingerprint, a face — because that is what makes the key
