@@ -23,20 +23,33 @@ type User struct {
 	Role         string
 	// Email receives alerts from rules this user creates. Optional; when an LDAP
 	// directory publishes a mail attribute it is synced here on login.
-	Email       string
-	AuthSource  string // "local" (password stored here) or "ldap" (verified externally)
-	ReadOnly    bool
-	Sections    []string
-	TOTPSecret  string
+	Email      string
+	AuthSource string // "local" (password stored here) or "ldap" (verified externally)
+	ReadOnly   bool
+	Sections   []string
+	TOTPSecret string
+	// TOTPEnabled means "has an authenticator app". MFAEnabled means "has a second
+	// factor of any kind" — the two stopped being the same thing when passkeys
+	// arrived, and the login path needs the second: an account with only a passkey
+	// must still be challenged, and must not be asked for a code it cannot produce.
 	TOTPEnabled bool
-	// TOTPPending holds a secret being paired while an authenticator is already
-	// active. It is promoted to TOTPSecret on confirmation, and otherwise simply
-	// never takes effect: a wrong code, a cancel or a closed tab leave it sitting
-	// here until the next pairing attempt overwrites it. That is deliberate —
-	// nothing reads it except ConfirmTOTPEnrollment, so a stale value grants
-	// nothing, and clearing it eagerly would mean a cancel path that can itself
-	// fail. Do not treat its presence as "a pairing is in progress".
+	MFAEnabled  bool
+	// TOTPPending holds a secret being paired. It becomes a factor on confirmation,
+	// and otherwise never takes effect: a wrong code, a cancel or a closed tab leave
+	// it sitting here until something clears it. Do not treat its presence as "a
+	// pairing is in progress".
+	//
+	// A stale value is NOT harmless, which is why it is cleared whenever a factor is
+	// created and why TOTPPendingStepUp exists. It is a capability: an enrolment
+	// begun on an unprotected account needs no password, so one left lying around
+	// could otherwise be redeemed later, against an account that has since been
+	// protected, by whoever started it.
 	TOTPPending string
+	// TOTPPendingStepUp records whether the password was proved when the pending
+	// enrolment was started. Redeeming it on an account that has a second factor
+	// requires this to be true — the check belongs at the moment the factor is
+	// created, not only at the moment the enrolment begins.
+	TOTPPendingStepUp bool
 	// TOTPLastCounter is the last 30-second time step whose code was accepted.
 	// A code is only valid once: within its window it would otherwise work
 	// repeatedly, so one shoulder-surfed or phished code could be spent several
@@ -107,7 +120,8 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, username, password_hash, role, email, totp_secret,
 		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id AND f.kind = 'totp'),
-		       totp_pending, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
+		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id),
+		       totp_pending, totp_pending_stepup, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
 		FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
@@ -159,7 +173,8 @@ func (s *Store) UserByUsername(ctx context.Context, username string) (*User, err
 	return scanUserRow(s.db.QueryRowContext(ctx, `
 		SELECT id, username, password_hash, role, email, totp_secret,
 		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id AND f.kind = 'totp'),
-		       totp_pending, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
+		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id),
+		       totp_pending, totp_pending_stepup, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
 		FROM users WHERE username = ?`, username))
 }
 
@@ -168,7 +183,8 @@ func (s *Store) UserByID(ctx context.Context, id int64) (*User, error) {
 	return scanUserRow(s.db.QueryRowContext(ctx, `
 		SELECT id, username, password_hash, role, email, totp_secret,
 		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id AND f.kind = 'totp'),
-		       totp_pending, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
+		       EXISTS(SELECT 1 FROM auth_factors f WHERE f.user_id = users.id),
+		       totp_pending, totp_pending_stepup, totp_last_counter, session_epoch, read_only, sections, auth_source, created_at, last_login_at
 		FROM users WHERE id = ?`, id))
 }
 
@@ -215,8 +231,9 @@ func scanUserRow(row scanner) (*User, error) {
 	var u User
 	var enabled, readOnly int
 	var sections, createdAt, lastLogin string
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.Email, &u.TOTPSecret, &enabled,
-		&u.TOTPPending, &u.TOTPLastCounter, &u.SessionEpoch, &readOnly, &sections, &u.AuthSource, &createdAt, &lastLogin)
+	var mfa, pendingStepUp int
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.Email, &u.TOTPSecret, &enabled, &mfa,
+		&u.TOTPPending, &pendingStepUp, &u.TOTPLastCounter, &u.SessionEpoch, &readOnly, &sections, &u.AuthSource, &createdAt, &lastLogin)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -224,6 +241,8 @@ func scanUserRow(row scanner) (*User, error) {
 		return nil, err
 	}
 	u.TOTPEnabled = enabled != 0
+	u.MFAEnabled = mfa != 0
+	u.TOTPPendingStepUp = pendingStepUp != 0
 	u.ReadOnly = readOnly != 0
 	u.Sections = unmarshalSections(sections)
 	u.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
@@ -272,8 +291,14 @@ func (s *Store) SetUserEmail(ctx context.Context, id int64, email string) error 
 
 // SetTOTPPending stores a secret for an authenticator being paired while another
 // one is still active, without touching the working secret.
-func (s *Store) SetTOTPPending(ctx context.Context, userID int64, secret string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE users SET totp_pending = ? WHERE id = ?`, secret, userID)
+//
+// stepUp records whether the password was proved to start this enrolment, so that
+// redeeming it can be judged against the account's protection at that time rather
+// than at the time the button was pressed.
+func (s *Store) SetTOTPPending(ctx context.Context, userID int64, secret string, stepUp bool) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET totp_pending = ?, totp_pending_stepup = ? WHERE id = ?`,
+		secret, boolToInt(stepUp), userID)
 	return err
 }
 

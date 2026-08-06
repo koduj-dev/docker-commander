@@ -187,7 +187,32 @@ regardless of permissions:
   old entry. Pairing does not revoke anything on its own — which is the point, but
   it does mean the old device keeps working until you say otherwise.
 
-  An account can hold ten authenticators.
+  **Passkeys** are the other kind of second factor. *Add a passkey* uses whatever
+  this device already has — a fingerprint, a face, a PIN, or a plugged-in security
+  key — and the private key never leaves that device's secure hardware. Two things
+  make it stronger than a code: there is nothing to type, so nothing to read out to
+  someone on the phone, and the signature is bound to this site's address, so a page
+  that looks exactly like this one cannot use what it captures.
+
+  Passkeys need a **secure context**, which is the browser's rule, not ours: HTTPS,
+  or `localhost`. They also need a **hostname** — an IP address cannot be a passkey's
+  relying party, so `http://127.0.0.1:8470/` will not offer them even though it is a
+  secure context; use `http://localhost:8470/` instead. Where they are unavailable
+  the button says why rather than failing when you press it. See
+  [Deployment](deployment.md) for TLS.
+
+  **Reach the app by one hostname.** A passkey is bound to the name you paired it
+  under, and the browser will only offer it back under that same name. Capitalisation
+  does not matter, but a trailing dot does: `dc.example.com.` is a different name to
+  the browser than `dc.example.com`, so a key paired under one will not be offered
+  under the other. Pick one spelling and stay with it.
+
+  A passkey counts as a second factor like any other: it appears in the same list,
+  it can be removed the same way, and it cannot be the one you remove last. At
+  sign-in you get whichever of the two your account actually has — the code box,
+  the passkey button, or both.
+
+  An account can hold ten authenticators and passkeys in total.
 
   Repeated wrong passwords on these actions are rate limited per **sign-in session**,
   so a device that has been fumbling cannot stop you doing the same thing from

@@ -61,6 +61,49 @@ All notable changes to Docker Commander are documented here. The format follows
     test pins.
 
 ### Added
+- **Passkeys.** *Profile → Security → Add a passkey* pairs whatever the device
+  already has — fingerprint, face, PIN, or a plugged-in security key — as a second
+  factor, and sign-in then offers it instead of typing a code.
+
+  Two properties make it worth having over TOTP. The private key never leaves the
+  device's secure hardware, so there is nothing on our side to steal and nothing on
+  yours to read out to a caller. And the signature covers the **origin** the browser
+  saw, so a page that looks exactly like this one gets an assertion it cannot use —
+  the part of phishing resistance a server can actually verify.
+
+  It is an option, never a requirement: a passkey needs a secure context (HTTPS or
+  `localhost`), so on a plain-HTTP deployment the button explains its absence rather
+  than failing when pressed. Accounts can hold both kinds at once; sign-in offers
+  whichever exist. A passkey counts as a second factor everywhere the app already
+  counted them — including the rule that the last one cannot be removed.
+
+  A signature counter that goes backwards is refused and audited: it means the key
+  answered from two places, and the honest device and the copy are indistinguishable
+  from here.
+
+  Passkeys are offered only where a browser will actually accept one: HTTPS, or
+  `localhost`. An **IP address is not a relying party** — no browser allows a
+  passkey at `https://192.0.2.10/` or `http://127.0.0.1:8470/` — so the option says
+  why it is missing there instead of failing when pressed. Reach the server by a
+  hostname to use them.
+
+  `mfaEnabled` joins `totpEnabled` in the profile and the admin user list, because
+  the two stopped being the same question: an account protected by a passkey alone
+  reported as having no second factor.
+
+  **Pairing is authorised by the write that creates the factor, not by a check
+  before it.** Adding a factor to an account that already has one needs the
+  password; adding the first needs nothing, because there is nothing yet to protect.
+  Those are decided minutes apart, so a half-finished enrolment carries the
+  authority it was begun under, and an unauthorised one is admitted by the insert
+  itself, conditional on the account still having no factor. Anything else leaves a
+  gap the client controls — the WebAuthn library reads the request body, and a
+  request whose body arrives slowly holds a handler open across it.
+
+  In practice: start pairing an authenticator, pair a passkey in another tab, and
+  the first flow asks you to begin again with your password rather than reporting a
+  wrong code.
+
 - **An account can hold several authenticators.** *Profile → Security* lists every
   paired one by a name you choose, with when it was added and last used, and lets
   you add or remove them. Pairing used to *replace*: the phone in your hand stopped

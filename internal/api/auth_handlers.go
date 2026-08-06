@@ -104,7 +104,31 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if res.MFARequired {
 		// Return the short-lived challenge token in the body; the browser keeps
 		// it only for the immediate 2FA call.
-		writeJSON(w, http.StatusOK, map[string]any{"mfaRequired": true, "mfaToken": res.Token})
+		// Which second factors this account HAS, and separately whether this
+		// connection can do a passkey ceremony at all.
+		//
+		// Keeping those apart matters: an account whose only factor is a passkey,
+		// reached over plain HTTP, would otherwise be offered nothing — a 2FA screen
+		// with no control on it and no explanation, which is a lockout that looks
+		// like a bug. Now the screen can say what is wrong.
+		methods := []string{}
+		if res.User.TOTPEnabled {
+			methods = append(methods, "totp")
+		}
+		hasPasskey := false
+		if has, err := s.auth.HasPasskeys(r.Context(), res.User.ID); err == nil && has {
+			hasPasskey = true
+			methods = append(methods, "passkey")
+		}
+		_, secure := s.relyingParty(r)
+		body := map[string]any{
+			"mfaRequired": true, "mfaToken": res.Token, "methods": methods,
+			"passkeyReady": hasPasskey && secure,
+		}
+		if hasPasskey && !secure {
+			body["passkeyReason"] = auth.ErrPasskeyUnavailable.Error()
+		}
+		writeJSON(w, http.StatusOK, body)
 		return
 	}
 	s.audit(r, "auth.login", res.User.Username, "password only")
@@ -165,7 +189,7 @@ func (s *Server) userView(r *http.Request, u *store.User) map[string]any {
 	return map[string]any{
 		"id": u.ID, "username": u.Username, "role": u.Role,
 		"email":    u.Email,
-		"readOnly": u.ReadOnly, "totpEnabled": u.TOTPEnabled,
+		"readOnly": u.ReadOnly, "totpEnabled": u.TOTPEnabled, "mfaEnabled": u.MFAEnabled,
 		"authSource": u.AuthSource,
 		"createdAt":  u.CreatedAt, "lastLoginAt": u.LastLoginAt,
 		"sections":    s.effectiveSections(r.Context(), u),
@@ -287,9 +311,17 @@ func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
 	// attacker pairs their own device and satisfies 2FA from then on, while the
 	// owner's app quietly stops working.
 	//
-	// A first enrolment is different: there is no factor to replace, and the
+	// A first enrolment is different: there is nothing yet to protect, and the
 	// first-run wizard walks straight into it.
-	if u.TOTPEnabled {
+	//
+	// The test is "has ANY factor", not "has an authenticator app". Keying it on
+	// TOTP meant an account whose only factor is a PASSKEY was treated as having
+	// nothing to protect: a stolen session could pair its own authenticator app
+	// without the password, and from then on the passkey was no longer what
+	// protected the account. That is the exact takeover the paragraph above says
+	// must not be possible.
+	stepUp := false
+	if u.MFAEnabled {
 		var body struct {
 			Password string `json:"password"`
 		}
@@ -310,9 +342,10 @@ func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusForbidden, "password required to pair a new authenticator")
 			return
 		}
+		stepUp = true
 	}
 
-	enr, err := s.auth.BeginTOTPEnrollment(r.Context(), c.UserID)
+	enr, err := s.auth.BeginTOTPEnrollment(r.Context(), c.UserID, stepUp)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not start enrollment")
 		return
@@ -336,6 +369,15 @@ func (s *Server) handleTOTPEnable(w http.ResponseWriter, r *http.Request) {
 	if err := s.auth.ConfirmTOTPEnrollment(r.Context(), c.UserID, body.Code, body.Name); err != nil {
 		if errors.Is(err, auth.ErrTooManyFactors) {
 			writeErr(w, http.StatusConflict, err.Error())
+			return
+		}
+		// The account gained a second factor while this enrolment was in flight, so
+		// the enrolment no longer carries enough authority to land. Says so plainly:
+		// "invalid code" would send the owner hunting a clock-skew problem, and it is
+		// worth auditing because the other way to arrive here is an attempt.
+		if errors.Is(err, auth.ErrEnrollmentStale) {
+			s.audit(r, "auth.2fa.repair.denied", c.Username, "enrolment predates the account's second factor")
+			writeErr(w, http.StatusForbidden, err.Error())
 			return
 		}
 		writeErr(w, http.StatusBadRequest, "invalid code")

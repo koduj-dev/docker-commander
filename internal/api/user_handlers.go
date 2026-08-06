@@ -38,7 +38,10 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 	for _, u := range users {
 		out = append(out, map[string]any{
 			"id": u.ID, "username": u.Username, "role": u.Role, "readOnly": u.ReadOnly,
-			"sections": u.Sections, "totpEnabled": u.TOTPEnabled,
+			// Both: "has an authenticator app" and "has any second factor". An admin
+			// auditing who is protected needs the second — a passkey-only account
+			// reads as totpEnabled=false and is nonetheless protected.
+			"sections": u.Sections, "totpEnabled": u.TOTPEnabled, "mfaEnabled": u.MFAEnabled,
 			"lastLoginAt": u.LastLoginAt,
 			"roleIds":     roleIDs[u.ID],
 			// Effective sections fold the user's roles into their own list, so the

@@ -97,7 +97,7 @@ func TestLogin2FAFlow(t *testing.T) {
 	svc, ctx := newService(t)
 	u, _ := svc.Setup(ctx, "admin", "correcthorse123")
 
-	enr, err := svc.BeginTOTPEnrollment(ctx, u.ID)
+	enr, err := svc.BeginTOTPEnrollment(ctx, u.ID, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func enable2FA(t *testing.T, svc *Service, ctx context.Context) (*store.User, st
 	if err != nil {
 		t.Fatal(err)
 	}
-	enr, err := svc.BeginTOTPEnrollment(ctx, u.ID)
+	enr, err := svc.BeginTOTPEnrollment(ctx, u.ID, false)
 	if err != nil {
 		t.Fatal(err)
 	}

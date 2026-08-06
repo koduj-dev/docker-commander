@@ -42,8 +42,17 @@ var ungatedRoutes = map[string]string{
 	// Own second factors only: both handlers read the caller's id from their
 	// claims, and removal additionally requires the account's password
 	// (TestPentestFactors_ListIsOwnOnly, TestPentestFactors_RemoveNeedsThePassword).
-	"/api/auth/factors":      "own authenticators only",
-	"/api/auth/factors/{id}": "own authenticators only; DELETE is scoped by user id",
+	"/api/auth/factors": "own authenticators only",
+	// Passkeys. Registration reads the caller's id from their claims and needs
+	// their password once any factor exists; the login pair is gated by the MFA
+	// challenge token, exactly as /auth/2fa is, and the support probe answers a
+	// property of the connection rather than of any account.
+	"/api/auth/webauthn/register/begin":  "own passkeys only",
+	"/api/auth/webauthn/register/finish": "own passkeys only",
+	"/api/auth/2fa/webauthn/begin":       "2FA challenge (passkey)",
+	"/api/auth/2fa/webauthn/finish":      "2FA challenge (passkey)",
+	"/api/auth/webauthn/support":         "whether this connection can do WebAuthn",
+	"/api/auth/factors/{id}":             "own authenticators only; DELETE is scoped by user id",
 	// Writes the CALLER's own alert address, taken from their session claims —
 	// it cannot touch another account (TestPentestSetMyEmail_OnlyAffectsTheCaller).
 	"/api/auth/me/email": "own alert address",

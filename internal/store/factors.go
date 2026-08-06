@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"strings"
 	"time"
@@ -22,10 +24,21 @@ type AuthFactor struct {
 	LastCounter int64
 	CreatedAt   time.Time
 	LastUsedAt  time.Time
+	// CredentialID identifies a passkey; empty for an authenticator app.
+	CredentialID string
+	// Credential is the WebAuthn library's own JSON for the key: the public key,
+	// the signature counter, and the flags that say what the authenticator proved.
+	// Opaque here on purpose — this package should not have opinions about a format
+	// the library owns.
+	Credential string
 }
 
-// FactorKindTOTP is an authenticator app.
-const FactorKindTOTP = "totp"
+const (
+	// FactorKindTOTP is an authenticator app.
+	FactorKindTOTP = "totp"
+	// FactorKindPasskey is a WebAuthn credential.
+	FactorKindPasskey = "webauthn"
+)
 
 // factorNameMax bounds what the owner can write. The name is theirs and shown
 // back to them; it does not need to be long.
@@ -43,25 +56,72 @@ func factorName(name string) string {
 	return name
 }
 
+// ErrNotFirstFactor means an unauthorised pairing arrived at an account that
+// already has a factor. Adding the first needs no password; adding another does.
+var ErrNotFirstFactor = errors.New("store: this account already has a second factor")
+
 // CreateFactor pairs a new factor and returns its id.
-func (s *Store) CreateFactor(ctx context.Context, f *AuthFactor) (int64, error) {
+//
+// authorised says the password was proved. When it is false the caller is relying
+// on "this account has nothing to protect yet", and THAT is checked here, as part
+// of the INSERT — not by the caller beforehand.
+//
+// The distinction matters because the gap between a caller's check and this write
+// is attacker-controlled. The WebAuthn library reads the request body, so a client
+// that sends its headers and then stalls holds the handler open between the two for
+// as long as it likes: the check runs against an unprotected account, the owner
+// pairs their real factor, and the insert lands afterwards. Making the condition
+// part of the write closes that, and the plain race with it — the same reason
+// PairPendingFactor claims its enrolment with a compare-and-swap instead of a read.
+//
+// Creating a factor also drops any half-finished TOTP enrolment. That enrolment is
+// a live capability authorised against an account with nothing to protect, and this
+// is the moment the account stops being unprotected — leaving it behind would let
+// whoever started it add their own authenticator afterwards, with no password. All
+// of it goes together or not at all.
+func (s *Store) CreateFactor(ctx context.Context, f *AuthFactor, authorised bool) (int64, error) {
 	name := factorName(f.Name)
-	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO auth_factors (user_id, kind, name, secret, created_at)
-		VALUES (?, ?, ?, ?, ?)`,
-		f.UserID, orDefault(f.Kind, FactorKindTOTP), name, f.Secret,
-		time.Now().UTC().Format(time.RFC3339))
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
-	return res.LastInsertId()
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx, `
+		INSERT INTO auth_factors (user_id, kind, name, secret, credential_id, credential, created_at)
+		SELECT ?, ?, ?, ?, ?, ?, ?
+		WHERE ? OR NOT EXISTS (SELECT 1 FROM auth_factors WHERE user_id = ?)`,
+		f.UserID, orDefault(f.Kind, FactorKindTOTP), name, f.Secret, f.CredentialID, f.Credential,
+		time.Now().UTC().Format(time.RFC3339), authorised, f.UserID)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if n == 0 {
+		return 0, ErrNotFirstFactor
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE users SET totp_pending = '', totp_pending_stepup = 0 WHERE id = ?`, f.UserID); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 // ListFactors returns a user's paired factors, oldest first — the order they were
 // added is the order that makes sense of "which one is my old phone".
 func (s *Store) ListFactors(ctx context.Context, userID int64) ([]AuthFactor, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, user_id, kind, name, secret, last_counter, created_at, last_used_at
+		SELECT id, user_id, kind, name, secret, last_counter, created_at, last_used_at, credential_id, credential
 		FROM auth_factors WHERE user_id = ? ORDER BY id`, userID)
 	if err != nil {
 		return nil, err
@@ -72,7 +132,8 @@ func (s *Store) ListFactors(ctx context.Context, userID int64) ([]AuthFactor, er
 	for rows.Next() {
 		var f AuthFactor
 		var created, used string
-		if err := rows.Scan(&f.ID, &f.UserID, &f.Kind, &f.Name, &f.Secret, &f.LastCounter, &created, &used); err != nil {
+		if err := rows.Scan(&f.ID, &f.UserID, &f.Kind, &f.Name, &f.Secret, &f.LastCounter, &created, &used,
+			&f.CredentialID, &f.Credential); err != nil {
 			return nil, err
 		}
 		f.CreatedAt, _ = time.Parse(time.RFC3339, created)
@@ -160,9 +221,10 @@ func (s *Store) FactorByID(ctx context.Context, id, userID int64) (*AuthFactor, 
 	var f AuthFactor
 	var created, used string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, user_id, kind, name, secret, last_counter, created_at, last_used_at
+		SELECT id, user_id, kind, name, secret, last_counter, created_at, last_used_at, credential_id, credential
 		FROM auth_factors WHERE id = ? AND user_id = ?`, id, userID).
-		Scan(&f.ID, &f.UserID, &f.Kind, &f.Name, &f.Secret, &f.LastCounter, &created, &used)
+		Scan(&f.ID, &f.UserID, &f.Kind, &f.Name, &f.Secret, &f.LastCounter, &created, &used,
+			&f.CredentialID, &f.Credential)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -194,7 +256,7 @@ func (s *Store) PairPendingFactor(ctx context.Context, userID int64, pending, na
 	defer func() { _ = tx.Rollback() }()
 
 	res, err := tx.ExecContext(ctx,
-		`UPDATE users SET totp_pending = '' WHERE id = ? AND totp_pending = ?`, userID, pending)
+		`UPDATE users SET totp_pending = '', totp_pending_stepup = 0 WHERE id = ? AND totp_pending = ?`, userID, pending)
 	if err != nil {
 		return 0, err
 	}
@@ -219,6 +281,104 @@ func (s *Store) PairPendingFactor(ctx context.Context, userID int64, pending, na
 		return 0, err
 	}
 	return id, tx.Commit()
+}
+
+// FactorByCredentialID finds a passkey by the credential id an assertion names.
+//
+// NOT scoped to a user, deliberately: an assertion arrives naming a credential and
+// the account it belongs to is the answer, not the question. That is safe because
+// the id is unique across the table (see the index) and because the caller still
+// has to verify the signature against this credential's public key — knowing an id
+// proves nothing on its own.
+func (s *Store) FactorByCredentialID(ctx context.Context, credentialID string) (*AuthFactor, error) {
+	if credentialID == "" {
+		return nil, ErrNotFound
+	}
+	var f AuthFactor
+	var created, used string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, user_id, kind, name, secret, last_counter, created_at, last_used_at, credential_id, credential
+		FROM auth_factors WHERE credential_id = ?`, credentialID).
+		Scan(&f.ID, &f.UserID, &f.Kind, &f.Name, &f.Secret, &f.LastCounter, &created, &used,
+			&f.CredentialID, &f.Credential)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	f.CreatedAt, _ = time.Parse(time.RFC3339, created)
+	f.LastUsedAt, _ = time.Parse(time.RFC3339, used)
+	return &f, nil
+}
+
+// UpdateCredential writes back the credential after a successful assertion — the
+// signature counter moves, and that movement is what detects a cloned key.
+func (s *Store) UpdateCredential(ctx context.Context, id int64, credential string) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE auth_factors SET credential = ?, last_used_at = ?
+		WHERE id = ? AND credential_id != ''`,
+		credential, time.Now().UTC().Format(time.RFC3339), id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// WebAuthnHandle returns the account's opaque user handle, creating one on first
+// use. It is what an authenticator stores next to the key, so it has to be stable
+// for the life of the account and must not be derived from anything guessable or
+// meaningful — the spec asks for 64 random bytes, and a username would leak into
+// the authenticator's own storage.
+func (s *Store) WebAuthnHandle(ctx context.Context, userID int64) ([]byte, error) {
+	var stored string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT webauthn_handle FROM users WHERE id = ?`, userID).Scan(&stored); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if stored != "" {
+		return base64.RawURLEncoding.DecodeString(stored)
+	}
+	handle := make([]byte, 32)
+	if _, err := rand.Read(handle); err != nil {
+		return nil, err
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(handle)
+	// Only if it is still empty: two concurrent registrations must not end up with
+	// different handles, or the first passkey would stop matching its account.
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE users SET webauthn_handle = ? WHERE id = ? AND webauthn_handle = ''`, encoded, userID); err != nil {
+		return nil, err
+	}
+	return s.WebAuthnHandle(ctx, userID)
+}
+
+// UserByWebAuthnHandle resolves the account a user handle belongs to.
+func (s *Store) UserByWebAuthnHandle(ctx context.Context, handle []byte) (*User, error) {
+	if len(handle) == 0 {
+		return nil, ErrNotFound
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(handle)
+	var id int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM users WHERE webauthn_handle = ? AND webauthn_handle != ''`, encoded).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.UserByID(ctx, id)
 }
 
 // DeleteUserFactors removes every factor for a user, for account deletion.
