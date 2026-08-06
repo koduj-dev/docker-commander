@@ -70,8 +70,16 @@ func (rp RelyingParty) webauthnAPI() (*webauthn.WebAuthn, error) {
 			// A second factor should prove possession of the device. Asking for user
 			// verification as well (a PIN or a fingerprint) would be a stronger claim,
 			// but "preferred" is what keeps a plain security key usable.
+			//
+			// Preferred rather than required for the resident key too. A discoverable
+			// credential is what lets the authenticator offer itself before anyone has
+			// said who they are, which is the whole of passwordless sign-in — but
+			// demanding one would turn "add a passkey" into an error on hardware with
+			// no room to store it, and as a second factor it does not need to be
+			// discoverable at all. So: ask, use it if we get it, and let the
+			// passwordless button simply find nothing on keys that could not.
 			UserVerification: protocol.VerificationPreferred,
-			ResidentKey:      protocol.ResidentKeyRequirementDiscouraged,
+			ResidentKey:      protocol.ResidentKeyRequirementPreferred,
 		},
 	})
 }
@@ -99,8 +107,9 @@ func (u passkeyUser) WebAuthnCredentials() []webauthn.Credential { return u.cred
 // door. Held in memory on purpose: it is worthless after ~2 minutes, and writing it
 // to the database would mean a row per abandoned tap of a button.
 type ceremonies struct {
-	mu   sync.Mutex
-	open map[string]ceremony
+	mu    sync.Mutex
+	open  map[string]ceremony
+	limit int
 }
 
 type ceremony struct {
@@ -112,17 +121,43 @@ type ceremony struct {
 	stepUp bool
 }
 
-func newCeremonies() *ceremonies {
-	return &ceremonies{open: make(map[string]ceremony)}
+func newCeremonies(limit int) *ceremonies {
+	return &ceremonies{open: make(map[string]ceremony), limit: limit}
 }
 
 const ceremonyTTL = 2 * time.Minute
 
-func (c *ceremonies) put(key string, data webauthn.SessionData, stepUp bool) {
+// The two ceremony stores are separate on purpose.
+//
+// Registration and the 2FA step overwrite a key per user or per challenge token and
+// both need credentials first, so neither can be grown by a stranger. Passwordless
+// sign-in can: it is reachable by anyone, and every call mints a FRESH random key.
+//
+// One shared map would mean a flood of anonymous sign-in attempts filling it and
+// then refusing everybody else — nobody able to pair a passkey, and an account whose
+// only second factor IS a passkey unable to finish logging in. Trading a memory
+// exhaustion for a lockout is not a fix. With two, the public one can be emptied by
+// anyone and it costs them nothing else.
+const (
+	maxOpenCeremonies = 4096
+	// The public store. Smaller because it is the one strangers can fill, and
+	// because a real user occupies a slot for seconds.
+	maxPublicCeremonies = 512
+)
+
+// put records a ceremony. It reports false when the server is already holding as
+// many as it will.
+func (c *ceremonies) put(key string, data webauthn.SessionData, stepUp bool) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.sweep(time.Now())
+	// Replacing an existing key is always allowed: it frees as much as it takes, and
+	// refusing it would let a flood block someone's own second attempt.
+	if _, existing := c.open[key]; !existing && len(c.open) >= c.limit {
+		return false
+	}
 	c.open[key] = ceremony{data: data, expires: time.Now().Add(ceremonyTTL), stepUp: stepUp}
+	return true
 }
 
 // take returns the ceremony and removes it: one begin, one finish. A challenge
@@ -190,7 +225,9 @@ func (s *Service) BeginPasskeyRegistration(ctx context.Context, rp RelyingParty,
 	if err != nil {
 		return nil, err
 	}
-	s.ceremonies.put(registrationKey(userID), *session, stepUp)
+	if !s.ceremonies.put(registrationKey(userID), *session, stepUp) {
+		return nil, ErrTooBusy
+	}
 	return creation, nil
 }
 
@@ -293,7 +330,9 @@ func (s *Service) BeginPasskeyLogin(ctx context.Context, rp RelyingParty, challe
 	// ceremony — the same rule the TOTP path follows.
 	// A login ceremony has no step-up to carry: the password is what minted the
 	// challenge token this is keyed on.
-	s.ceremonies.put(loginKey(claims.ID), *session, true)
+	if !s.ceremonies.put(loginKey(claims.ID), *session, true) {
+		return nil, ErrTooBusy
+	}
 	return assertion, nil
 }
 

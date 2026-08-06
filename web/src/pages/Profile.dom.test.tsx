@@ -29,13 +29,21 @@ vi.mock("../lib/api", () => ({
     // here, but it must not explode.
     factors: () => Promise.resolve([{ id: 1, kind: "totp", name: "Phone", createdAt: "2026-08-01T09:00:00Z", lastUsedAt: "2026-08-05T09:00:00Z" }]),
     hosts: () => Promise.resolve([]),
+    passkeySupport: () => Promise.resolve({ available: true, reason: "" }),
+    setPasswordless: () => Promise.resolve({ enabled: true }),
     version: () => Promise.resolve({ version: "test" }),
   },
 }));
 
+// Mutable so the tests can vary the account: which controls the Security tab
+// offers depends on what the account actually is.
+const mockUser = vi.hoisted(() => ({
+  current: {} as Record<string, unknown>,
+}));
+
 vi.mock("../auth/AuthContext", () => ({
   useAuth: () => ({
-    user: { id: 1, username: "alice", role: "user", totpEnabled: true },
+    user: mockUser.current,
     refresh: () => Promise.resolve(),
   }),
 }));
@@ -107,6 +115,11 @@ async function mount() {
 
 beforeEach(async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  // An ordinary local account with a second factor, unless a test says otherwise.
+  mockUser.current = {
+    id: 1, username: "alice", role: "user",
+    totpEnabled: true, mfaEnabled: true, authSource: "local", passwordless: false,
+  };
   sessions.mockResolvedValue([
     {
       id: THIS_ONE, ip: "10.0.0.9", userAgent: UA_FIREFOX,
@@ -205,5 +218,40 @@ describe("Profile → Security → signed-in sessions", () => {
     await act(async () => button("Try again").click());
     expect(container.textContent).toContain("Firefox on Linux");
     expect(container.textContent).not.toContain("network down");
+  });
+});
+
+
+// Whether a passkey may be a whole login is the account holder's decision, so the
+// switch has to appear for the accounts that can make it and stay away from the
+// ones that cannot — an LDAP or federated account signs in against its directory,
+// and the server refuses the setting outright.
+//
+// Each case remounts: beforeEach has already rendered and opened the tab, and
+// clicking a tab that is already active re-renders nothing, so a mutation applied
+// afterwards would simply not be read.
+describe("the passwordless switch", () => {
+  const remount = async (user: Record<string, unknown>) => {
+    mockUser.current = { ...mockUser.current, ...user };
+    await mount(); // tears down and rebuilds the tree, so the new account is read
+  };
+
+  it("is offered to a local account with a second factor", async () => {
+    await remount({});
+    expect(container.textContent).toContain("Sign in with a passkey alone");
+  });
+
+  it("stays away from an account with no second factor", async () => {
+    await remount({ mfaEnabled: false, totpEnabled: false });
+    expect(container.textContent).not.toContain("Sign in with a passkey alone");
+  });
+
+  it("stays away from an account the directory owns", async () => {
+    // Not just "ldap": the server uses an allowlist, so anything that is not a
+    // local account is refused and the switch must not promise otherwise.
+    for (const source of ["ldap", "oidc"]) {
+      await remount({ authSource: source });
+      expect(container.textContent, source).not.toContain("Sign in with a passkey alone");
+    }
   });
 });

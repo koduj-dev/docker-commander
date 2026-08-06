@@ -31,6 +31,13 @@ type Service struct {
 	challenges *usedChallenges
 	// ceremonies holds the server half of an in-flight WebAuthn exchange.
 	ceremonies *ceremonies
+	// publicCeremonies holds the ones anyone can start: passwordless sign-in.
+	publicCeremonies *ceremonies
+	// passkeyLimiter meters the passwordless endpoints. Separate from limiter
+	// because a passkey assertion is not a guess at a password: charging one to the
+	// other lets a stranger — or an honest user with a stale key — close the
+	// password form for everyone behind a shared address.
+	passkeyLimiter *LoginLimiter
 	// ldapAuth is the directory bind, swappable so the provisioning rules below
 	// (what a login is allowed to grant) can be tested without a directory.
 	// Production always uses LDAPAuthenticate.
@@ -40,14 +47,27 @@ type Service struct {
 // NewService wires the auth service together.
 func NewService(s *store.Store, tm *TokenManager) *Service {
 	return &Service{
-		store:      s,
-		tokens:     tm,
-		limiter:    NewLoginLimiter(5, 15*time.Minute),
-		challenges: newUsedChallenges(),
-		ceremonies: newCeremonies(),
-		ldapAuth:   LDAPAuthenticate,
+		store:   s,
+		tokens:  tm,
+		limiter: NewLoginLimiter(5, 15*time.Minute),
+		// A separate, UI-sized budget for starting a passwordless sign-in. Five per
+		// fifteen minutes is a password-GUESSING budget; this meters a button whose
+		// commonest outcome is the browser prompt being dismissed, and where a
+		// success costs a slot too.
+		passkeyLimiter: NewLoginLimiter(passkeyAttempts, 5*time.Minute),
+		challenges:     newUsedChallenges(),
+		ceremonies:     newCeremonies(maxOpenCeremonies),
+		// Reachable without credentials, so it gets its own bounded store; see the
+		// comment on maxPublicCeremonies.
+		publicCeremonies: newCeremonies(maxPublicCeremonies),
+		ldapAuth:         LDAPAuthenticate,
 	}
 }
+
+// passkeyAttempts is how many passwordless starts or attempts one address gets per
+// window. Sized for a button rather than for guessing: dismissing the browser
+// prompt is the commonest outcome and costs a slot, as does a success.
+const passkeyAttempts = 30
 
 // SessionInfo is what a login knows about the client asking for one. Recorded on
 // the session so its owner can recognise it later.

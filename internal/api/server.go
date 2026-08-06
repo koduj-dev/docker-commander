@@ -85,6 +85,11 @@ func (s *Server) Handler() http.Handler {
 			// Whether this connection is a secure context at all, so the login screen
 			// can explain the absence instead of showing a button that cannot work.
 			r.Get("/auth/webauthn/support", s.handlePasskeySupport)
+			// Signing in with a passkey alone. No session and no challenge token:
+			// the assertion IS the claim, and user verification is what makes it
+			// two factors rather than one.
+			r.Post("/auth/passkey/begin", s.handlePasswordlessBegin)
+			r.Post("/auth/passkey/finish", s.handlePasswordlessFinish)
 		})
 
 		// Authenticated endpoints.
@@ -104,6 +109,7 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/auth/me/access", s.handleMyAccess)
 			r.Post("/auth/totp/setup", s.handleTOTPSetup)
 			r.Post("/auth/totp/enable", s.handleTOTPEnable)
+			r.Put("/auth/passwordless", s.handlePasswordlessSetting)
 			// Own second factors: list them, unpair one (password required).
 			r.Get("/auth/factors", s.handleListFactors)
 			r.Delete("/auth/factors/{id}", s.handleDeleteFactor)

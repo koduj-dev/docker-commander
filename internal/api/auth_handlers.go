@@ -190,8 +190,9 @@ func (s *Server) userView(r *http.Request, u *store.User) map[string]any {
 		"id": u.ID, "username": u.Username, "role": u.Role,
 		"email":    u.Email,
 		"readOnly": u.ReadOnly, "totpEnabled": u.TOTPEnabled, "mfaEnabled": u.MFAEnabled,
-		"authSource": u.AuthSource,
-		"createdAt":  u.CreatedAt, "lastLoginAt": u.LastLoginAt,
+		"passwordless": u.Passwordless,
+		"authSource":   u.AuthSource,
+		"createdAt":    u.CreatedAt, "lastLoginAt": u.LastLoginAt,
 		"sections":    s.effectiveSections(r.Context(), u),
 		"mfaEnforced": !s.mfaExempt(r),
 	}

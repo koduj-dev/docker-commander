@@ -14,10 +14,13 @@ const login = vi.hoisted(() => vi.fn());
 const verify2fa = vi.hoisted(() => vi.fn());
 const passkeyLoginBegin = vi.hoisted(() => vi.fn());
 const passkeyLoginFinish = vi.hoisted(() => vi.fn());
+const passwordlessBegin = vi.hoisted(() => vi.fn());
+const passwordlessFinish = vi.hoisted(() => vi.fn());
+const passkeySupport = vi.hoisted(() => vi.fn());
 
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
-  return { ...actual, api: { login, verify2fa, passkeyLoginBegin, passkeyLoginFinish } };
+  return { ...actual, api: { login, verify2fa, passkeyLoginBegin, passkeyLoginFinish, passwordlessBegin, passwordlessFinish, passkeySupport } };
 });
 vi.mock("../auth/AuthContext", () => ({
   useAuth: () => ({ refresh: () => Promise.resolve() }),
@@ -32,6 +35,11 @@ beforeEach(async () => {
   verify2fa.mockReset();
   passkeyLoginBegin.mockReset();
   passkeyLoginFinish.mockReset();
+  passwordlessBegin.mockReset();
+  passwordlessFinish.mockReset();
+  // The connection can do WebAuthn unless a test says otherwise.
+  passkeySupport.mockReset();
+  passkeySupport.mockResolvedValue({ available: true, reason: "" });
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -183,5 +191,75 @@ describe("the 2FA step", () => {
     await reachTheCodeStep();
     expect(container.querySelector("input")).toBeTruthy();
     expect(container.textContent).toContain("Two-factor authentication");
+  });
+});
+
+// The passwordless button is offered next to the password, never instead of it.
+// A lost key must cost convenience, not the account — and this app gives admins no
+// way to reset someone else's second factor, so the password IS the recovery path.
+describe("passwordless sign-in", () => {
+  it("offers a passkey alongside the password form", async () => {
+    withPasskeySupport();
+    // A fresh key forces a remount: re-rendering the same instance would not re-run
+    // the connection probe, and the probe is what decides whether the button exists.
+    await act(async () => root.render(<Login key="a" />));
+    await act(async () => {}); // the probe resolves a tick later
+
+    const buttons = [...container.querySelectorAll("button")].map((b) => b.textContent);
+    expect(buttons).toContain("Sign in with a passkey");
+    // …and the password form is still there. This is additive, not a replacement.
+    expect(container.querySelector('input[type="password"]')).not.toBeNull();
+  });
+
+  it("stays quiet where the browser cannot do passkeys", async () => {
+    delete (globalThis as Record<string, unknown>).PublicKeyCredential;
+    await act(async () => root.render(<Login key="b" />));
+    await act(async () => {});
+
+    const buttons = [...container.querySelectorAll("button")].map((b) => b.textContent);
+    expect(buttons).not.toContain("Sign in with a passkey");
+  });
+
+  it("signs in without a username or a password", async () => {
+    const credential = { id: "cred", rawId: "cred", type: "public-key", response: {} };
+    withPasskeySupport({ get: () => Promise.resolve(credential) });
+    passwordlessBegin.mockResolvedValue({
+      ceremonyId: "ceremony-1",
+      publicKey: { challenge: "AAEC", allowCredentials: [] },
+    });
+    passwordlessFinish.mockResolvedValue({ user: { id: 1, username: "admin" } });
+
+    await act(async () => root.render(<Login key="c" />));
+    await act(async () => {}); // the probe resolves a tick later
+    const button = [...container.querySelectorAll("button")].find(
+      (b) => b.textContent === "Sign in with a passkey",
+    );
+    if (!button) throw new Error("the passkey button was not rendered");
+    await act(async () => button.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    expect(passwordlessBegin).toHaveBeenCalled();
+    // The ceremony id has to travel back, or the server cannot tie the answer to
+    // the challenge it issued.
+    expect(passwordlessFinish).toHaveBeenCalledWith("ceremony-1", expect.anything());
+    // Neither field was touched.
+    expect(login).not.toHaveBeenCalled();
+  });
+
+  it("explains a refusal rather than leaving the button dead", async () => {
+    withPasskeySupport({ get: () => Promise.resolve({ id: "c", rawId: "c", type: "public-key", response: {} }) });
+    passwordlessBegin.mockResolvedValue({ ceremonyId: "c1", publicKey: { challenge: "AAEC" } });
+    passwordlessFinish.mockRejectedValue(
+      new ApiError(401, "auth: this passkey did not verify who you are; use your password"),
+    );
+
+    await act(async () => root.render(<Login key="d" />));
+    await act(async () => {}); // the probe resolves a tick later
+    const button = [...container.querySelectorAll("button")].find(
+      (b) => b.textContent === "Sign in with a passkey",
+    );
+    if (!button) throw new Error("the passkey button was not rendered");
+    await act(async () => button.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    expect(container.textContent).toContain("did not verify who you are");
   });
 });

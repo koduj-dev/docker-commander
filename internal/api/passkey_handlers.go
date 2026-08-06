@@ -140,6 +140,9 @@ func (s *Server) handlePasskeyRegisterBegin(w http.ResponseWriter, r *http.Reque
 	creation, err := s.auth.BeginPasskeyRegistration(r.Context(), rp, c.UserID, stepUp)
 	switch {
 	case err == nil:
+	case errors.Is(err, auth.ErrTooBusy):
+		writeErr(w, http.StatusServiceUnavailable, err.Error())
+		return
 	case errors.Is(err, auth.ErrTooManyFactors):
 		writeErr(w, http.StatusConflict, err.Error())
 		return
@@ -209,6 +212,11 @@ func (s *Server) handlePasskeyLoginBegin(w http.ResponseWriter, r *http.Request)
 	assertion, err := s.auth.BeginPasskeyLogin(r.Context(), rp, body.MFAToken)
 	switch {
 	case err == nil:
+	case errors.Is(err, auth.ErrTooBusy):
+		// Not "invalid credentials": the password was right and the challenge is
+		// valid. Saying otherwise sends someone to reset a password that works.
+		writeErr(w, http.StatusServiceUnavailable, err.Error())
+		return
 	case errors.Is(err, auth.ErrNoPasskeys):
 		writeErr(w, http.StatusConflict, err.Error())
 		return
@@ -275,4 +283,143 @@ func (s *Server) handlePasskeySupport(w http.ResponseWriter, r *http.Request) {
 		"available": ok,
 		"reason":    map[bool]string{true: "", false: auth.ErrPasskeyUnavailable.Error()}[ok],
 	})
+}
+
+// handlePasswordlessBegin issues a discoverable-credential challenge.
+//
+// Public, and deliberately says nothing: it is asked before anyone has claimed an
+// identity, so there is no account to leak and no username to confirm. The reply is
+// the same whether or not this server has a single passkey on it.
+func (s *Server) handlePasswordlessBegin(w http.ResponseWriter, r *http.Request) {
+	rp, ok := s.relyingParty(r)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, auth.ErrPasskeyUnavailable.Error())
+		return
+	}
+	assertion, id, err := s.auth.BeginPasswordlessLogin(r.RemoteAddr, rp)
+	switch {
+	case err == nil:
+	case errors.Is(err, auth.ErrRateLimited):
+		writeErr(w, http.StatusTooManyRequests, err.Error())
+		return
+	case errors.Is(err, auth.ErrTooBusy):
+		writeErr(w, http.StatusServiceUnavailable, err.Error())
+		return
+	default:
+		writeErr(w, http.StatusInternalServerError, "could not start")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ceremonyId": id, "publicKey": assertion.Response})
+}
+
+// handlePasswordlessFinish verifies the assertion and signs the account in.
+func (s *Server) handlePasswordlessFinish(w http.ResponseWriter, r *http.Request) {
+	rp, ok := s.relyingParty(r)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, auth.ErrPasskeyUnavailable.Error())
+		return
+	}
+	// The body is the credential, which the library parses itself, so the ceremony
+	// id rides in a header — not the URL, which is the part of a request that gets
+	// logged. Capped for the same reason the other finish endpoints are.
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+	id := r.Header.Get("X-Passkey-Ceremony")
+
+	res, err := s.auth.FinishPasswordlessLogin(r.Context(), rp, r.RemoteAddr, id, r, sessionInfo(r))
+	// Once the assertion verifies, the account is known — and these are the failures
+	// worth writing down. This is the only thing between the network and a full
+	// session, so a refusal that leaves no trace is a refusal nobody can investigate.
+	var named *auth.PasswordlessError
+	if errors.As(err, &named) {
+		switch {
+		case errors.Is(err, auth.ErrClonedAuthenticator):
+			s.audit(r, "auth.passkey.cloned", named.Username, "signature counter went backwards")
+		case errors.Is(err, auth.ErrUserVerificationRequired):
+			s.audit(r, "auth.login.failed", named.Username, "passkey did not verify the user")
+		case errors.Is(err, auth.ErrPasswordlessNotAllowed):
+			s.audit(r, "auth.login.failed", named.Username, "passwordless sign-in is not enabled for this account")
+		}
+	}
+	switch {
+	case err == nil:
+	case errors.Is(err, auth.ErrRateLimited):
+		writeErr(w, http.StatusTooManyRequests, err.Error())
+		return
+	case errors.Is(err, auth.ErrTooBusy):
+		writeErr(w, http.StatusServiceUnavailable, err.Error())
+		return
+	case errors.Is(err, auth.ErrUserVerificationRequired):
+		// Worth saying plainly: the key worked, and the account is fine. What is
+		// missing is the PIN or fingerprint, and the fix is either to set one up or
+		// to sign in with the password.
+		writeErr(w, http.StatusUnauthorized, err.Error())
+		return
+	case errors.Is(err, auth.ErrPasswordlessNotAllowed):
+		writeErr(w, http.StatusForbidden, err.Error())
+		return
+	case errors.Is(err, auth.ErrClonedAuthenticator):
+		writeErr(w, http.StatusUnauthorized, err.Error())
+		return
+	case errors.Is(err, auth.ErrInvalidCreds):
+		writeErr(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	default:
+		// Past the signature check and then failed on our side. Reporting it as a
+		// rejected passkey would blame the user for our outage.
+		writeErr(w, http.StatusInternalServerError, "the passkey verified, but the login could not be completed")
+		return
+	}
+
+	s.audit(r, "auth.login", res.User.Username, "passkey (passwordless)")
+	s.setSessionCookie(w, r, res.Token, res.ExpiresAt)
+	writeJSON(w, http.StatusOK, s.loginResponse(r, res))
+}
+
+// handlePasswordlessSetting turns signing in with a passkey alone on or off for the
+// caller's own account.
+//
+// Needs the password, like every other change to what it takes to sign in as you.
+// Turning it ON is the significant direction: it makes a passkey a whole login
+// rather than a second factor, and for a synced passkey that moves the account onto
+// whatever platform account the key syncs through. A stolen session must not be able
+// to make that change and then use it.
+func (s *Server) handlePasswordlessSetting(w http.ResponseWriter, r *http.Request) {
+	c, _ := auth.ClaimsFrom(r.Context())
+	u, err := s.store.UserByID(r.Context(), c.UserID)
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var body struct {
+		Enabled  bool   `json:"enabled"`
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if err := s.auth.VerifyUserPassword(r.Context(), auth.StepUpKey(u.ID, c.ID), u, body.Password); err != nil {
+		if errors.Is(err, auth.ErrRateLimited) {
+			writeErr(w, http.StatusTooManyRequests, err.Error())
+			return
+		}
+		s.audit(r, "auth.passwordless.denied", u.Username, "wrong password")
+		writeErr(w, http.StatusForbidden, "password required")
+		return
+	}
+	// Only accounts this server owns the password for. An LDAP account's authority
+	// is the directory, and the sign-in path refuses it anyway — offering the switch
+	// would be a promise this cannot keep.
+	// Allowlist, matching the sign-in path: a future auth source has to be added
+	// deliberately rather than inherit this.
+	if body.Enabled && u.AuthSource != "" && u.AuthSource != "local" {
+		writeErr(w, http.StatusForbidden, auth.ErrPasswordlessNotAllowed.Error())
+		return
+	}
+	if err := s.store.SetPasswordless(r.Context(), u.ID, body.Enabled); err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not save")
+		return
+	}
+	s.audit(r, "auth.passwordless", u.Username, map[bool]string{true: "enabled", false: "disabled"}[body.Enabled])
+	writeJSON(w, http.StatusOK, map[string]bool{"enabled": body.Enabled})
 }

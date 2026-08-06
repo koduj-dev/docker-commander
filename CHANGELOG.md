@@ -6,6 +6,40 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Sign in with a passkey alone.** The login screen offers it next to the password
+  form: no username, no password — the browser finds a credential for this server
+  and that assertion is the whole login.
+
+  This is defensible only because such a passkey is *itself* two factors: possession
+  of the authenticator, and the PIN or fingerprint that unlocks it. That second half
+  is **user verification**, and it is demanded of the browser *and* checked on the
+  assertion that comes back — an authenticator may ignore the request, so the answer
+  is what decides. Without it the key proves possession only, and that is refused
+  with an explanation rather than a generic failure.
+
+  **Off until you ask for it**, in *Profile → Security*, and turning it on costs
+  your password. A passkey you paired as a *second* factor was accepted while the
+  password still stood in front of it; making it the whole login changes what the
+  account rests on, and that is not a change to make on your behalf because the app
+  was updated. It matters most for a passkey that **syncs** between your devices:
+  the PIN or fingerprint can then be satisfied wherever that credential reaches, so
+  the account effectively rests on the platform account it syncs through. Reasonable
+  for many people, wrong for others — hence a choice.
+
+  **The password still works.** This is an addition, not a replacement, and
+  deliberately so: this app gives admins no way to reset someone else's second
+  factor, so if a passkey were the only way in, a lost phone would be a lost
+  account. Signing in with a password and a second factor remains a valid route, and
+  is the recovery path.
+
+  Newly paired passkeys ask to be *discoverable* so the browser can offer them
+  before anyone has said who they are. Hardware with no room to store one keeps
+  working as a second factor and simply will not appear for passwordless sign-in.
+
+  Accounts backed by **LDAP cannot use it**: the directory is their authority — what
+  they may do, whether they are still enabled — and a passkey answers none of that.
+
 ### Fixed
 - **A request body can no longer be dribbled out to hold a handler open.** The
   server set `ReadHeaderTimeout` but no `ReadTimeout`, so once the headers arrived a

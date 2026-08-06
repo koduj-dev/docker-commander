@@ -239,11 +239,21 @@ export const api = {
   // Passkeys. The credential JSON is the whole body of the "finish" calls, because
   // that is what the WebAuthn library on the server reads — so the name and the
   // challenge token travel in the query string rather than sharing the body.
+  // Turning a passkey into a whole login rather than a second factor. Needs the
+  // password: it changes what it takes to sign in as you.
+  setPasswordless: (enabled: boolean, password: string) =>
+    req<{ enabled: boolean }>("PUT", "/api/auth/passwordless", { enabled, password }),
   passkeySupport: () => req<{ available: boolean; reason: string }>("GET", "/api/auth/webauthn/support"),
   passkeyRegisterBegin: (password?: string) =>
     req<CreationOptions>("POST", "/api/auth/webauthn/register/begin", password === undefined ? undefined : { password }),
   passkeyRegisterFinish: (name: string, credential: unknown) =>
     req<{ ok: boolean }>("POST", `/api/auth/webauthn/register/finish?name=${encodeURIComponent(name)}`, credential),
+  // Signing in with a passkey alone. No username and no password: the browser
+  // finds a discoverable credential for this site and the assertion is the claim.
+  passwordlessBegin: () =>
+    req<{ ceremonyId: string; publicKey: RequestOptions["publicKey"] }>("POST", "/api/auth/passkey/begin"),
+  passwordlessFinish: (ceremonyId: string, credential: unknown) =>
+    req<LoginResult>("POST", "/api/auth/passkey/finish", credential, { "X-Passkey-Ceremony": ceremonyId }),
   passkeyLoginBegin: (mfaToken: string) =>
     req<RequestOptions>("POST", "/api/auth/2fa/webauthn/begin", { mfaToken }),
   // The body is the credential, which the server's WebAuthn library parses itself,

@@ -11,6 +11,10 @@ export interface User {
   createdAt?: string;
   lastLoginAt?: string;
   totpEnabled: boolean;
+  /** Any second factor at all — an authenticator app OR a passkey. */
+  mfaEnabled?: boolean;
+  /** Whether a passkey alone may sign this account in. Off unless asked for. */
+  passwordless?: boolean;
   readOnly: boolean;
   sections: string[];
   mfaEnforced: boolean;
