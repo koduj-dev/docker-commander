@@ -65,6 +65,13 @@ All notable changes to Docker Commander are documented here. The format follows
   factor" stays true.
 
 ### Fixed
+- **The audit log now documents itself.** `docs/audit.md` named seven actions out
+  of 143, as prose ("e.g. `container.stop`, `image.pull`…"), which is a poor shape
+  for the one page whose readers arrive asking *what can I look for?*. The full
+  set is now listed by area — and generated from the source, with a test that
+  fails when an audited action has no entry, when an entry names an action the
+  code never writes, and when a new verb appears in one of the runtime-assembled
+  families. The same treatment the CLI flags have had.
 - **The admin user list called a passkey-protected account "off".** The 2FA column
   answers "is this account protected?", and an admin auditing their users acts on
   it — but it read *"does this account have an authenticator app?"*, which stopped
