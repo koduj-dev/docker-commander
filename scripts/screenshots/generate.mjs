@@ -76,6 +76,20 @@ const SHOTS = [
   { name: 'templates', path: '/templates' },
   { name: 'mcp', path: '/mcp-tokens' },
   { name: 'mcp_admin', path: '/mcp-admin' },
+  {
+    // Everything an account holds that decides how it signs in: live sessions,
+    // paired authenticators and passkeys, and whether a passkey alone may be the
+    // whole login. The tab is not the default one, so it has to be opened.
+    name: 'profile_security',
+    path: '/profile',
+    prep: async (page) => {
+      const tab = page.locator('button', { hasText: /^security$/i }).first();
+      if (await tab.count().catch(() => 0)) {
+        await tab.click().catch(() => {});
+        await page.waitForTimeout(900);
+      }
+    },
+  },
 
   // Detail views.
   {
@@ -152,6 +166,38 @@ async function main() {
     colorScheme: 'dark',
   });
   const page = await context.newPage();
+
+  // --- The sign-in screen, shot while still logged out.
+  //
+  // Both steps are worth a picture: the first shows the passkey option beside the
+  // password, the second shows that an account is offered only the factors it
+  // actually has. Driven through the UI rather than the API precisely because the
+  // rendering is the subject.
+  const wantsLogin = !ONLY.length || ONLY.includes('login') || ONLY.includes('login_2fa');
+  if (wantsLogin) {
+    // Deliberately NOT swallowed: a refused connection here would otherwise be
+    // screenshotted as a blank page and committed as documentation.
+    await page.goto(BASE + '/', { waitUntil: 'networkidle' });
+    await page.waitForTimeout(1200); // the passkey button waits on /webauthn/support
+    await page.screenshot({ path: `${OUT}/login.png` });
+    console.log('✓ login  →  login.png');
+
+    // …then the second step, if this instance asks for one.
+    const inputs = page.locator('form input');
+    if (await inputs.count().catch(() => 0) >= 2) {
+      await inputs.nth(0).fill(USER).catch(() => {});
+      await inputs.nth(1).fill(PASS).catch(() => {});
+      await page.locator('form button[type=submit], form button').first().click().catch(() => {});
+      await page.waitForTimeout(1400);
+      const onSecondStep = await page.locator('text=/two-factor/i').count().catch(() => 0);
+      if (onSecondStep) {
+        await page.screenshot({ path: `${OUT}/login_2fa.png` });
+        console.log('✓ login_2fa  →  login_2fa.png');
+      } else {
+        console.warn('• skip login_2fa: this instance signed in without a second factor');
+      }
+    }
+  }
 
   // --- Authenticate via the JSON API so the session cookie lands in the context.
   await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });

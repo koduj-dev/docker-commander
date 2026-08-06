@@ -279,9 +279,11 @@ func (s *Server) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Request
 // at all, so the UI can explain the absence rather than showing a dead button.
 func (s *Server) handlePasskeySupport(w http.ResponseWriter, r *http.Request) {
 	_, ok := s.relyingParty(r)
+	// Through the same stripping as writeErr: this string is shown under the button
+	// it explains, and "auth:" belongs in a log, not on a screen.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"available": ok,
-		"reason":    map[bool]string{true: "", false: auth.ErrPasskeyUnavailable.Error()}[ok],
+		"reason":    map[bool]string{true: "", false: stripPackagePrefix(auth.ErrPasskeyUnavailable.Error())}[ok],
 	})
 }
 
