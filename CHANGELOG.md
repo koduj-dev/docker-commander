@@ -7,6 +7,14 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Kill a container, and build args in the image build dialog.** Both were
+  supported by the API and named in the documentation, and neither had a control —
+  so the docs described the backend rather than the app. Kill sends SIGKILL and
+  goes through the app's confirm dialog, never one click: it is for a container
+  that has stopped responding to Stop, and the difference between the two is
+  exactly what a confirmation is for. Build args take one `KEY=VALUE` per line,
+  with a note that they can end up in the image's history and are the wrong place
+  for secrets.
 - **Sign in with a passkey alone.** The login screen offers it next to the password
   form: no username, no password — the browser finds a credential for this server
   and that assertion is the whole login.
@@ -72,6 +80,13 @@ All notable changes to Docker Commander are documented here. The format follows
   fails when an audited action has no entry, when an entry names an action the
   code never writes, and when a new verb appears in one of the runtime-assembled
   families. The same treatment the CLI flags have had.
+- **The events feed said "Live" over a dead connection.** Its WebSocket had no
+  reconnect at all — unlike the stats/logs socket next door — so a server restart,
+  a proxy idle timeout or a laptop waking from sleep left the page showing a
+  pulsing green badge above a list that would never move again. That is the worst
+  shape for the bug: an empty feed reads as "nothing is happening", so nobody looks
+  closer. It now reconnects, and the badge reports the *connection* rather than
+  just the pause toggle — it says **Reconnecting…** when it is not live.
 - **The admin user list called a passkey-protected account "off".** The 2FA column
   answers "is this account protected?", and an admin auditing their users acts on
   it — but it read *"does this account have an authenticator app?"*, which stopped
