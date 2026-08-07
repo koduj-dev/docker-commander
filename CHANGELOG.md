@@ -7,6 +7,14 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Kill a container, and build args in the image build dialog.** Both were
+  supported by the API and named in the documentation, and neither had a control —
+  so the docs described the backend rather than the app. Kill sends SIGKILL and
+  goes through the app's confirm dialog, never one click: it is for a container
+  that has stopped responding to Stop, and the difference between the two is
+  exactly what a confirmation is for. Build args take one `KEY=VALUE` per line,
+  with a note that they can end up in the image's history and are the wrong place
+  for secrets.
 - **Sign in with a passkey alone.** The login screen offers it next to the password
   form: no username, no password — the browser finds a credential for this server
   and that assertion is the whole login.
