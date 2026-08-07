@@ -85,6 +85,19 @@ All notable changes to Docker Commander are documented here. The format follows
   lockout (5 per 15 minutes — the number the docs had never stated), upload and
   archive caps, project file counts, scan timeouts. Hitting a limit and finding no
   page that names it is a bad way to learn the app has one.
+- **Documentation that described something other than the app.** An audit compared
+  every claim in the manual against the code, and in the other direction too —
+  what the app does that no page mentions. Corrected: the container network panel
+  shows an interface *count*, not a per-interface breakdown (the code says why);
+  Probe fingerprints TCP only and leaves UDP with its passive guess, and the list
+  of protocols it recognises was a third of the real one; the container file
+  browser uses `docker cp` for transfers but a direct `ls`/`mkdir`/`rm` for the
+  rest, so only the Console needs a shell; force-removing a volume is not a way
+  past "volume is in use"; the registry list carries no indication of whether a
+  secret is stored, and a stored credential cannot be edited in place; the events
+  filter is one box matching four fields, not three filters, and the feed is
+  live-only; `-session-ttl` is the one option with no environment variable. The
+  test counts in the README were five commits stale.
 - **The events feed said "Live" over a dead connection.** Its WebSocket had no
   reconnect at all — unlike the stats/logs socket next door — so a server restart,
   a proxy idle timeout or a laptop waking from sleep left the page showing a
