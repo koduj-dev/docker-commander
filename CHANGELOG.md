@@ -73,6 +73,19 @@ All notable changes to Docker Commander are documented here. The format follows
   factor" stays true.
 
 ### Fixed
+- **The manual's screenshots showed an idle machine, and one of them was a
+  duplicate.** They were re-shot against a daemon under real load, so the pictures
+  now show what the pages are for: a log stream with three colour-coded sources, an
+  events feed with something in it, a network graph with seven containers on it,
+  and CPU history with actual peaks. Three faults in the generator came out in the
+  process. `network_detail.png` and `network_detail_graph.png` had been
+  byte-identical since the file was written — the graph toggle is an icon-only
+  button and the selector matched on text, so the miss went unnoticed and the shot
+  was taken in the unchanged state; a `prep` that cannot find its control now fails
+  the shot instead of photographing the page anyway. Alert toasts covered whatever
+  was underneath on any instance busy enough to be worth photographing, so they are
+  hidden during a run. And the shots that need time — the events feed, the
+  dashboard's network *rate* — now wait for it rather than capturing "Collecting…".
 - **Nothing checked that the committed `web/dist` still matched `web/src`.** CI
   runs `make ui` and then tests the bundle it just built, so a stale committed one
   passes every check green. Binaries cut from a tag rebuild it as well — but
