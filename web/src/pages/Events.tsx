@@ -26,6 +26,7 @@ interface Row extends EventMsg {
 export function Events() {
   const [events, setEvents] = useState<Row[]>([]);
   const [paused, setPaused] = useState(false);
+  const [connected, setConnected] = useState(false);
   const [filter, setFilter] = useState("");
   const buf = useRef<Row[]>([]);
   const seq = useRef(0);
@@ -33,19 +34,50 @@ export function Events() {
   pausedRef.current = paused;
   const boxRef = useRef<HTMLDivElement>(null);
 
+  // The feed reconnects, and says so when it is not connected.
+  //
+  // Neither used to be true: a dropped socket — a server restart, a proxy idle
+  // timeout, a laptop waking up — left the page showing a pulsing green "Live"
+  // badge above a list that would never move again. A feed that lies about being
+  // live is worse than one that is visibly broken, because the absence of events
+  // reads as "nothing is happening".
   useEffect(() => {
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${proto}://${location.host}/api/events${hostParam("?")}`);
-    ws.onmessage = (ev) => {
-      try {
-        const e = JSON.parse(ev.data as string) as EventMsg;
-        if ((e as { error?: string }).error) return;
-        buf.current.push({ ...e, seq: seq.current++ });
-      } catch {
-        /* ignore malformed frame */
-      }
+    let ws: WebSocket | null = null;
+    let retry: number | null = null;
+    let closedByUnmount = false;
+
+    const open = () => {
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      ws = new WebSocket(`${proto}://${location.host}/api/events${hostParam("?")}`);
+      ws.onopen = () => setConnected(true);
+      ws.onmessage = (ev) => {
+        try {
+          const e = JSON.parse(ev.data as string) as EventMsg;
+          if ((e as { error?: string }).error) return;
+          buf.current.push({ ...e, seq: seq.current++ });
+        } catch {
+          /* ignore malformed frame */
+        }
+      };
+      ws.onclose = () => {
+        setConnected(false);
+        if (closedByUnmount || retry != null) return;
+        // The same 1.5s the shared stats/logs socket uses (lib/ws.ts), so the two
+        // behave alike after a server restart.
+        retry = window.setTimeout(() => {
+          retry = null;
+          open();
+        }, 1500);
+      };
+      ws.onerror = () => ws?.close();
     };
-    return () => ws.close();
+    open();
+
+    return () => {
+      closedByUnmount = true;
+      if (retry != null) window.clearTimeout(retry);
+      ws?.close();
+    };
   }, []);
 
   // Flush buffered events into the view unless paused (snapshot-then-clear).
@@ -77,10 +109,17 @@ export function Events() {
           <div className="flex items-center gap-3 p-3 border-b border-border">
             <button
               onClick={() => setPaused((v) => !v)}
-              className={clsx("inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-md font-medium", paused ? "bg-panel2 text-muted" : "bg-ok/15 text-ok")}
+              className={clsx("inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-md font-medium",
+                paused ? "bg-panel2 text-muted" : connected ? "bg-ok/15 text-ok" : "bg-warn/15 text-warn")}
             >
               {paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
-              {paused ? "Paused" : <><span className="h-2 w-2 rounded-full bg-ok animate-pulse" /> Live</>}
+              {/* The badge reports the CONNECTION, not just the pause toggle. It
+                  used to say "Live" over a dead socket. */}
+              {paused
+                ? "Paused"
+                : connected
+                  ? <><span className="h-2 w-2 rounded-full bg-ok animate-pulse" /> Live</>
+                  : "Reconnecting…"}
             </button>
             <div className="relative flex-1">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted" />
