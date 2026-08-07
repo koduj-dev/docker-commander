@@ -12,9 +12,11 @@ Store credentials so Docker Commander can **pull private images** and **push**.
   `registry.example.com`, `localhost:5000`…
 - **Username** and **Password / token**.
 
-The secret is **encrypted at rest** (AES-256-GCM) and never returned by the API
-(the list only shows whether a password is set). **Test** asks the daemon to log
-in and reports success or the error.
+The secret is **encrypted at rest** (AES-256-GCM) and never returned by the API —
+the list carries only the name, address and username, with nothing to say whether
+a secret is stored. **Test** asks the daemon to log in and reports success or the
+error, which is the way to find out. A stored credential cannot be edited in
+place either: delete it and add it again.
 
 ## How it's used
 When you [pull](images.md) or [push](images.md) an image, the credentials are

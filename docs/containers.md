@@ -34,18 +34,24 @@ Tabs:
 
 - **Overview** — status, health, command, networks, ports, mounts. Each port
   shows a passive **guess** from its number; the **Probe** button then actively
-  connects to the published ports and fingerprints what's *really* listening
-  (SSH / HTTP(S) / SMTP / Redis / TLS / banner) — useful when the port number
-  doesn't match the service. For SSH hosts the probe is tunnelled through the
-  same SSH connection; it only touches **your own** hosts.
+  connects to the published **TCP** ports and fingerprints what's *really*
+  listening (SSH, HTTP(S), TLS, SMTP, POP3, IMAP, FTP, DNS, NTP, syslog, SNMP,
+  Redis, Memcached, MongoDB, MySQL/MariaDB, PostgreSQL, MSSQL, AMQP,
+  Elasticsearch, or a raw banner) — useful when the port number doesn't match the
+  service. **UDP ports keep only the passive guess**: they cannot be
+  banner-grabbed reliably, so nothing connects to them. For SSH hosts the probe is
+  tunnelled through the same SSH connection; it only touches **your own** hosts.
 - **Logs** — live `stdout`/`stderr` tail.
 - **Console** — an interactive shell (xterm.js) into the running container.
 - **Processes** — `docker top`, refreshed periodically.
 - **Files** — a file browser: navigate directories, **create** folders,
   **download** a file or a whole directory (as a tar), **upload** files or
   **upload & extract** an archive (`.zip` / `.tar` / `.tar.gz`) into the current
-  directory, and delete paths (this is `docker cp` under the hood; needs a
-  shell/`ls` in the image).
+  directory, and delete paths. Transfers are `docker cp`; listing, creating and
+  deleting run a direct `ls`/`mkdir`/`rm` in the container — no shell is involved,
+  but the image does need those binaries. Only **Console** needs `/bin/sh`.
+  Uploads are capped at 2 GiB, and an archive that expands past 512 MiB is
+  refused.
 - **Changes** — filesystem changes since start (`docker diff`: added / modified
   / deleted).
 - **Env** — environment variables.
@@ -61,11 +67,13 @@ totals since the container started, with packets, **dropped** and **errors**
 called out: those are usually zero, and on the day they are not they are often
 the only visible sign of the problem.
 
-With more than one interface you also get the per-interface breakdown. Docker
-reports interface names (`eth0`, `eth1`…) and **does not say which Docker network
-each belongs to** — mapping that reliably needs MAC/namespace inspection, which is
-Linux-only and awkward on remote hosts, so the app reports what Docker gives
-rather than guessing.
+With more than one interface you get the **count**, not a per-interface table.
+Docker reports interface names (`eth0`, `eth1`…) and **does not say which Docker
+network each belongs to** — mapping that reliably needs MAC/namespace inspection,
+which is Linux-only and awkward on remote hosts. A per-interface split would
+therefore invite a question it cannot answer, so the aggregate is what you get
+here; the per-network figures live on the [network detail](networks.md), where
+the attachment is known.
 
 > A **counter reset** (the container was recreated) shows as a gap at zero rather
 > than a negative rate or a phantom spike.
