@@ -366,8 +366,8 @@ notify webhooks (Go-template bodies) and/or email. **Prometheus:** scrape
 ## 🧪 How it's tested
 
 You're pointing this at real Docker daemons, so the fast tests are the floor, not
-the ceiling. Alongside **~700 Go unit tests** and **~140 frontend tests**, the repo
-carries **100+ adversarial "pentest" cases** that assert attacks are *rejected* (token
+the ceiling. Alongside **~715 Go unit tests** and **~147 frontend tests**, the repo
+carries **115 adversarial "pentest" cases** that assert attacks are *rejected* (token
 forgery, OAuth replay, CSRF, IDOR, per-host scope bypass, privilege escalation,
 path traversal), an integration tier against a **real Docker daemon** (plus
 throwaway Redis / OpenLDAP / SMTP), and an end-to-end tier that deploys to

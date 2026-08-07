@@ -85,6 +85,13 @@ All notable changes to Docker Commander are documented here. The format follows
   lockout (5 per 15 minutes — the number the docs had never stated), upload and
   archive caps, project file counts, scan timeouts. Hitting a limit and finding no
   page that names it is a bad way to learn the app has one.
+- **The audit log now documents itself.** `docs/audit.md` named seven actions out
+  of 143, as prose ("e.g. `container.stop`, `image.pull`…"), which is a poor shape
+  for the one page whose readers arrive asking *what can I look for?*. The full
+  set is now listed by area — and generated from the source, with a test that
+  fails when an audited action has no entry, when an entry names an action the
+  code never writes, and when a new verb appears in one of the runtime-assembled
+  families. The same treatment the CLI flags have had.
 - **Documentation that described something other than the app.** An audit compared
   every claim in the manual against the code, and in the other direction too —
   what the app does that no page mentions. Corrected: the container network panel
