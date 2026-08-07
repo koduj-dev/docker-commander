@@ -15,6 +15,13 @@
 //   CHROME_BIN   chrome executable      (default /usr/bin/google-chrome)
 //   ONLY         comma list of shot names to (re)generate, e.g. ONLY=alerts,mcp
 //   HEADED       set to 1 to watch the run in a visible window
+//
+// What the pictures show is chosen here too — the shots are only as good as the
+// instance behind them, so point these at something busy:
+//   DC_CONTAINER    container to feature in container_detail  (default queue-worker)
+//   DC_LOG_SOURCES  containers to tick in the aggregated Logs view
+//   DC_NETWORK      network to open in the detail drawer; prefer one with several
+//                   containers attached, or the graph view has nothing to draw
 
 import { chromium } from 'playwright-core';
 import { fileURLToPath } from 'node:url';
@@ -29,6 +36,20 @@ const PASS = process.env.DC_PASS;
 const TOTP = process.env.DC_TOTP || '';
 const CHROME = process.env.CHROME_BIN || '/usr/bin/google-chrome';
 const ONLY = (process.env.ONLY || '').split(',').map((s) => s.trim()).filter(Boolean);
+
+// Which containers to feature. The pictures are only as good as what is running:
+// a busy container shows live graphs and a moving log stream, an idle one shows
+// flat lines. Override per instance rather than editing the list.
+const FEATURED = (process.env.DC_CONTAINER || 'queue-worker').trim();
+const LOG_SOURCES = (process.env.DC_LOG_SOURCES || 'app-php-fpm,queue-worker,db-postgres')
+  .split(',').map((s) => s.trim()).filter(Boolean);
+// Which network to open in the detail drawer. Pick one with several containers
+// attached: the graph view of a single-container network is two boxes and a line,
+// which shows the feature at its least convincing.
+const NETWORKS = [
+  ...(process.env.DC_NETWORK || '').split(',').map((s) => s.trim()).filter(Boolean),
+  'elastic', 'bridge',
+];
 
 // 1280x720 at deviceScaleFactor 2 → 2560x1440 PNGs (matches the existing docs).
 const VIEWPORT = { width: 1280, height: 720 };
@@ -49,11 +70,58 @@ async function openTab(page, label) {
   return true;
 }
 
+// clickTitled clicks a control that carries no text of its own — the icon-only
+// buttons in the detail drawers are identified by their `title` alone.
+async function clickTitled(page, title) {
+  const btn = page.locator(`button[title="${title}"]`).first();
+  if (!(await btn.count().catch(() => 0))) return false;
+  await btn.click().catch(() => {});
+  await page.waitForTimeout(900);
+  return true;
+}
+
+// hideToasts suppresses the alert toast stack for the duration of the shot. On a
+// busy instance — which is exactly the instance worth photographing — rules fire
+// constantly, and three stacked toasts sit on top of whatever the picture is
+// meant to show. They are transient overlays, not part of the agenda being
+// documented; the Alerts page is where the manual covers them.
+async function hideToasts(page) {
+  await page
+    .addStyleTag({ content: 'div.fixed.bottom-4.right-4 { display: none !important; }' })
+    .catch(() => {});
+}
+
+// selectLogSources ticks containers in the aggregated Logs "Sources" panel. The
+// selection lives in localStorage, so a fresh browser context starts with none
+// and the picture would otherwise be an empty stream. Returns false if not one
+// of the wanted containers exists, so the shot fails loudly instead of showing
+// nothing.
+async function selectLogSources(page, names) {
+  const panel = page.locator('div.card').filter({ hasText: 'Sources' }).first();
+  if (!(await panel.count().catch(() => 0))) return false;
+  let on = 0;
+  for (const name of names) {
+    const btn = panel.locator('button', { hasText: name }).first();
+    if (!(await btn.count().catch(() => 0))) continue;
+    // The selected state is the exact class token `bg-panel2`; the unselected one
+    // carries `hover:bg-panel2/60`, which a substring test would confuse for it.
+    const cls = ((await btn.getAttribute('class').catch(() => '')) || '').split(/\s+/);
+    if (!cls.includes('bg-panel2')) {
+      await btn.click().catch(() => {});
+      await page.waitForTimeout(250);
+    }
+    on++;
+  }
+  return on > 0;
+}
+
 // Each agenda: the route to visit, the output filename, and an optional `prep`
 // that opens a drawer/detail before the shot. `pick` resolves a dynamic id from
 // the API for routes that need one (container detail, …).
 const SHOTS = [
-  { name: 'dashboard', path: '/' },
+  // Host network throughput is a *rate*, so it needs two samples before it can
+  // show anything — shot too early, the tile reads "Collecting…" instead.
+  { name: 'dashboard', path: '/', settle: 20000 },
   { name: 'containers', path: '/containers' },
   { name: 'images', path: '/images' },
   { name: 'stacks', path: '/stacks' },
@@ -61,8 +129,17 @@ const SHOTS = [
   { name: 'volumes', path: '/volumes' },
   { name: 'networks', path: '/networks' },
   { name: 'topology', path: '/topology' },
-  { name: 'logs', path: '/logs' },
-  { name: 'events', path: '/events' },
+  {
+    // A stream is only worth showing with several sources in it: the colour
+    // coding by container is the point of the aggregated view.
+    name: 'logs',
+    path: '/logs',
+    prep: (page) => selectLogSources(page, LOG_SOURCES),
+    settle: 4000, // let lines from every selected source arrive
+  },
+  // The feed fills as Docker emits events, so it needs a moment to have anything
+  // in it — an empty list is the one thing this picture must not show.
+  { name: 'events', path: '/events', settle: 15000 },
   {
     // The Feed tab is empty until an alert actually fires; the Rules tab shows
     // configured rules, which is the more useful hero shot.
@@ -111,7 +188,11 @@ const SHOTS = [
     name: 'container_detail',
     pick: async (api) => {
       const list = await api('/api/containers');
-      const c = list.find((x) => (x.State || x.state) === 'running') || list[0];
+      const running = list.filter((x) => (x.State || x.state) === 'running');
+      const named = (c) => (c.Names?.[0] || c.name || '').replace(/^\//, '');
+      // Prefer the container asked for: the shot is meant to show live CPU and
+      // memory history, which an idle container renders as two flat lines.
+      const c = running.find((x) => named(x).includes(FEATURED)) || running[0] || list[0];
       return c && `/containers/${c.Id || c.id}`;
     },
   },
@@ -119,15 +200,17 @@ const SHOTS = [
     // Network detail opens as a drawer from the Networks list (no own route).
     name: 'network_detail',
     path: '/networks',
-    prep: async (page) => openFirstRow(page, ['elastic', 'bridge']),
+    prep: async (page) => openFirstRow(page, NETWORKS),
   },
   {
-    // …and the same drawer switched to its graph view.
+    // …and the same drawer switched to its graph view. The toggle is an icon-only
+    // button, so it is found by title: matching on text produced a byte-identical
+    // copy of the shot above for as long as this file has existed.
     name: 'network_detail_graph',
     path: '/networks',
     prep: async (page) => {
-      await openFirstRow(page, ['elastic', 'bridge']);
-      await openTab(page, /^graph$/i);
+      if (!(await openFirstRow(page, NETWORKS))) return false;
+      return clickTitled(page, 'Graph view');
     },
   },
   {
@@ -300,8 +383,17 @@ async function main() {
         await page.goto(BASE + path, { waitUntil: 'domcontentloaded' });
       });
       await page.waitForTimeout(1400); // let data load + charts animate in
-      if (shot.prep) await shot.prep(page);
-      await page.waitForTimeout(600);
+      await hideToasts(page); // re-applied per navigation: the style tag does not survive one
+      // A prep that cannot find its control returns false. Treat that as a
+      // failure rather than shooting anyway: the picture still looks plausible,
+      // it just shows the wrong state, and nobody re-checks a green run.
+      if (shot.prep && (await shot.prep(page)) === false) {
+        throw new Error('prep could not find its control — selector out of date?');
+      }
+      if (shot.settle) {
+        console.log(`  … settling ${shot.settle / 1000}s for ${shot.name}`);
+      }
+      await page.waitForTimeout(shot.settle ?? 600);
       const file = `${OUT}/${shot.name}.png`;
       await page.screenshot({ path: file });
       console.log(`✓ ${shot.name}  →  ${shot.name}.png`);
