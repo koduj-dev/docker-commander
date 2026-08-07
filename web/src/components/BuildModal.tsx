@@ -10,6 +10,7 @@ export function BuildModal({ onClose, onDone }: { onClose: () => void; onDone: (
   const [tags, setTags] = useState("");
   const [dockerfile, setDockerfile] = useState("");
   const [nocache, setNocache] = useState(false);
+  const [buildArgs, setBuildArgs] = useState("");
   const [phase, setPhase] = useState<"idle" | "working" | "done" | "error">("idle");
   const [output, setOutput] = useState("");
   const [error, setError] = useState("");
@@ -30,6 +31,11 @@ export function BuildModal({ onClose, onDone }: { onClose: () => void; onDone: (
     tags.split(/[\s,]+/).filter(Boolean).forEach((t) => params.append("tag", t));
     if (dockerfile.trim()) params.set("dockerfile", dockerfile.trim());
     if (nocache) params.set("nocache", "1");
+    // One KEY=VALUE per line, and only lines that actually have a `=` — the
+    // server ignores the rest anyway (image_handlers.go), so dropping them here
+    // means a typo does not travel as a mystery.
+    buildArgs.split("\n").map((l) => l.trim()).filter((l) => l.includes("="))
+      .forEach((kv) => params.append("buildarg", kv));
     const h = getHostId();
     if (h != null) params.set("host", String(h));
 
@@ -90,6 +96,20 @@ export function BuildModal({ onClose, onDone }: { onClose: () => void; onDone: (
               <label className="label">Dockerfile path (optional)</label>
               <input className="input font-mono" value={dockerfile} onChange={(e) => setDockerfile(e.target.value)} placeholder="Dockerfile" disabled={phase === "working"} />
             </div>
+          </div>
+          <div>
+            <label className="label">Build args (optional)</label>
+            <textarea
+              className="input font-mono min-h-[4.5rem]"
+              value={buildArgs}
+              onChange={(e) => setBuildArgs(e.target.value)}
+              placeholder={"VERSION=1.2.3\nHTTP_PROXY=http://proxy:3128"}
+              disabled={phase === "working"}
+            />
+            <p className="text-xs text-muted mt-1">
+              One <code className="font-mono">KEY=VALUE</code> per line. They reach the daemon as
+              build arguments and can end up in the image's history — do not put secrets here.
+            </p>
           </div>
           <label className="flex items-center gap-2 text-sm text-muted">
             <input type="checkbox" checked={nocache} onChange={(e) => setNocache(e.target.checked)} disabled={phase === "working"} /> No cache

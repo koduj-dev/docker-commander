@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Play, Plus, RotateCw, Square, Pause } from "lucide-react";
+import { Play, Plus, RotateCw, Square, Pause, Zap } from "lucide-react";
 import { api } from "../lib/api";
 import type { ContainerSummary } from "../lib/types";
 import { shortId } from "../lib/format";
@@ -8,6 +8,7 @@ import { StateBadge, EmptyState, Spinner } from "../components/ui";
 import { PageHeader } from "../layout/Shell";
 import { useListControls, SearchBar, Pager, type StatusOption } from "../components/ListControls";
 import { CreateContainerModal } from "../components/CreateContainerModal";
+import { useDialogs } from "../components/Dialog";
 
 const CONTAINER_STATUSES: StatusOption<ContainerSummary>[] = [
   { value: "all", label: "All states" },
@@ -29,6 +30,7 @@ function matchContainer(c: ContainerSummary, q: string): boolean {
 // With runningOnly it hides stopped containers (handy on the dashboard when a
 // host has many idle containers); withControls adds search + pagination.
 export function ContainerTable({ runningOnly = false, withControls = false, refreshSignal = 0 }: { runningOnly?: boolean; withControls?: boolean; refreshSignal?: number }) {
+  const dialogs = useDialogs();
   const [list, setList] = useState<ContainerSummary[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -62,6 +64,21 @@ export function ContainerTable({ runningOnly = false, withControls = false, refr
     } finally {
       setBusyId(null);
     }
+  };
+
+  // Kill is SIGKILL: no shutdown handler runs, nothing is flushed. Stop asks
+  // politely first and waits, so the two are not interchangeable and the
+  // difference is exactly what a confirmation is for. Through the app's own
+  // dialog, like every other destructive action here.
+  const kill = async (c: ContainerSummary) => {
+    const ok = await dialogs.confirm({
+      title: `Kill ${c.name}?`,
+      message: "SIGKILL, immediately — the process gets no chance to shut down cleanly or "
+        + "flush anything in flight. Use Stop unless it is already unresponsive.",
+      danger: true,
+      confirmLabel: "Kill",
+    });
+    if (ok) await act(c.id, "kill");
   };
 
   if (!list) return <div className="flex items-center gap-2 text-muted"><Spinner /> Loading…</div>;
@@ -133,6 +150,7 @@ export function ContainerTable({ runningOnly = false, withControls = false, refr
                         <IconBtn title="Restart" onClick={() => act(c.id, "restart")}><RotateCw className="h-4 w-4" /></IconBtn>
                         <IconBtn title="Pause" onClick={() => act(c.id, "pause")}><Pause className="h-4 w-4" /></IconBtn>
                         <IconBtn title="Stop" danger onClick={() => act(c.id, "stop")}><Square className="h-4 w-4" /></IconBtn>
+                        <IconBtn title="Kill (SIGKILL)" danger onClick={() => kill(c)}><Zap className="h-4 w-4" /></IconBtn>
                       </>
                     ) : c.state === "paused" ? (
                       <IconBtn title="Unpause" onClick={() => act(c.id, "unpause")}><Play className="h-4 w-4" /></IconBtn>
