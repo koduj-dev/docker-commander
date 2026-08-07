@@ -73,6 +73,16 @@ All notable changes to Docker Commander are documented here. The format follows
   factor" stays true.
 
 ### Fixed
+- **The guard on the README's test counts guarded one number out of three, and
+  would have missed the drift it was written for.** It checked only the Go figure,
+  so the README could claim 73 frontend tests and 7 adversarial cases against real
+  counts of 147 and 115 with the suite green — both verified by falsifying them. Its
+  tolerance was a quarter either way, which at 700 real tests accepts anything from
+  525: the "~533 for five commits" drift cited in its own comment as the thing it
+  would catch would have passed. It now checks all three figures at a tenth either
+  way. Doing so surfaced a fourth error — the 115 pentest cases are a *subset* of
+  the Go total, not a tier alongside it, so the README's phrasing implied 830 tests
+  where there are 715. The unit figure is now the disjoint 600.
 - **The profile page had no manual page, and the limits were nowhere.** The page
   where you manage your own second factors, sessions and sign-in options was
   documented as a section inside *Users & roles* — findable only if you already
