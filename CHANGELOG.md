@@ -4,377 +4,7 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
-## [Unreleased]
-
-### Added
-- **Kill a container, and build args in the image build dialog.** Both were
-  supported by the API and named in the documentation, and neither had a control —
-  so the docs described the backend rather than the app. Kill sends SIGKILL and
-  goes through the app's confirm dialog, never one click: it is for a container
-  that has stopped responding to Stop, and the difference between the two is
-  exactly what a confirmation is for. Build args take one `KEY=VALUE` per line,
-  with a note that they can end up in the image's history and are the wrong place
-  for secrets.
-- **Sign in with a passkey alone.** The login screen offers it next to the password
-  form: no username, no password — the browser finds a credential for this server
-  and that assertion is the whole login.
-
-  This is defensible only because such a passkey is *itself* two factors: possession
-  of the authenticator, and the PIN or fingerprint that unlocks it. That second half
-  is **user verification**, and it is demanded of the browser *and* checked on the
-  assertion that comes back — an authenticator may ignore the request, so the answer
-  is what decides. Without it the key proves possession only, and that is refused
-  with an explanation rather than a generic failure.
-
-  **Off until you ask for it**, in *Profile → Security*, and turning it on costs
-  your password. A passkey you paired as a *second* factor was accepted while the
-  password still stood in front of it; making it the whole login changes what the
-  account rests on, and that is not a change to make on your behalf because the app
-  was updated. It matters most for a passkey that **syncs** between your devices:
-  the PIN or fingerprint can then be satisfied wherever that credential reaches, so
-  the account effectively rests on the platform account it syncs through. Reasonable
-  for many people, wrong for others — hence a choice.
-
-  **The password still works.** This is an addition, not a replacement, and
-  deliberately so: this app gives admins no way to reset someone else's second
-  factor, so if a passkey were the only way in, a lost phone would be a lost
-  account. Signing in with a password and a second factor remains a valid route, and
-  is the recovery path.
-
-  Newly paired passkeys ask to be *discoverable* so the browser can offer them
-  before anyone has said who they are. Hardware with no room to store one keeps
-  working as a second factor and simply will not appear for passwordless sign-in.
-
-  Accounts backed by **LDAP cannot use it**: the directory is their authority — what
-  they may do, whether they are still enabled — and a passkey answers none of that.
-
-### Added
-- **`dockercmd --reset-password <user>`** — a way back into an instance whose
-  password is lost. An admin can reset someone else's from the UI, but the *last*
-  admin locking themselves out had nobody to ask, and this app deliberately gives
-  nobody a way to reset another account's second factor. That state used to be
-  terminal.
-
-  It is local, against the data directory, and never over HTTP — the server does
-  not need to be stopped. The password is
-  read from the terminal rather than taken as an argument, because an argument
-  lands in shell history and in `/proc/<pid>/cmdline` where any local user can read
-  it. Every browser session for the account is ended — a reset that leaves a stolen
-  session alive is the opposite of what someone reaching for this needs — and the
-  reset is written to the audit log. API and MCP tokens are *not* revoked, and it
-  says so: they are not sessions, and somebody resetting after a compromise needs
-  to know to review them too.
-
-  **The second factor is left alone.** Whoever holds the files can bypass it
-  anyway: the token signing secret is a row in the same database, so anyone who can
-  run this command could already mint an admin session directly. That is also why
-  offering it costs nothing — the capability is the filesystem, not the command.
-  But it should not do it for them, so "nobody resets another account's second
-  factor" stays true.
-
-### Fixed
-- **The manual's screenshots showed an idle machine, and one of them was a
-  duplicate.** They were re-shot against a daemon under real load, so the pictures
-  now show what the pages are for: a log stream with three colour-coded sources, an
-  events feed with something in it, a network graph with seven containers on it,
-  and CPU history with actual peaks. Three faults in the generator came out in the
-  process. `network_detail.png` and `network_detail_graph.png` had been
-  byte-identical since the file was written — the graph toggle is an icon-only
-  button and the selector matched on text, so the miss went unnoticed and the shot
-  was taken in the unchanged state; a `prep` that cannot find its control now fails
-  the shot instead of photographing the page anyway. Alert toasts covered whatever
-  was underneath on any instance busy enough to be worth photographing, so they are
-  hidden during a run. And the shots that need time — the events feed, the
-  dashboard's network *rate* — now wait for it rather than capturing "Collecting…".
-- **A busy container broke its own history chart.** CPU is reported the way
-  `docker stats` reports it — 100% is *one core* — so a container working across
-  several cores legitimately reads 300%. The chart's axis was pinned to `[0, 100]`,
-  which recharts treats as a hint rather than a limit: once the data overflowed it
-  rendered a five-digit top label (52348%) above gridlines spaced by 80, on the
-  page that exists to show exactly that workload. The axis now rounds up to whole
-  cores and never drops below 100, so an idle container still reads against a
-  familiar 0–100 scale. Invisible until now because the demo instance was idle;
-  the alert engine had the convention right all along ("CPU 272.0% of one core,
-  16 cores available").
-- **Nothing checked that the committed `web/dist` still matched `web/src`.** CI
-  runs `make ui` and then tests the bundle it just built, so a stale committed one
-  passes every check green. Binaries cut from a tag rebuild it as well — but
-  `go install` embeds whatever is in the repository, so that channel, and only that
-  channel, could ship a UI built from older source. CI now compares the two and
-  fails with the command to fix it. Verified by changing a component without
-  rebuilding: the step catches it.
-- **`make ui` rewrote `package-lock.json` behind your back.** Its install step was
-  `npm install`, which resolves afresh rather than installing the locked tree, and
-  an npm older than the one that wrote the lockfile drops fields it does not know —
-  30 lines of `libc` platform hints, most recently — leaving an unrelated edit
-  staged in the next commit. It now runs `npm ci`, which is also what makes the
-  bundle comparison above reproducible.
-- **The guard on the README's test counts guarded one number out of three, and
-  would have missed the drift it was written for.** It checked only the Go figure,
-  so the README could claim 73 frontend tests and 7 adversarial cases against real
-  counts of 147 and 115 with the suite green — both verified by falsifying them. Its
-  tolerance was a quarter either way, which at 700 real tests accepts anything from
-  525: the "~533 for five commits" drift cited in its own comment as the thing it
-  would catch would have passed. It now checks all three figures at a tenth either
-  way. Doing so surfaced a fourth error — the 115 pentest cases are a *subset* of
-  the Go total, not a tier alongside it, so the README's phrasing implied 830 tests
-  where there are 715. The unit figure is now the disjoint 600.
-- **The profile page had no manual page, and the limits were nowhere.** The page
-  where you manage your own second factors, sessions and sign-in options was
-  documented as a section inside *Users & roles* — findable only if you already
-  knew to look there — and its **Access** tab, which answers "why can I reach
-  this?", was described nowhere at all. It is now [its own
-  page](docs/profile.md), linked from the index.
-
-  Alongside it, a [Limits](docs/limits.md) page: every cap you can actually hit,
-  with the reason where the number is not obvious. Session lifetime, the sign-in
-  lockout (5 per 15 minutes — the number the docs had never stated), upload and
-  archive caps, project file counts, scan timeouts. Hitting a limit and finding no
-  page that names it is a bad way to learn the app has one.
-- **The audit log now documents itself.** `docs/audit.md` named seven actions out
-  of 143, as prose ("e.g. `container.stop`, `image.pull`…"), which is a poor shape
-  for the one page whose readers arrive asking *what can I look for?*. The full
-  set is now listed by area — and generated from the source, with a test that
-  fails when an audited action has no entry, when an entry names an action the
-  code never writes, and when a new verb appears in one of the runtime-assembled
-  families. The same treatment the CLI flags have had.
-- **Documentation that described something other than the app.** An audit compared
-  every claim in the manual against the code, and in the other direction too —
-  what the app does that no page mentions. Corrected: the container network panel
-  shows an interface *count*, not a per-interface breakdown (the code says why);
-  Probe fingerprints TCP only and leaves UDP with its passive guess, and the list
-  of protocols it recognises was a third of the real one; the container file
-  browser uses `docker cp` for transfers but a direct `ls`/`mkdir`/`rm` for the
-  rest, so only the Console needs a shell; force-removing a volume is not a way
-  past "volume is in use"; the registry list carries no indication of whether a
-  secret is stored, and a stored credential cannot be edited in place; the events
-  filter is one box matching four fields, not three filters, and the feed is
-  live-only; `-session-ttl` is the one option with no environment variable. The
-  test counts in the README were five commits stale.
-- **The events feed said "Live" over a dead connection.** Its WebSocket had no
-  reconnect at all — unlike the stats/logs socket next door — so a server restart,
-  a proxy idle timeout or a laptop waking from sleep left the page showing a
-  pulsing green badge above a list that would never move again. That is the worst
-  shape for the bug: an empty feed reads as "nothing is happening", so nobody looks
-  closer. It now reconnects, and the badge reports the *connection* rather than
-  just the pause toggle — it says **Reconnecting…** when it is not live.
-- **The admin user list called a passkey-protected account "off".** The 2FA column
-  answers "is this account protected?", and an admin auditing their users acts on
-  it — but it read *"does this account have an authenticator app?"*, which stopped
-  being the same question the moment passkeys existed. The server had been sending
-  the right field since passkeys landed; the table was not reading it. It now shows
-  `enabled` for an authenticator app, `passkey` for an account protected by one,
-  and `off` only when there is genuinely no second factor.
-
-- **Error messages no longer start with `auth:`.** Go puts a package prefix on every
-  error, which is right for a log line and wrong on a screen — it reached one as
-  `auth: passkeys need HTTPS (or localhost)` under a greyed-out button. Stripped on
-  the way out, by an allowlist of this app's own prefixes rather than "everything
-  before the first colon", because messages legitimately contain colons.
-
-- **A request body can no longer be dribbled out to hold a handler open.** The
-  server set `ReadHeaderTimeout` but no `ReadTimeout`, so once the headers arrived a
-  client could take as long as it liked over the body — and Go runs the handler from
-  the moment the headers land, not the moment the body finishes. That is a resource
-  anyone could reserve for free, and it was what let a stalled WebAuthn registration
-  straddle a change in the account's protection.
-
-  Requests now have a 60-second read timeout. The routes that legitimately take
-  minutes — loading or importing an image, sending a build context, uploading and
-  extracting a file into a container or a volume, importing a project — swap it for
-  a *rolling* one, extended each time data arrives, so the limit is "this upload
-  went quiet", not "this upload took a while". A multi-gigabyte upload over a slow
-  link is unaffected; a stalled one is dropped — the two file-upload routes answer
-  it with a 408 that says so, the rest report it the way they report any other
-  failed upload. The profiling listener gets the same treatment.
-
-  WebSocket streams are not on this clock: `net/http` clears deadlines when a
-  handler hijacks the connection. One side effect worth knowing: an idle
-  keep-alive connection now closes after 60 seconds where it previously stayed
-  open, because Go falls back to the read timeout when no idle timeout is set.
-
-- **Leaving a page mid-stream could drop the whole WebSocket.** Stats and log frames
-  were written under the *subscription's* context, and the websocket library
-  registers a `context.AfterFunc` on the context given to `Write` that closes the
-  entire connection. So unsubscribing while a frame was in flight — clicking away
-  from a container whose stats are streaming — took every other subscription on that
-  socket with it, and the client saw an abrupt disconnect with no error.
-
-  Writes now run under the connection's own context; only the stream itself is
-  cancelled by an unsubscribe.
-
-  A cancelled stream's last few frames are dropped rather than delivered.
-  Subscription ids are deterministic, so leaving a container page and coming
-  straight back would otherwise hand the old stream's tail to the new subscription
-  — a duplicated log line, or a stats sample from before the reset.
-
-  This is what had been failing intermittently in CI as
-  `TestHubResubscribeDoesNotCancelTheNewSubscription` ("failed to read frame header:
-  EOF"): a loaded runner widened the window enough to hit it, and a quiet laptop
-  never did in two thousand runs. The new test reproduces it deliberately by
-  unsubscribing from a stream that never stops emitting.
-
-- **A review pass over the last few merges.** None of these were reachable as an
-  attack, but each was a statement the code no longer backed up:
-  - The MFA challenge is now required to carry an expiry. `exp` is optional in a
-    JWT, so a challenge token without one parsed cleanly and was then dereferenced
-    for the one-use window — a nil pointer on the pre-2FA endpoint. It needs the
-    signing secret to reach, which is why this is a guard rather than a hole.
-  - **A successful step-up clears the rate-limit budget**, as a successful login
-    already did. Without it, someone else's wrong guesses from the same address
-    locked the real account holder out of *their own* re-pairing for the rest of
-    the window, even with the right password.
-  - Re-pairing with **no request body** is a failed step-up (403), not a malformed
-    request (400) — it is the shape an older client sends, and the answer should
-    describe what actually happened. A genuinely broken body is still a 400.
-  - **The backup size line counts the database.** It is usually the largest thing
-    in the archive, and leaving it out made "1.2 MiB" mean *everything except the
-    part you care about most*. The units now say `MiB`/`GiB` too, matching the
-    rest of the project instead of dividing by 1024 and printing `MB`.
-  - Saving in **Settings no longer shows a failure in green.** "Save failed" was
-    rendered in the success colour, which said the setting was live when it wasn't;
-    it now carries the reason.
-  - A **2FA code rejected by the network** no longer reads as a rejected code. A
-    dropped request said "That code was not accepted", sending people hunting
-    through an authenticator for a problem in the wire.
-  - The session list clears a stale error when a reload succeeds, and offers
-    **Try again** when the first load fails — previously that was a dead end.
-  - Comment corrections where the prose had drifted from the code: a doc comment
-    that had slid onto the wrong function, a breadcrumb naming a test that does not
-    exist, a rationale about "recycled user ids" (ids are `AUTOINCREMENT` and never
-    reused), a restore note describing symlink *target* checking that is now an
-    outright refusal, and an SMTP test comment that said the opposite of what the
-    test pins.
-
-### Added
-- **Passkeys.** *Profile → Security → Add a passkey* pairs whatever the device
-  already has — fingerprint, face, PIN, or a plugged-in security key — as a second
-  factor, and sign-in then offers it instead of typing a code.
-
-  Two properties make it worth having over TOTP. The private key never leaves the
-  device's secure hardware, so there is nothing on our side to steal and nothing on
-  yours to read out to a caller. And the signature covers the **origin** the browser
-  saw, so a page that looks exactly like this one gets an assertion it cannot use —
-  the part of phishing resistance a server can actually verify.
-
-  It is an option, never a requirement: a passkey needs a secure context (HTTPS or
-  `localhost`), so on a plain-HTTP deployment the button explains its absence rather
-  than failing when pressed. Accounts can hold both kinds at once; sign-in offers
-  whichever exist. A passkey counts as a second factor everywhere the app already
-  counted them — including the rule that the last one cannot be removed.
-
-  A signature counter that goes backwards is refused and audited: it means the key
-  answered from two places, and the honest device and the copy are indistinguishable
-  from here.
-
-  Passkeys are offered only where a browser will actually accept one: HTTPS, or
-  `localhost`. An **IP address is not a relying party** — no browser allows a
-  passkey at `https://192.0.2.10/` or `http://127.0.0.1:8470/` — so the option says
-  why it is missing there instead of failing when pressed. Reach the server by a
-  hostname to use them.
-
-  `mfaEnabled` joins `totpEnabled` in the profile and the admin user list, because
-  the two stopped being the same question: an account protected by a passkey alone
-  reported as having no second factor.
-
-  **Pairing is authorised by the write that creates the factor, not by a check
-  before it.** Adding a factor to an account that already has one needs the
-  password; adding the first needs nothing, because there is nothing yet to protect.
-  Those are decided minutes apart, so a half-finished enrolment carries the
-  authority it was begun under, and an unauthorised one is admitted by the insert
-  itself, conditional on the account still having no factor. Anything else leaves a
-  gap the client controls — the WebAuthn library reads the request body, and a
-  request whose body arrives slowly holds a handler open across it.
-
-  In practice: start pairing an authenticator, pair a passkey in another tab, and
-  the first flow asks you to begin again with your password rather than reporting a
-  wrong code.
-
-- **An account can hold several authenticators.** *Profile → Security* lists every
-  paired one by a name you choose, with when it was added and last used, and lets
-  you add or remove them. Pairing used to *replace*: the phone in your hand stopped
-  working the moment you set up a new one, which made "add my tablet too" impossible
-  and losing a device a support call.
-
-  **The last one cannot be removed** — 2FA is mandatory here and there is no admin
-  reset, so an account with no authenticator is one that cannot sign in. Pair the
-  replacement first.
-
-  Removing asks for your password, exactly as pairing does: both change what it
-  takes to sign in as you, and a stolen session must not be able to strip an
-  account's factors one at a time.
-
-  The replay guard is now **per authenticator**. It used to be one watermark for the
-  account, which with two paired devices would have let a code from one refuse the
-  same time step on the other.
-
-  An account holds at most ten, and pairing the same secret twice is refused by the
-  database itself: two rows sharing a secret would give that authenticator two
-  independent replay watermarks, so each of its codes could be spent twice.
-
-  Note what this does *not* do: pairing no longer implicitly revokes anything. If
-  you are replacing a lost phone, remove its entry as well — adding the new one is
-  no longer enough.
-
-  Existing installations migrate on start, in one transaction: the single stored
-  authenticator becomes the first entry in the list, keeping the same secret and
-  the same replay watermark, so nobody has to re-pair. Every legacy secret is
-  cleared from the old column in the process — a live secret that nothing reads and
-  nobody can remove is a credential nobody knows exists.
-
-- **Removing a factor, pairing one, and spending a code are each atomic.** Found by
-  an independent adversarial review of the change above, which reproduced all three:
-  sixteen parallel confirmations of one enrolment produced **five** authenticators
-  sharing a single secret (and therefore five replay watermarks); two concurrent
-  removals both passed the "this is your last one" check and left the account with
-  **none** — which is not a lockout but 2FA silently switched off, since it is
-  derived from whether any factor exists; and one TOTP code minted **two or three**
-  sessions when presented simultaneously, because the watermark write reported
-  "nothing to update" as success. The count now lives inside the `DELETE`, pairing
-  claims its enrolment with a compare-and-swap inside a transaction, and a burn that
-  moves no row is an error. Each has a concurrency test that fails without the fix.
-
-  Step-up password checks are bucketed **per session**. Per address (the original)
-  meant anyone holding a session could stop everyone behind that address from
-  signing in for fifteen minutes. Per account — the first attempt at fixing that,
-  and caught by a second review round — merely aimed the same weapon at the victim:
-  a stolen session could burn the budget every fifteen minutes, and the owner's
-  *correct* password would then be refused for exactly the two things they need to
-  recover (removing the attacker's authenticator, pairing a replacement) while
-  logins kept working, so nothing looked broken. Per session, the stolen session
-  spends its own budget and minting another needs the password.
-
-  A spent budget now answers **429**, not "password required" — telling someone
-  their own password is wrong while they are recovering an account is both false
-  and cruel.
-
-  A session token carrying no `jti` is refused outright. `jti` is optional in a
-  JWT, so a signed token without one parsed cleanly and arrived with an empty id —
-  and both the revocation row and the per-session rate-limit bucket key on it, the
-  second of which would have collapsed back to per-account. Minting such a token
-  needs the signing key, so this makes a property that held by accident hold by
-  construction.
-
-- **See what is signed in as you, and end it.** *Profile → Security* now lists every
-  live session for your account — the device, the address, when it was last used and
-  when it signed in, with the one you are using marked — and lets you sign out any of
-  them, or all the others at once. Each row names the client (*Firefox on Linux*,
-  *Safari on iPhone*, *curl*) with an icon for the kind of device, because the
-  question this screen answers is "is that me?" and a raw user-agent string does not
-  answer it. An agent we cannot place is shown verbatim rather than guessed at. Until now a session could only be ended by waiting for it to expire or
-  by changing your password, and there was nowhere to look to find out one existed.
-
-  Own sessions only, deliberately: an admin view over everyone's would be a record
-  of when each person works and from where, which is surveillance rather than
-  administration.
-
-  This works because a session is now a **row** as well as a token: the token
-  carries an id, the row is what the middleware checks, and revoking deletes it.
-  Signing out deletes it too — previously logout only cleared the cookie, so the
-  token itself kept working until it expired.
-
-  **Upgrading signs everyone out once.** Tokens issued before this release have no
-  id and therefore no row, so they are refused; one sign-in fixes it per person.
+## [1.6.0] — 2026-08-07
 
 ### Security
 - **Backups no longer carry symbolic links, and say what they skipped.** A link in
@@ -552,111 +182,304 @@ All notable changes to Docker Commander are documented here. The format follows
   for a plain-HTTP loopback install, where the browser would otherwise refuse to
   send the cookie back at all.
 
-### Fixed
-- **Re-subscribing to a live stream no longer cancels the wrong one.** The
-  frontend reuses deterministic subscription ids, so leaving a container page and
-  coming straight back replaced a subscription while the old stream was still
-  winding down — and the old one's cleanup then removed the *new* entry. The new
-  stream kept running with nothing able to stop it short of closing the socket,
-  and the client was told its live subscription had ended. Subscriptions are
-  numbered now, so a stream can tell whether the entry under its id is still its
-  own.
+- **A failed webhook could write its own URL — and any token in it — into the
+  alert delivery record.** The record deliberately stores a webhook's *name and
+  host* rather than its URL, because webhook URLs routinely carry a secret in the
+  path or query and the record is readable by anyone holding the `alerts` section.
+  Transport failures slipped past that: `net/http` wraps them in a `*url.Error`
+  whose message embeds the full request URL, so a refused connection stored the
+  secret verbatim. The cause is now recorded without the URL, which keeps the
+  diagnostic value ("connection refused") and drops the credential. Found in review
+  before the feature was ever released.
 
-- **A log stream no longer ends when the first of its two readers does.** Docker
-  multiplexes stdout and stderr; returning as soon as either finished dropped
-  whatever the other was still emitting, which on a plain log fetch typically
-  meant losing the tail of stderr. Scanner errors were discarded too, so a line
-  over the 1 MiB buffer looked like a clean end — the WebSocket client saw a normal
-  close and a log-following alert rule stopped silently until the next reconcile,
-  missing every match in between.
+- **Removing an MCP OAuth client now revokes its access immediately.** Deleting a
+  client purged its authorization codes and refresh tokens, which stopped it
+  obtaining a *new* access token — but an access token is a **signed** credential,
+  so nothing about deleting a database row reached the copy a connected tool
+  already held. It kept working until it expired: up to 15 minutes of access after
+  an admin pressed Revoke. Access tokens are now bound to the client that was
+  issued them (a `dc_cid` claim) and every call requires that client to still be
+  registered. The window was always bounded, so this is hardening rather than a
+  hole — but "revoked" should mean now, and the admin dialog said so while the
+  behaviour didn't. Tokens minted before this carry no binding and simply expire
+  within one lifetime; rejecting them would have forced every connector to
+  re-authorize on upgrade to buy at most fifteen minutes.
 
-- **Three slow leaks.** A log follower that ended on its own forgot its cancel
-  function instead of calling it, leaving a context attached to the monitor's root
-  for the life of the process; restart timestamps were pruned only when a restart
-  rule happened to read them, so a host with churn accumulated them for ever with
-  no such rule configured; the in-memory metric history never forgot containers
-  that stopped reporting, keeping their full retention window indefinitely.
+- **The stack editor's backup could be redirected through a symlink.** Saving a
+  CLI-discovered stack's compose file keeps the previous version beside it as
+  `<name>.dc-prev`, and that backup was written with a plain write — which follows
+  a symlink already sitting at the destination. Anyone able to create files in the
+  stack's directory (a deploy or CI account, *not* necessarily one with Docker
+  access) could pre-place `compose.yml.dc-prev` as a link to, say, `/etc/cron.d/`
+  and have Docker Commander — commonly root — write through it, with content they
+  also controlled, since the backup is the previous compose file. Backups are now
+  written with a temporary file plus a rename, which replaces a symlink instead of
+  following it; the SSH path does the same with `mktemp`, where `cat >` and `cp`
+  had the same weakness. Found in a review of the release, before any tagged build
+  shipped it.
+- **Redeploying a stack skipped the containment check that saving enforced.** A
+  compose path outside the stack's working directory was refused for writes but
+  still handed to `docker compose up -d`, which would deploy whatever definition
+  sat there. Both operations now answer the same question in one place, which also
+  means the UI stops offering an editor whose Save could only ever fail. Exploiting
+  it required direct Docker API access (to set the labels), which is already
+  root-equivalent — so this hardens a boundary rather than closing a path into the
+  app.
 
-- **A non-JSON error response is reported as its status.** The API client parsed
-  the body before checking whether the request succeeded, so an error page from
-  something other than this app — a reverse proxy's 502 — threw a SyntaxError
-  instead of the error type every caller expects. The UI showed
-  `Unexpected token '<'` rather than the status, and code branching on the error
-  type took the wrong path.
+- **The SMTP config is now admin-only, and lives under Settings → Email.**
+  It is a *single instance-wide* outbound mail relay with a stored credential, but
+  it was gated by the **alerts** section — so any non-admin with write access to
+  alerts could repoint the whole installation's mail at a server they control and
+  receive its notifications. (The password was never returned by the API, so this
+  was about redirecting delivery, not reading the secret.) `/api/smtp` and
+  `/api/smtp/test` now require admin.
 
-- **An unreachable host no longer reports its alerts as resolved.** A failed or
-  timed-out container listing left that host out of the stats snapshot, and the
-  resolve sweep read the absence as recovery — so every live condition on it got a
-  "back to normal" event, and then started over as a fresh incident, with the
-  duration reset, when the host returned. On a flaky link that produced a
-  resolve/fire pair every poll; disabling a host did the same. Silence is not
-  recovery: only a host that was actually observed can end a condition.
+  **This narrows an existing permission:** someone who managed alerts *including*
+  their e-mail delivery will now need an admin to configure the relay. The rest of
+  the alerts surface — feed, rules, webhooks — is unchanged for them, and alert
+  rules can still opt into e-mail.
+- **Raw `inspect` no longer readable without the owning section.**
+  `GET /api/inspect/{kind}` returns the **raw** Docker inspect payload, which for a
+  container includes `Config.Env` — database passwords, API keys. It was ungated,
+  so **any signed-in account** (no sections granted at all, even read-only) could
+  read the environment of any container on **any** host via `?host=`. It is now
+  gated by the section that owns the kind: container→`containers`, image→`images`,
+  volume→`volumes`, network→`networks`, with an unknown kind failing closed onto
+  `containers`. This matches how the UI already uses it — the Inspect dialog only
+  opens from pages those sections already guard — so nothing legitimate changes.
+- **MCP tokens: a scope that narrowed to nothing produced an *unrestricted*
+  token.** An empty stored scope means "inherit the owner's rights", so requesting
+  a scope consisting only of sections the account doesn't hold was silently turned
+  into a token with the owner's **full** access — asking for less returned more.
+  Such a request is now refused. Token scopes are also matched against
+  **effective** sections, so access granted through a role can be scoped to (it
+  would otherwise have been dropped, hitting the same widening path). This was
+  reachable before roles existed, by requesting only ungranted sections.
+- **Remote Projects now support bind mounts.** Deploying a managed project to a
+  remote host previously refused any compose file with a host-path bind mount,
+  because the remote daemon can't see Docker Commander's data dir. Each bind
+  whose source lives **inside the project folder** is now copied to a named
+  volume on the target host (`dcseed-<project>-<hash>`, labelled with the
+  project) and the mount is repointed at it via a generated compose override, so
+  sidecar configs and scripts work remotely — including single-file mounts like
+  `./nginx.conf:/etc/nginx/nginx.conf`, which mount out of the volume by
+  subpath. `read_only` is preserved and the project's own named volumes are left
+  untouched. The copy is a **snapshot taken at deploy time, not a live mount**:
+  editing the files needs a redeploy, and writes inside the container stay on the
+  remote host. The deploy output says so explicitly.
+- Bind mounts pointing **outside** the project folder (e.g. `/etc/localtime`,
+  `/var/run/docker.sock`, or anything reached through a symlink out of the
+  folder) are still **refused** on a remote deploy, now with a message naming
+  them: they address paths on the remote host, which won't be mounted blind.
 
-- **A host that went away stayed "unreachable" until the app was restarted.** The
-  Docker client is cached per host, and an SSH one captures its SSH connection in
-  the transport's dialer — so once that connection died (the machine rebooted, the
-  link dropped) every later call failed against the same dead object. Nothing
-  evicted it: the cache was only cleared when a host was edited, deleted or
-  re-trusted. The host alerted as offline and then never recovered, which is the
-  behaviour that teaches people to ignore host alerts. A failed health probe now
-  drops the cached client, so the next 30-second sweep dials afresh.
-
-- **One unreachable host no longer freezes the others.** Building a client held a
-  manager-wide lock, and for SSH hosts that includes a synchronous dial whose
-  handshake isn't bounded by the request context. A single sleeping laptop could
-  stall every Docker call in the app — the local host included — in ten-second
-  bursts. The dial now happens outside the lock, with concurrent first-time callers
-  still ending up on one shared connection.
-
-- **Acknowledging an alert is now scoped to that alert's host**, over both the
-  REST route and MCP. The feed and *ack all* were already scoped; acknowledging a
-  single id was not, and alert ids are sequential integers — so a role confined
-  to staging could clear production's alerts. Quietly, too: an acknowledged alert
-  stops being surfaced, which makes it a suppression primitive rather than a
-  nuisance. A missing alert and an out-of-reach one give the same answer, so the
-  route cannot be used to discover which ids exist elsewhere.
-
-  Deliberately **not** gated behind the `hosts` section. Host reach is derived
-  from grants across all sections, so a user whose `alerts` grant is scoped to a
-  remote host already sees that host's alerts; demanding `hosts` as well would
-  show them an alert they could neither acknowledge nor trace. (The same
-  correction applies to `alert_delivery`, which had been over-tightened when it
-  was first scoped.) Over-tightening is not a safe default — it is a different
-  bug that looks like caution, and it now has its own test.
-
-- **`list_managed_projects` no longer names projects on out-of-scope hosts.** The
-  REST list has always filtered these out — a project names its target host, so
-  listing one discloses that host's workloads, and whether they are deployed, to
-  someone who cannot reach it. The MCP tool returned every project regardless.
-  It now applies the same filter, and answers with a shorter list rather than an
-  error, since an error would itself confirm such a project exists.
-
-- **`alert_delivery` now authorizes against the alert's host.** It took an alert
-  id and checked only the `alerts` section, so a token confined to one host could
-  walk the id space — alert ids are sequential integers — and read which webhooks
-  fired for another host and whether they succeeded. The REST feed never had this
-  problem: it only fetches deliveries for events a host-scoped query already
-  returned. A missing alert and an out-of-reach one now give the same answer, so
-  the tool cannot be used to discover which ids exist elsewhere.
-
-- **An absurd token lifetime is refused rather than silently wrapped.**
-  `time.Duration` is int64 nanoseconds, so days × 24h overflows above ~106,751
-  days: asking for 200,000 days produced an expiry in 1989 — a token dead the
-  moment it was issued — and larger values wrapped to arbitrary dates. Only
-  reachable once an admin removed the ceiling, and it failed safe, but it
-  answered the wrong question without saying so.
-
-- **`preview_deploy` now re-checks the project's host.** While remote-host
-  projects were refused outright, that refusal was the only thing gating this
-  tool; allowing them without a per-host check let a token scoped to one host
-  read back the services and images running on another. A preview being a *read*
-  does not exempt it — listing what runs on a host is exactly what the per-host
-  scope exists to withhold. It now authorizes against the project's actual host,
-  the same way `deploy_project` and `down_project` do. The regression test drives
-  the MCP **tool** rather than the helper it forgot to call, and asserts the
-  preview closure is never reached for an out-of-scope host.
+- **Remote deploys can opt into host paths.** Bind mounts pointing outside the
+  project folder are still refused by default, but a project's Settings now has
+  **Allow host paths** to mount them from the remote host's own filesystem
+  instead (contents are whatever exists there; nothing is copied, and the deploy
+  output names them every time). Enabling it needs **write access to the Hosts
+  section** — it is authority over the host, not the project — and is audited;
+  turning it back off needs only project access, so a restricted user can always
+  close a hole they cannot open.
+- **Deleting a project offers to remove its seeded volumes.** A remote deploy
+  leaves `dcseed-*` volumes on the target host, which used to accumulate
+  silently. The delete flow now lists them and asks, since they hold data;
+  declining keeps them for a later redeploy. Only volumes carrying that
+  project's seed label are touched.
 
 ### Added
+- **Kill a container, and build args in the image build dialog.** Both were
+  supported by the API and named in the documentation, and neither had a control —
+  so the docs described the backend rather than the app. Kill sends SIGKILL and
+  goes through the app's confirm dialog, never one click: it is for a container
+  that has stopped responding to Stop, and the difference between the two is
+  exactly what a confirmation is for. Build args take one `KEY=VALUE` per line,
+  with a note that they can end up in the image's history and are the wrong place
+  for secrets.
+- **Sign in with a passkey alone.** The login screen offers it next to the password
+  form: no username, no password — the browser finds a credential for this server
+  and that assertion is the whole login.
+
+  This is defensible only because such a passkey is *itself* two factors: possession
+  of the authenticator, and the PIN or fingerprint that unlocks it. That second half
+  is **user verification**, and it is demanded of the browser *and* checked on the
+  assertion that comes back — an authenticator may ignore the request, so the answer
+  is what decides. Without it the key proves possession only, and that is refused
+  with an explanation rather than a generic failure.
+
+  **Off until you ask for it**, in *Profile → Security*, and turning it on costs
+  your password. A passkey you paired as a *second* factor was accepted while the
+  password still stood in front of it; making it the whole login changes what the
+  account rests on, and that is not a change to make on your behalf because the app
+  was updated. It matters most for a passkey that **syncs** between your devices:
+  the PIN or fingerprint can then be satisfied wherever that credential reaches, so
+  the account effectively rests on the platform account it syncs through. Reasonable
+  for many people, wrong for others — hence a choice.
+
+  **The password still works.** This is an addition, not a replacement, and
+  deliberately so: this app gives admins no way to reset someone else's second
+  factor, so if a passkey were the only way in, a lost phone would be a lost
+  account. Signing in with a password and a second factor remains a valid route, and
+  is the recovery path.
+
+  Newly paired passkeys ask to be *discoverable* so the browser can offer them
+  before anyone has said who they are. Hardware with no room to store one keeps
+  working as a second factor and simply will not appear for passwordless sign-in.
+
+  Accounts backed by **LDAP cannot use it**: the directory is their authority — what
+  they may do, whether they are still enabled — and a passkey answers none of that.
+
+- **`dockercmd --reset-password <user>`** — a way back into an instance whose
+  password is lost. An admin can reset someone else's from the UI, but the *last*
+  admin locking themselves out had nobody to ask, and this app deliberately gives
+  nobody a way to reset another account's second factor. That state used to be
+  terminal.
+
+  It is local, against the data directory, and never over HTTP — the server does
+  not need to be stopped. The password is
+  read from the terminal rather than taken as an argument, because an argument
+  lands in shell history and in `/proc/<pid>/cmdline` where any local user can read
+  it. Every browser session for the account is ended — a reset that leaves a stolen
+  session alive is the opposite of what someone reaching for this needs — and the
+  reset is written to the audit log. API and MCP tokens are *not* revoked, and it
+  says so: they are not sessions, and somebody resetting after a compromise needs
+  to know to review them too.
+
+  **The second factor is left alone.** Whoever holds the files can bypass it
+  anyway: the token signing secret is a row in the same database, so anyone who can
+  run this command could already mint an admin session directly. That is also why
+  offering it costs nothing — the capability is the filesystem, not the command.
+  But it should not do it for them, so "nobody resets another account's second
+  factor" stays true.
+
+- **Passkeys.** *Profile → Security → Add a passkey* pairs whatever the device
+  already has — fingerprint, face, PIN, or a plugged-in security key — as a second
+  factor, and sign-in then offers it instead of typing a code.
+
+  Two properties make it worth having over TOTP. The private key never leaves the
+  device's secure hardware, so there is nothing on our side to steal and nothing on
+  yours to read out to a caller. And the signature covers the **origin** the browser
+  saw, so a page that looks exactly like this one gets an assertion it cannot use —
+  the part of phishing resistance a server can actually verify.
+
+  It is an option, never a requirement: a passkey needs a secure context (HTTPS or
+  `localhost`), so on a plain-HTTP deployment the button explains its absence rather
+  than failing when pressed. Accounts can hold both kinds at once; sign-in offers
+  whichever exist. A passkey counts as a second factor everywhere the app already
+  counted them — including the rule that the last one cannot be removed.
+
+  A signature counter that goes backwards is refused and audited: it means the key
+  answered from two places, and the honest device and the copy are indistinguishable
+  from here.
+
+  Passkeys are offered only where a browser will actually accept one: HTTPS, or
+  `localhost`. An **IP address is not a relying party** — no browser allows a
+  passkey at `https://192.0.2.10/` or `http://127.0.0.1:8470/` — so the option says
+  why it is missing there instead of failing when pressed. Reach the server by a
+  hostname to use them.
+
+  `mfaEnabled` joins `totpEnabled` in the profile and the admin user list, because
+  the two stopped being the same question: an account protected by a passkey alone
+  reported as having no second factor.
+
+  **Pairing is authorised by the write that creates the factor, not by a check
+  before it.** Adding a factor to an account that already has one needs the
+  password; adding the first needs nothing, because there is nothing yet to protect.
+  Those are decided minutes apart, so a half-finished enrolment carries the
+  authority it was begun under, and an unauthorised one is admitted by the insert
+  itself, conditional on the account still having no factor. Anything else leaves a
+  gap the client controls — the WebAuthn library reads the request body, and a
+  request whose body arrives slowly holds a handler open across it.
+
+  In practice: start pairing an authenticator, pair a passkey in another tab, and
+  the first flow asks you to begin again with your password rather than reporting a
+  wrong code.
+
+- **An account can hold several authenticators.** *Profile → Security* lists every
+  paired one by a name you choose, with when it was added and last used, and lets
+  you add or remove them. Pairing used to *replace*: the phone in your hand stopped
+  working the moment you set up a new one, which made "add my tablet too" impossible
+  and losing a device a support call.
+
+  **The last one cannot be removed** — 2FA is mandatory here and there is no admin
+  reset, so an account with no authenticator is one that cannot sign in. Pair the
+  replacement first.
+
+  Removing asks for your password, exactly as pairing does: both change what it
+  takes to sign in as you, and a stolen session must not be able to strip an
+  account's factors one at a time.
+
+  The replay guard is now **per authenticator**. It used to be one watermark for the
+  account, which with two paired devices would have let a code from one refuse the
+  same time step on the other.
+
+  An account holds at most ten, and pairing the same secret twice is refused by the
+  database itself: two rows sharing a secret would give that authenticator two
+  independent replay watermarks, so each of its codes could be spent twice.
+
+  Note what this does *not* do: pairing no longer implicitly revokes anything. If
+  you are replacing a lost phone, remove its entry as well — adding the new one is
+  no longer enough.
+
+  Existing installations migrate on start, in one transaction: the single stored
+  authenticator becomes the first entry in the list, keeping the same secret and
+  the same replay watermark, so nobody has to re-pair. Every legacy secret is
+  cleared from the old column in the process — a live secret that nothing reads and
+  nobody can remove is a credential nobody knows exists.
+
+- **Removing a factor, pairing one, and spending a code are each atomic.** Found by
+  an independent adversarial review of the change above, which reproduced all three:
+  sixteen parallel confirmations of one enrolment produced **five** authenticators
+  sharing a single secret (and therefore five replay watermarks); two concurrent
+  removals both passed the "this is your last one" check and left the account with
+  **none** — which is not a lockout but 2FA silently switched off, since it is
+  derived from whether any factor exists; and one TOTP code minted **two or three**
+  sessions when presented simultaneously, because the watermark write reported
+  "nothing to update" as success. The count now lives inside the `DELETE`, pairing
+  claims its enrolment with a compare-and-swap inside a transaction, and a burn that
+  moves no row is an error. Each has a concurrency test that fails without the fix.
+
+  Step-up password checks are bucketed **per session**. Per address (the original)
+  meant anyone holding a session could stop everyone behind that address from
+  signing in for fifteen minutes. Per account — the first attempt at fixing that,
+  and caught by a second review round — merely aimed the same weapon at the victim:
+  a stolen session could burn the budget every fifteen minutes, and the owner's
+  *correct* password would then be refused for exactly the two things they need to
+  recover (removing the attacker's authenticator, pairing a replacement) while
+  logins kept working, so nothing looked broken. Per session, the stolen session
+  spends its own budget and minting another needs the password.
+
+  A spent budget now answers **429**, not "password required" — telling someone
+  their own password is wrong while they are recovering an account is both false
+  and cruel.
+
+  A session token carrying no `jti` is refused outright. `jti` is optional in a
+  JWT, so a signed token without one parsed cleanly and arrived with an empty id —
+  and both the revocation row and the per-session rate-limit bucket key on it, the
+  second of which would have collapsed back to per-account. Minting such a token
+  needs the signing key, so this makes a property that held by accident hold by
+  construction.
+
+- **See what is signed in as you, and end it.** *Profile → Security* now lists every
+  live session for your account — the device, the address, when it was last used and
+  when it signed in, with the one you are using marked — and lets you sign out any of
+  them, or all the others at once. Each row names the client (*Firefox on Linux*,
+  *Safari on iPhone*, *curl*) with an icon for the kind of device, because the
+  question this screen answers is "is that me?" and a raw user-agent string does not
+  answer it. An agent we cannot place is shown verbatim rather than guessed at. Until now a session could only be ended by waiting for it to expire or
+  by changing your password, and there was nowhere to look to find out one existed.
+
+  Own sessions only, deliberately: an admin view over everyone's would be a record
+  of when each person works and from where, which is surveillance rather than
+  administration.
+
+  This works because a session is now a **row** as well as a token: the token
+  carries an id, the row is what the middleware checks, and revoking deletes it.
+  Signing out deletes it too — previously logout only cleared the cookie, so the
+  token itself kept working until it expired.
+
+  **Upgrading signs everyone out once.** Tokens issued before this release have no
+  id and therefore no row, so they are refused; one sign-in fixes it per person.
+
 - **The browser tab now names the page you are on** — `Images · Docker Commander`,
   and a container's own name on its detail page. Every screen was titled just
   "Docker Commander", which is no label at all once a few tabs are open: the app
@@ -867,140 +690,6 @@ All notable changes to Docker Commander are documented here. The format follows
   poll: they had separate timers at first, so a row could appear in the table
   seconds before the toast announcing it.
 
-### Changed
-- **Threshold alerts are conditions with a lifetime, not lines reprinted every
-  minute.** Testing the engine against a real stack produced an alert log that was
-  the same seven lines repeated every 60 seconds, and three separate problems were
-  behind it. Every `resource` rule was evaluated independently, so a container over
-  both a *warning >5%* and a *critical >10%* memory rule emitted **two** alerts for
-  one fact. Nothing tracked whether a condition was already known, so the cooldown
-  expiring re-announced it as if it were new. And nothing was ever emitted when a
-  problem went away, so the log could not tell you whether it was still happening.
-
-  A threshold alert is now one **condition per container + metric**, regardless of
-  how many rules notice it, and only the most severe rule speaks for it. You get an
-  event when it starts, when it **escalates** or **eases** to a different severity,
-  when the re-notify interval elapses (`repeat`), and when it **resolves** —
-  carrying how long it lasted. Escalation updates the existing condition rather
-  than opening a second one, so the incident clock keeps running. Silence now means
-  "unchanged", which is the whole point.
-
-  Conditions are stored, so they survive a restart: without that, nothing would
-  ever resolve across one. `state`, `log` and `restart` rules stay edge-triggered
-  and keep the plain cooldown — a container that died has no later moment at which
-  it stops having died.
-
-- **CPU thresholds can be a percentage of the whole machine.** Docker's CPU figure
-  is per-core — 100% is one core — so a container busy on four cores reads ~400%
-  and a `> 80%` rule fires permanently on any multi-core host. Rules gained a
-  **CPU % (of all cores)** metric that normalises by the core count, the editor now
-  says which basis each option uses, and existing rules keep the per-core meaning
-  they were written with.
-
-- **Alert messages say what the number measures.** `MEM 61.9% > 5%` never revealed
-  whether that was of host RAM or of the container's limit (it is the limit). It
-  now reads `MEM 3.0 GB / 5.0 GB (61.9% of limit) > 5%`, and CPU messages name
-  their basis and the core count.
-
-### Security
-- **A failed webhook could write its own URL — and any token in it — into the
-  alert delivery record.** The record deliberately stores a webhook's *name and
-  host* rather than its URL, because webhook URLs routinely carry a secret in the
-  path or query and the record is readable by anyone holding the `alerts` section.
-  Transport failures slipped past that: `net/http` wraps them in a `*url.Error`
-  whose message embeds the full request URL, so a refused connection stored the
-  secret verbatim. The cause is now recorded without the URL, which keeps the
-  diagnostic value ("connection refused") and drops the credential. Found in review
-  before the feature was ever released.
-
-- **Removing an MCP OAuth client now revokes its access immediately.** Deleting a
-  client purged its authorization codes and refresh tokens, which stopped it
-  obtaining a *new* access token — but an access token is a **signed** credential,
-  so nothing about deleting a database row reached the copy a connected tool
-  already held. It kept working until it expired: up to 15 minutes of access after
-  an admin pressed Revoke. Access tokens are now bound to the client that was
-  issued them (a `dc_cid` claim) and every call requires that client to still be
-  registered. The window was always bounded, so this is hardening rather than a
-  hole — but "revoked" should mean now, and the admin dialog said so while the
-  behaviour didn't. Tokens minted before this carry no binding and simply expire
-  within one lifetime; rejecting them would have forced every connector to
-  re-authorize on upgrade to buy at most fifteen minutes.
-
-- **The stack editor's backup could be redirected through a symlink.** Saving a
-  CLI-discovered stack's compose file keeps the previous version beside it as
-  `<name>.dc-prev`, and that backup was written with a plain write — which follows
-  a symlink already sitting at the destination. Anyone able to create files in the
-  stack's directory (a deploy or CI account, *not* necessarily one with Docker
-  access) could pre-place `compose.yml.dc-prev` as a link to, say, `/etc/cron.d/`
-  and have Docker Commander — commonly root — write through it, with content they
-  also controlled, since the backup is the previous compose file. Backups are now
-  written with a temporary file plus a rename, which replaces a symlink instead of
-  following it; the SSH path does the same with `mktemp`, where `cat >` and `cp`
-  had the same weakness. Found in a review of the release, before any tagged build
-  shipped it.
-- **Redeploying a stack skipped the containment check that saving enforced.** A
-  compose path outside the stack's working directory was refused for writes but
-  still handed to `docker compose up -d`, which would deploy whatever definition
-  sat there. Both operations now answer the same question in one place, which also
-  means the UI stops offering an editor whose Save could only ever fail. Exploiting
-  it required direct Docker API access (to set the labels), which is already
-  root-equivalent — so this hardens a boundary rather than closing a path into the
-  app.
-
-### Fixed
-- **Opening the Alerts page made the app stop responding to navigation.** The URL
-  changed and the screen did not. Moving *Ack all* into the page header published
-  the handler through an effect that depended on the handler itself — a new closure
-  every render, so the effect re-ran every render, set state in the parent, and
-  re-rendered the page. An infinite render loop, which React does not report as an
-  error: it simply never gets far enough to paint. Published through a ref now, so
-  the only dependency is the stable setter.
-
-- **A role scoped to only-invalid hosts became unscoped instead of being refused.**
-  Sending `hostIds: [0]` was sanitised down to an empty list, which means *every
-  host* — so a request to narrow a role quietly produced an unrestricted one, with
-  an audit line describing a scope that wasn't there. An explicit scope that
-  survives no validation is now a 400, matching the rule already applied to MCP
-  token section scopes.
-- **A non-positive `?host=` is the local daemon everywhere.** The Docker layer has
-  always treated `hostID <= 0` that way, but the new host-scope check took it
-  literally: `?host=-1` was served by the local daemon while being authorised and
-  audited as host −1, so a scoped user was refused something they were allowed.
-  Normalised at all three entry points — REST, the WebSocket subscribe frame and
-  MCP tool arguments.
-- **Deleting the LDAP fallback role could slip through** when the LDAP settings
-  could not be read (corrupt JSON, transient DB error): the guard was skipped
-  rather than failing closed, which is the one situation it exists for.
-- **The profile page span forever if loading permissions failed** — "still loading"
-  and "failed" were the same state. It now says what went wrong and offers a retry.
-
-### Fixed
-- **Redeploying a stack rebuilds its image too.** The same staleness bug as the
-  project deploy below, on the other code path: `StackRedeploy` ran a plain
-  `docker compose up -d`, so a CLI-discovered stack declaring `build:` kept running
-  the image from its first deploy however much its Dockerfile or context changed on
-  the host. Found while auditing the docs against the merged code, right after the
-  project half was fixed — the two deploy paths are separate code and only one of
-  them had been corrected.
-
-- **Deploying a project no longer runs a stale image.** A project with a `build:`
-  section was built on its first deploy and then never again: `docker compose up -d`
-  builds a service only when its image is **missing**, so every later deploy reused
-  the original image no matter what changed in the Dockerfile or its build context.
-  Edit a Dockerfile in the project editor, hit Deploy, and the CLI reported
-  `Container Running` — a wrong answer delivered as a success. Deploy now passes
-  `--build`, which is a no-op for services that only pull an image, so an image-only
-  project pays nothing. `POST` a deploy with `{"build": false}` to opt out. The MCP
-  `deploy` tool matches, so the same project behaves the same way from either.
-
-  While confirming this, one roadmap item turned out to rest on a wrong premise:
-  **uploading `build:` contexts to a remote host already worked.** Docker's build
-  API takes the context as a tar from the client, so a remote daemon receives the
-  local folder and builds the image there — unlike a bind mount, which nothing
-  uploads and which the app therefore seeds into a volume. Both are now covered
-  together by an end-to-end test against a second daemon.
-
-### Added
 - **Edit and redeploy a stack that wasn't created here.** Stacks started with the
   host's `docker compose` CLI have always been visible and their compose file
   readable; now it can be changed. The viewer became an editor with **Save** (write
@@ -1158,7 +847,379 @@ All notable changes to Docker Commander are documented here. The format follows
   All of it is self-service and reads only your own account; role management stays
   admin-only.
 
+### Changed
+- **Threshold alerts are conditions with a lifetime, not lines reprinted every
+  minute.** Testing the engine against a real stack produced an alert log that was
+  the same seven lines repeated every 60 seconds, and three separate problems were
+  behind it. Every `resource` rule was evaluated independently, so a container over
+  both a *warning >5%* and a *critical >10%* memory rule emitted **two** alerts for
+  one fact. Nothing tracked whether a condition was already known, so the cooldown
+  expiring re-announced it as if it were new. And nothing was ever emitted when a
+  problem went away, so the log could not tell you whether it was still happening.
+
+  A threshold alert is now one **condition per container + metric**, regardless of
+  how many rules notice it, and only the most severe rule speaks for it. You get an
+  event when it starts, when it **escalates** or **eases** to a different severity,
+  when the re-notify interval elapses (`repeat`), and when it **resolves** —
+  carrying how long it lasted. Escalation updates the existing condition rather
+  than opening a second one, so the incident clock keeps running. Silence now means
+  "unchanged", which is the whole point.
+
+  Conditions are stored, so they survive a restart: without that, nothing would
+  ever resolve across one. `state`, `log` and `restart` rules stay edge-triggered
+  and keep the plain cooldown — a container that died has no later moment at which
+  it stops having died.
+
+- **CPU thresholds can be a percentage of the whole machine.** Docker's CPU figure
+  is per-core — 100% is one core — so a container busy on four cores reads ~400%
+  and a `> 80%` rule fires permanently on any multi-core host. Rules gained a
+  **CPU % (of all cores)** metric that normalises by the core count, the editor now
+  says which basis each option uses, and existing rules keep the per-core meaning
+  they were written with.
+
+- **Alert messages say what the number measures.** `MEM 61.9% > 5%` never revealed
+  whether that was of host RAM or of the container's limit (it is the limit). It
+  now reads `MEM 3.0 GB / 5.0 GB (61.9% of limit) > 5%`, and CPU messages name
+  their basis and the core count.
+
+- **Settings and MCP Admin are now tabbed**, using the same shared tab bar as
+  Alerts, Templates and the container detail view: Settings splits into
+  **Features / Security / LDAP / Email**, and MCP Admin into **API tokens / OAuth
+  clients**. The SMTP form moved from Alerts → Settings → Email (see Security
+  above); Alerts keeps Feed / Rules / Webhooks.
+- **Changing a deployed project's target host now warns first.** It does not tear
+  the project down on the old host, so you would end up with two live copies
+  while the page showed only the new one. The host picker says so inline and asks
+  for confirmation before saving.
+
 ### Fixed
+- **The manual's screenshots showed an idle machine, and one of them was a
+  duplicate.** They were re-shot against a daemon under real load, so the pictures
+  now show what the pages are for: a log stream with three colour-coded sources, an
+  events feed with something in it, a network graph with seven containers on it,
+  and CPU history with actual peaks. Three faults in the generator came out in the
+  process. `network_detail.png` and `network_detail_graph.png` had been
+  byte-identical since the file was written — the graph toggle is an icon-only
+  button and the selector matched on text, so the miss went unnoticed and the shot
+  was taken in the unchanged state; a `prep` that cannot find its control now fails
+  the shot instead of photographing the page anyway. Alert toasts covered whatever
+  was underneath on any instance busy enough to be worth photographing, so they are
+  hidden during a run. And the shots that need time — the events feed, the
+  dashboard's network *rate* — now wait for it rather than capturing "Collecting…".
+- **A busy container broke its own history chart.** CPU is reported the way
+  `docker stats` reports it — 100% is *one core* — so a container working across
+  several cores legitimately reads 300%. The chart's axis was pinned to `[0, 100]`,
+  which recharts treats as a hint rather than a limit: once the data overflowed it
+  rendered a five-digit top label (52348%) above gridlines spaced by 80, on the
+  page that exists to show exactly that workload. The axis now rounds up to whole
+  cores and never drops below 100, so an idle container still reads against a
+  familiar 0–100 scale. Invisible until now because the demo instance was idle;
+  the alert engine had the convention right all along ("CPU 272.0% of one core,
+  16 cores available").
+- **Nothing checked that the committed `web/dist` still matched `web/src`.** CI
+  runs `make ui` and then tests the bundle it just built, so a stale committed one
+  passes every check green. Binaries cut from a tag rebuild it as well — but
+  `go install` embeds whatever is in the repository, so that channel, and only that
+  channel, could ship a UI built from older source. CI now compares the two and
+  fails with the command to fix it. Verified by changing a component without
+  rebuilding: the step catches it.
+- **`make ui` rewrote `package-lock.json` behind your back.** Its install step was
+  `npm install`, which resolves afresh rather than installing the locked tree, and
+  an npm older than the one that wrote the lockfile drops fields it does not know —
+  30 lines of `libc` platform hints, most recently — leaving an unrelated edit
+  staged in the next commit. It now runs `npm ci`, which is also what makes the
+  bundle comparison above reproducible.
+- **The guard on the README's test counts guarded one number out of three, and
+  would have missed the drift it was written for.** It checked only the Go figure,
+  so the README could claim 73 frontend tests and 7 adversarial cases against real
+  counts of 147 and 115 with the suite green — both verified by falsifying them. Its
+  tolerance was a quarter either way, which at 700 real tests accepts anything from
+  525: the "~533 for five commits" drift cited in its own comment as the thing it
+  would catch would have passed. It now checks all three figures at a tenth either
+  way. Doing so surfaced a fourth error — the 115 pentest cases are a *subset* of
+  the Go total, not a tier alongside it, so the README's phrasing implied 830 tests
+  where there are 715. The unit figure is now the disjoint 600.
+- **The profile page had no manual page, and the limits were nowhere.** The page
+  where you manage your own second factors, sessions and sign-in options was
+  documented as a section inside *Users & roles* — findable only if you already
+  knew to look there — and its **Access** tab, which answers "why can I reach
+  this?", was described nowhere at all. It is now [its own
+  page](docs/profile.md), linked from the index.
+
+  Alongside it, a [Limits](docs/limits.md) page: every cap you can actually hit,
+  with the reason where the number is not obvious. Session lifetime, the sign-in
+  lockout (5 per 15 minutes — the number the docs had never stated), upload and
+  archive caps, project file counts, scan timeouts. Hitting a limit and finding no
+  page that names it is a bad way to learn the app has one.
+- **The audit log now documents itself.** `docs/audit.md` named seven actions out
+  of 143, as prose ("e.g. `container.stop`, `image.pull`…"), which is a poor shape
+  for the one page whose readers arrive asking *what can I look for?*. The full
+  set is now listed by area — and generated from the source, with a test that
+  fails when an audited action has no entry, when an entry names an action the
+  code never writes, and when a new verb appears in one of the runtime-assembled
+  families. The same treatment the CLI flags have had.
+- **Documentation that described something other than the app.** An audit compared
+  every claim in the manual against the code, and in the other direction too —
+  what the app does that no page mentions. Corrected: the container network panel
+  shows an interface *count*, not a per-interface breakdown (the code says why);
+  Probe fingerprints TCP only and leaves UDP with its passive guess, and the list
+  of protocols it recognises was a third of the real one; the container file
+  browser uses `docker cp` for transfers but a direct `ls`/`mkdir`/`rm` for the
+  rest, so only the Console needs a shell; force-removing a volume is not a way
+  past "volume is in use"; the registry list carries no indication of whether a
+  secret is stored, and a stored credential cannot be edited in place; the events
+  filter is one box matching four fields, not three filters, and the feed is
+  live-only; `-session-ttl` is the one option with no environment variable. The
+  test counts in the README were five commits stale.
+- **The events feed said "Live" over a dead connection.** Its WebSocket had no
+  reconnect at all — unlike the stats/logs socket next door — so a server restart,
+  a proxy idle timeout or a laptop waking from sleep left the page showing a
+  pulsing green badge above a list that would never move again. That is the worst
+  shape for the bug: an empty feed reads as "nothing is happening", so nobody looks
+  closer. It now reconnects, and the badge reports the *connection* rather than
+  just the pause toggle — it says **Reconnecting…** when it is not live.
+- **The admin user list called a passkey-protected account "off".** The 2FA column
+  answers "is this account protected?", and an admin auditing their users acts on
+  it — but it read *"does this account have an authenticator app?"*, which stopped
+  being the same question the moment passkeys existed. The server had been sending
+  the right field since passkeys landed; the table was not reading it. It now shows
+  `enabled` for an authenticator app, `passkey` for an account protected by one,
+  and `off` only when there is genuinely no second factor.
+
+- **Error messages no longer start with `auth:`.** Go puts a package prefix on every
+  error, which is right for a log line and wrong on a screen — it reached one as
+  `auth: passkeys need HTTPS (or localhost)` under a greyed-out button. Stripped on
+  the way out, by an allowlist of this app's own prefixes rather than "everything
+  before the first colon", because messages legitimately contain colons.
+
+- **A request body can no longer be dribbled out to hold a handler open.** The
+  server set `ReadHeaderTimeout` but no `ReadTimeout`, so once the headers arrived a
+  client could take as long as it liked over the body — and Go runs the handler from
+  the moment the headers land, not the moment the body finishes. That is a resource
+  anyone could reserve for free, and it was what let a stalled WebAuthn registration
+  straddle a change in the account's protection.
+
+  Requests now have a 60-second read timeout. The routes that legitimately take
+  minutes — loading or importing an image, sending a build context, uploading and
+  extracting a file into a container or a volume, importing a project — swap it for
+  a *rolling* one, extended each time data arrives, so the limit is "this upload
+  went quiet", not "this upload took a while". A multi-gigabyte upload over a slow
+  link is unaffected; a stalled one is dropped — the two file-upload routes answer
+  it with a 408 that says so, the rest report it the way they report any other
+  failed upload. The profiling listener gets the same treatment.
+
+  WebSocket streams are not on this clock: `net/http` clears deadlines when a
+  handler hijacks the connection. One side effect worth knowing: an idle
+  keep-alive connection now closes after 60 seconds where it previously stayed
+  open, because Go falls back to the read timeout when no idle timeout is set.
+
+- **Leaving a page mid-stream could drop the whole WebSocket.** Stats and log frames
+  were written under the *subscription's* context, and the websocket library
+  registers a `context.AfterFunc` on the context given to `Write` that closes the
+  entire connection. So unsubscribing while a frame was in flight — clicking away
+  from a container whose stats are streaming — took every other subscription on that
+  socket with it, and the client saw an abrupt disconnect with no error.
+
+  Writes now run under the connection's own context; only the stream itself is
+  cancelled by an unsubscribe.
+
+  A cancelled stream's last few frames are dropped rather than delivered.
+  Subscription ids are deterministic, so leaving a container page and coming
+  straight back would otherwise hand the old stream's tail to the new subscription
+  — a duplicated log line, or a stats sample from before the reset.
+
+  This is what had been failing intermittently in CI as
+  `TestHubResubscribeDoesNotCancelTheNewSubscription` ("failed to read frame header:
+  EOF"): a loaded runner widened the window enough to hit it, and a quiet laptop
+  never did in two thousand runs. The new test reproduces it deliberately by
+  unsubscribing from a stream that never stops emitting.
+
+- **A review pass over the last few merges.** None of these were reachable as an
+  attack, but each was a statement the code no longer backed up:
+  - The MFA challenge is now required to carry an expiry. `exp` is optional in a
+    JWT, so a challenge token without one parsed cleanly and was then dereferenced
+    for the one-use window — a nil pointer on the pre-2FA endpoint. It needs the
+    signing secret to reach, which is why this is a guard rather than a hole.
+  - **A successful step-up clears the rate-limit budget**, as a successful login
+    already did. Without it, someone else's wrong guesses from the same address
+    locked the real account holder out of *their own* re-pairing for the rest of
+    the window, even with the right password.
+  - Re-pairing with **no request body** is a failed step-up (403), not a malformed
+    request (400) — it is the shape an older client sends, and the answer should
+    describe what actually happened. A genuinely broken body is still a 400.
+  - **The backup size line counts the database.** It is usually the largest thing
+    in the archive, and leaving it out made "1.2 MiB" mean *everything except the
+    part you care about most*. The units now say `MiB`/`GiB` too, matching the
+    rest of the project instead of dividing by 1024 and printing `MB`.
+  - Saving in **Settings no longer shows a failure in green.** "Save failed" was
+    rendered in the success colour, which said the setting was live when it wasn't;
+    it now carries the reason.
+  - A **2FA code rejected by the network** no longer reads as a rejected code. A
+    dropped request said "That code was not accepted", sending people hunting
+    through an authenticator for a problem in the wire.
+  - The session list clears a stale error when a reload succeeds, and offers
+    **Try again** when the first load fails — previously that was a dead end.
+  - Comment corrections where the prose had drifted from the code: a doc comment
+    that had slid onto the wrong function, a breadcrumb naming a test that does not
+    exist, a rationale about "recycled user ids" (ids are `AUTOINCREMENT` and never
+    reused), a restore note describing symlink *target* checking that is now an
+    outright refusal, and an SMTP test comment that said the opposite of what the
+    test pins.
+
+- **Re-subscribing to a live stream no longer cancels the wrong one.** The
+  frontend reuses deterministic subscription ids, so leaving a container page and
+  coming straight back replaced a subscription while the old stream was still
+  winding down — and the old one's cleanup then removed the *new* entry. The new
+  stream kept running with nothing able to stop it short of closing the socket,
+  and the client was told its live subscription had ended. Subscriptions are
+  numbered now, so a stream can tell whether the entry under its id is still its
+  own.
+
+- **A log stream no longer ends when the first of its two readers does.** Docker
+  multiplexes stdout and stderr; returning as soon as either finished dropped
+  whatever the other was still emitting, which on a plain log fetch typically
+  meant losing the tail of stderr. Scanner errors were discarded too, so a line
+  over the 1 MiB buffer looked like a clean end — the WebSocket client saw a normal
+  close and a log-following alert rule stopped silently until the next reconcile,
+  missing every match in between.
+
+- **Three slow leaks.** A log follower that ended on its own forgot its cancel
+  function instead of calling it, leaving a context attached to the monitor's root
+  for the life of the process; restart timestamps were pruned only when a restart
+  rule happened to read them, so a host with churn accumulated them for ever with
+  no such rule configured; the in-memory metric history never forgot containers
+  that stopped reporting, keeping their full retention window indefinitely.
+
+- **A non-JSON error response is reported as its status.** The API client parsed
+  the body before checking whether the request succeeded, so an error page from
+  something other than this app — a reverse proxy's 502 — threw a SyntaxError
+  instead of the error type every caller expects. The UI showed
+  `Unexpected token '<'` rather than the status, and code branching on the error
+  type took the wrong path.
+
+- **An unreachable host no longer reports its alerts as resolved.** A failed or
+  timed-out container listing left that host out of the stats snapshot, and the
+  resolve sweep read the absence as recovery — so every live condition on it got a
+  "back to normal" event, and then started over as a fresh incident, with the
+  duration reset, when the host returned. On a flaky link that produced a
+  resolve/fire pair every poll; disabling a host did the same. Silence is not
+  recovery: only a host that was actually observed can end a condition.
+
+- **A host that went away stayed "unreachable" until the app was restarted.** The
+  Docker client is cached per host, and an SSH one captures its SSH connection in
+  the transport's dialer — so once that connection died (the machine rebooted, the
+  link dropped) every later call failed against the same dead object. Nothing
+  evicted it: the cache was only cleared when a host was edited, deleted or
+  re-trusted. The host alerted as offline and then never recovered, which is the
+  behaviour that teaches people to ignore host alerts. A failed health probe now
+  drops the cached client, so the next 30-second sweep dials afresh.
+
+- **One unreachable host no longer freezes the others.** Building a client held a
+  manager-wide lock, and for SSH hosts that includes a synchronous dial whose
+  handshake isn't bounded by the request context. A single sleeping laptop could
+  stall every Docker call in the app — the local host included — in ten-second
+  bursts. The dial now happens outside the lock, with concurrent first-time callers
+  still ending up on one shared connection.
+
+- **Acknowledging an alert is now scoped to that alert's host**, over both the
+  REST route and MCP. The feed and *ack all* were already scoped; acknowledging a
+  single id was not, and alert ids are sequential integers — so a role confined
+  to staging could clear production's alerts. Quietly, too: an acknowledged alert
+  stops being surfaced, which makes it a suppression primitive rather than a
+  nuisance. A missing alert and an out-of-reach one give the same answer, so the
+  route cannot be used to discover which ids exist elsewhere.
+
+  Deliberately **not** gated behind the `hosts` section. Host reach is derived
+  from grants across all sections, so a user whose `alerts` grant is scoped to a
+  remote host already sees that host's alerts; demanding `hosts` as well would
+  show them an alert they could neither acknowledge nor trace. (The same
+  correction applies to `alert_delivery`, which had been over-tightened when it
+  was first scoped.) Over-tightening is not a safe default — it is a different
+  bug that looks like caution, and it now has its own test.
+
+- **`list_managed_projects` no longer names projects on out-of-scope hosts.** The
+  REST list has always filtered these out — a project names its target host, so
+  listing one discloses that host's workloads, and whether they are deployed, to
+  someone who cannot reach it. The MCP tool returned every project regardless.
+  It now applies the same filter, and answers with a shorter list rather than an
+  error, since an error would itself confirm such a project exists.
+
+- **`alert_delivery` now authorizes against the alert's host.** It took an alert
+  id and checked only the `alerts` section, so a token confined to one host could
+  walk the id space — alert ids are sequential integers — and read which webhooks
+  fired for another host and whether they succeeded. The REST feed never had this
+  problem: it only fetches deliveries for events a host-scoped query already
+  returned. A missing alert and an out-of-reach one now give the same answer, so
+  the tool cannot be used to discover which ids exist elsewhere.
+
+- **An absurd token lifetime is refused rather than silently wrapped.**
+  `time.Duration` is int64 nanoseconds, so days × 24h overflows above ~106,751
+  days: asking for 200,000 days produced an expiry in 1989 — a token dead the
+  moment it was issued — and larger values wrapped to arbitrary dates. Only
+  reachable once an admin removed the ceiling, and it failed safe, but it
+  answered the wrong question without saying so.
+
+- **`preview_deploy` now re-checks the project's host.** While remote-host
+  projects were refused outright, that refusal was the only thing gating this
+  tool; allowing them without a per-host check let a token scoped to one host
+  read back the services and images running on another. A preview being a *read*
+  does not exempt it — listing what runs on a host is exactly what the per-host
+  scope exists to withhold. It now authorizes against the project's actual host,
+  the same way `deploy_project` and `down_project` do. The regression test drives
+  the MCP **tool** rather than the helper it forgot to call, and asserts the
+  preview closure is never reached for an out-of-scope host.
+
+- **Opening the Alerts page made the app stop responding to navigation.** The URL
+  changed and the screen did not. Moving *Ack all* into the page header published
+  the handler through an effect that depended on the handler itself — a new closure
+  every render, so the effect re-ran every render, set state in the parent, and
+  re-rendered the page. An infinite render loop, which React does not report as an
+  error: it simply never gets far enough to paint. Published through a ref now, so
+  the only dependency is the stable setter.
+
+- **A role scoped to only-invalid hosts became unscoped instead of being refused.**
+  Sending `hostIds: [0]` was sanitised down to an empty list, which means *every
+  host* — so a request to narrow a role quietly produced an unrestricted one, with
+  an audit line describing a scope that wasn't there. An explicit scope that
+  survives no validation is now a 400, matching the rule already applied to MCP
+  token section scopes.
+- **A non-positive `?host=` is the local daemon everywhere.** The Docker layer has
+  always treated `hostID <= 0` that way, but the new host-scope check took it
+  literally: `?host=-1` was served by the local daemon while being authorised and
+  audited as host −1, so a scoped user was refused something they were allowed.
+  Normalised at all three entry points — REST, the WebSocket subscribe frame and
+  MCP tool arguments.
+- **Deleting the LDAP fallback role could slip through** when the LDAP settings
+  could not be read (corrupt JSON, transient DB error): the guard was skipped
+  rather than failing closed, which is the one situation it exists for.
+- **The profile page span forever if loading permissions failed** — "still loading"
+  and "failed" were the same state. It now says what went wrong and offers a retry.
+
+- **Redeploying a stack rebuilds its image too.** The same staleness bug as the
+  project deploy below, on the other code path: `StackRedeploy` ran a plain
+  `docker compose up -d`, so a CLI-discovered stack declaring `build:` kept running
+  the image from its first deploy however much its Dockerfile or context changed on
+  the host. Found while auditing the docs against the merged code, right after the
+  project half was fixed — the two deploy paths are separate code and only one of
+  them had been corrected.
+
+- **Deploying a project no longer runs a stale image.** A project with a `build:`
+  section was built on its first deploy and then never again: `docker compose up -d`
+  builds a service only when its image is **missing**, so every later deploy reused
+  the original image no matter what changed in the Dockerfile or its build context.
+  Edit a Dockerfile in the project editor, hit Deploy, and the CLI reported
+  `Container Running` — a wrong answer delivered as a success. Deploy now passes
+  `--build`, which is a no-op for services that only pull an image, so an image-only
+  project pays nothing. `POST` a deploy with `{"build": false}` to opt out. The MCP
+  `deploy` tool matches, so the same project behaves the same way from either.
+
+  While confirming this, one roadmap item turned out to rest on a wrong premise:
+  **uploading `build:` contexts to a remote host already worked.** Docker's build
+  API takes the context as a tar from the client, so a remote daemon receives the
+  local folder and builds the image there — unlike a bind mount, which nothing
+  uploads and which the app therefore seeds into a volume. Both are now covered
+  together by an end-to-end test against a second daemon.
+
 - **Starting a 2FA re-pair no longer disables the authenticator you already have.**
   Beginning enrolment overwrote the live secret and switched 2FA off, so abandoning
   the flow silently left the account without 2FA *and* invalidated the authenticator
@@ -1219,78 +1280,6 @@ All notable changes to Docker Commander are documented here. The format follows
   read-only is labelled *view only* even without the read-only flag.
 
   _This is phase 1 of [design/rbac-roles-and-host-scoping.md](design/rbac-roles-and-host-scoping.md); per-host scoping is phase 2._
-
-### Security
-- **The SMTP config is now admin-only, and lives under Settings → Email.**
-  It is a *single instance-wide* outbound mail relay with a stored credential, but
-  it was gated by the **alerts** section — so any non-admin with write access to
-  alerts could repoint the whole installation's mail at a server they control and
-  receive its notifications. (The password was never returned by the API, so this
-  was about redirecting delivery, not reading the secret.) `/api/smtp` and
-  `/api/smtp/test` now require admin.
-
-  **This narrows an existing permission:** someone who managed alerts *including*
-  their e-mail delivery will now need an admin to configure the relay. The rest of
-  the alerts surface — feed, rules, webhooks — is unchanged for them, and alert
-  rules can still opt into e-mail.
-- **Raw `inspect` no longer readable without the owning section.**
-  `GET /api/inspect/{kind}` returns the **raw** Docker inspect payload, which for a
-  container includes `Config.Env` — database passwords, API keys. It was ungated,
-  so **any signed-in account** (no sections granted at all, even read-only) could
-  read the environment of any container on **any** host via `?host=`. It is now
-  gated by the section that owns the kind: container→`containers`, image→`images`,
-  volume→`volumes`, network→`networks`, with an unknown kind failing closed onto
-  `containers`. This matches how the UI already uses it — the Inspect dialog only
-  opens from pages those sections already guard — so nothing legitimate changes.
-- **MCP tokens: a scope that narrowed to nothing produced an *unrestricted*
-  token.** An empty stored scope means "inherit the owner's rights", so requesting
-  a scope consisting only of sections the account doesn't hold was silently turned
-  into a token with the owner's **full** access — asking for less returned more.
-  Such a request is now refused. Token scopes are also matched against
-  **effective** sections, so access granted through a role can be scoped to (it
-  would otherwise have been dropped, hitting the same widening path). This was
-  reachable before roles existed, by requesting only ungranted sections.
-- **Remote Projects now support bind mounts.** Deploying a managed project to a
-  remote host previously refused any compose file with a host-path bind mount,
-  because the remote daemon can't see Docker Commander's data dir. Each bind
-  whose source lives **inside the project folder** is now copied to a named
-  volume on the target host (`dcseed-<project>-<hash>`, labelled with the
-  project) and the mount is repointed at it via a generated compose override, so
-  sidecar configs and scripts work remotely — including single-file mounts like
-  `./nginx.conf:/etc/nginx/nginx.conf`, which mount out of the volume by
-  subpath. `read_only` is preserved and the project's own named volumes are left
-  untouched. The copy is a **snapshot taken at deploy time, not a live mount**:
-  editing the files needs a redeploy, and writes inside the container stay on the
-  remote host. The deploy output says so explicitly.
-- Bind mounts pointing **outside** the project folder (e.g. `/etc/localtime`,
-  `/var/run/docker.sock`, or anything reached through a symlink out of the
-  folder) are still **refused** on a remote deploy, now with a message naming
-  them: they address paths on the remote host, which won't be mounted blind.
-
-- **Remote deploys can opt into host paths.** Bind mounts pointing outside the
-  project folder are still refused by default, but a project's Settings now has
-  **Allow host paths** to mount them from the remote host's own filesystem
-  instead (contents are whatever exists there; nothing is copied, and the deploy
-  output names them every time). Enabling it needs **write access to the Hosts
-  section** — it is authority over the host, not the project — and is audited;
-  turning it back off needs only project access, so a restricted user can always
-  close a hole they cannot open.
-- **Deleting a project offers to remove its seeded volumes.** A remote deploy
-  leaves `dcseed-*` volumes on the target host, which used to accumulate
-  silently. The delete flow now lists them and asks, since they hold data;
-  declining keeps them for a later redeploy. Only volumes carrying that
-  project's seed label are touched.
-
-### Changed
-- **Settings and MCP Admin are now tabbed**, using the same shared tab bar as
-  Alerts, Templates and the container detail view: Settings splits into
-  **Features / Security / LDAP / Email**, and MCP Admin into **API tokens / OAuth
-  clients**. The SMTP form moved from Alerts → Settings → Email (see Security
-  above); Alerts keeps Feed / Rules / Webhooks.
-- **Changing a deployed project's target host now warns first.** It does not tear
-  the project down on the old host, so you would end up with two live copies
-  while the page showed only the new one. The host picker says so inline and asks
-  for confirmation before saving.
 
 ### Documentation
 - **`docs/hosts.md` now covers two SSH-host requirements** that produced
@@ -1793,6 +1782,7 @@ Initial release: a single CGO-free Go binary with an embedded React UI.
   per-section permissions / read-only, feature flags, audit log, optional LDAP;
   secrets encrypted at rest.
 
+[1.6.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.0
 [1.5.1]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.5.1
 [1.5.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.5.0
 [1.4.4]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.4.4
