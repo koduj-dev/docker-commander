@@ -24,6 +24,21 @@ interface NetRow {
 
 type View = "usage" | "network";
 
+// usageDomainMax picks the top of the CPU/memory axis.
+//
+// CPU here follows the `docker stats` convention where 100% is *one core*, so a
+// busy container on a multi-core host legitimately reads 300%. The axis used to
+// be pinned to [0, 100]; recharts treats that as a hint rather than a clamp, and
+// when the data overflowed it produced a garbage top label (a five-digit number
+// above ticks spaced by 80). Nobody noticed because the demo instance was idle.
+//
+// Round up to whole cores so the gridlines stay meaningful, and never shrink
+// below 100 so an idle container still renders against a familiar 0–100 scale.
+export function usageDomainMax(dataMax: number): number {
+  if (!Number.isFinite(dataMax) || dataMax <= 100) return 100;
+  return Math.ceil(dataMax / 100) * 100;
+}
+
 // MetricsHistory shows persisted CPU% and MEM% over a selectable time range,
 // served from the history store (Redis or in-memory). Complements the live
 // charts, which only hold the last minute or so.
@@ -119,7 +134,7 @@ export function MetricsHistory({ containerId }: { containerId: string }) {
               <LineChart data={rows} margin={{ top: 4, right: 8, bottom: 0, left: -16 }}>
                 <CartesianGrid stroke="#1a2233" vertical={false} />
                 <XAxis dataKey="t" tickFormatter={fmtTime} stroke="#8b97ad" fontSize={10} minTickGap={40} />
-                <YAxis domain={[0, 100]} stroke="#8b97ad" fontSize={10} unit="%" />
+                <YAxis domain={[0, usageDomainMax]} allowDataOverflow={false} stroke="#8b97ad" fontSize={10} unit="%" />
                 <Tooltip
                   contentStyle={{ background: "#1a2233", border: "1px solid #243047", borderRadius: 8, fontSize: 12 }}
                   labelFormatter={(t) => new Date(t as number).toLocaleTimeString()}

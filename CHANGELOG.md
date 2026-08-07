@@ -73,6 +73,16 @@ All notable changes to Docker Commander are documented here. The format follows
   factor" stays true.
 
 ### Fixed
+- **A busy container broke its own history chart.** CPU is reported the way
+  `docker stats` reports it — 100% is *one core* — so a container working across
+  several cores legitimately reads 300%. The chart's axis was pinned to `[0, 100]`,
+  which recharts treats as a hint rather than a limit: once the data overflowed it
+  rendered a five-digit top label (52348%) above gridlines spaced by 80, on the
+  page that exists to show exactly that workload. The axis now rounds up to whole
+  cores and never drops below 100, so an idle container still reads against a
+  familiar 0–100 scale. Invisible until now because the demo instance was idle;
+  the alert engine had the convention right all along ("CPU 272.0% of one core,
+  16 cores available").
 - **Nothing checked that the committed `web/dist` still matched `web/src`.** CI
   runs `make ui` and then tests the bundle it just built, so a stale committed one
   passes every check green. Binaries cut from a tag rebuild it as well — but
