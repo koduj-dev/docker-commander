@@ -73,6 +73,19 @@ All notable changes to Docker Commander are documented here. The format follows
   factor" stays true.
 
 ### Fixed
+- **Nothing checked that the committed `web/dist` still matched `web/src`.** CI
+  runs `make ui` and then tests the bundle it just built, so a stale committed one
+  passes every check green. Binaries cut from a tag rebuild it as well — but
+  `go install` embeds whatever is in the repository, so that channel, and only that
+  channel, could ship a UI built from older source. CI now compares the two and
+  fails with the command to fix it. Verified by changing a component without
+  rebuilding: the step catches it.
+- **`make ui` rewrote `package-lock.json` behind your back.** Its install step was
+  `npm install`, which resolves afresh rather than installing the locked tree, and
+  an npm older than the one that wrote the lockfile drops fields it does not know —
+  30 lines of `libc` platform hints, most recently — leaving an unrelated edit
+  staged in the next commit. It now runs `npm ci`, which is also what makes the
+  bundle comparison above reproducible.
 - **The guard on the README's test counts guarded one number out of three, and
   would have missed the drift it was written for.** It checked only the Go figure,
   so the README could claim 73 frontend tests and 7 adversarial cases against real

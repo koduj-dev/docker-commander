@@ -326,7 +326,7 @@ Per OS (building **from source** — end users can just download a release):
 
 ```bash
 make dev                       # API on :8470 (dev mode)
-cd web && npm install && npm run dev   # UI on :5173, proxies /api → :8470
+cd web && npm ci && npm run dev        # UI on :5173, proxies /api → :8470
 ```
 
 ### Tests

@@ -15,8 +15,14 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 all: build
 
 ## ui: build the frontend into web/dist (embedded by the Go build)
+#
+# `npm ci`, not `npm install`: the committed web/dist is an artifact CI compares
+# against, so the build has to resolve the same dependency tree every time. It
+# also stops the install step rewriting package-lock.json — an npm older than the
+# one that wrote the lockfile silently drops fields it does not know (`libc`
+# platform hints, most recently), which then rides along in the next commit.
 ui:
-	cd web && npm install && npm run build
+	cd web && npm ci && npm run build
 
 ## build: build the UI then the binary for the current platform
 build: ui

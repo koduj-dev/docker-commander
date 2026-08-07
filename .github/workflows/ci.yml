@@ -25,6 +25,18 @@ jobs:
       # Build the embedded UI (installs web deps), run the frontend unit tests,
       # then vet/test/build the Go binary.
       - run: make ui
+      # `make ui` has just rebuilt web/dist from web/src, so anything left in the
+      # diff is a committed bundle that no longer matches its source. Nothing else
+      # here notices: every other step uses the copy CI just built. Binaries cut
+      # from a tag rebuild it too (`make release` depends on `ui`), but `go install`
+      # embeds whatever is committed — that channel ships the stale bundle alone.
+      - name: committed web/dist matches web/src
+        run: |
+          if ! git diff --quiet -- web/dist; then
+            git diff --stat -- web/dist
+            echo "::error::web/dist is stale. Rebuild with 'make ui' and commit the result."
+            exit 1
+          fi
       - run: npm run test --prefix web
       - run: gofmt -l $(git ls-files '*.go') | tee /tmp/fmt && test ! -s /tmp/fmt
       - run: go vet ./...
