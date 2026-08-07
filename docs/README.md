@@ -28,6 +28,7 @@ two cover installation and configuration.
 - [Hosts](hosts.md) — local / TCP+TLS / SSH daemons, host-key trust, per-host email
 - [Registries](registries.md) — stored credentials for private pull & push
 - [Users & roles](users.md) — accounts, permissions, read-only
+- [Your profile](profile.md) — your own account, second factors, sessions, and what you can reach
 - [Settings](settings.md) — feature flags, localhost 2FA, MCP token lifetimes, LDAP, SMTP
 - [Audit log](audit.md) — record of privileged actions
 - [MCP (AI tools)](mcp.md) — remote control from AI tools (Claude Code/Desktop, Cursor): tokens, OAuth, the safe tool surface
@@ -36,6 +37,7 @@ two cover installation and configuration.
 - [Getting started](getting-started.md) — first run, 2FA, the basics
 - [Deployment](deployment.md) — running on a server (systemd, HTTPS, config, logs, health, self-update)
 - [How it's tested](testing.md) — the test tiers, incl. real multi-daemon runs over TCP/SSH, and what isn't covered
+- [Limits](limits.md) — every cap you can actually hit, and which are adjustable
 - [Gotchas](gotchas.md) — behaviours of this codebase that cost real debugging time once
 - [Dev environment](dev-environment.md) — local setup, and the throwaway services the tests expect
 - [Changelog](../CHANGELOG.md) — what changed in each release

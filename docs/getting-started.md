@@ -50,7 +50,7 @@ all, because asking for a code it cannot produce would be a dead end.
 - A passkey that verifies you with a PIN, fingerprint or face can also sign you in
   **on its own**, once you turn that on per account. Your password keeps working:
   it is the way back if the key is lost, since no admin can reset another
-  account's second factor. See [Users & roles](users.md#your-own-profile).
+  account's second factor. See [Your profile](profile.md).
 - **Account type**: `admin` (full access + administration) or `user`. A `user`
   reaches only what they are granted — through **named roles** (a reusable bundle
   of sections, each read or write, optionally limited to specific **hosts**)

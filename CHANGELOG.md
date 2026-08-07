@@ -73,6 +73,18 @@ All notable changes to Docker Commander are documented here. The format follows
   factor" stays true.
 
 ### Fixed
+- **The profile page had no manual page, and the limits were nowhere.** The page
+  where you manage your own second factors, sessions and sign-in options was
+  documented as a section inside *Users & roles* — findable only if you already
+  knew to look there — and its **Access** tab, which answers "why can I reach
+  this?", was described nowhere at all. It is now [its own
+  page](docs/profile.md), linked from the index.
+
+  Alongside it, a [Limits](docs/limits.md) page: every cap you can actually hit,
+  with the reason where the number is not obvious. Session lifetime, the sign-in
+  lockout (5 per 15 minutes — the number the docs had never stated), upload and
+  archive caps, project file counts, scan timeouts. Hitting a limit and finding no
+  page that names it is a bad way to learn the app has one.
 - **The audit log now documents itself.** `docs/audit.md` named seven actions out
   of 143, as prose ("e.g. `container.stop`, `image.pull`…"), which is a poor shape
   for the one page whose readers arrive asking *what can I look for?*. The full
