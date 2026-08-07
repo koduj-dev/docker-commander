@@ -18,9 +18,16 @@ the app itself that are easy to get wrong, see [Gotchas](gotchas.md).
   `lsof -ti tcp:PORT | xargs kill`.
 - **Build:** `make build` (UI, then binary). The committed `web/dist` is what lets
   `go build ./...` work without Node installed.
-- **Frontend:** `make ui` for a normal rebuild. For a **Dependabot npm PR**, use
-  `npm ci && npm run build` instead — `make ui`'s install step rewrites the
-  lockfile the PR is about.
+- **Frontend:** `make ui` for every rebuild, Dependabot npm PRs included. It runs
+  `npm ci`, so it installs exactly the locked tree and leaves `package-lock.json`
+  alone. (It used to run `npm install`, which quietly rewrote the lockfile: an npm
+  older than the one that wrote it drops fields it does not recognise — `libc`
+  platform hints, most recently. Anything else running `npm install` over this repo,
+  an IDE's npm integration included, still does that; if the lockfile turns up
+  modified on its own, that is why.)
+- **CI checks the committed `web/dist` against `web/src`.** If you change anything
+  under `web/src`, rebuild and commit the bundle or the build fails. It matters
+  because `go install` embeds the committed copy — tagged binaries rebuild it.
 - **Headless UI verification:** puppeteer-core driving the system
   `google-chrome`, with a Node TOTP helper to get past mandatory 2FA. Two quirks
   worth knowing: controlled inputs need the native value-setter plus an `input`

@@ -44,12 +44,18 @@ For UI work, run the API and the Vite dev server side by side:
 
 ```bash
 make dev                                # API on :8470 (dev mode, permissive CORS)
-cd web && npm install && npm run dev    # UI on :5173, proxies /api → :8470
+cd web && npm ci && npm run dev         # UI on :5173, proxies /api → :8470
 ```
 
 > **The committed `web/dist` matters.** It lets `go build ./...` work without
-> Node. If you change anything under `web/src`, rebuild it with `make ui` and
-> **commit the regenerated `web/dist`** as part of your PR.
+> Node, and it is what `go install` embeds. If you change anything under
+> `web/src`, rebuild it with `make ui` and **commit the regenerated `web/dist`**
+> as part of your PR — CI compares the committed bundle against its own rebuild
+> and fails if they differ.
+
+> Use `npm ci` rather than `npm install`. An npm older than the one that wrote
+> `package-lock.json` silently drops fields it does not recognise, and the edit
+> then rides along in your next commit.
 
 ## Tests
 
