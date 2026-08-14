@@ -104,3 +104,60 @@ func TestProjectHostIDRoundTrip(t *testing.T) {
 		t.Error("the opt-in could not be turned back off")
 	}
 }
+
+func TestProjectLastDeployedProfiles(t *testing.T) {
+	s, ctx := newStore(t)
+
+	id, err := s.CreateProject(ctx, &Project{Name: "App", Slug: "app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Never deployed: nil/empty, not an error, not a placeholder string.
+	got, err := s.ProjectByID(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.LastDeployedProfiles) != 0 {
+		t.Errorf("expected no profiles before any deploy, got %v", got.LastDeployedProfiles)
+	}
+
+	// A deploy with profiles round-trips through ProjectByID...
+	if err := s.SetLastDeployedProfiles(ctx, id, []string{"prod", "cache"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.ProjectByID(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.LastDeployedProfiles) != 2 || got.LastDeployedProfiles[0] != "prod" || got.LastDeployedProfiles[1] != "cache" {
+		t.Errorf("unexpected profiles after set: %v", got.LastDeployedProfiles)
+	}
+
+	// ...and through ListProjects, not just a by-id read.
+	list, err := s.ListProjects(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, p := range list {
+		if p.ID == id {
+			found = true
+			if len(p.LastDeployedProfiles) != 2 {
+				t.Errorf("ListProjects lost the profiles: %v", p.LastDeployedProfiles)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("project missing from ListProjects")
+	}
+
+	// A later deploy with no profiles clears the previous set — it must not
+	// linger and misrepresent what's actually running.
+	if err := s.SetLastDeployedProfiles(ctx, id, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = s.ProjectByID(ctx, id); len(got.LastDeployedProfiles) != 0 {
+		t.Errorf("expected profiles cleared, got %v", got.LastDeployedProfiles)
+	}
+}

@@ -28,6 +28,7 @@ function dotColor(state: string): string {
     case "running":
       return "bg-ok shadow-[0_0_8px] shadow-ok/60";
     case "paused":
+    case "partial":
       return "bg-warn";
     case "exited":
     case "dead":

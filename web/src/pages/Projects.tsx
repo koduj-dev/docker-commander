@@ -19,6 +19,7 @@ const CodeEditor = lazy(() => import("../components/CodeEditor").then((m) => ({ 
 import { getPref, setPref } from "../lib/prefs";
 import { useDockerEventTick } from "../lib/dockerEvents";
 import { composeOutputText } from "../lib/composeOutput";
+import { resolveServiceState } from "../lib/composeState";
 
 type Output = { title: string; text: string; ok: boolean };
 type Kind = "deploy" | "down" | "restart";
@@ -87,12 +88,26 @@ function buildLabel(b: ComposeService["build"]): string {
   return b.context ? `build: ${b.context}` : "build";
 }
 
+// serviceStateBadge resolves what a compose service's state badge should say
+// (see lib/composeState.ts for the decision logic) by matching it against the
+// stack's live containers, by service name.
+function serviceStateBadge(name: string, svc: ComposeService, stack: Stack | undefined, lastDeployedProfiles: string[]): ReactNode {
+  const containers = stack?.containers.filter((c) => c.service === name) ?? [];
+  const r = resolveServiceState(svc, containers, !!stack, lastDeployedProfiles);
+  return <StateBadge state={r.state} label={r.label} />;
+}
+
 // ComposeSummaryModal renders an overview of the resolved compose model:
-// services with their image/ports/volumes, top-level resources, and any
-// duplicate-host-port conflicts.
-function ComposeSummaryModal({ model, onClose }: { model: ComposeModel; onClose: () => void }) {
+// services with their image/ports/volumes, top-level resources, any
+// duplicate-host-port conflicts, and (when a live stack is known) each
+// service's actual state — correctly telling "excluded by the deployed
+// profiles" apart from "stopped". Exported for tests.
+export function ComposeSummaryModal({ model, stack, lastDeployedProfiles, onClose }: {
+  model: ComposeModel; stack?: Stack; lastDeployedProfiles?: string[]; onClose: () => void;
+}) {
   const conflicts = portConflicts(model);
   const services = Object.entries(model.services ?? {});
+  const deployedProfiles = lastDeployedProfiles ?? [];
   const tops: [string, string[]][] = [
     ["Networks", Object.keys(model.networks ?? {})],
     ["Volumes", Object.keys(model.volumes ?? {})],
@@ -122,6 +137,12 @@ function ComposeSummaryModal({ model, onClose }: { model: ComposeModel; onClose:
                 <span className="font-medium text-sm">{name}</span>
                 <span className="text-xs text-muted font-mono break-all">{svc.image ?? buildLabel(svc.build)}</span>
                 {svc.restart && <span className="text-[10px] bg-panel2 rounded px-1.5 py-0.5 text-muted">{svc.restart}</span>}
+                {!!svc.profiles?.length && (
+                  <span className="text-[10px] font-mono text-muted border border-border rounded px-1.5 py-0.5" title="Profiles this service requires">
+                    {svc.profiles.join(", ")}
+                  </span>
+                )}
+                <span className="ml-auto">{serviceStateBadge(name, svc, stack, deployedProfiles)}</span>
               </div>
               {!!svc.ports?.length && (
                 <div className="mt-1.5 flex flex-wrap gap-1">
@@ -358,6 +379,7 @@ export function Projects() {
           project={editing}
           composeAvailable={composeAvailable}
           deployed={!!editStack}
+          stack={editStack}
           onClose={() => { setEditing(null); load(); }}
           onOutput={(o) => { setOutput(o); load(); }}
         />
@@ -792,7 +814,7 @@ function NewProjectModal({ hosts, onClose, onCreated }: { hosts: Host[]; onClose
       else if (mode === "template" && selectedTpl) r = await api.createProject(n, { hostId, template: { id: selectedTpl.id, source: selectedTpl.source }, variables });
       else r = await api.createProject(n, { hostId });
       const host = hosts.find((h) => h.id === hostId);
-      onCreated({ id: r.id, name: n, slug: r.slug, composeFile: "compose.yml", hostId, hostName: host?.name, createdBy: "", createdAt: "", updatedAt: "" });
+      onCreated({ id: r.id, name: n, slug: r.slug, composeFile: "compose.yml", hostId, hostName: host?.name, lastDeployedProfiles: [], createdBy: "", createdAt: "", updatedAt: "" });
     } catch (e2) {
       setErr(e2 instanceof ApiError ? e2.message : "could not create project");
       setBusy(false);
@@ -1006,8 +1028,8 @@ function NewProjectModal({ hosts, onClose, onCreated }: { hosts: Host[]; onClose
 }
 
 // ProjectEditor is a multi-file editor over the project folder.
-function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput }: {
-  project: Project; composeAvailable: boolean; deployed: boolean; onClose: () => void; onOutput: (o: Output) => void;
+function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, onOutput }: {
+  project: Project; composeAvailable: boolean; deployed: boolean; stack?: Stack; onClose: () => void; onOutput: (o: Output) => void;
 }) {
   const [files, setFiles] = useState<ProjectFile[] | null>(null);
   const [active, setActive] = useState<string>("");
@@ -1015,6 +1037,12 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
   const [busy, setBusy] = useState("");
   const [profiles, setProfiles] = useState<string[]>([]);
   const [selectedProfiles, setSelectedProfiles] = useState<string[]>(() => getPref<string[]>(`projects.profiles.${project.slug}`, []));
+  // Seeded from the project prop, then updated locally right after a
+  // successful deploy — `project` itself doesn't refresh while this editor
+  // stays open (the parent's `editing` state isn't re-synced from `load()`),
+  // so without this the "Deployed with" badge would show stale data until the
+  // editor is closed and reopened.
+  const [deployedProfiles, setDeployedProfiles] = useState<string[]>(project.lastDeployedProfiles);
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
   const [currentDir, setCurrentDir] = useState(""); // where New file/folder land
   const [liveVal, setLiveVal] = useState<"idle" | "checking" | "ok" | "warning" | "error">("idle");
@@ -1185,6 +1213,7 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
     setBusy(kind);
     try {
       const r = kind === "deploy" ? await api.deployProject(project.id, selectedProfiles) : kind === "down" ? await api.downProject(project.id) : await api.restartProject(project.id);
+      if (kind === "deploy" && r.ok) setDeployedProfiles(selectedProfiles);
       onOutput({ title: `${project.name} — ${kind}`, text: composeOutputText(r), ok: r.ok });
     } catch (e) {
       onOutput({ title: `${project.name} — ${kind}`, text: e instanceof Error ? e.message : "failed", ok: false });
@@ -1243,15 +1272,33 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
         </div>
 
         {profiles.length > 0 && (
-          <div className="flex items-center gap-2 px-4 py-2 border-b border-border text-xs flex-wrap">
-            <span className="text-muted">Profiles:</span>
-            {profiles.map((pr) => {
-              const on = selectedProfiles.includes(pr);
-              return (
-                <button key={pr} onClick={() => toggleProfile(pr)} className={`px-2 py-0.5 rounded-md border font-mono ${on ? "border-accent text-accent bg-accent/10" : "border-border text-muted hover:text-text"}`}>{pr}</button>
-              );
-            })}
-            <span className="text-muted/60">— applied on Deploy</span>
+          <div className="border-b border-border text-xs">
+            <div className="flex items-center gap-2 px-4 py-2 flex-wrap">
+              <span className="text-muted">Profiles:</span>
+              {profiles.map((pr) => {
+                const on = selectedProfiles.includes(pr);
+                return (
+                  <button key={pr} onClick={() => toggleProfile(pr)} className={`px-2 py-0.5 rounded-md border font-mono ${on ? "border-accent text-accent bg-accent/10" : "border-border text-muted hover:text-text"}`}>{pr}</button>
+                );
+              })}
+              <span className="text-muted/60">— applied on next Deploy</span>
+            </div>
+            {/* "Currently deployed with" reflects what's actually running (the
+                server-persisted last-deploy profiles), which can lag the toggle
+                chips above until Redeploy is clicked — that gap is the point of
+                showing both. */}
+            {deployed && (
+              <div className="flex items-center gap-2 px-4 pb-2 flex-wrap text-muted">
+                <span>Deployed with:</span>
+                {deployedProfiles.length === 0 ? (
+                  <span className="font-mono">none</span>
+                ) : (
+                  deployedProfiles.map((pr) => (
+                    <span key={pr} className="font-mono bg-panel2 rounded px-1.5 py-0.5 text-text/80">{pr}</span>
+                  ))
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -1334,7 +1381,14 @@ function ProjectEditor({ project, composeAvailable, deployed, onClose, onOutput 
           </div>
         </div>
       </div>
-      {summary && <ComposeSummaryModal model={summary} onClose={() => setSummary(null)} />}
+      {summary && (
+        <ComposeSummaryModal
+          model={summary}
+          stack={stack}
+          lastDeployedProfiles={deployedProfiles}
+          onClose={() => setSummary(null)}
+        />
+      )}
       {saveTpl && <SaveAsTemplateModal projectId={project.id} onClose={() => setSaveTpl(false)} onSaved={() => setSaveTpl(false)} />}
     </div>
   );

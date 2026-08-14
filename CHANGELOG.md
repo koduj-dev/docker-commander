@@ -7,6 +7,29 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **MCP: `restart_stack_containers` / `stop_stack_containers`.** Restart or stop
+  a caller-chosen subset (up to 10) of one Compose stack's own containers over
+  MCP. Every container id is verified server-side to belong to the named
+  project before anything runs — a mismatched id refuses the whole call rather
+  than skipping it — and the 10-container cap keeps a single call within the
+  blast radius the existing MCP control rate limit assumes (one call ≈ one
+  container). Scoping to a project the caller already named keeps this no
+  wider in spirit than the existing whole-stack `restart_stack`/`stop_stack`
+  tools. The control rate limit now charges per container acted on, not per
+  call, so a batch of up to 10 costs up to 10 units instead of 1 — and a
+  `container_ids` list naming the same container twice is refused outright,
+  naming the duplicate, before anything runs or is charged.
+- **Bulk restart/stop for containers.** Select several containers on the
+  Containers page and restart or stop them together: a preview lists exactly
+  which containers are targeted, the app's own confirm dialog gates the action
+  (never one click), the calls run with bounded parallelism, and a
+  per-container success/failure summary follows — not just a single toast.
+  Every container acted on gets its own audit entry, success or failure, with
+  the daemon's error text on failures — a failed attempt leaves the same
+  trace a successful one does, not a silent gap in the log.
+  Reuses the existing `containers` section write permission; no new
+  permission model. Pull and per-host RBAC scoping for bulk operations are not
+  part of this pass — see `NEXT.md`.
 - **Windows native service.** `--install-service` now registers dockercmd as a
   real Service Control Manager (SCM) service on Windows — auto-restart on
   crash, `services.msc`/`sc query` visibility — instead of failing with SCM
@@ -17,6 +40,31 @@ All notable changes to Docker Commander are documented here. The format follows
   Network, Observability, System) to fold/unfold it; state is remembered per
   browser. A collapsed group holding the current page auto-expands, so
   navigating there directly never hides where you are.
+- **Compose profiles: "deployed" vs "selected", and per-service state badges.**
+  Projects now persists the profiles used on a project's last successful deploy,
+  and the project editor shows them ("Deployed with: …") right next to the toggle
+  chips you use to pick profiles for the *next* deploy — the two can differ until
+  you redeploy. The compose summary also badges each service's real state, and a
+  service left out by the deployed profile set reads **"Not in active profile"**
+  rather than "Stopped" — so a compose file with several profiles doesn't read as
+  half-broken just because most of it was never selected to run.
+
+  Deploys with no profiles selected now also neutralize `COMPOSE_PROFILES` for
+  the `docker compose` subprocess: without this, an operator's own environment
+  or a project's `.env` file could activate profiles the deploy request never
+  asked for, so a genuinely-running service would be misbadged "Not in active
+  profile" — the exact bug this feature exists to fix, reintroduced by a
+  side channel. A failure to persist the deployed profile set is now also
+  logged server-side (it no longer fails the deploy itself, matching the
+  existing best-effort behavior, but it's no longer silent either).
+- **Compat matrix pins exact Engine patches, not just majors.** `docker:NN-dind`
+  always floats to whatever patch of that major is newest when pulled, so the
+  nightly compat workflow only ever proved the latest patch of each major
+  works. It now also runs a handful of exact `docker:X.Y.Z-dind` patch tags
+  (the newest published patch of the two newest majors) alongside the
+  existing major and Compose-version pins, so a specific patch regression is
+  caught by name instead of silently disappearing once the major tag moves
+  past it.
 
 ## [1.6.0] — 2026-08-07
 

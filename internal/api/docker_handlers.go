@@ -102,6 +102,81 @@ func (s *Server) handleContainerAction(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// maxBulkContainerIDs caps how many containers one bulk-action request may
+// name, so a single request can't be used to queue an unbounded amount of
+// daemon work (the concurrency bound in BulkContainerAction limits how many
+// run *at once*, not how many get queued in total).
+const maxBulkContainerIDs = 200
+
+// bulkContainerActions are the only actions the bulk endpoint accepts.
+// Deliberately narrower than ContainerAction's full set (start/pause/unpause/
+// kill also exist there): this endpoint is the first, deliberately scoped cut
+// of bulk operations (see NEXT.md), and a generic action-agnostic bulk
+// endpoint would let a future caller fire a destructive action across a whole
+// selection without that being its own reviewed decision.
+var bulkContainerActions = map[string]bool{"restart": true, "stop": true}
+
+// handleBulkContainerAction restarts or stops a set of containers, running the
+// per-container calls with bounded parallelism and reporting one result per
+// container rather than a single aggregate ok/fail.
+func (s *Server) handleBulkContainerAction(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	var req struct {
+		IDs    []string `json:"ids"`
+		Action string   `json:"action"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if !bulkContainerActions[req.Action] {
+		writeErr(w, http.StatusBadRequest, "action must be restart or stop")
+		return
+	}
+	if len(req.IDs) == 0 {
+		writeErr(w, http.StatusBadRequest, "ids is required")
+		return
+	}
+	if len(req.IDs) > maxBulkContainerIDs {
+		writeErr(w, http.StatusBadRequest, "too many containers in one request")
+		return
+	}
+
+	results, err := s.docker.BulkContainerAction(r.Context(), hostID, req.IDs, req.Action)
+	if err != nil {
+		// A duplicate id — refused before any container was touched.
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	succeeded, failed := 0, 0
+	for _, res := range results {
+		// One audit entry per container acted on, success or failure — a
+		// bulk write that silently drops failed attempts from the audit log
+		// would hide exactly the case an operator most needs a record of
+		// (wrong/stale ids, an attempt against a container the caller
+		// shouldn't have been able to target). The detail carries the
+		// daemon's error text for failures, same convention as
+		// stack.redeploy.failed.
+		if res.OK {
+			succeeded++
+			s.audit(r, "container."+req.Action, res.ID, "")
+		} else {
+			failed++
+			s.audit(r, "container."+req.Action, res.ID, res.Error)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"results":   results,
+		"succeeded": succeeded,
+		"failed":    failed,
+	})
+}
+
 func (s *Server) handleListNetworks(w http.ResponseWriter, r *http.Request) {
 	hostID, err := s.resolveHostID(r)
 	if err != nil {

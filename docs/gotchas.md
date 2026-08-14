@@ -62,6 +62,22 @@ every guard and the fixture traps that come with a real Docker daemon.
   Engine 24 reported a container as `running` for ~250 ms while `inspect` already
   said `exited`. The app polls, so it is only a problem for tests that assume
   instantaneous consistency.
+- **`COMPOSE_PROFILES` has three sources, and they don't merge the way you'd
+  guess.** Verified empirically against a real `docker compose up` (Compose
+  v5.4.0): when `--profile` is passed on the command line at all, Compose uses
+  *only* the `--profile` flags and ignores `COMPOSE_PROFILES` entirely — no
+  union. `COMPOSE_PROFILES` (from the shell/process environment, or the
+  project's own `.env` file, which `compose` auto-loads from its working
+  directory) only takes effect when **no** `--profile` flag is given at all —
+  exactly the "no profiles selected" deploy case. And between the two
+  `COMPOSE_PROFILES` sources, process/shell env wins over `.env`: setting it to
+  the empty string in the subprocess's env (last entry wins in `exec.Cmd.Env`)
+  suppresses a project's own `.env` setting too, it isn't only a shell-level
+  override. `ComposeUpFiles` relies on exactly this: it always sets
+  `COMPOSE_PROFILES=` on the subprocess so its explicit `--profile` list is the
+  sole source, closing the gap where an operator's env or a project's `.env`
+  could silently activate more than what gets persisted as "last deployed
+  profiles".
 
 ## HTTP timeouts and streaming
 

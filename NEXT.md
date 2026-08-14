@@ -343,29 +343,14 @@ the security property alone, independent of the NAT-traversal convenience.
 
 ### Smaller, well-scoped
 
-- **Compose profiles — finish the UX.** Deploy-time profile selection already
-  works end to end (`docker compose --profile`, `ComposeProfiles` lists what a
-  project defines, and Projects has a toggle-chip picker that persists per
-  project). What's still missing is *state reflection*: per-service profile
-  badges, a clear "profiles currently deployed" vs. "profiles selected for
-  next deploy" distinction, and not showing a profile-excluded service as
-  stopped/errored when it's simply not part of the active profile set — this
-  exact gap (profile-disabled services misrepresented in stack state) is a
-  recurring complaint against Portainer, Dockge and Arcane alike. Narrower
-  and cheaper than it first looks, since the backend piece already shipped.
-  **A natural pairing, not a prerequisite: Project secrets** (see
-  "Configuration and secrets" below) came up in the same conversation —
-  general per-project secret storage, **not** scoped to profiles
-  specifically, referenced from the compose file (`${SECRET_NAME}`-style)
-  and resolved from a store the operator fills in, GitHub-Actions-style.
-  Reasonable to build in the same window as the profiles UX pass since both
-  touch the same Projects/compose-editing surface, but it's the bigger of
-  the two by far (encryption at rest, redaction everywhere a resolved value
-  could leak, RBAC) and shouldn't be assumed to fit in the same timeframe
-  just because they were discussed together.
-- **Bulk operations** (restart/start/stop/pull across a selection) with preview,
-  confirmation, bounded parallelism, per-host RBAC and a clear success/failure
-  summary.
+- **Bulk operations — remaining scope.** Restart/stop across a multi-selection
+  shipped (preview, confirmation, bounded parallelism, per-container
+  success/failure summary; reuses the existing `containers` section write
+  permission). Still open: **pull** as a third bulk action, **start** (the
+  fourth verb from the original roadmap wording), and **per-host RBAC**
+  granularity for bulk actions specifically (today a bulk request is scoped
+  the same way any single container action is — the section-level grant, not
+  a separate per-host bulk permission).
 - **Log bookmarks** — save a time range plus filters, link it to an incident, share
   it with users who have the rights, export a small diagnostic bundle without
   secrets.
@@ -403,10 +388,6 @@ the security property alone, independent of the NAT-traversal convenience.
 - **ACME / Let's Encrypt** for public hosts. Self-signed `--make-certs` ships;
   lower priority because production usually sits behind a reverse proxy. Testable
   locally against Pebble.
-- **Version matrix — pin Engine patch versions, not just majors.** The compat
-  matrix now pins the Compose plugin too (see CHANGELOG), but it still only
-  pins Engine **majors**, so a regression in a specific patch isn't caught the
-  moment it ships.
 
 ---
 

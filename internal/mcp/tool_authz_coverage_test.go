@@ -205,9 +205,7 @@ func argsFromSchema(schema any) map[string]any {
 		kind := "string"
 		if props != nil {
 			if p, ok := props[name].(map[string]any); ok {
-				if tn, ok := p["type"].(string); ok {
-					kind = tn
-				}
+				kind = schemaKind(p["type"])
 			}
 		}
 		switch kind {
@@ -224,6 +222,28 @@ func argsFromSchema(schema any) map[string]any {
 		}
 	}
 	return out
+}
+
+// schemaKind extracts a scalar type name from a schema property's "type",
+// which is usually a plain string but for a nullable field — notably a Go
+// slice, whose jsonschema reflection distinguishes nil from empty via
+// ["null","array"] — is a list instead. Picks the first non-"null" entry so a
+// required nullable array/object still gets a matching synthetic value
+// instead of silently falling through to the "string" default (which then
+// fails the SDK's own schema validation before the handler is ever reached,
+// masking a real authorize()-coverage gap behind a schema-shape mismatch).
+func schemaKind(t any) string {
+	switch v := t.(type) {
+	case string:
+		return v
+	case []any:
+		for _, e := range v {
+			if s, ok := e.(string); ok && s != "null" {
+				return s
+			}
+		}
+	}
+	return "string"
 }
 
 func trim(s string) string {

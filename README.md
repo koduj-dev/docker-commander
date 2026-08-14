@@ -48,11 +48,14 @@ level filters, regex search and structured parsing.
 - **Networks & topology** — an interactive containers ↔ networks graph (force-directed, pan / zoom / fullscreen, **search**, **filter by compose stack**) with a compact **list view** (state, image, stack, ports, networks).
 
 **Control**
-- Containers: **create/run**, start/stop/restart/pause/unpause/**kill**, **rename**, **update** limits & restart policy, **commit** to an image, and an interactive **shell** (xterm.js).
+- Containers: **create/run**, start/stop/restart/pause/unpause/**kill**, **rename**, **update** limits & restart policy, **commit** to an image, an interactive **shell** (xterm.js), and **bulk restart/stop** across a multi-selection (preview, confirmation, bounded parallelism, per-container success/failure summary).
 - **File browser** inside containers **and volumes** — list, download, upload (incl. **upload & extract** a `.zip`/`.tar`/`.tar.gz`), delete, create folders.
 - Images: pull (live progress), build, push, tag, save/load/import, history, prune, and **vulnerability scanning** (Trivy — severity summary + CVE table).
 - Volumes & networks: list, inspect, create, remove, prune; networks also **connect / disconnect** containers, with a per-network detail (graph or list).
-- **Compose** — discover & manage **Stacks** by label (CLI-created ones too: start/stop/restart/remove, and **edit their compose file in place on the host, then redeploy** — kept where it lives, so relative bind/`env_file`/`build.context` paths still resolve), and **Projects**: managed compose *folders* edited in a built-in **code editor** (CodeMirror) with **live, inline validation** — compose (anchors/`${VAR}`-aware), **Dockerfile** (`docker build --check`), YAML/JSON/`.env` — plus a **Resolved** preview, a services/ports **Summary**, **templates**, **schema-aware Compose autocomplete** and **image-name / tag** suggestions (local, Docker Hub, and configured **private registries**), and **deploy via the `docker compose` CLI** with **profiles** and `.zip` import/export — to the **local or a remote host** (a remote deploy copies the project's bind-mounted configs/scripts into volumes on that host, and `build:` contexts are uploaded with the build; a redeploy **rebuilds** an edited image).
+- **Compose** — discover & manage **Stacks** by label (CLI-created ones too: start/stop/restart/remove, and **edit their compose file in place on the host, then redeploy** — kept where it lives, so relative bind/`env_file`/`build.context` paths still resolve), and **Projects**: managed compose *folders* edited in a built-in **code editor** (CodeMirror) with **live, inline validation** — compose (anchors/`${VAR}`-aware), **Dockerfile** (`docker build --check`), YAML/JSON/`.env` — plus a **Resolved** preview, a services/ports **Summary**, **templates**, **schema-aware Compose autocomplete** and **image-name / tag** suggestions (local, Docker Hub, and configured **private registries**), and **deploy via the `docker compose` CLI** with **profiles** (the summary badges each
+  service's real state, and clearly separates what's *currently deployed* from what's
+  *selected for the next deploy*, so a profile-excluded service reads as such — not as
+  stopped) and `.zip` import/export — to the **local or a remote host** (a remote deploy copies the project's bind-mounted configs/scripts into volumes on that host, and `build:` contexts are uploaded with the build; a redeploy **rebuilds** an edited image).
 
 **Multi-host**
 - Manage **local**, **TCP(+TLS)** and **SSH** daemons; SSH **host keys are verified** (known_hosts / trust-on-first-use). Every view rebinds to the selected host, and the alert engine watches **all** hosts. A per-host **detail** panel shows the hardware / OS / engine, and a host can be **disabled** to take it out of monitoring (e.g. an offline laptop).
@@ -103,6 +106,7 @@ what is hoped for.
 |---|---|
 | **Minimum Engine API** | **1.43** (Docker Engine 24) |
 | **Tested Engine majors** | 24, 25, 26, 27, 28 (nightly; see the workflow runs for the current result) |
+| **Tested Engine patches** | a handful of exact patch releases of the newest majors are also pinned and tested nightly, independent of the floating major tags (see the workflow runs for the current exact versions) |
 | **Compose** | the `docker compose` plugin, v2 or newer (legacy `docker-compose` v1 is not supported); a handful of recent v2 releases are pinned and tested nightly (see the workflow runs) |
 | **Client SDK** | pinned in `go.mod`, negotiated **down** to the daemon at connect time |
 
@@ -114,11 +118,15 @@ These numbers are **measured, not remembered**: the
 [compatibility workflow](.github/workflows/compat.yml) runs the app's whole Docker
 integration suite against a pinned `docker:NN-dind` for each major, nightly and on
 demand, and prints the negotiated API version — plus the Compose version it ran
-with — for every run. Both axes are pinned: every Engine major is tested against
-the newest of a small set of recent Compose releases, and the newest Engine major
-is additionally tested against the older ones in that set — so the matrix answers
-both "which daemons work" and "which recent Compose releases work", short of a
-full Engine × Compose cross product. Reproduce any row locally:
+with — for every run. Three axes are pinned: every Engine major is tested against
+the newest of a small set of recent Compose releases, the newest Engine major is
+additionally tested against the older ones in that set, and a handful of exact
+Engine **patch** releases (`docker:X.Y.Z-dind`, not just `docker:NN-dind`) are
+pinned and tested too — since the plain major tag always floats to whatever patch
+is newest when it's pulled, it alone can't prove a *specific* patch is good, only
+that the latest one currently is. So the matrix answers "which daemons work",
+"which recent Compose releases work", and "does this exact Engine patch work",
+short of a full Engine × Compose cross product. Reproduce any row locally:
 
 ```bash
 docker run -d --name dc-compat --privileged -e DOCKER_TLS_CERTDIR="" \
@@ -372,7 +380,7 @@ notify webhooks (Go-template bodies) and/or email. **Prometheus:** scrape
 ## 🧪 How it's tested
 
 You're pointing this at real Docker daemons, so the fast tests are the floor, not
-the ceiling. Alongside **~600 Go unit tests** and **~147 frontend tests**, the repo
+the ceiling. Alongside **~600 Go unit tests** and **~190 frontend tests**, the repo
 carries **115 adversarial "pentest" cases** that assert attacks are *rejected* (token
 forgery, OAuth replay, CSRF, IDOR, per-host scope bypass, privilege escalation,
 path traversal), an integration tier against a **real Docker daemon** (plus

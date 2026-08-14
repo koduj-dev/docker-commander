@@ -118,6 +118,11 @@ right, with syntax highlighting for YAML, JSON, shell, Dockerfiles and
   `.zip`** (editor header).
 - **Profiles** — if the compose file defines `profiles`, a toggle bar lets you
   pick which ones to enable; the selection is remembered and applied on deploy.
+  The bar also shows **Deployed with: …**, the profiles actually used on the
+  last successful deploy — separate from the toggle chips above it, which are
+  only what's *selected for the next deploy*. The **Summary** panel (below)
+  badges each service against that deployed set, so a service excluded by it
+  reads **"Not in active profile"** rather than "Stopped".
 
 ### Validation (live, while you edit)
 Validation runs on the **unsaved** buffer (no save needed) and shows results as
@@ -135,7 +140,9 @@ On the compose file, two extra actions sit in the editor toolbar:
 - **Resolved** — the fully-flattened compose (anchors / interpolation / extends
   resolved) — exactly what `docker compose up` deploys.
 - **Summary** — an overview of services, published ports and volumes, with a
-  **duplicate-host-port** check.
+  **duplicate-host-port** check and a per-service **state badge** (Running /
+  Partial / Stopped / **Not in active profile** / Not deployed) computed
+  against the project's live containers and the profiles actually deployed.
 
 ## Lifecycle
 - **Deploy / Redeploy** — runs `docker compose up -d --build` (with the selected

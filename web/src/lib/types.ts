@@ -153,6 +153,19 @@ export interface ContainerSummary {
   labels: Record<string, string> | null;
 }
 
+// One container's outcome within a bulk restart/stop request.
+export interface BulkActionResult {
+  id: string;
+  ok: boolean;
+  error?: string;
+}
+
+export interface BulkActionResponse {
+  results: BulkActionResult[];
+  succeeded: number;
+  failed: number;
+}
+
 export interface MountInfo {
   type: string;
   source: string;
@@ -410,6 +423,13 @@ export interface Project {
    * needs write access to the "hosts" section.
    */
   allowRemoteHostPaths?: boolean;
+  /**
+   * Profiles used on the last successful `compose up` for this project — what's
+   * ACTUALLY running. Distinct from whatever's selected client-side for the
+   * NEXT deploy (see `projects.profiles.<slug>` in prefs). Always an array;
+   * empty means never deployed, or deployed with no profiles.
+   */
+  lastDeployedProfiles: string[];
   createdBy: string;
   createdAt: string;
   updatedAt: string;
