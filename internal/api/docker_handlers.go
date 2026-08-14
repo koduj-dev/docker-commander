@@ -155,15 +155,19 @@ func (s *Server) handleBulkContainerAction(w http.ResponseWriter, r *http.Reques
 
 	succeeded, failed := 0, 0
 	for _, res := range results {
+		// One audit entry per container acted on, success or failure — a
+		// bulk write that silently drops failed attempts from the audit log
+		// would hide exactly the case an operator most needs a record of
+		// (wrong/stale ids, an attempt against a container the caller
+		// shouldn't have been able to target). The detail carries the
+		// daemon's error text for failures, same convention as
+		// stack.redeploy.failed.
 		if res.OK {
 			succeeded++
-			// One audit entry per container acted on, matching the granularity
-			// of the single-container endpoint above (which also audits only on
-			// success) — not a single "bulk" entry that would hide which
-			// containers were actually touched.
 			s.audit(r, "container."+req.Action, res.ID, "")
 		} else {
 			failed++
+			s.audit(r, "container."+req.Action, res.ID, res.Error)
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{

@@ -24,6 +24,9 @@ All notable changes to Docker Commander are documented here. The format follows
   which containers are targeted, the app's own confirm dialog gates the action
   (never one click), the calls run with bounded parallelism, and a
   per-container success/failure summary follows — not just a single toast.
+  Every container acted on gets its own audit entry, success or failure, with
+  the daemon's error text on failures — a failed attempt leaves the same
+  trace a successful one does, not a silent gap in the log.
   Reuses the existing `containers` section write permission; no new
   permission model. Pull and per-host RBAC scoping for bulk operations are not
   part of this pass — see `NEXT.md`.
