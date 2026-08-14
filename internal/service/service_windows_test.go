@@ -234,7 +234,10 @@ func TestWindowsHandlerExecute_Interrogate(t *testing.T) {
 
 // TestWindowsHandlerExecute_StopTimeout proves Execute doesn't hang forever
 // waiting on a run() that ignores cancellation (e.g. stuck in a blocking
-// syscall) — it must still report Stopped once serviceStopTimeout elapses.
+// syscall) — it must still report Stopped once serviceStopTimeout elapses,
+// and must NOT report the same success (svcSpecific=false, exitCode=0) a
+// graceful stop would: that would mask an unclean shutdown as a clean one in
+// the Event Log/SCM history.
 func TestWindowsHandlerExecute_StopTimeout(t *testing.T) {
 	old := serviceStopTimeout
 	serviceStopTimeout = 50 * time.Millisecond
@@ -249,10 +252,16 @@ func TestWindowsHandlerExecute_StopTimeout(t *testing.T) {
 
 	reqs := make(chan svc.ChangeRequest)
 	statuses := make(chan svc.Status, 16)
-	execDone := make(chan struct{}, 1)
+	execDone := make(chan struct {
+		svcSpecific bool
+		exitCode    uint32
+	}, 1)
 	go func() {
-		h.Execute(nil, reqs, statuses)
-		execDone <- struct{}{}
+		svcSpecific, exitCode := h.Execute(nil, reqs, statuses)
+		execDone <- struct {
+			svcSpecific bool
+			exitCode    uint32
+		}{svcSpecific, exitCode}
 	}()
 
 	mustRecvStatus(t, statuses, svc.StartPending)
@@ -268,7 +277,10 @@ func TestWindowsHandlerExecute_StopTimeout(t *testing.T) {
 	mustRecvStatus(t, statuses, svc.Stopped)
 
 	select {
-	case <-execDone:
+	case res := <-execDone:
+		if !res.svcSpecific || res.exitCode == 0 {
+			t.Errorf("Execute returned (svcSpecific=%v, exitCode=%d) after a stop timeout, want (true, non-zero) — a hung run() must not be reported the same as a clean stop", res.svcSpecific, res.exitCode)
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Execute hung past serviceStopTimeout waiting for an unresponsive run()")
 	}
