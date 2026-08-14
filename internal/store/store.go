@@ -486,6 +486,14 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
 		// no restriction, and host 0 is the local daemon.
 		`ALTER TABLE api_tokens ADD COLUMN host_ids TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE audit_log ADD COLUMN host_id INTEGER NOT NULL DEFAULT 0`,
+		// The profiles used on the project's last successful `compose up`, as a
+		// JSON array (same convention as users.sections / api_tokens.host_ids).
+		// This is what was actually deployed, not what's merely selected for the
+		// next deploy — the two can differ, and that's the whole point of tracking
+		// it: a service excluded by these profiles is "not part of the active
+		// profile set", not "stopped". Empty means never successfully deployed, or
+		// deployed with no profiles.
+		`ALTER TABLE projects ADD COLUMN last_deployed_profiles TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := s.db.ExecContext(ctx, alter); err != nil && !isDuplicateColumn(err) {
 			return err
