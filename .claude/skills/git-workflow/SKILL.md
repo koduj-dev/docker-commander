@@ -40,6 +40,11 @@ just check out that branch.
 - **Hotfix to an already-shipped version**: bypass the release branch — branch
   from `main`, PR straight into `main`, tag directly. Don't route an urgent
   fix through whatever's mid-flight on the current release branch.
+- **Dependabot**: deliberately left targeting `main` (its default, set in
+  `.github/dependabot.yml`, which has no `target-branch`) — same exception as
+  hotfixes. Dependency bumps are low-risk and mechanical; retargeting every
+  weekly PR, or updating `target-branch` by hand every release cycle, isn't
+  worth the upkeep. Leave dependabot PRs on `main`, don't move them.
 - No GitHub branch-protection rules exist on `main` (checked via
   `gh api repos/koduj-dev/docker-commander/branches/main/protection` → 404),
   so nothing blocks this merge pattern technically — the discipline is
