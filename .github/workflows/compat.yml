@@ -14,12 +14,36 @@ name: Docker compatibility matrix
 #
 # A red job here is a real compatibility break, not flakiness: the same suite is
 # green against the other versions in the same run.
+#
+# Two things move independently here: the Engine (the daemon, pinned via
+# docker:NN-dind) and the Compose plugin (a client-side CLI binary the app
+# shells out to). Pinning only the Engine and letting Compose be "whatever the
+# runner image ships" means five green jobs still only ever exercise one
+# Compose release — and the README claims "v2 or newer", which is a much
+# bigger promise than that. So each job now also installs a specific pinned
+# `docker-compose` plugin binary before the test step, overriding the runner's
+# default.
+#
+# We do NOT cross every Engine major with every Compose version — 5 majors ×
+# 3 Compose releases would be 15 jobs for a workflow that already runs nightly,
+# and most of that grid is redundant: a Compose regression is about the
+# client/daemon protocol and the CLI's own output shape, not about which
+# Engine patch happens to be listening. So the matrix stays sparse: every
+# Engine major is tested against the newest pinned Compose release (this is
+# the "which daemons work" axis, same as before), and the newest Engine major
+# is additionally tested against the older pinned Compose releases (this is
+# the "which Compose releases work" axis). That's 5 + 2 = 7 jobs — same order
+# of magnitude as the old 5 — instead of 15.
 
 on:
   workflow_dispatch:
     inputs:
       versions:
         description: 'JSON array of docker:NN-dind majors, e.g. ["24","28"]'
+        required: false
+        default: ''
+      compose_versions:
+        description: 'JSON array of docker/compose release tags, newest first, e.g. ["v5.4.0","v5.3.1"]'
         required: false
         default: ''
   schedule:
@@ -30,13 +54,18 @@ permissions:
   contents: read
 
 jobs:
-  # Resolve the matrix once, so the `versions` dispatch input actually selects
-  # what runs. Declaring the input and then hard-coding the list would silently
-  # run all five whatever you asked for — worse than not offering the input.
+  # Resolve the matrix once, so the dispatch inputs actually select what runs.
+  # Declaring the inputs and then hard-coding the lists would silently run the
+  # defaults whatever you asked for — worse than not offering the inputs.
+  #
+  # This also builds the sparse {docker, compose} combo list described above,
+  # via `include:`-only entries rather than declaring `docker` and `compose`
+  # as two plain matrix arrays — the latter is an automatic full cross
+  # product, which is exactly the 15-job grid we're avoiding.
   choose:
     runs-on: ubuntu-latest
     outputs:
-      versions: ${{ steps.pick.outputs.versions }}
+      combos: ${{ steps.pick.outputs.combos }}
     steps:
       - id: pick
         run: |
@@ -44,19 +73,36 @@ jobs:
           if [ -z "$want" ]; then
             want='["24","25","26","27","28"]'
           fi
-          echo "versions=$want" >> "$GITHUB_OUTPUT"
-          echo "running against: $want"
+          compose_want='${{ inputs.compose_versions }}'
+          if [ -z "$compose_want" ]; then
+            # Newest first. Three recent minors, latest patch of each — see the
+            # top-of-file comment for why not every release.
+            compose_want='["v5.4.0","v5.3.1","v5.2.0"]'
+          fi
+
+          # Every Engine major x the newest Compose release, plus the newest
+          # Engine major x the remaining (older) Compose releases. Assumes
+          # both input arrays are ordered oldest-to-... / newest-first as
+          # documented on the inputs above.
+          combos=$(jq -nc --argjson want "$want" --argjson compose "$compose_want" '
+            ($want[-1]) as $newest_docker |
+            ($compose[0]) as $newest_compose |
+            [ $want[] | {docker: ., compose: $newest_compose} ]
+              + [ $compose[1:][] | {docker: $newest_docker, compose: .} ]
+          ')
+          echo "combos=$combos" >> "$GITHUB_OUTPUT"
+          echo "running: $combos"
 
   matrix:
     needs: choose
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
-      # One version failing must not cancel the others: the whole value here is
+      # One combo failing must not cancel the others: the whole value here is
       # seeing WHICH versions broke.
       fail-fast: false
       matrix:
-        docker: ${{ fromJSON(needs.choose.outputs.versions) }}
+        include: ${{ fromJSON(needs.choose.outputs.combos) }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -65,6 +111,19 @@ jobs:
         with:
           go-version: "1.25"
           cache: true
+
+      # The runner ships whatever Compose plugin its image happens to have —
+      # not something this workflow controls otherwise. A user-level plugin
+      # at ~/.docker/cli-plugins takes precedence over the runner's system
+      # install (apt's docker-compose-plugin lands under /usr/lib/docker/cli-plugins),
+      # so dropping the pinned binary there overrides it without touching apt.
+      - name: Install docker compose ${{ matrix.compose }}
+        run: |
+          mkdir -p ~/.docker/cli-plugins
+          curl -sSL -o ~/.docker/cli-plugins/docker-compose \
+            "https://github.com/docker/compose/releases/download/${{ matrix.compose }}/docker-compose-linux-x86_64"
+          chmod +x ~/.docker/cli-plugins/docker-compose
+          docker compose version
 
       # A privileged dind sidecar, not the runner's own daemon: the point is to
       # pin the Engine version, and the runner's is whatever GitHub ships.
@@ -97,10 +156,15 @@ jobs:
         if: always()
         run: |
           {
-            echo "### docker:${{ matrix.docker }}-dind"
+            echo "### docker:${{ matrix.docker }}-dind × compose ${{ matrix.compose }}"
             echo
             echo '```'
             python3 -c "import json;d=json.load(open('/tmp/version.json'));print('engine', d['Version'], 'api', d['ApiVersion'], 'min-api', d['MinAPIVersion'])" || true
+            # docker compose version is also the COMPAT= line's `compose=` field
+            # (see internal/docker/compat_test.go), but printed here directly
+            # too so the plugin actually installed is on record even if the
+            # suite failed before logging COMPAT=.
+            docker compose version || true
             grep -h 'COMPAT=' /tmp/test.log || echo 'no COMPAT= line (the suite did not reach it)'
             echo '```'
             echo
