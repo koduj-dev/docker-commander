@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -66,8 +67,46 @@ func TestBoundedRunZeroItems(t *testing.T) {
 // level: no ids in, no results out, no panic.
 func TestBulkContainerActionEmptyIDs(t *testing.T) {
 	m := &Manager{}
-	results := m.BulkContainerAction(nil, 0, nil, "stop") //nolint:staticcheck // nil ctx unused on the empty path
+	results, err := m.BulkContainerAction(nil, 0, nil, "stop") //nolint:staticcheck // nil ctx unused on the empty path
+	if err != nil {
+		t.Fatalf("unexpected error for 0 ids: %v", err)
+	}
 	if len(results) != 0 {
 		t.Errorf("want 0 results for 0 ids, got %d", len(results))
+	}
+}
+
+// TestBulkContainerActionRejectsDuplicateIDs proves the fail-closed dedup
+// guard at the shared Manager level: [id, id] is refused, naming the
+// duplicate, before any container action would run. This is the level the
+// REST bulk endpoint and BulkStackContainerAction both go through, so the
+// guard protects every caller of BulkContainerAction, not just MCP.
+func TestBulkContainerActionRejectsDuplicateIDs(t *testing.T) {
+	m := &Manager{}
+	results, err := m.BulkContainerAction(nil, 0, []string{"c1", "c2", "c1"}, "stop") //nolint:staticcheck // nil ctx unused on the reject path
+	if err == nil {
+		t.Fatal("a batch containing the same id twice should be refused")
+	}
+	if !strings.Contains(err.Error(), "c1") {
+		t.Errorf("the error should name the duplicate id: %v", err)
+	}
+	if results != nil {
+		t.Errorf("a refused batch must act on nothing: got results %+v", results)
+	}
+}
+
+// TestFirstDuplicateID is the pure-function boundary check, no Manager
+// needed: unique ids find nothing, a repeat is found and named as the FIRST
+// duplicate encountered (matching the "name the offending id" convention
+// used elsewhere in this package).
+func TestFirstDuplicateID(t *testing.T) {
+	if dup := FirstDuplicateID([]string{"a", "b", "c"}); dup != "" {
+		t.Errorf("unique ids should report no duplicate, got %q", dup)
+	}
+	if dup := FirstDuplicateID(nil); dup != "" {
+		t.Errorf("empty input should report no duplicate, got %q", dup)
+	}
+	if dup := FirstDuplicateID([]string{"a", "b", "a", "b"}); dup != "a" {
+		t.Errorf("want the first duplicate %q, got %q", "a", dup)
 	}
 }
