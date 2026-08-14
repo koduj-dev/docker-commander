@@ -7,6 +7,14 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Bulk restart/stop for containers.** Select several containers on the
+  Containers page and restart or stop them together: a preview lists exactly
+  which containers are targeted, the app's own confirm dialog gates the action
+  (never one click), the calls run with bounded parallelism, and a
+  per-container success/failure summary follows — not just a single toast.
+  Reuses the existing `containers` section write permission; no new
+  permission model. Pull and per-host RBAC scoping for bulk operations are not
+  part of this pass — see `NEXT.md`.
 - **Windows native service.** `--install-service` now registers dockercmd as a
   real Service Control Manager (SCM) service on Windows — auto-restart on
   crash, `services.msc`/`sc query` visibility — instead of failing with SCM
@@ -25,6 +33,14 @@ All notable changes to Docker Commander are documented here. The format follows
   service left out by the deployed profile set reads **"Not in active profile"**
   rather than "Stopped" — so a compose file with several profiles doesn't read as
   half-broken just because most of it was never selected to run.
+- **Compat matrix pins exact Engine patches, not just majors.** `docker:NN-dind`
+  always floats to whatever patch of that major is newest when pulled, so the
+  nightly compat workflow only ever proved the latest patch of each major
+  works. It now also runs a handful of exact `docker:X.Y.Z-dind` patch tags
+  (the newest published patch of the two newest majors) alongside the
+  existing major and Compose-version pins, so a specific patch regression is
+  caught by name instead of silently disappearing once the major tag moves
+  past it.
 
 ## [1.6.0] — 2026-08-07
 

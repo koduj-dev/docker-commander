@@ -316,9 +316,14 @@ the security property alone, independent of the NAT-traversal convenience.
 
 ### Smaller, well-scoped
 
-- **Bulk operations** (restart/start/stop/pull across a selection) with preview,
-  confirmation, bounded parallelism, per-host RBAC and a clear success/failure
-  summary.
+- **Bulk operations — remaining scope.** Restart/stop across a multi-selection
+  shipped (preview, confirmation, bounded parallelism, per-container
+  success/failure summary; reuses the existing `containers` section write
+  permission). Still open: **pull** as a third bulk action, **start** (the
+  fourth verb from the original roadmap wording), and **per-host RBAC**
+  granularity for bulk actions specifically (today a bulk request is scoped
+  the same way any single container action is — the section-level grant, not
+  a separate per-host bulk permission).
 - **Log bookmarks** — save a time range plus filters, link it to an incident, share
   it with users who have the rights, export a small diagnostic bundle without
   secrets.
@@ -331,10 +336,6 @@ the security property alone, independent of the NAT-traversal convenience.
 - **ACME / Let's Encrypt** for public hosts. Self-signed `--make-certs` ships;
   lower priority because production usually sits behind a reverse proxy. Testable
   locally against Pebble.
-- **Version matrix — pin Engine patch versions, not just majors.** The compat
-  matrix now pins the Compose plugin too (see CHANGELOG), but it still only
-  pins Engine **majors**, so a regression in a specific patch isn't caught the
-  moment it ships.
 
 ---
 

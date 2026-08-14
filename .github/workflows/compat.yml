@@ -32,8 +32,25 @@ name: Docker compatibility matrix
 # Engine major is tested against the newest pinned Compose release (this is
 # the "which daemons work" axis, same as before), and the newest Engine major
 # is additionally tested against the older pinned Compose releases (this is
-# the "which Compose releases work" axis). That's 5 + 2 = 7 jobs — same order
-# of magnitude as the old 5 — instead of 15.
+# the "which Compose releases work" axis).
+#
+# A third thing was still unpinned: docker:NN-dind always resolves to
+# whichever patch of that major happens to be newest *when the image is
+# pulled*, so five green "which majors work" jobs only ever prove the latest
+# patch of each major is fine. A regression that ships in one patch and is
+# fixed in the next is never caught on the day it ships — the major tag just
+# silently moves past it — and nothing here matches what a distro that pins
+# an older patch actually runs. So a handful of specific `docker:X.Y.Z-dind`
+# tags are pinned too (the newest published patch of the two newest majors),
+# run against the newest Compose release the same way the plain major entries
+# are — this is the "does this exact patch work" axis, independent of both of
+# the above. Only the newest couple of majors get an explicit patch pin;
+# older majors are already effectively covered indirectly, since a Docker Hub
+# patch bump there would also show up as that major's own job going red.
+#
+# That's 5 + 2 + 2 = 9 jobs — same order of magnitude as the old 5 (or the 7
+# after the Compose pin) — instead of the 15+ a full cross product across all
+# three axes would be.
 
 on:
   workflow_dispatch:
@@ -44,6 +61,10 @@ on:
         default: ''
       compose_versions:
         description: 'JSON array of docker/compose release tags, newest first, e.g. ["v5.4.0","v5.3.1"]'
+        required: false
+        default: ''
+      patch_versions:
+        description: 'JSON array of exact docker:X.Y.Z-dind patch tags, newest first, e.g. ["28.5.2","27.5.1"]'
         required: false
         default: ''
   schedule:
@@ -61,7 +82,11 @@ jobs:
   # This also builds the sparse {docker, compose} combo list described above,
   # via `include:`-only entries rather than declaring `docker` and `compose`
   # as two plain matrix arrays — the latter is an automatic full cross
-  # product, which is exactly the 15-job grid we're avoiding.
+  # product, which is exactly the 15-job grid we're avoiding. The patch-pin
+  # entries are folded into the same `docker` field: `matrix.docker` is just
+  # whatever string ends up before `-dind`, and Docker Hub accepts both a
+  # bare major ("24") and an exact patch ("24.0.9") there, so no separate
+  # matrix field or workflow step is needed for the third axis.
   choose:
     runs-on: ubuntu-latest
     outputs:
@@ -79,16 +104,26 @@ jobs:
             # top-of-file comment for why not every release.
             compose_want='["v5.4.0","v5.3.1","v5.2.0"]'
           fi
+          patch_want='${{ inputs.patch_versions }}'
+          if [ -z "$patch_want" ]; then
+            # Newest first. The newest published patch of the two newest
+            # majors — see the top-of-file comment for why not every patch
+            # of every major. Bump these by hand as new patches ship; there
+            # is no registry lookup here, same as the compose list above.
+            patch_want='["28.5.2","27.5.1"]'
+          fi
 
           # Every Engine major x the newest Compose release, plus the newest
-          # Engine major x the remaining (older) Compose releases. Assumes
-          # both input arrays are ordered oldest-to-... / newest-first as
+          # Engine major x the remaining (older) Compose releases, plus each
+          # pinned Engine patch x the newest Compose release. Assumes all
+          # three input arrays are ordered oldest-to-... / newest-first as
           # documented on the inputs above.
-          combos=$(jq -nc --argjson want "$want" --argjson compose "$compose_want" '
+          combos=$(jq -nc --argjson want "$want" --argjson compose "$compose_want" --argjson patch "$patch_want" '
             ($want[-1]) as $newest_docker |
             ($compose[0]) as $newest_compose |
             [ $want[] | {docker: ., compose: $newest_compose} ]
               + [ $compose[1:][] | {docker: $newest_docker, compose: .} ]
+              + [ $patch[] | {docker: ., compose: $newest_compose} ]
           ')
           echo "combos=$combos" >> "$GITHUB_OUTPUT"
           echo "running: $combos"

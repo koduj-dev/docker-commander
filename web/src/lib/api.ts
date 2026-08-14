@@ -13,6 +13,7 @@ import type {
   ManagedUser,
   ContainerDetail,
   ContainerSummary,
+  BulkActionResponse,
   CreateSpec,
   DiffEntry,
   FileEntry,
@@ -296,6 +297,9 @@ export const api = {
   container: (id: string) => req<ContainerDetail>("GET", `/api/containers/${id}${hostParam()}`),
   containerAction: (id: string, action: string) =>
     req<{ ok: boolean }>("POST", `/api/containers/${id}/${action}${hostParam()}`),
+  // restart/stop only — see internal/api/docker_handlers.go's bulkContainerActions.
+  bulkContainerAction: (ids: string[], action: "restart" | "stop") =>
+    req<BulkActionResponse>("POST", `/api/containers/bulk-action${hostParam()}`, { ids, action }),
   containerDiff: (id: string) => req<DiffEntry[]>("GET", `/api/containers/${id}/diff${hostParam()}`),
   containerTop: (id: string) => req<TopResult>("GET", `/api/containers/${id}/top${hostParam()}`),
 
