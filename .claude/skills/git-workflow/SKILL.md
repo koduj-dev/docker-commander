@@ -45,10 +45,18 @@ just check out that branch.
   hotfixes. Dependency bumps are low-risk and mechanical; retargeting every
   weekly PR, or updating `target-branch` by hand every release cycle, isn't
   worth the upkeep. Leave dependabot PRs on `main`, don't move them.
-- No GitHub branch-protection rules exist on `main` (checked via
-  `gh api repos/koduj-dev/docker-commander/branches/main/protection` → 404),
-  so nothing blocks this merge pattern technically — the discipline is
-  procedural, not enforced by the platform.
+- `main` **is** protected, but via a **ruleset** (`protected-branches`, id
+  17308131), not the classic branch-protection API — the classic endpoint
+  (`gh api repos/koduj-dev/docker-commander/branches/main/protection`) 404s,
+  which looks like "no protection" but isn't; check rulesets instead
+  (`gh api repos/koduj-dev/docker-commander/rulesets`). It requires the
+  `build` status check to pass, restricts merges to **squash** merge method,
+  and blocks force-push/deletion on `main`/`master`. The maintainer's own
+  account is a permanent bypass actor (`bypass_mode: always`), so merges as
+  that account aren't actually gated by it in practice.
+  `allow_auto_merge` is **on** at the repo level (enabled 2026-08-14) — use
+  `gh pr merge <N> --auto` to queue a merge for once required checks pass
+  instead of manually polling `gh pr checks --watch`.
 
 ## Commit messages
 
