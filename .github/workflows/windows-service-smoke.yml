@@ -22,8 +22,12 @@ name: Windows service smoke test
 
 on:
   workflow_dispatch: {}
+  # main and the active release/vX.Y.Z branch (see git-workflow skill) — a PR
+  # merge into either lands as a merge commit that the PR's own pull_request
+  # run never re-validates, so a regression that only shows up on the merged
+  # result (not the PR branch alone) would otherwise ship unnoticed.
   push:
-    branches: [main]
+    branches: [main, "release/v*"]
     paths:
       - "internal/service/**"
       - "cmd/dockercmd/main.go"
@@ -122,14 +126,23 @@ jobs:
           # just told the SCM it did while the goroutine kept running.
           $orphan = Get-Process -Name dockercmd -ErrorAction SilentlyContinue
           if ($orphan) { throw "dockercmd process($($orphan.Id)) still alive after Stop" }
+          # Request outside the try/catch's own control flow: a request that
+          # succeeds (the failure case we're checking for) must not be able
+          # to land in the generic `catch` below and get logged as success —
+          # `throw` inside a `try` is itself catchable, so asserting failure
+          # from inside the try block that's supposed to prove absence would
+          # silently swallow its own assertion.
+          $stillUp = $false
           try {
             Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8470/healthz' -TimeoutSec 2 | Out-Null
-            throw "server still answering /healthz after Stop"
-          } catch [System.Net.WebException] {
-            Write-Host "confirmed: no longer listening"
+            $stillUp = $true
           } catch {
-            Write-Host "confirmed: no longer listening ($($_.Exception.GetType().Name))"
+            # Connection refused/reset — the server is actually gone, which is
+            # what we want. Any other failure shape would also mean "not
+            # answering", so no need to distinguish exception types here.
           }
+          if ($stillUp) { throw "server still answering /healthz after Stop" }
+          Write-Host "confirmed: no longer listening"
 
       # Start again via the SCM, separately from Install()'s own auto-start,
       # to exercise a plain Start-Service against an already-registered

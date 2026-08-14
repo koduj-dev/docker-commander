@@ -1,8 +1,11 @@
 name: CI
 
 on:
+  # main and the active release/vX.Y.Z branch (see git-workflow skill): a PR
+  # merge lands as a merge commit that PR-triggered CI never re-checks by
+  # itself, so push needs to cover both, not just main.
   push:
-    branches: [main]
+    branches: [main, "release/v*"]
   pull_request:
 
 jobs:

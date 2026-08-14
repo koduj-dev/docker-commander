@@ -74,12 +74,6 @@ func Install(w io.Writer) error {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return fmt.Errorf("create data dir: %w", err)
 	}
-	if !strings.EqualFold(self, binDest) {
-		if err := copyFile(self, binDest, 0o755); err != nil {
-			return fmt.Errorf("install binary to %s: %w", binDest, err)
-		}
-		fmt.Fprintf(w, "Installed binary -> %s\n", binDest)
-	}
 
 	m, err := mgr.Connect()
 	if err != nil {
@@ -89,13 +83,40 @@ func Install(w io.Writer) error {
 
 	// A re-run of --install-service (e.g. after an upgrade, or pointing at a
 	// new data dir) reconfigures rather than erroring on "already exists".
-	if existing, err := m.OpenService(winServiceName); err == nil {
+	// Stop it — and wait for Stopped — BEFORE touching binDest: that's very
+	// likely the running service's own executable, and Windows keeps a
+	// mapped-for-execution file locked, so overwriting it while the old
+	// process still has it open fails with a sharing violation.
+	existing, openErr := m.OpenService(winServiceName)
+	if openErr == nil {
 		_, _ = existing.Control(svc.Stop)
 		waitStopped(existing, 15*time.Second)
+	}
+
+	if !strings.EqualFold(self, binDest) {
+		if err := copyFile(self, binDest, 0o755); err != nil {
+			if openErr == nil {
+				existing.Close()
+			}
+			return fmt.Errorf("install binary to %s: %w", binDest, err)
+		}
+		fmt.Fprintf(w, "Installed binary -> %s\n", binDest)
+	}
+
+	if openErr == nil {
 		delErr := existing.Delete()
 		existing.Close()
 		if delErr != nil {
 			return fmt.Errorf("remove existing service before reinstall: %w", delErr)
+		}
+		// Delete() marks the service for deletion; the SCM only actually
+		// drops the name once every open handle to it is released (ours,
+		// but also e.g. an open services.msc). Racing CreateService against
+		// that teardown fails with ERROR_SERVICE_MARKED_FOR_DELETE, so wait
+		// for the name to genuinely disappear instead of assuming Delete()
+		// was synchronous.
+		if err := waitServiceGone(m, winServiceName, 10*time.Second); err != nil {
+			return err
 		}
 	}
 
@@ -207,6 +228,26 @@ func waitStopped(s *mgr.Service, timeout time.Duration) {
 	}
 }
 
+// waitServiceGone polls until OpenService(name) fails (the SCM has actually
+// dropped the name, not just marked it for deletion) or the timeout elapses,
+// returning a clear error in the latter case instead of letting the caller's
+// next CreateService fail with the far more cryptic
+// ERROR_SERVICE_MARKED_FOR_DELETE.
+func waitServiceGone(m *mgr.Mgr, name string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		s, err := m.OpenService(name)
+		if err != nil {
+			return nil
+		}
+		s.Close()
+		if time.Now().After(deadline) {
+			return fmt.Errorf("service %q is still marked for deletion after %s — close any open Services console/sc.exe handles on it and re-run --install-service", name, timeout)
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+}
+
 func svcStateString(s svc.State) string {
 	switch s {
 	case svc.Stopped:
@@ -288,10 +329,18 @@ func (h windowsHandler) Execute(_ []string, r <-chan svc.ChangeRequest, statusCh
 				cancel()
 				select {
 				case <-done:
+					statusCh <- svc.Status{State: svc.Stopped}
+					return false, 0
 				case <-time.After(serviceStopTimeout):
+					// run() ignored cancellation. The process is about to exit
+					// either way (the SCM itself considers a service hung around
+					// this point), but this was not a clean stop — say so with a
+					// service-specific non-zero code instead of reporting the
+					// same Stopped/0 a graceful shutdown would, which would mask
+					// the timeout in the Event Log/SCM history.
+					statusCh <- svc.Status{State: svc.Stopped}
+					return true, 1
 				}
-				statusCh <- svc.Status{State: svc.Stopped}
-				return false, 0
 			default:
 				// Unrecognized control (e.g. session/power events) — report the
 				// current status back so the SCM doesn't consider it dropped.
