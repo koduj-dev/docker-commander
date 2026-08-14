@@ -140,3 +140,30 @@ every guard and the fixture traps that come with a real Docker daemon.
 - **A plain file write follows a symlink at the destination.** Anywhere the app
   writes next to a user-controlled path, write to a temp file and rename — rename
   replaces the link instead of writing through it.
+
+## Frontend build
+
+- **A local `make ui` rebuild of `web/dist` is not guaranteed to match CI's.**
+  Same `web/src`, same `web/package-lock.json`, same Node/npm version (checked
+  by installing CI's exact `node -v` via nvm) — and the committed CSS still
+  came out smaller locally than CI's own rebuild: CI's included 10 extra
+  Tailwind v4 utility classes (`transform`, `transition`, `underline`,
+  `blur`, `isolate`, `list-item`, `invert`, `ease-in`/`ease-in-out`/`ease-out`)
+  that a local rebuild pruned. Root cause not fully pinned down — suspected is
+  Tailwind v4's automatic content-candidate scanning behaving differently
+  based on something environment-specific beyond Node/npm version — but the
+  practical fix is procedural: **when a `web/dist` gate failure looks
+  surprising, trust CI's own rebuild over a local one.** Download it
+  (`gh run download <run-id> -n <artifact>` after a temporary
+  `actions/upload-artifact` step on `web/dist`, or just let a pushed branch's
+  own CI run be the thing you commit from) rather than assuming your local
+  build is right and re-pushing it repeatedly.
+- **`ci.yml`'s push trigger only covered `main`+`release/v*`; the `web/dist`
+  gate had never actually run against several already-merged commits on
+  `release/v1.6.1`.** Every individual PR's `pull_request`-triggered check
+  validated *that PR's own diff* correctly, but the *merge commits* combining
+  them (a manual conflict-resolution merge, a forwarded Dependabot merge) were
+  never independently re-checked until push-triggered CI was extended to
+  `release/v*` — which is exactly when the above discrepancy surfaced. A
+  merge commit needs its own CI run, not just trust in its parents' green
+  checks.
