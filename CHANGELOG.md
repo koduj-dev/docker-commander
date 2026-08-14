@@ -17,6 +17,14 @@ All notable changes to Docker Commander are documented here. The format follows
   Network, Observability, System) to fold/unfold it; state is remembered per
   browser. A collapsed group holding the current page auto-expands, so
   navigating there directly never hides where you are.
+- **Compat matrix pins exact Engine patches, not just majors.** `docker:NN-dind`
+  always floats to whatever patch of that major is newest when pulled, so the
+  nightly compat workflow only ever proved the latest patch of each major
+  works. It now also runs a handful of exact `docker:X.Y.Z-dind` patch tags
+  (the newest published patch of the two newest majors) alongside the
+  existing major and Compose-version pins, so a specific patch regression is
+  caught by name instead of silently disappearing once the major tag moves
+  past it.
 
 ## [1.6.0] — 2026-08-07
 

@@ -103,6 +103,7 @@ what is hoped for.
 |---|---|
 | **Minimum Engine API** | **1.43** (Docker Engine 24) |
 | **Tested Engine majors** | 24, 25, 26, 27, 28 (nightly; see the workflow runs for the current result) |
+| **Tested Engine patches** | a handful of exact patch releases of the newest majors are also pinned and tested nightly, independent of the floating major tags (see the workflow runs for the current exact versions) |
 | **Compose** | the `docker compose` plugin, v2 or newer (legacy `docker-compose` v1 is not supported); a handful of recent v2 releases are pinned and tested nightly (see the workflow runs) |
 | **Client SDK** | pinned in `go.mod`, negotiated **down** to the daemon at connect time |
 
@@ -114,11 +115,15 @@ These numbers are **measured, not remembered**: the
 [compatibility workflow](.github/workflows/compat.yml) runs the app's whole Docker
 integration suite against a pinned `docker:NN-dind` for each major, nightly and on
 demand, and prints the negotiated API version — plus the Compose version it ran
-with — for every run. Both axes are pinned: every Engine major is tested against
-the newest of a small set of recent Compose releases, and the newest Engine major
-is additionally tested against the older ones in that set — so the matrix answers
-both "which daemons work" and "which recent Compose releases work", short of a
-full Engine × Compose cross product. Reproduce any row locally:
+with — for every run. Three axes are pinned: every Engine major is tested against
+the newest of a small set of recent Compose releases, the newest Engine major is
+additionally tested against the older ones in that set, and a handful of exact
+Engine **patch** releases (`docker:X.Y.Z-dind`, not just `docker:NN-dind`) are
+pinned and tested too — since the plain major tag always floats to whatever patch
+is newest when it's pulled, it alone can't prove a *specific* patch is good, only
+that the latest one currently is. So the matrix answers "which daemons work",
+"which recent Compose releases work", and "does this exact Engine patch work",
+short of a full Engine × Compose cross product. Reproduce any row locally:
 
 ```bash
 docker run -d --name dc-compat --privileged -e DOCKER_TLS_CERTDIR="" \

@@ -341,10 +341,6 @@ the security property alone, independent of the NAT-traversal convenience.
 - **ACME / Let's Encrypt** for public hosts. Self-signed `--make-certs` ships;
   lower priority because production usually sits behind a reverse proxy. Testable
   locally against Pebble.
-- **Version matrix — pin Engine patch versions, not just majors.** The compat
-  matrix now pins the Compose plugin too (see CHANGELOG), but it still only
-  pins Engine **majors**, so a regression in a specific patch isn't caught the
-  moment it ships.
 
 ---
 
