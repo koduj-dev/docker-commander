@@ -42,6 +42,22 @@ the old repeat-every-cooldown engine would have produced a timeline of noise.
   matches and metrics into one explainable incident: what changed, what broke, what
   it affected, and a link to the revision to roll back to. Feeds MCP tools
   (`diagnose_container`, `get_incident`, `list_active_incidents`).
+  `diagnose_container` specifically has a shape worth being deliberate about:
+  read logs/events/inspect for a container and return a **suggested**
+  root cause and fix — never apply it. Docker's own Gordon agent does roughly
+  this (inspects an OOM-killed container, traces exit 137 to the specific
+  process, proposes a fix the human must approve). It fits the MCP server's
+  existing safe-control philosophy exactly, since the output is advice, not
+  an action.
+- **External / synthetic checks.** Everything DC alerts on today is
+  container-internal (state, resource thresholds, log patterns). It has no
+  outside-in check — hitting a URL over HTTP(S)/TCP and alerting if it's
+  down, times out, or its TLS cert is close to expiring, the way Uptime Kuma
+  does. It's the single most commonly paired tool with Portainer/Dockge in
+  self-hosted stack write-ups specifically because that gap exists. Worth
+  scoping narrowly (a new alert-rule *source*, reusing the existing
+  rule/lifecycle/notification machinery) rather than growing into a general
+  monitoring tool.
 - **Alert delivery retry.** Failures are now *recorded* but never re-attempted.
   Retry needs a queue and a backoff policy, and silently retrying a webhook that
   returns 500 for a good reason is its own hazard — worth doing deliberately.
@@ -52,10 +68,39 @@ the old repeat-every-cooldown engine would have produced a timeline of noise.
 
 ### Safe changes
 
+The next three items — plan/diff, drift detection, and revisions/rollback —
+share one underlying question: *what does the compose definition say, what is
+actually running, and what's the difference?* Worth designing as one internal
+state-diff model (current state + desired state → difference → plan →
+execution → verification → rollback) rather than three one-off features, so
+the same diff engine can back a pre-deploy preview, a drift check, and a
+rollback's "what will restoring this revision actually change" — and, later,
+feed the same model to the CLI/MCP instead of each surface re-deriving it.
+
+- **Deployment plan / diff.** Before a deploy or redeploy, show exactly what
+  is about to happen: which services get created / recreated / removed, image
+  tag **and digest** changes, env/port/volume/network changes, resource-limit
+  and healthcheck changes, and a downtime-risk callout (e.g. "backend will be
+  recreated"). Projects already show a **resolved config preview** (rendered
+  YAML) — this is a step beyond that: a structural diff against the *running*
+  state, not just the file. Should be a first-class UI screen, not only
+  something MCP callers see.
+- **Drift detection (desired vs. running state).** Compare a project's compose
+  definition against what's actually running — image digest, env, mounts,
+  restart policy, resource limits — and surface the delta (e.g. "restart:
+  unless-stopped ⟶ running as always ⚠"). Actions: reconcile the running
+  container to match the file, adopt the running config back into the file,
+  view the full diff, or explicitly ignore a drift. Nobody in this space does
+  this well — Terraform-style drift tooling exists because Terraform keeps a
+  state file; Compose has none, so nothing today compares "what's running" to
+  "what the file says" the way this would. Reuses the container-diff and
+  inspect infrastructure that already exists.
 - **Deployment revisions and rollback.** An immutable history of every project and
   edited-stack deploy — compose file, sidecar files, resolved config, profiles,
   target host, image references *and resolved digests*, validation result, output,
-  author, reason — with diff, preview and restore. Notes that matter: roll back a
+  author, reason — with diff, preview and restore. Should include an **env/secret
+  diff** between two revisions (values stay redacted; only "changed/added/removed"
+  is shown). Notes that matter: roll back a
   mutable tag using the stored **digest**; a revision must identify its remote bind
   snapshots; rollback must not delete persistent named volumes; it should re-run
   validation before applying; and a CLI-discovered stack must keep its original
@@ -68,6 +113,56 @@ the old repeat-every-cooldown engine would have produced a timeline of noise.
 - **Controlled image updates.** Detect that a newer image exists for a running
   workload, show what would change, and update deliberately. (Distinct from
   self-update, which is about the Docker Commander binary and already ships.)
+  Should include a **poll schedule** (periodic registry check, not just
+  on-demand), a per-container / per-project **opt-in** for auto-apply once
+  policy checks pass, and a **notification** on update — reusing the existing
+  alert delivery channels rather than inventing a new one. Arcane ships
+  roughly this shape (scheduled polling + auto-update toggle + Discord/email
+  notification) — worth using as a reference, not a spec. Round it out with
+  per-image controls (ignore this version / ignore major versions / ignore
+  this image entirely), an optional **auto-rollback on failed healthcheck**,
+  and post-deploy verification (healthcheck result, restart count, crash
+  loop, alert status) before calling an update "kept".
+
+### GitOps and Compose sources
+
+- **GitOps stack deploy.** Deploy a stack from a git repository instead of a
+  host-backed compose folder — pull compose (and any files it references) from
+  a repo/ref/path, redeploy on a poll or a webhook when the ref advances.
+  Portainer and Arcane both support this; our Stacks/Projects model is always
+  filesystem-backed on the host today. Needs repo credentials (encrypted at
+  rest, matching the registry/SMTP secret pattern) — an **SSH deploy key** is
+  the expected auth path, matching how self-hosters already grant read access
+  to a private repo — a fetch step ahead of the existing validate → deploy
+  pipeline, and a decision on whether a git-sourced project stays editable in
+  the built-in editor or is read-only between pulls. Consider a
+  **Renovate-style mode** alongside direct-apply: instead of redeploying
+  straight away, open a PR against the repo bumping the image tag and let a
+  human merge it — treats an available update as a diffable change to
+  review, not just a notification to act on.
+  **Build-from-source is this, not a separate feature:** once the full repo
+  is pulled (not just `compose.yml`), a service with `build: context: ./app`
+  already builds correctly through the existing `--build` / remote-build
+  machinery — no new capability needed. The only new rule is the refusal
+  case: a repo with neither a compose file nor a Dockerfile at the given path
+  gets rejected outright. Deliberately **no AI-driven "figure out how to run
+  this repo"** — DC decides how to run something from an explicit compose
+  file or Dockerfile, never by having something infer it, which would be a
+  much bigger trust boundary than anything the MCP surface allows today.
+- **Monorepo-aware mapping.** Self-hosters commonly keep one repo for the
+  whole homelab (`infra/host-a/immich`, `infra/host-b/monitoring`…), not one
+  repo per stack. Clone the repo once and map multiple projects/hosts to
+  subdirectories of that single checkout, rather than a separate clone per
+  stack — plus shared files across projects (a common `.env`, shared compose
+  fragments via `include`/`extends`). Depends on GitOps stack deploy above;
+  design it in from the start rather than bolting it on, since "one repo, one
+  checkout, many project paths" is a different data model than "one project,
+  one repo".
+- **Lightweight webhook redeploy.** A single authenticated per-stack/project
+  webhook URL that just re-pulls and redeploys — no git required. Smaller and
+  more common a want than full GitOps (people who keep compose on the host,
+  not in a repo, still want "redeploy on push from CI"). Complements, doesn't
+  replace, GitOps deploy above.
 
 ### Network statistics
 
@@ -96,6 +191,28 @@ Exact mapping needs MAC/namespace inspection via netlink — Linux-only and host
 to remote hosts. So the app sums across interfaces and says so, rather than
 publishing a per-network number that looks authoritative and is wrong.
 
+### Backup and disaster recovery
+
+- **Portable recovery bundle.** Export everything Docker Commander itself
+  knows as one file: project/stack compose + sidecar files, resolved project
+  config, host definitions, alert rules, registry definitions, image
+  digests, network/volume inventory, and DC's own config — no volume data.
+  Restore flow: import the bundle → pick a target host → a compatibility
+  check surfaces missing images/volumes/secrets → restore. This needs no new
+  storage engine, since it's exactly the state DC already keeps; it's the
+  single most-requested thing on this whole list — Portainer gates it behind
+  its paid Business Edition ([#1759](https://github.com/portainer/portainer/issues/1759),
+  78 👍; [#2901](https://github.com/portainer/portainer/issues/2901), 54 👍) —
+  and DC having no external DB of its own to restore is a real edge.
+- **Volume data: integrate, don't reinvent.** Deliberately *not* a backup
+  engine — no repositories, retention policies or storage backends of our
+  own. Instead, a **trigger-and-status wrapper**: run a user-supplied command
+  (their own `restic`/`borg`/whatever, already configured with its own repo
+  and encryption) per volume or project, on a schedule or on demand, and
+  surface "last backup: ok/failed, 3h ago" next to that volume/project in the
+  dashboard. The recovery bundle above says what infrastructure looked like;
+  this says whether its data was actually captured.
+
 ### Identity and access
 
 - **OIDC / SSO** — Google/Azure/Okta login. LDAP (including group→role) is step
@@ -106,9 +223,19 @@ publishing a per-network number that looks authoritative and is wrong.
 
 ### Configuration and secrets
 
-- **Secrets references** in compose — pull values from an internal store or an
-  external provider rather than inlining them, with resolved previews that stay
-  redacted.
+- **Project secrets.** A GitHub-Actions-secrets-style store: name a value once
+  (`DB_PASSWORD`, `API_TOKEN`…), reference it from compose/`.env` instead of
+  inlining it, and it never appears in plaintext again — not in the compose
+  file, not in a git-sourced repo, not in the resolved-config preview, not in
+  a deployment plan/diff, not in logs, not in a normal API response. Matters
+  more now that GitOps/build-from-source deploy is planned: a repo pulled
+  from git must never need a real secret committed to it to run. RBAC on who
+  can view/edit which secrets; audit *that* a secret changed, never its
+  value; detect a likely-secret pasted directly into a compose editor and
+  offer to move it. Storage stays DC's own encrypted-at-rest store for now
+  (matching the registry/SMTP/LDAP secret pattern already in place) — `.env`
+  import and an external provider (SOPS+age, Docker Secrets, Vault…) are
+  later, optional backends, not a prerequisite. Don't try to become Vault.
 - **Parameterized user templates.** Built-in presets support `{{.Var}}`;
   user-saved ones are literal snapshots. Add variables, validation and safe
   handling of generated secrets.
@@ -119,8 +246,86 @@ publishing a per-network number that looks authoritative and is wrong.
   provider needs catalog signing, item versions, a local cache, a trust policy and
   a preview before import.
 
+### Multi-host organization
+
+- **Aggregated cross-host dashboard.** Every view today rebinds to one
+  selected host; there is no single screen listing containers/images/
+  volumes/networks across *all* reachable hosts at once. Close to a
+  necessity once a deployment has more than a handful of hosts and
+  containers — Arcane's top open feature request
+  ([#634](https://github.com/getarcaneapp/arcane/issues/634), 38 👍) asks for
+  exactly this, citing it as the reason people stay on flatter multi-agent
+  tools. Read-only aggregation over data already fetched per host; no new
+  connectivity model needed.
+- **Host groups / tags.** Organize the flat host list into groups (env, team,
+  region…) — filter the host switcher, scope alert rules and RBAC by group
+  instead of per-host, and show a group rollup on the dashboard. Consider
+  letting the same grouping also scope **stacks/projects**, not just hosts —
+  a "project" as a saved, bounded set of stacks with its own optional
+  resource quota, the way Dokploy scopes teams/environments. This is grouping
+  for hosts we already directly reach; it's a smaller, self-contained step
+  distinct from the multi-instance federation ("edge agents") idea below.
+
+### Reverse proxy and ingress
+
+- **Per-container domain + TLS.** An optional embedded reverse proxy
+  (Go-native, e.g. Caddy-as-a-library — no new external process) that maps a
+  domain to a container's host port with automatic Let's Encrypt issuance,
+  so a deployed stack doesn't need a hand-rolled Traefik/nginx-proxy-manager
+  sitting next to it. This is the single most-cited draw pulling people from
+  Portainer/Dockge-class tools toward Coolify/CapRover, and it's asked for
+  directly against Dockge too
+  ([discussion #292](https://github.com/louislam/dockge/discussions/292),
+  [#553](https://github.com/louislam/dockge/issues/553)). DC already does
+  ACME/native HTTPS for *itself*; this is the same capability, scoped
+  per-deployed-container instead of per-DC-instance.
+
+### Multi-instance federation
+
+Resolves the "edge agents" open question below: yes, worth building, mainly
+for the **security** shape, not just the reach. Today's model is one DC
+instance reaching *out* to every daemon it manages (TCP/TLS or SSH) — that
+instance ends up holding credentials to everything at once, and it can't
+reach a host behind a NAT/firewall it isn't allowed to open toward. Splitting
+into a hub + lightweight agents inverts that:
+
+- **Agent-initiated, outbound-only connections.** Each remote host runs an
+  agent (same binary, a mode flag) that opens an outbound connection to the
+  hub (websocket / long-poll) and never needs to be reachable itself — NAT
+  traversal falls out for free, and no port needs opening on the agent side.
+- **Smaller blast radius.** The hub never holds per-host SSH keys/TLS certs;
+  an agent only knows its own host and its own pairing credential. Compromise
+  one agent, and the attacker has that host — not the whole estate the way a
+  stolen hub credential would today.
+- **Pairing/enrollment.** A trust-on-first-use or one-time-code flow to
+  attach a new agent to a hub, similar in spirit to the passkey pairing
+  already in the product — needs a UX, not just an API.
+- **Offline handling.** The hub must decide what "this agent hasn't checked
+  in" means for monitoring (alert? just mark stale?) and for pending actions
+  (queue until it reconnects? reject?).
+- **Scope discipline:** this is aggregation and reachability, not workload
+  orchestration — it does not decide *where* a container runs the way Swarm
+  or Kubernetes would. The **aggregated cross-host dashboard** above is the
+  natural first consumer once agents exist, and **host groups/tags** should
+  be designed to apply uniformly whether a host is reached directly or
+  through an agent.
+
+Expect this to be a genuinely non-trivial implementation — new auth model,
+new connection lifecycle, a pairing UX — but it's judged worth the cost for
+the security property alone, independent of the NAT-traversal convenience.
+
 ### Smaller, well-scoped
 
+- **Compose profiles — finish the UX.** Deploy-time profile selection already
+  works end to end (`docker compose --profile`, `ComposeProfiles` lists what a
+  project defines, and Projects has a toggle-chip picker that persists per
+  project). What's still missing is *state reflection*: per-service profile
+  badges, a clear "profiles currently deployed" vs. "profiles selected for
+  next deploy" distinction, and not showing a profile-excluded service as
+  stopped/errored when it's simply not part of the active profile set — this
+  exact gap (profile-disabled services misrepresented in stack state) is a
+  recurring complaint against Portainer, Dockge and Arcane alike. Narrower
+  and cheaper than it first looks, since the backend piece already shipped.
 - **Bulk operations** (restart/start/stop/pull across a selection) with preview,
   confirmation, bounded parallelism, per-host RBAC and a clear success/failure
   summary.
@@ -150,6 +355,46 @@ publishing a per-network number that looks authoritative and is wrong.
   whatever it happens to have (v5 today).
 
 ---
+
+## 📦 Backlog
+
+Plausible, deliberately not prioritized — different from 🧭 below, which is a
+closed question. Revisit if the reasoning changes, not on a timer.
+
+- **Docker Swarm support.** Real feature, real (shrinking) audience — usage
+  keeps moving toward plain Compose on one side and Kubernetes on the other,
+  and Swarm needs a genuinely new object model (services/tasks/nodes,
+  `docker stack deploy`, overlay networks, Swarm-native secrets) rather than
+  an incremental add. Not worth the build for a shrinking slice of users
+  right now. Parked here instead of rejected outright, since "shrinking" can
+  reverse.
+
+---
+
+## ❓ Open questions
+
+Not decided yet — sitting here until they get triaged into 🔭 Open work,
+📦 Backlog or 🧭 Deliberately not doing. Recorded so the question itself
+doesn't get lost or re-asked from scratch.
+
+- **Automation API + CLI** (`dockercmd host list`, `dockercmd project plan
+  <name>`, `dockercmd project deploy <name>`, a declarative
+  `dockercmd config apply infrastructure.yaml`…). DC has REST + MCP but
+  nothing conventional for CI/CD, Ansible or shell scripts to call without
+  speaking MCP. Not yet discussed with the user — surfaced from a separate
+  product-direction note, not from the forum research above.
+- **"Existing containers → Compose project."** Select running (e.g.
+  `docker run`-created) containers and derive a compose project from their
+  inspect data — images, ports, volumes, env, networks, restart policy,
+  resource limits, labels — flagging secret-looking env vars and anonymous
+  volumes along the way. A migration/onboarding path for exactly the
+  "everything is `docker run` and label-discovered Stacks" users DC already
+  targets. Not yet discussed with the user.
+- **Compose Watch / development mode.** Expose `develop.watch` (sync-on-change
+  / rebuild-on-change) as a live UI panel — positions DC as a local dev
+  cockpit, not just an ops tool. A bigger scope question than the others
+  here: worth deciding whether "local dev workflow" is a direction DC wants
+  at all before designing it. Not yet discussed with the user.
 
 ## 🧭 Deliberately not doing
 
