@@ -345,9 +345,6 @@ the security property alone, independent of the NAT-traversal convenience.
   console exe is not a native service (SCM error 1053), so this needs
   `golang.org/x/sys/windows/svc`; the Task Scheduler script remains the supported
   path meanwhile.
-- **Collapsible sidebar groups.** The sidebar is already grouped (Compute,
-  Network, Observability, System); the groups just don't fold. Worth doing only if
-  the list grows enough that folding beats scrolling.
 - **Version matrix — narrower axes.** It pins Engine **majors**, so a regression in
   a specific patch isn't caught the moment it ships; and it does not pin the
   **Compose plugin**, which comes from the runner. Compose is the more likely one
