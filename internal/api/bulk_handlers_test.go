@@ -75,10 +75,12 @@ func TestAPIBulkContainerActionRestartAndStopAreAllowed(t *testing.T) {
 // container that exists and one that does not, over HTTP, and checks:
 //   - the response reports one result per id, in order, with the right
 //     succeeded/failed counts (a structured summary, not a single ok/fail)
-//   - only the container that actually restarted gets a container.restart
-//     audit entry — the same success-only granularity as the single-container
-//     endpoint, not a single aggregate "bulk" entry that would hide which
-//     container was actually touched.
+//   - both the container that actually restarted AND the one that failed get
+//     their own container.restart audit entry — one entry per container acted
+//     on (not a single aggregate "bulk" entry that would hide which container
+//     was actually touched), and a failed attempt must leave a trace too: a
+//     bulk write against ids the caller doesn't actually control should not be
+//     invisible in the audit log just because the daemon rejected it.
 func TestAPIBulkContainerActionSummaryAndAudit(t *testing.T) {
 	a := newAPI(t)
 	if code, _ := a.do("POST", "/api/auth/setup", map[string]string{"username": "admin", "password": "correcthorse123"}); code != 200 {
@@ -130,8 +132,9 @@ func TestAPIBulkContainerActionSummaryAndAudit(t *testing.T) {
 		t.Errorf("results[1] = %v, want {id:%q ok:false error:<non-empty>}", r1, bogus)
 	}
 
-	// Audit: exactly one container.restart entry, naming the container that
-	// actually restarted — none for the bogus id.
+	// Audit: exactly two container.restart entries, one per container acted
+	// on — the one that actually restarted AND the one that failed. A bulk
+	// write must not drop failed attempts from the audit log.
 	_, entries := a.getJSONArray("/api/audit")
 	var restarts []map[string]any
 	for _, e := range entries {
@@ -139,15 +142,28 @@ func TestAPIBulkContainerActionSummaryAndAudit(t *testing.T) {
 			restarts = append(restarts, e)
 		}
 	}
-	if len(restarts) != 1 {
-		t.Fatalf("want exactly 1 container.restart audit entry, got %d: %v", len(restarts), restarts)
+	if len(restarts) != 2 {
+		t.Fatalf("want exactly 2 container.restart audit entries, got %d: %v", len(restarts), restarts)
 	}
-	if restarts[0]["target"] != id {
-		t.Errorf("audit entry names target %v, want %q", restarts[0]["target"], id)
-	}
-	for _, e := range entries {
-		if e["target"] == bogus {
-			t.Errorf("SECURITY/correctness: the failed container got an audit entry too: %v", e)
+	var okEntry, failEntry map[string]any
+	for _, e := range restarts {
+		switch e["target"] {
+		case id:
+			okEntry = e
+		case bogus:
+			failEntry = e
 		}
+	}
+	if okEntry == nil {
+		t.Errorf("no audit entry for the succeeded container %q: %v", id, restarts)
+	} else if d, _ := okEntry["detail"].(string); d != "" {
+		t.Errorf("succeeded entry detail = %q, want empty", d)
+	}
+	if failEntry == nil {
+		t.Fatalf("no audit entry for the failed container %q — failed bulk attempts must not be silently dropped from the audit log: %v", bogus, restarts)
+	}
+	detail, _ := failEntry["detail"].(string)
+	if detail == "" {
+		t.Errorf("failed entry detail is empty, want the daemon's error text identifying why %q failed", bogus)
 	}
 }
