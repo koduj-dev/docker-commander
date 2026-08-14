@@ -75,6 +75,20 @@ func ComposeUpFiles(ctx context.Context, dir, slug string, profiles, env, files 
 	if build {
 		args = append(args, "--build")
 	}
+	// Neutralize COMPOSE_PROFILES for the subprocess so the --profile flags
+	// above — built from `profiles`, the caller's authoritative selection (the
+	// server persists exactly this as "last deployed profiles") — are the ONLY
+	// profile source `up` sees. Without this, Compose also honors:
+	//   - COMPOSE_PROFILES inherited from this server process's own
+	//     environment (an operator's systemd `Environment=` line, a shell var);
+	//   - a `COMPOSE_PROFILES=…` line in the project's own .env file (the
+	//     compose CLI auto-loads .env from cmd.Dir, the project's directory).
+	// Either can otherwise activate MORE profiles than `profiles` lists, so a
+	// service the UI badges "not in active profile" would actually be running.
+	//
+	// See docs/gotchas.md for what empirical testing against a real `docker
+	// compose up` showed about the resulting precedence.
+	env = append(append([]string{}, env...), "COMPOSE_PROFILES=")
 	return runComposeFiles(ctx, dir, slug, env, files, args...)
 }
 

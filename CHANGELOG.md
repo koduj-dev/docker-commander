@@ -33,6 +33,15 @@ All notable changes to Docker Commander are documented here. The format follows
   service left out by the deployed profile set reads **"Not in active profile"**
   rather than "Stopped" — so a compose file with several profiles doesn't read as
   half-broken just because most of it was never selected to run.
+
+  Deploys with no profiles selected now also neutralize `COMPOSE_PROFILES` for
+  the `docker compose` subprocess: without this, an operator's own environment
+  or a project's `.env` file could activate profiles the deploy request never
+  asked for, so a genuinely-running service would be misbadged "Not in active
+  profile" — the exact bug this feature exists to fix, reintroduced by a
+  side channel. A failure to persist the deployed profile set is now also
+  logged server-side (it no longer fails the deploy itself, matching the
+  existing best-effort behavior, but it's no longer silent either).
 - **Compat matrix pins exact Engine patches, not just majors.** `docker:NN-dind`
   always floats to whatever patch of that major is newest when pulled, so the
   nightly compat workflow only ever proved the latest patch of each major
