@@ -190,6 +190,138 @@ func TestStackContainersActionEnforcesCap(t *testing.T) {
 	}
 }
 
+// TestStackContainersActionRejectsDuplicateIDs proves the MCP-layer guard
+// added for Finding 2: a batch naming the same container twice is refused
+// with an error naming the duplicate, and — because the rejection happens
+// before h.deps.Docker.BulkStackContainerAction is ever called — zero
+// containers are acted on. h.deps.Docker is left as its zero value
+// (newTestHandler never sets it), so reaching that call here would panic;
+// the test passing at all is itself evidence the rejection happened before
+// any Docker work was attempted.
+func TestStackContainersActionRejectsDuplicateIDs(t *testing.T) {
+	h, uid := newTestHandler(t, nil)
+	ctx := context.Background()
+	u, err := h.deps.Store.UserByID(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := reqFor(&principal{user: u})
+
+	tool := h.stackContainersActionTool("restart")
+	in := stackContainersActionInput{Project: "web", ContainerIDs: []string{"c1", "c2", "c1"}}
+	_, _, err = tool(ctx, req, in)
+	if err == nil {
+		t.Fatal("a container_ids batch containing the same id twice should be refused")
+	}
+	if !strings.Contains(err.Error(), "c1") {
+		t.Errorf("the refusal should name the duplicate id: %v", err)
+	}
+}
+
+// TestStackContainersActionDuplicateRejectionDoesNotChargeExtra proves the
+// other half of Finding 2's fix: a rejected duplicate-containing request
+// costs no MORE than the 1 unit authorize() already spent — the extra
+// per-container charge (Finding 1) must never run for a batch that gets
+// refused for duplicates.
+func TestStackContainersActionDuplicateRejectionDoesNotChargeExtra(t *testing.T) {
+	h, uid := newTestHandler(t, nil)
+	h.limiter.burst = 5
+	ctx := context.Background()
+	u, err := h.deps.Store.UserByID(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := reqFor(&principal{user: u})
+
+	tool := h.stackContainersActionTool("restart")
+	// 5 containers, but 3 of them are the same id repeated — if the extra
+	// charge ran before the dedup check, this alone would nearly drain a
+	// burst of 5. It must instead cost exactly 1 (authorize's own charge).
+	in := stackContainersActionInput{Project: "web", ContainerIDs: []string{"c1", "c1", "c1", "c2", "c3"}}
+	if _, _, err := tool(ctx, req, in); err == nil {
+		t.Fatal("duplicate ids should have been refused")
+	}
+
+	// 4 units must still be available: only the 1 unit authorize() spent for
+	// this call is gone.
+	for i := 0; i < 4; i++ {
+		if ok, _ := h.limiter.allow(uid); !ok {
+			t.Fatalf("only %d of 4 remaining units were available; the duplicate rejection overspent the limiter", i)
+		}
+	}
+}
+
+// TestStackContainersActionChargesPerAdditionalContainer is the regression
+// test for Finding 1: the control rate limiter must charge per CONTAINER
+// changed, not per CALL. Exercised directly against chargeAdditionalContainers
+// (the function stackContainersActionTool calls after authorize() and the
+// dedup check) so the boundary can be proven without a Docker daemon — the
+// same "test the pure boundary directly" convention validateStackContainerIDs
+// already uses in this file.
+//
+// The proof: with authorize()'s own 1-unit charge simulated per call, three
+// calls of 3 containers each cost 9 units total (3 x [1 authorize + 2 extra])
+// and fit inside a burst of 10 with exactly 1 to spare. A fourth such call
+// needs 3 more — 1 remains — so it must be refused. If the limiter only
+// charged per call (the bug), all 4 calls (12 containers acted on) would have
+// succeeded inside the same burst of 10.
+func TestStackContainersActionChargesPerAdditionalContainer(t *testing.T) {
+	h, uid := newTestHandler(t, nil)
+	h.limiter.burst = 10
+	ctx := context.Background()
+	u, err := h.deps.Store.UserByID(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &principal{user: u}
+
+	// spend mirrors what stackContainersActionTool does: authorize()'s own
+	// 1-unit charge, then chargeAdditionalContainers for the rest of the
+	// batch.
+	spend := func(containers int) error {
+		if ok, _ := h.limiter.allow(p.user.ID); !ok {
+			return errControlRateLimited()
+		}
+		return h.chargeAdditionalContainers(p, containers)
+	}
+
+	for i := 1; i <= 3; i++ {
+		if err := spend(3); err != nil {
+			t.Fatalf("call %d of 3 (each acting on 3 containers) refused inside a burst of 10: %v", i, err)
+		}
+	}
+	if err := spend(3); err == nil {
+		t.Fatal("SECURITY: a 4th 3-container call succeeded inside a burst of 10 " +
+			"(12 container changes from 10 units) — the limiter is charging per call, not per container")
+	}
+}
+
+// TestStackContainersActionSingleContainerCallsCostOne is the contrasting
+// case: a batch of exactly 1 container must cost exactly 1 unit (no extra
+// charge), so ordinary single-container use is unaffected by this fix.
+func TestStackContainersActionSingleContainerCallsCostOne(t *testing.T) {
+	h, uid := newTestHandler(t, nil)
+	h.limiter.burst = 3
+	ctx := context.Background()
+	u, err := h.deps.Store.UserByID(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &principal{user: u}
+
+	for i := 1; i <= 3; i++ {
+		if ok, _ := h.limiter.allow(p.user.ID); !ok {
+			t.Fatalf("authorize's own charge %d of 3 refused inside the burst", i)
+		}
+		if err := h.chargeAdditionalContainers(p, 1); err != nil {
+			t.Fatalf("a single-container batch should add no extra charge: %v", err)
+		}
+	}
+	if ok, _ := h.limiter.allow(p.user.ID); ok {
+		t.Fatal("a 4th single-container call should have exhausted a burst of 3")
+	}
+}
+
 // TestAuditStackContainerResultsAuditsSuccessAndFailure proves the per-container
 // audit fan-out: every result, success or failure, gets its own entry under
 // the existing mcp.container.<action> code (the same code containerActionTool

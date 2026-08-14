@@ -21,13 +21,41 @@ type BulkActionResult struct {
 	Error string `json:"error,omitempty"`
 }
 
+// FirstDuplicateID returns the first id in ids that also appears earlier in
+// ids, or "" if every id is unique. Exported so MCP-layer callers (see
+// internal/mcp/tools_parity.go) can refuse a duplicate-containing batch
+// before spending their own per-container rate-limit budget on it, while
+// BulkContainerAction below applies the same check as its own fail-closed
+// guard for every caller — MCP or the REST bulk endpoint
+// (internal/api/docker_handlers.go).
+func FirstDuplicateID(ids []string) string {
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if seen[id] {
+			return id
+		}
+		seen[id] = true
+	}
+	return ""
+}
+
 // BulkContainerAction runs action (restart|stop — callers must validate the
 // action before calling this; ContainerAction itself rejects anything else)
 // against each of ids, bounded to bulkActionConcurrency concurrent daemon
 // calls. One container failing does not stop the others: every id gets a
 // result, success or error, so the caller can report a per-container summary
 // instead of a single aggregate ok/fail.
-func (m *Manager) BulkContainerAction(ctx context.Context, hostID int64, ids []string, action string) []BulkActionResult {
+//
+// Rejects a batch containing the same id twice, naming the duplicate, before
+// running anything: one goroutine is started per INDEX, not per unique id, so
+// [id, id] would otherwise fire two concurrent actions at the same container
+// — a race, plus a doubled audit entry, for no legitimate request shape.
+// Matches this package's fail-closed style elsewhere (the stack-membership
+// check below): refuse the whole call, name the offender, execute nothing.
+func (m *Manager) BulkContainerAction(ctx context.Context, hostID int64, ids []string, action string) ([]BulkActionResult, error) {
+	if dup := FirstDuplicateID(ids); dup != "" {
+		return nil, fmt.Errorf("container %q is listed more than once in the same request", dup)
+	}
 	results := make([]BulkActionResult, len(ids))
 	boundedRun(len(ids), bulkActionConcurrency, func(i int) {
 		id := ids[i]
@@ -37,7 +65,7 @@ func (m *Manager) BulkContainerAction(ctx context.Context, hostID int64, ids []s
 		}
 		results[i] = BulkActionResult{ID: id, OK: true}
 	})
-	return results
+	return results, nil
 }
 
 // BulkStackContainerAction restarts or stops a caller-chosen subset of one
@@ -88,7 +116,10 @@ func (m *Manager) BulkStackContainerAction(ctx context.Context, hostID int64, pr
 			return nil, fmt.Errorf("container %q does not belong to stack %q", id, project)
 		}
 	}
-	return m.BulkContainerAction(ctx, hostID, ids, action), nil
+	// BulkContainerAction applies its own duplicate check before running
+	// anything, so [id, id] is refused here too even though membership alone
+	// would have passed it.
+	return m.BulkContainerAction(ctx, hostID, ids, action)
 }
 
 // boundedRun calls fn(i) for every i in [0,n), running at most concurrency

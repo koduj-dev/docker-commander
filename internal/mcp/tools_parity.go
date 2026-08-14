@@ -164,6 +164,37 @@ func validateStackContainerIDs(ids []string) error {
 	return nil
 }
 
+// chargeAdditionalContainers charges the control rate limiter for every
+// container beyond the first in a stack-container-subset batch.
+//
+// authorize() already spent one unit for the call as a whole — the limiter's
+// entire design (ratelimit.go) assumes one change through MCP means one
+// container changed. restart_stack_containers/stop_stack_containers break
+// that assumption on their own: a single call can name up to
+// maxStackContainerIDs containers. Without this, 30 calls/minute would mean
+// up to maxStackContainerIDs*30 container state changes/minute, not 30.
+//
+// Charged directly against h.limiter — not by calling authorize() again,
+// which would redundantly re-check RBAC and the token's narrowing that are
+// already established for this call — and charged BEFORE any container is
+// acted on, so a bucket that runs dry mid-batch refuses the WHOLE call
+// rather than partially executing it. Split out of stackContainersActionTool,
+// matching the validateStackContainerIDs convention in this file, so the
+// charging boundary can be tested directly against the limiter without a
+// handler or a Docker daemon behind it.
+func (h *handler) chargeAdditionalContainers(p *principal, n int) error {
+	for range n - 1 {
+		ok, firstTrip := h.limiter.allow(p.user.ID)
+		if !ok {
+			if firstTrip {
+				h.audit(p, "mcp.ratelimit", "containers", "control rate limit reached via MCP; changes refused")
+			}
+			return errControlRateLimited()
+		}
+	}
+	return nil
+}
+
 // stackContainersActionTool builds the handler for one lifecycle verb, acting
 // on a caller-chosen subset of one stack's own containers rather than the
 // whole stack (stackActionTool) or a single container (containerActionTool).
@@ -183,6 +214,19 @@ func (h *handler) stackContainersActionTool(action string) func(context.Context,
 			return nil, stackContainersActionOut{}, errors.New("project is required")
 		}
 		if err := validateStackContainerIDs(in.ContainerIDs); err != nil {
+			return nil, stackContainersActionOut{}, err
+		}
+		if dup := docker.FirstDuplicateID(in.ContainerIDs); dup != "" {
+			// Checked here, before any limiter budget beyond authorize()'s own 1
+			// unit is spent, and before BulkStackContainerAction (which applies
+			// the same guard again at the Docker layer) does any Docker work.
+			derr := fmt.Errorf(
+				"container_ids lists %q more than once; each container may appear only once per call", dup)
+			h.audit(p, "mcp.stack."+action, in.Project, outcome(derr))
+			return nil, stackContainersActionOut{}, derr
+		}
+		if err := h.chargeAdditionalContainers(p, len(in.ContainerIDs)); err != nil {
+			h.audit(p, "mcp.stack."+action, in.Project, outcome(err))
 			return nil, stackContainersActionOut{}, err
 		}
 

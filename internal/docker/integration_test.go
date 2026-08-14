@@ -230,7 +230,10 @@ func TestIntegrationBulkContainerAction(t *testing.T) {
 	id1 := startTestContainer(ctx, t, m, "dctest_bulk1")
 	id2 := startTestContainer(ctx, t, m, "dctest_bulk2")
 
-	results := m.BulkContainerAction(ctx, 0, []string{id1, id2}, "restart")
+	results, err := m.BulkContainerAction(ctx, 0, []string{id1, id2}, "restart")
+	if err != nil {
+		t.Fatalf("BulkContainerAction: %v", err)
+	}
 	if len(results) != 2 {
 		t.Fatalf("want 2 results, got %d", len(results))
 	}
@@ -241,7 +244,10 @@ func TestIntegrationBulkContainerAction(t *testing.T) {
 	}
 
 	// Partial failure: id1 is real and running, the second id names nothing.
-	mixed := m.BulkContainerAction(ctx, 0, []string{id1, "dctest-bulk-does-not-exist"}, "stop")
+	mixed, err := m.BulkContainerAction(ctx, 0, []string{id1, "dctest-bulk-does-not-exist"}, "stop")
+	if err != nil {
+		t.Fatalf("BulkContainerAction: %v", err)
+	}
 	if len(mixed) != 2 {
 		t.Fatalf("want 2 results, got %d", len(mixed))
 	}
@@ -253,6 +259,21 @@ func TestIntegrationBulkContainerAction(t *testing.T) {
 	}
 	// Restore id1 for other tests / cleanup expecting a running container.
 	_ = m.ContainerAction(ctx, 0, id1, "start")
+
+	// A duplicate id must be refused outright, naming the duplicate, and must
+	// act on NOTHING — not even once. Proven against the real daemon: if the
+	// guard were absent this would fire two concurrent restarts at the same
+	// running container.
+	dupResults, dupErr := m.BulkContainerAction(ctx, 0, []string{id1, id1}, "restart")
+	if dupErr == nil {
+		t.Fatal("a batch naming the same container twice should be refused")
+	}
+	if !strings.Contains(dupErr.Error(), id1) {
+		t.Errorf("the refusal should name the duplicate id %s: %v", id1, dupErr)
+	}
+	if dupResults != nil {
+		t.Errorf("a refused duplicate batch must produce no results: got %+v", dupResults)
+	}
 }
 
 func TestIntegrationImagesTransfer(t *testing.T) {

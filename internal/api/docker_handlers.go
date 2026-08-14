@@ -146,7 +146,12 @@ func (s *Server) handleBulkContainerAction(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	results := s.docker.BulkContainerAction(r.Context(), hostID, req.IDs, req.Action)
+	results, err := s.docker.BulkContainerAction(r.Context(), hostID, req.IDs, req.Action)
+	if err != nil {
+		// A duplicate id — refused before any container was touched.
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	succeeded, failed := 0, 0
 	for _, res := range results {

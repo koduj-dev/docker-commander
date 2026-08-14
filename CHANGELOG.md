@@ -15,7 +15,10 @@ All notable changes to Docker Commander are documented here. The format follows
   blast radius the existing MCP control rate limit assumes (one call ≈ one
   container). Scoping to a project the caller already named keeps this no
   wider in spirit than the existing whole-stack `restart_stack`/`stop_stack`
-  tools.
+  tools. The control rate limit now charges per container acted on, not per
+  call, so a batch of up to 10 costs up to 10 units instead of 1 — and a
+  `container_ids` list naming the same container twice is refused outright,
+  naming the duplicate, before anything runs or is charged.
 - **Bulk restart/stop for containers.** Select several containers on the
   Containers page and restart or stop them together: a preview lists exactly
   which containers are targeted, the app's own confirm dialog gates the action
