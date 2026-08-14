@@ -1,6 +1,6 @@
 ---
 name: git-workflow
-description: Use BEFORE any git or release operation in this repo — committing, branching, staging, opening or editing a PR, tagging, or cutting a release. Captures the project's conventions so they aren't re-derived or skipped: dev-cycle PRs target the long-lived `release/vX.Y.Z` branch (not `main`) so `main` only ever holds what's shipped, and only the `release/vX.Y.Z → main` PR at ship time actually touches `main`; commit subjects start with a bracketed action (`[add]`, `[fix]`, `[docs]`) and stay terse because they feed changelog generation, with NO Co-Authored-By / Claude trailer (and none in PR bodies either); PR bodies MUST follow .github/PULL_REQUEST_TEMPLATE.md; the gofmt gate runs AFTER git add; web/dist is committed whenever web/src changes; CHANGELOG accumulates under [Unreleased] then becomes [x.y.z] + a link def at release; pushing a vX.Y.Z tag on main triggers release.yml. Read it before touching git.
+description: MANDATORY GATE — run before creating any branch, and again before any push/tag/merge, in this repo. Two checkpoints (spelled out under "Gate" in this file): (1) before branching, check whether a `release/vX.Y.Z` branch exists — dev-cycle work bases off THAT, not `main`, so `main` only ever holds what's shipped; (2) before push/merge, verify the PR's base branch is actually correct, run the diff-appropriate checks, confirm CI is green (not just started), and confirm with the user. Also captures: commit subjects start with a bracketed action (`[add]`, `[fix]`, `[docs]`) and stay terse because they feed changelog generation, with NO Co-Authored-By / Claude trailer (and none in PR bodies either); PR bodies MUST follow .github/PULL_REQUEST_TEMPLATE.md; the gofmt gate runs AFTER git add; web/dist is committed whenever web/src changes (regenerate via `make ui`, never hand-merge it); CHANGELOG accumulates under [Unreleased] then becomes [x.y.z] + a link def at release; pushing a vX.Y.Z tag on main triggers release.yml; hotfixes and Dependabot are the two exceptions that base off `main` directly. Read it before touching git — every time, not just once per session.
 ---
 
 # Docker Commander — git & release conventions
@@ -10,10 +10,54 @@ doesn't have to re-specify them every time. Anything that pushes, tags, or opens
 a PR is outward-facing — **confirm with the user before doing it** unless they've
 already told you to proceed.
 
+## Gate — run this before every branch, and again before every push/merge
+
+Don't skim it, actually run the commands. Two checkpoints, both mandatory.
+
+### Gate 1 — before creating any branch
+
+1. `git fetch origin --quiet`, then find the active release branch:
+   `git ls-remote --heads origin 'release/v*'`.
+2. **A `release/vX.Y.Z` exists** → that is the base for `feat/…`, `fix/…`,
+   `docs/…`, `chore/…` work. Branch from `origin/release/vX.Y.Z`, **not**
+   `origin/main`. (Exceptions — base off `main` instead — are a hotfix to an
+   already-shipped version, or a Dependabot PR; see Release branches below.)
+3. **No `release/vX.Y.Z` exists** → nothing is mid-cycle. Don't start feature
+   work straight on `main` — cut `release/vX.Y.Z` from `origin/main` first
+   (see "Starting a cycle" below), then branch off that.
+4. Branch from the fetched `origin/<base>` ref, never a possibly-stale local
+   branch of the same name.
+
+### Gate 2 — before every push, tag, or merge
+
+1. **Base check**: does the PR actually target what Gate 1 said it should?
+   `gh pr view <N> --json baseRefName`. Wrong base → fix it before anything
+   else: `gh api repos/koduj-dev/docker-commander/pulls/<N> -X PATCH -f
+   base=<branch>` (`gh pr edit --base` hits a known GraphQL/Projects-classic
+   bug in this repo — use the REST PATCH instead).
+2. **Diff-appropriate checks pass** — run what the Pre-PR / pre-merge checks
+   section below calls for (gofmt after `git add`, `go vet`/`go test`, `make
+   ui` + commit `web/dist` if `web/src` changed, tests for new behaviour,
+   CHANGELOG/docs for user-facing changes). Don't skip a category because the
+   diff "probably" doesn't need it — check.
+3. **CI is green**, not just started: `gh pr checks <N>`, or `gh pr checks <N>
+   --watch --interval 15` to block until it resolves. Never merge on
+   `pending` or `fail`. `allow_auto_merge` is on at the repo level — `gh pr
+   merge <N> --auto` queues the merge for once checks pass, instead of
+   manually polling.
+4. **Confirm with the user** before the push/tag/merge itself — the default
+   for this whole doc, not just this gate. A "yes, merge them" already given
+   for a named set of PRs covers exactly those PRs, not ones opened later.
+5. `main`'s ruleset (`protected-branches`) restricts merges into `main` to
+   **squash**, and requires the `build` check. The maintainer's account is a
+   permanent bypass actor, so `--merge` (merge commit) still works for them —
+   don't assume that holds for any other account/token acting on this repo.
+
 ## Branching
 
 - **Never commit directly to `main`.** Create a branch first:
-  `feat/…`, `fix/…`, `docs/…`, `chore/…`.
+  `feat/…`, `fix/…`, `docs/…`, `chore/…`. Which branch you cut *from* is
+  Gate 1 above — almost always `release/vX.Y.Z`, not `main`.
 - One **frontend** PR in flight at a time — `web/dist` is a committed build
   artifact and parallel frontend branches conflict on it (see below).
 
@@ -28,8 +72,8 @@ just check out that branch.
 - **Starting a cycle**: cut `release/vX.Y.Z` from `main` (`X.Y.Z` = the version
   it's aiming for — bump from the last release, adjust if scope changes).
 - **During the cycle**: every `feat/…`/`fix/…`/`docs/…`/`chore/…` PR targets
-  `release/vX.Y.Z` as its base, **not** `main`. Everything else in this doc
-  (commit style, PR template, pre-PR checks, `CHANGELOG.md` under
+  `release/vX.Y.Z` as its base, **not** `main` (Gate 1 above). Everything else
+  in this doc (commit style, PR template, pre-PR checks, `CHANGELOG.md` under
   `[Unreleased]`) applies unchanged — only the PR base branch changes.
 - **Shipping**: on `release/vX.Y.Z`, stamp the CHANGELOG (`[Unreleased]` →
   `[x.y.z] — YYYY-MM-DD` + link def, see below), open a PR
@@ -44,19 +88,18 @@ just check out that branch.
   `.github/dependabot.yml`, which has no `target-branch`) — same exception as
   hotfixes. Dependency bumps are low-risk and mechanical; retargeting every
   weekly PR, or updating `target-branch` by hand every release cycle, isn't
-  worth the upkeep. Leave dependabot PRs on `main`, don't move them.
+  worth the upkeep. Leave dependabot PRs on `main`, don't move them. When one
+  merges into `main`, merge `main` into the current `release/vX.Y.Z` too (a
+  plain merge, not a rebase) so the release branch doesn't silently drift
+  behind — expect a `web/dist` conflict if the release branch also touched
+  `web/src`; resolve it by regenerating (`make ui`), never by hand-merging
+  the built files (see Pre-PR / pre-merge checks below).
 - `main` **is** protected, but via a **ruleset** (`protected-branches`, id
   17308131), not the classic branch-protection API — the classic endpoint
   (`gh api repos/koduj-dev/docker-commander/branches/main/protection`) 404s,
   which looks like "no protection" but isn't; check rulesets instead
-  (`gh api repos/koduj-dev/docker-commander/rulesets`). It requires the
-  `build` status check to pass, restricts merges to **squash** merge method,
-  and blocks force-push/deletion on `main`/`master`. The maintainer's own
-  account is a permanent bypass actor (`bypass_mode: always`), so merges as
-  that account aren't actually gated by it in practice.
-  `allow_auto_merge` is **on** at the repo level (enabled 2026-08-14) — use
-  `gh pr merge <N> --auto` to queue a merge for once required checks pass
-  instead of manually polling `gh pr checks --watch`.
+  (`gh api repos/koduj-dev/docker-commander/rulesets`). Full detail on what it
+  enforces is in Gate 2 above.
 
 ## Commit messages
 
