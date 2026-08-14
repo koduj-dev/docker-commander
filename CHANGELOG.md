@@ -17,6 +17,14 @@ All notable changes to Docker Commander are documented here. The format follows
   Network, Observability, System) to fold/unfold it; state is remembered per
   browser. A collapsed group holding the current page auto-expands, so
   navigating there directly never hides where you are.
+- **Compose profiles: "deployed" vs "selected", and per-service state badges.**
+  Projects now persists the profiles used on a project's last successful deploy,
+  and the project editor shows them ("Deployed with: …") right next to the toggle
+  chips you use to pick profiles for the *next* deploy — the two can differ until
+  you redeploy. The compose summary also badges each service's real state, and a
+  service left out by the deployed profile set reads **"Not in active profile"**
+  rather than "Stopped" — so a compose file with several profiles doesn't read as
+  half-broken just because most of it was never selected to run.
 
 ## [1.6.0] — 2026-08-07
 

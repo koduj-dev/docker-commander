@@ -316,16 +316,6 @@ the security property alone, independent of the NAT-traversal convenience.
 
 ### Smaller, well-scoped
 
-- **Compose profiles — finish the UX.** Deploy-time profile selection already
-  works end to end (`docker compose --profile`, `ComposeProfiles` lists what a
-  project defines, and Projects has a toggle-chip picker that persists per
-  project). What's still missing is *state reflection*: per-service profile
-  badges, a clear "profiles currently deployed" vs. "profiles selected for
-  next deploy" distinction, and not showing a profile-excluded service as
-  stopped/errored when it's simply not part of the active profile set — this
-  exact gap (profile-disabled services misrepresented in stack state) is a
-  recurring complaint against Portainer, Dockge and Arcane alike. Narrower
-  and cheaper than it first looks, since the backend piece already shipped.
 - **Bulk operations** (restart/start/stop/pull across a selection) with preview,
   confirmation, bounded parallelism, per-host RBAC and a clear success/failure
   summary.

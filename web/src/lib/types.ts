@@ -410,6 +410,13 @@ export interface Project {
    * needs write access to the "hosts" section.
    */
   allowRemoteHostPaths?: boolean;
+  /**
+   * Profiles used on the last successful `compose up` for this project — what's
+   * ACTUALLY running. Distinct from whatever's selected client-side for the
+   * NEXT deploy (see `projects.profiles.<slug>` in prefs). Always an array;
+   * empty means never deployed, or deployed with no profiles.
+   */
+  lastDeployedProfiles: string[];
   createdBy: string;
   createdAt: string;
   updatedAt: string;
