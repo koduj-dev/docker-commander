@@ -348,7 +348,7 @@ Standalone actions:
   --backup <file>              write a full backup of the data dir (add --passphrase to encrypt)
   --restore <file>             restore a backup into the data dir (server must be stopped)
   --reset-password <user>      set a new password from this machine when it is lost
-  --install-service            install as a systemd (Linux) / launchd (macOS) service
+  --install-service            install as a systemd (Linux) / launchd (macOS) / SCM (Windows) service
   --uninstall-service          remove the service
   --service-status             show the service status
 
@@ -399,6 +399,25 @@ func run() error {
 		return runBackupAction(act, file, wantPass)
 	}
 
+	// On Windows, the Service Control Manager launches dockercmd with no
+	// interactive console and expects the SCM start/stop protocol instead of
+	// OS signals (which it never sends) — service.IsWindowsService() detects
+	// that and service.RunWindowsService hands control to it. Everywhere else
+	// this is always false and falls through to the normal signal-driven path.
+	if service.IsWindowsService() {
+		return service.RunWindowsService(runServer)
+	}
+
+	shutdownCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runServer(shutdownCtx)
+}
+
+// runServer loads config, opens the store and serves the API + embedded UI
+// until shutdownCtx is cancelled. shutdownCtx comes from an OS signal in the
+// normal/systemd/launchd path, or from the Windows SCM's Stop/Shutdown request
+// when running as a native Windows service (see service.RunWindowsService).
+func runServer(shutdownCtx context.Context) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -443,11 +462,6 @@ func run() error {
 	dm := docker.NewManager(st)
 	defer dm.Close()
 	hub := ws.NewHub(dm)
-
-	// Graceful shutdown on SIGINT/SIGTERM (declared early so the monitor binds
-	// to the same lifecycle as the HTTP server).
-	shutdownCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	// Metrics history store (Redis if configured, else in-memory).
 	hist := history.Open(shutdownCtx, history.Config{

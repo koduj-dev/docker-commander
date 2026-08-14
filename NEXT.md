@@ -341,10 +341,6 @@ the security property alone, independent of the NAT-traversal convenience.
 - **ACME / Let's Encrypt** for public hosts. Self-signed `--make-certs` ships;
   lower priority because production usually sits behind a reverse proxy. Testable
   locally against Pebble.
-- **Windows native service.** `--install-service` covers systemd and launchd. A
-  console exe is not a native service (SCM error 1053), so this needs
-  `golang.org/x/sys/windows/svc`; the Task Scheduler script remains the supported
-  path meanwhile.
 - **Collapsible sidebar groups.** The sidebar is already grouped (Compute,
   Network, Observability, System); the groups just don't fold. Worth doing only if
   the list grows enough that folding beats scrolling.

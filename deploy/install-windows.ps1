@@ -3,12 +3,13 @@
   Install Docker Commander to run in the background on Windows.
 
 .DESCRIPTION
-  dockercmd is a plain console program, not a native Windows service (it doesn't
-  implement the Service Control Manager protocol), so `sc.exe create` / New-Service
-  would fail with error 1053 ("did not respond in time"). Instead we register a
-  Scheduled Task that starts it at boot and restarts it on failure — no extra
-  dependencies. For a "real" Windows service, wrap the exe with NSSM (https://nssm.cc)
-  or WinSW; this script is the dependency-free option.
+  Registers a Scheduled Task that starts dockercmd at boot and restarts it on
+  failure — no extra dependencies, and no SYSTEM-owned Service Control Manager
+  entry. For a native SCM service instead (auto-restart via SCM recovery
+  actions, `sc query`/services.msc visibility), run
+  `dockercmd.exe --install-service` from an elevated prompt — see
+  docs/deployment.md. Wrapping the exe with NSSM (https://nssm.cc) or WinSW is
+  also still an option.
 
 .PARAMETER BinPath
   Path to dockercmd.exe (default: .\dockercmd.exe, then .\dockercmd-windows-amd64.exe).

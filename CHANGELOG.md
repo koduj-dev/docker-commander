@@ -4,6 +4,16 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Windows native service.** `--install-service` now registers dockercmd as a
+  real Service Control Manager (SCM) service on Windows — auto-restart on
+  crash, `services.msc`/`sc query` visibility — instead of failing with SCM
+  error 1053 (a plain console exe never speaks the service protocol). The
+  Task Scheduler installer (`deploy/install-windows.ps1`) remains available as
+  a dependency-free alternative.
+
 ## [1.6.0] — 2026-08-07
 
 ### Security
