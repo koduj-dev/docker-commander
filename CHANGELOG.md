@@ -7,6 +7,14 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Bulk restart/stop for containers.** Select several containers on the
+  Containers page and restart or stop them together: a preview lists exactly
+  which containers are targeted, the app's own confirm dialog gates the action
+  (never one click), the calls run with bounded parallelism, and a
+  per-container success/failure summary follows — not just a single toast.
+  Reuses the existing `containers` section write permission; no new
+  permission model. Pull and per-host RBAC scoping for bulk operations are not
+  part of this pass — see `NEXT.md`.
 - **Windows native service.** `--install-service` now registers dockercmd as a
   real Service Control Manager (SCM) service on Windows — auto-restart on
   crash, `services.msc`/`sc query` visibility — instead of failing with SCM

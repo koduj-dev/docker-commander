@@ -182,6 +182,7 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/containers/{id}/update", s.handleUpdateContainer)
 			r.Post("/containers/{id}/commit", s.handleCommitContainer)
 			r.Post("/containers/{id}/probe", s.handleProbePorts)
+			r.Post("/containers/bulk-action", s.handleBulkContainerAction)
 			r.Post("/containers/{id}/{action}", s.handleContainerAction)
 
 			// Compose stacks (grouped by the compose project label).

@@ -48,7 +48,7 @@ level filters, regex search and structured parsing.
 - **Networks & topology** — an interactive containers ↔ networks graph (force-directed, pan / zoom / fullscreen, **search**, **filter by compose stack**) with a compact **list view** (state, image, stack, ports, networks).
 
 **Control**
-- Containers: **create/run**, start/stop/restart/pause/unpause/**kill**, **rename**, **update** limits & restart policy, **commit** to an image, and an interactive **shell** (xterm.js).
+- Containers: **create/run**, start/stop/restart/pause/unpause/**kill**, **rename**, **update** limits & restart policy, **commit** to an image, an interactive **shell** (xterm.js), and **bulk restart/stop** across a multi-selection (preview, confirmation, bounded parallelism, per-container success/failure summary).
 - **File browser** inside containers **and volumes** — list, download, upload (incl. **upload & extract** a `.zip`/`.tar`/`.tar.gz`), delete, create folders.
 - Images: pull (live progress), build, push, tag, save/load/import, history, prune, and **vulnerability scanning** (Trivy — severity summary + CVE table).
 - Volumes & networks: list, inspect, create, remove, prune; networks also **connect / disconnect** containers, with a per-network detail (graph or list).
@@ -377,7 +377,7 @@ notify webhooks (Go-template bodies) and/or email. **Prometheus:** scrape
 ## 🧪 How it's tested
 
 You're pointing this at real Docker daemons, so the fast tests are the floor, not
-the ceiling. Alongside **~600 Go unit tests** and **~147 frontend tests**, the repo
+the ceiling. Alongside **~600 Go unit tests** and **~170 frontend tests**, the repo
 carries **115 adversarial "pentest" cases** that assert attacks are *rejected* (token
 forgery, OAuth replay, CSRF, IDOR, per-host scope bypass, privilege escalation,
 path traversal), an integration tier against a **real Docker daemon** (plus

@@ -12,6 +12,16 @@ SIGKILL immediately — no shutdown handler runs and nothing in flight is flushe
 so it asks first, and is for a container that has stopped responding to Stop. Click a name
 to open the detail page.
 
+### Bulk restart / stop
+Select several rows with the checkboxes (or the header checkbox to select every
+row currently shown) and a toolbar appears with **Restart** and **Stop**. Both
+open the app's confirm dialog first, listing exactly which containers are
+targeted — nothing runs on a single click. The requests run with bounded
+parallelism, and once they finish you get a per-container summary: which
+containers succeeded and which failed, with the daemon's error for each
+failure. Pull and per-host scoping for bulk actions aren't part of this pass —
+see `NEXT.md`.
+
 ### Create / run
 **Create container** opens a form covering the common `docker run` options:
 
