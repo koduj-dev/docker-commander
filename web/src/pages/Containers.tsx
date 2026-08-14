@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Play, Plus, RotateCw, Square, Pause, Zap } from "lucide-react";
+import { Play, Plus, RotateCw, Square, Pause, Zap, X, Check } from "lucide-react";
 import { api } from "../lib/api";
-import type { ContainerSummary } from "../lib/types";
+import type { BulkActionResult, ContainerSummary } from "../lib/types";
 import { shortId } from "../lib/format";
 import { StateBadge, EmptyState, Spinner } from "../components/ui";
 import { PageHeader } from "../layout/Shell";
@@ -33,6 +33,11 @@ export function ContainerTable({ runningOnly = false, withControls = false, refr
   const dialogs = useDialogs();
   const [list, setList] = useState<ContainerSummary[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Bulk select is gated behind withControls (the standalone Containers page)
+  // so embeds like the dashboard's ContainerTable (withControls=false) never
+  // grow checkboxes or a bulk toolbar they weren't asked for.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -50,6 +55,17 @@ export function ContainerTable({ runningOnly = false, withControls = false, refr
     return () => clearInterval(t);
   }, [load, refreshSignal]);
 
+  // Drop selected ids that no longer exist (removed/renamed away) so a stale
+  // selection can't be bulk-acted on.
+  useEffect(() => {
+    if (!list) return;
+    setSelected((prev) => {
+      const ids = new Set(list.map((c) => c.id));
+      const next = new Set([...prev].filter((id) => ids.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [list]);
+
   const controls = useListControls(
     list ?? [],
     matchContainer,
@@ -63,6 +79,53 @@ export function ContainerTable({ runningOnly = false, withControls = false, refr
       await load();
     } finally {
       setBusyId(null);
+    }
+  };
+
+  const toggleOne = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // Bulk restart/stop: preview exactly which containers are targeted inside
+  // the confirm dialog (never a one-click bulk action — matches every other
+  // destructive-ish action in this app), then fire the request and show a
+  // per-container success/failure summary rather than a single toast.
+  const bulkAct = async (action: "restart" | "stop") => {
+    const targets = (list ?? []).filter((c) => selected.has(c.id));
+    if (targets.length === 0) return;
+    const label = action === "restart" ? "Restart" : "Stop";
+    const ok = await dialogs.confirm({
+      title: `${label} ${targets.length} container${targets.length === 1 ? "" : "s"}?`,
+      message: (
+        <div className="space-y-2">
+          <div>This will {action} the following container{targets.length === 1 ? "" : "s"}:</div>
+          <ul className="max-h-48 overflow-y-auto space-y-0.5 text-sm font-mono bg-panel2/50 rounded-md p-2">
+            {targets.map((c) => <li key={c.id}>{c.name}</li>)}
+          </ul>
+        </div>
+      ),
+      danger: action === "stop",
+      confirmLabel: label,
+    });
+    if (!ok) return;
+
+    setBulkBusy(true);
+    try {
+      const resp = await api.bulkContainerAction(targets.map((c) => c.id), action);
+      const nameFor = (id: string) => targets.find((c) => c.id === id)?.name ?? shortId(id);
+      await dialogs.alert({
+        title: `${label}: ${resp.succeeded} succeeded, ${resp.failed} failed`,
+        message: <BulkResultList results={resp.results} nameFor={nameFor} />,
+      });
+      setSelected(new Set());
+      await load();
+    } finally {
+      setBulkBusy(false);
     }
   };
 
@@ -91,14 +154,47 @@ export function ContainerTable({ runningOnly = false, withControls = false, refr
     );
 
   const rows = withControls ? controls.pageItems : list;
+  const allVisibleSelected = withControls && rows.length > 0 && rows.every((c) => selected.has(c.id));
+  const toggleAllVisible = () => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) rows.forEach((c) => next.delete(c.id));
+      else rows.forEach((c) => next.add(c.id));
+      return next;
+    });
+  };
 
   return (
    <div className="space-y-3">
     {withControls && <SearchBar controls={controls} placeholder="Search containers by name, image, id, state…" />}
+    {withControls && selected.size > 0 && (
+      <div className="card p-2 flex items-center gap-2">
+        <span className="text-sm text-muted pl-1">{selected.size} selected</span>
+        <button className="btn-ghost px-2 py-1.5 text-sm ml-auto" disabled={bulkBusy} onClick={() => setSelected(new Set())}>
+          Clear
+        </button>
+        <button className="btn-ghost px-2 py-1.5 text-sm" disabled={bulkBusy} onClick={() => bulkAct("restart")}>
+          {bulkBusy ? <Spinner className="h-3.5 w-3.5" /> : <RotateCw className="h-3.5 w-3.5" />} Restart
+        </button>
+        <button className="btn-ghost px-2 py-1.5 text-sm text-danger hover:bg-danger/15" disabled={bulkBusy} onClick={() => bulkAct("stop")}>
+          {bulkBusy ? <Spinner className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />} Stop
+        </button>
+      </div>
+    )}
     <div className="card overflow-hidden">
       <table className="w-full text-sm">
         <thead className="text-muted text-xs uppercase tracking-wide">
           <tr className="border-b border-border">
+            {withControls && (
+              <th className="text-left px-4 py-3 w-8">
+                <input
+                  type="checkbox"
+                  checked={allVisibleSelected}
+                  onChange={toggleAllVisible}
+                  aria-label="Select all containers"
+                />
+              </th>
+            )}
             <th className="text-left font-medium px-4 py-3">Name</th>
             <th className="text-left font-medium px-4 py-3">State</th>
             <th className="text-left font-medium px-4 py-3 hidden lg:table-cell">Image</th>
@@ -112,6 +208,17 @@ export function ContainerTable({ runningOnly = false, withControls = false, refr
             const running = c.state === "running";
             return (
               <tr key={c.id} className="border-b border-border/50 hover:bg-panel2/40">
+                {withControls && (
+                  <td className="px-4 py-3">
+                    <input
+                      type="checkbox"
+                      checked={selected.has(c.id)}
+                      disabled={bulkBusy}
+                      onChange={() => toggleOne(c.id)}
+                      aria-label={`Select ${c.name}`}
+                    />
+                  </td>
+                )}
                 <td className="px-4 py-3">
                   <Link to={`/containers/${c.id}`} className="font-medium hover:text-accent">
                     {c.name}
@@ -167,6 +274,26 @@ export function ContainerTable({ runningOnly = false, withControls = false, refr
     </div>
     {withControls && <Pager controls={controls} />}
    </div>
+  );
+}
+
+// BulkResultList is the post-action summary: one line per container, ok or
+// failed (with its error), instead of a single pass/fail toast — so a bulk
+// action across several containers still tells you exactly which ones need a
+// second look.
+function BulkResultList({ results, nameFor }: { results: BulkActionResult[]; nameFor: (id: string) => string }) {
+  return (
+    <ul className="max-h-64 overflow-y-auto space-y-1 text-sm">
+      {results.map((r) => (
+        <li key={r.id} className="flex items-start gap-1.5">
+          {r.ok ? <Check className="h-4 w-4 text-accent shrink-0 mt-0.5" /> : <X className="h-4 w-4 text-danger shrink-0 mt-0.5" />}
+          <span>
+            <span className={r.ok ? "" : "text-danger"}>{nameFor(r.id)}</span>
+            {!r.ok && r.error && <span className="text-muted"> — {r.error}</span>}
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }
 

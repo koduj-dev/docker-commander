@@ -221,6 +221,40 @@ func TestIntegrationContainerLifecycle(t *testing.T) {
 	}
 }
 
+// TestIntegrationBulkContainerAction exercises BulkContainerAction against
+// real containers: an all-success batch, then a batch mixing a real container
+// with a bogus id so one result succeeds and one fails — proving each
+// container gets its own outcome rather than the batch failing as a whole.
+func TestIntegrationBulkContainerAction(t *testing.T) {
+	m, ctx := newManager(t)
+	id1 := startTestContainer(ctx, t, m, "dctest_bulk1")
+	id2 := startTestContainer(ctx, t, m, "dctest_bulk2")
+
+	results := m.BulkContainerAction(ctx, 0, []string{id1, id2}, "restart")
+	if len(results) != 2 {
+		t.Fatalf("want 2 results, got %d", len(results))
+	}
+	for _, r := range results {
+		if !r.OK || r.Error != "" {
+			t.Errorf("expected success restarting %s, got %+v", r.ID, r)
+		}
+	}
+
+	// Partial failure: id1 is real and running, the second id names nothing.
+	mixed := m.BulkContainerAction(ctx, 0, []string{id1, "dctest-bulk-does-not-exist"}, "stop")
+	if len(mixed) != 2 {
+		t.Fatalf("want 2 results, got %d", len(mixed))
+	}
+	if mixed[0].ID != id1 || !mixed[0].OK || mixed[0].Error != "" {
+		t.Errorf("expected %s to stop cleanly, got %+v", id1, mixed[0])
+	}
+	if mixed[1].ID != "dctest-bulk-does-not-exist" || mixed[1].OK || mixed[1].Error == "" {
+		t.Errorf("expected the bogus id to fail with an error message, got %+v", mixed[1])
+	}
+	// Restore id1 for other tests / cleanup expecting a running container.
+	_ = m.ContainerAction(ctx, 0, id1, "start")
+}
+
 func TestIntegrationImagesTransfer(t *testing.T) {
 	m, ctx := newManager(t)
 	ensureImage(ctx, t, m)

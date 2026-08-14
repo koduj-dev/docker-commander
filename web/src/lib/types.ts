@@ -153,6 +153,19 @@ export interface ContainerSummary {
   labels: Record<string, string> | null;
 }
 
+// One container's outcome within a bulk restart/stop request.
+export interface BulkActionResult {
+  id: string;
+  ok: boolean;
+  error?: string;
+}
+
+export interface BulkActionResponse {
+  results: BulkActionResult[];
+  succeeded: number;
+  failed: number;
+}
+
 export interface MountInfo {
   type: string;
   source: string;

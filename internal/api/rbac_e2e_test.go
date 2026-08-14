@@ -215,3 +215,48 @@ func TestPentestRBACEndToEndReadOnlyAccountBeatsWritableRole(t *testing.T) {
 		}
 	}
 }
+
+// TestRBACEndToEndBulkContainerAction proves the bulk endpoint reuses the
+// existing "containers" section write permission — no separate permission
+// model for bulk actions, per the roadmap's narrowed v1 scope. A read-only
+// role must be refused; a writable one must reach the handler (a daemon error
+// for the fake ids is fine — the point is that RBAC itself let the request
+// through, same as every other write test in this file).
+func TestRBACEndToEndBulkContainerAction(t *testing.T) {
+	admin := rbacFixture(t)
+
+	code, resp := admin.do("POST", "/api/roles", map[string]any{
+		"name":     "ContainersRW2",
+		"sections": []map[string]any{{"section": "containers", "write": true}},
+	})
+	if code != 200 {
+		t.Fatalf("create writable role: %d %v", code, resp)
+	}
+	rwID := int64(resp["id"].(float64))
+
+	code, resp = admin.do("POST", "/api/roles", map[string]any{
+		"name":     "ContainersRO2",
+		"sections": []map[string]any{{"section": "containers", "write": false}},
+	})
+	if code != 200 {
+		t.Fatalf("create read-only role: %d %v", code, resp)
+	}
+	roID := int64(resp["id"].(float64))
+
+	rw := loginWithRoles(t, admin, "bulkrw", false, nil, []int64{rwID})
+	ro := loginWithRoles(t, admin, "bulkro", false, nil, []int64{roID})
+
+	body := map[string]any{"ids": []string{"abc"}, "action": "stop"}
+	if code, _ := ro.do("POST", "/api/containers/bulk-action", body); code != http.StatusForbidden {
+		t.Errorf("SECURITY: a read-only role performed a bulk write (%d)", code)
+	}
+	if code, _ := rw.do("POST", "/api/containers/bulk-action", body); code == http.StatusForbidden {
+		t.Error("a writable role should be permitted the bulk write (a daemon error is fine)")
+	}
+
+	// Zero-grant account: refused outright, same as every other containers write.
+	nobody := loginWithRoles(t, admin, "bulknobody", true, nil, nil)
+	if code, _ := nobody.do("POST", "/api/containers/bulk-action", body); code != http.StatusForbidden {
+		t.Errorf("SECURITY: a zero-grant account performed a bulk write (%d)", code)
+	}
+}

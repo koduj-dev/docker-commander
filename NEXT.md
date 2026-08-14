@@ -326,9 +326,14 @@ the security property alone, independent of the NAT-traversal convenience.
   exact gap (profile-disabled services misrepresented in stack state) is a
   recurring complaint against Portainer, Dockge and Arcane alike. Narrower
   and cheaper than it first looks, since the backend piece already shipped.
-- **Bulk operations** (restart/start/stop/pull across a selection) with preview,
-  confirmation, bounded parallelism, per-host RBAC and a clear success/failure
-  summary.
+- **Bulk operations — remaining scope.** Restart/stop across a multi-selection
+  shipped (preview, confirmation, bounded parallelism, per-container
+  success/failure summary; reuses the existing `containers` section write
+  permission). Still open: **pull** as a third bulk action, **start** (the
+  fourth verb from the original roadmap wording), and **per-host RBAC**
+  granularity for bulk actions specifically (today a bulk request is scoped
+  the same way any single container action is — the section-level grant, not
+  a separate per-host bulk permission).
 - **Log bookmarks** — save a time range plus filters, link it to an incident, share
   it with users who have the rights, export a small diagnostic bundle without
   secrets.
