@@ -7,6 +7,15 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **MCP: `restart_stack_containers` / `stop_stack_containers`.** Restart or stop
+  a caller-chosen subset (up to 10) of one Compose stack's own containers over
+  MCP. Every container id is verified server-side to belong to the named
+  project before anything runs — a mismatched id refuses the whole call rather
+  than skipping it — and the 10-container cap keeps a single call within the
+  blast radius the existing MCP control rate limit assumes (one call ≈ one
+  container). Scoping to a project the caller already named keeps this no
+  wider in spirit than the existing whole-stack `restart_stack`/`stop_stack`
+  tools.
 - **Bulk restart/stop for containers.** Select several containers on the
   Containers page and restart or stop them together: a preview lists exactly
   which containers are targeted, the app's own confirm dialog gates the action

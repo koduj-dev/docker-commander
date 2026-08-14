@@ -2,9 +2,12 @@ package mcp
 
 import (
 	"context"
+	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/koduj-dev/docker-commander/internal/docker"
 	"github.com/koduj-dev/docker-commander/internal/store"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -104,6 +107,155 @@ func TestScanImageIsAWrite(t *testing.T) {
 		if _, _, err := tool(ctx, ro, stackActionInput{Project: "web"}); err == nil {
 			t.Errorf("SECURITY: a read-only token was allowed to %s a stack", action)
 		}
+	}
+
+	// And to the stack-container-subset verbs.
+	for _, action := range []string{"restart", "stop"} {
+		tool := h.stackContainersActionTool(action)
+		in := stackContainersActionInput{Project: "web", ContainerIDs: []string{"abc123"}}
+		if _, _, err := tool(ctx, ro, in); err == nil {
+			t.Errorf("SECURITY: a read-only token was allowed to %s stack containers", action)
+		}
+	}
+}
+
+// TestStackContainersActionRequiresAProject mirrors
+// TestStackActionRequiresAProject: an empty project would otherwise reach
+// BulkStackContainerAction, which matches on a label — "act on the stack
+// called nothing" is not a request anyone means.
+func TestStackContainersActionRequiresAProject(t *testing.T) {
+	h, uid := newTestHandler(t, nil)
+	ctx := context.Background()
+	u, err := h.deps.Store.UserByID(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := reqFor(&principal{user: u})
+
+	tool := h.stackContainersActionTool("restart")
+	in := stackContainersActionInput{Project: "  ", ContainerIDs: []string{"abc123"}}
+	if _, _, err := tool(ctx, req, in); err == nil {
+		t.Error("an empty project name must be refused")
+	}
+}
+
+// TestStackContainersActionRequiresContainerIDs: an empty container_ids list
+// is refused before it reaches BulkStackContainerAction, same input-validation
+// convention as the empty-project check above.
+func TestStackContainersActionRequiresContainerIDs(t *testing.T) {
+	h, uid := newTestHandler(t, nil)
+	ctx := context.Background()
+	u, err := h.deps.Store.UserByID(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := reqFor(&principal{user: u})
+
+	tool := h.stackContainersActionTool("stop")
+	if _, _, err := tool(ctx, req, stackContainersActionInput{Project: "web"}); err == nil {
+		t.Error("an empty container_ids must be refused")
+	}
+}
+
+// TestStackContainersActionEnforcesCap proves the 10-container cap boundary:
+// 9 and 10 pass validation, 11 is refused with a message that states the cap
+// and points at the whole-stack tool. validateStackContainerIDs is a pure
+// function precisely so this boundary can be checked without a handler or a
+// Docker daemon behind it.
+func TestStackContainersActionEnforcesCap(t *testing.T) {
+	ids := func(n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = fmt.Sprintf("container-%d", i)
+		}
+		return out
+	}
+
+	if err := validateStackContainerIDs(ids(9)); err != nil {
+		t.Errorf("9 container_ids should be allowed: %v", err)
+	}
+	if err := validateStackContainerIDs(ids(maxStackContainerIDs)); err != nil {
+		t.Errorf("exactly %d container_ids should be allowed: %v", maxStackContainerIDs, err)
+	}
+
+	err := validateStackContainerIDs(ids(maxStackContainerIDs + 1))
+	if err == nil {
+		t.Fatalf("%d container_ids should be refused (cap is %d)", maxStackContainerIDs+1, maxStackContainerIDs)
+	}
+	if !strings.Contains(err.Error(), strconv.Itoa(maxStackContainerIDs)) {
+		t.Errorf("the cap-exceeded error should state the cap (%d): %v", maxStackContainerIDs, err)
+	}
+	if !strings.Contains(err.Error(), "restart_stack") || !strings.Contains(err.Error(), "stop_stack") {
+		t.Errorf("the cap-exceeded error should point at the whole-stack tools: %v", err)
+	}
+}
+
+// TestAuditStackContainerResultsAuditsSuccessAndFailure proves the per-container
+// audit fan-out: every result, success or failure, gets its own entry under
+// the existing mcp.container.<action> code (the same code containerActionTool
+// writes — no new audit vocabulary for this tool), matching the granularity
+// the REST bulk endpoint already established.
+func TestAuditStackContainerResultsAuditsSuccessAndFailure(t *testing.T) {
+	h, uid := newTestHandler(t, nil)
+	ctx := context.Background()
+	u, err := h.deps.Store.UserByID(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &principal{user: u}
+
+	results := []docker.BulkActionResult{
+		{ID: "container-ok", OK: true},
+		{ID: "container-bad", OK: false, Error: "container is paused"},
+	}
+	if ok := h.auditStackContainerResults(p, "stop", results); ok {
+		t.Error("the overall result should be false when any container in the batch failed")
+	}
+
+	entries, err := h.deps.Store.RecentAudit(ctx, 500, 0)
+	if err != nil {
+		t.Fatalf("read audit: %v", err)
+	}
+	var sawSuccess, sawFailure bool
+	for _, e := range entries {
+		if e.Action != "mcp.container.stop" {
+			continue
+		}
+		switch e.Target {
+		case "container-ok":
+			sawSuccess = true
+			if strings.Contains(e.Detail, "failed") {
+				t.Errorf("container-ok succeeded but its audit entry reads as a failure: %q", e.Detail)
+			}
+		case "container-bad":
+			sawFailure = true
+			if !strings.Contains(e.Detail, "failed") {
+				t.Errorf("container-bad failed but its audit entry doesn't say so: %q", e.Detail)
+			}
+		}
+	}
+	if !sawSuccess {
+		t.Error("no audit entry was written for the container that succeeded")
+	}
+	if !sawFailure {
+		t.Error("no audit entry was written for the container that failed")
+	}
+}
+
+// TestAuditStackContainerResultsAllSucceed: the inverse of the above — when
+// every container in the batch succeeds, the overall result is true.
+func TestAuditStackContainerResultsAllSucceed(t *testing.T) {
+	h, uid := newTestHandler(t, nil)
+	ctx := context.Background()
+	u, err := h.deps.Store.UserByID(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &principal{user: u}
+
+	results := []docker.BulkActionResult{{ID: "a", OK: true}, {ID: "b", OK: true}}
+	if ok := h.auditStackContainerResults(p, "restart", results); !ok {
+		t.Error("the overall result should be true when every container succeeded")
 	}
 }
 

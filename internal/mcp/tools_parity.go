@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -19,6 +20,19 @@ import (
 // whether it was full of known holes.
 
 const scanMaxVulns = 100
+
+// maxStackContainerIDs caps how many containers one restart_stack_containers /
+// stop_stack_containers call may name.
+//
+// The per-user control rate limit (docs/mcp.md) caps CALLS per minute, on the
+// assumption that one call is roughly one container — that is what turns "the
+// whole estate stopped" into "a few containers stopped and the audit log is
+// shouting". A generic bulk tool with no cap of its own would let a single
+// call act on arbitrarily many containers, silently defeating that assumption
+// without ever tripping the limiter. This constant is that missing cap: a
+// named number so the value shows up once — in the tool description, the
+// validator, and the error — rather than as a handful of matching magic 10s.
+const maxStackContainerIDs = 10
 
 // errNoSuchAlert covers both "no such id" and "belongs to a host you cannot
 // reach". One message for both, so the tool cannot be used to discover which
@@ -48,6 +62,21 @@ func (h *handler) registerParityTools(s *mcpsdk.Server) {
 			Description: a.verb + " every container in a Compose stack, by project name. " +
 				"Affects the whole stack — prefer the per-container tools when one service is the problem.",
 		}, h.stackActionTool(a.action))
+	}
+
+	for _, a := range []struct{ name, action, verb, whole string }{
+		{"restart_stack_containers", "restart", "Restart", "restart_stack"},
+		{"stop_stack_containers", "stop", "Stop", "stop_stack"},
+	} {
+		mcpsdk.AddTool(s, &mcpsdk.Tool{
+			Name: a.name,
+			Description: fmt.Sprintf(
+				"%s a caller-chosen subset (up to %d) of one Compose stack's own containers, by project name and "+
+					"container ids from list_containers. Every id is verified server-side to belong to that "+
+					"project — if even one doesn't, the whole call is refused, nothing runs. Use %s to act on the "+
+					"whole stack instead.",
+				a.verb, maxStackContainerIDs, a.whole),
+		}, h.stackContainersActionTool(a.action))
 	}
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
@@ -101,6 +130,99 @@ func (h *handler) stackActionTool(action string) func(context.Context, *mcpsdk.C
 		}
 		return nil, stackActionOut{OK: true, Project: in.Project, Action: action}, nil
 	}
+}
+
+// ---- stack container subset lifecycle ----
+
+type stackContainersActionInput struct {
+	Project      string   `json:"project" jsonschema:"the Compose project (stack) name, from list_projects"`
+	ContainerIDs []string `json:"container_ids" jsonschema:"full container IDs from list_containers, all belonging to project; up to 10 per call"`
+	HostID       int64    `json:"host_id,omitempty" jsonschema:"Docker host id; 0 or omitted = the default local host"`
+}
+
+type stackContainersActionOut struct {
+	OK      bool                      `json:"ok"`
+	Project string                    `json:"project"`
+	Action  string                    `json:"action"`
+	Results []docker.BulkActionResult `json:"results"`
+}
+
+// validateStackContainerIDs enforces the container_ids shape before any
+// Docker call is made: non-empty, and no more than maxStackContainerIDs. Kept
+// as its own function so the cap boundary can be unit-tested directly,
+// without a handler or a Docker daemon behind it.
+func validateStackContainerIDs(ids []string) error {
+	if len(ids) == 0 {
+		return errors.New("container_ids is required")
+	}
+	if len(ids) > maxStackContainerIDs {
+		return fmt.Errorf(
+			"container_ids has %d entries; restart_stack_containers/stop_stack_containers are capped at %d per "+
+				"call — use restart_stack/stop_stack to act on the whole stack instead",
+			len(ids), maxStackContainerIDs)
+	}
+	return nil
+}
+
+// stackContainersActionTool builds the handler for one lifecycle verb, acting
+// on a caller-chosen subset of one stack's own containers rather than the
+// whole stack (stackActionTool) or a single container (containerActionTool).
+//
+// Deliberately only restart/stop, matching BulkStackContainerAction and the
+// two sibling tools it sits between — this is the same "safe control"
+// restriction, not a wider one, just narrower in scope-per-call than
+// restart_stack/stop_stack and broader in count than restart_container/
+// stop_container.
+func (h *handler) stackContainersActionTool(action string) func(context.Context, *mcpsdk.CallToolRequest, stackContainersActionInput) (*mcpsdk.CallToolResult, stackContainersActionOut, error) {
+	return func(ctx context.Context, req *mcpsdk.CallToolRequest, in stackContainersActionInput) (*mcpsdk.CallToolResult, stackContainersActionOut, error) {
+		p, err := h.authorize(ctx, req, "containers", true, in.HostID)
+		if err != nil {
+			return nil, stackContainersActionOut{}, err
+		}
+		if strings.TrimSpace(in.Project) == "" {
+			return nil, stackContainersActionOut{}, errors.New("project is required")
+		}
+		if err := validateStackContainerIDs(in.ContainerIDs); err != nil {
+			return nil, stackContainersActionOut{}, err
+		}
+
+		results, derr := h.deps.Docker.BulkStackContainerAction(ctx, in.HostID, in.Project, in.ContainerIDs, action)
+		if derr != nil {
+			// Refused before a single container was touched — an id that doesn't
+			// belong to the stack, most likely. Audited the same way a failed
+			// whole-stack action is: an attempt was made even though nothing ran,
+			// and that is exactly the kind of thing worth finding later.
+			h.audit(p, "mcp.stack."+action, in.Project, outcome(derr))
+			return nil, stackContainersActionOut{}, derr
+		}
+
+		// Membership held, so every id was actually attempted.
+		ok := h.auditStackContainerResults(p, action, results)
+		return nil, stackContainersActionOut{OK: ok, Project: in.Project, Action: action, Results: results}, nil
+	}
+}
+
+// auditStackContainerResults writes one audit entry per container result,
+// success or failure, matching the granularity the REST bulk endpoint already
+// established (internal/api/docker_handlers.go) and reusing the same
+// mcp.container.<action> codes containerActionTool writes — no new audit code
+// family for this tool. Returns whether every container in the batch
+// succeeded.
+//
+// Split out from stackContainersActionTool so the audit fan-out can be
+// exercised directly against a synthetic result set, without going through a
+// live Docker daemon to produce a mixed success/failure batch.
+func (h *handler) auditStackContainerResults(p *principal, action string, results []docker.BulkActionResult) bool {
+	ok := true
+	for _, r := range results {
+		if r.OK {
+			h.audit(p, "mcp.container."+action, r.ID, outcome(nil))
+		} else {
+			ok = false
+			h.audit(p, "mcp.container."+action, r.ID, outcome(errors.New(r.Error)))
+		}
+	}
+	return ok
 }
 
 // ---- scan_image ----
