@@ -13,6 +13,10 @@ All notable changes to Docker Commander are documented here. The format follows
   error 1053 (a plain console exe never speaks the service protocol). The
   Task Scheduler installer (`deploy/install-windows.ps1`) remains available as
   a dependency-free alternative.
+- **Collapsible sidebar groups.** Click a group heading (Workloads, Storage,
+  Network, Observability, System) to fold/unfold it; state is remembered per
+  browser. A collapsed group holding the current page auto-expands, so
+  navigating there directly never hides where you are.
 
 ## [1.6.0] — 2026-08-07
 

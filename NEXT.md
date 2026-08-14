@@ -341,14 +341,10 @@ the security property alone, independent of the NAT-traversal convenience.
 - **ACME / Let's Encrypt** for public hosts. Self-signed `--make-certs` ships;
   lower priority because production usually sits behind a reverse proxy. Testable
   locally against Pebble.
-- **Collapsible sidebar groups.** The sidebar is already grouped (Compute,
-  Network, Observability, System); the groups just don't fold. Worth doing only if
-  the list grows enough that folding beats scrolling.
-- **Version matrix — narrower axes.** It pins Engine **majors**, so a regression in
-  a specific patch isn't caught the moment it ships; and it does not pin the
-  **Compose plugin**, which comes from the runner. Compose is the more likely one
-  to bite, since the README claims "v2 or newer" while CI only ever exercises
-  whatever it happens to have (v5 today).
+- **Version matrix — pin Engine patch versions, not just majors.** The compat
+  matrix now pins the Compose plugin too (see CHANGELOG), but it still only
+  pins Engine **majors**, so a regression in a specific patch isn't caught the
+  moment it ships.
 
 ---
 
