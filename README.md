@@ -277,23 +277,27 @@ list. The Docker connection also honours the standard `DOCKER_HOST` /
 ## 🖥️ Run as a service
 
 The server keeps monitoring, alerting and metric history running 24/7 whether or
-not a browser is connected — so run it as a background service. On Linux/macOS
-the binary installs itself:
+not a browser is connected — so run it as a background service. On
+Linux/macOS/Windows the binary installs itself:
 
 ```bash
 sudo ./dockercmd --install-service     # Linux — systemd (needs root)
 ./dockercmd --install-service          # macOS — launchd LaunchAgent (your user, not sudo)
+dockercmd.exe --install-service        # Windows — native SCM service (elevated PowerShell/cmd)
 ```
 
-It creates a dedicated user, writes the (hardened) service definition and starts
-it. On Windows, or to read exactly what gets installed, use the equivalent
-scripts in [`deploy/`](deploy/):
+It creates a dedicated user (or, on Windows, registers with the Service Control
+Manager), writes the (hardened) service definition and starts it. To read
+exactly what gets installed, use the equivalent scripts in [`deploy/`](deploy/):
 
 ```bash
 sudo ./deploy/install-linux.sh ./dockercmd                  # Linux  — systemd
 ./deploy/install-macos.sh ./dockercmd                       # macOS  — launchd
 .\deploy\install-windows.ps1 -BinPath .\dockercmd.exe       # Windows — Scheduled Task (elevated PowerShell)
 ```
+
+The Windows Scheduled Task script remains as a dependency-free alternative to
+the native SCM service above.
 
 See **[Deployment](docs/deployment.md)** for what each installer does, the manual
 systemd steps, HTTPS, logging and the config reference.

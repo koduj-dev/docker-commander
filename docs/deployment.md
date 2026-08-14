@@ -84,13 +84,14 @@ built-in default. A starter file lives at
 
 ## Running as a service
 
-### The binary installs itself (Linux / macOS)
+### The binary installs itself (Linux / macOS / Windows)
 The simplest path — the binary writes the service definition for the current OS,
 installs itself to a stable location, and starts it. No script, no manual steps:
 
 ```bash
-sudo ./dockercmd --install-service     # Linux  — systemd (needs root)
-./dockercmd --install-service          # macOS  — launchd LaunchAgent (your user, NOT sudo)
+sudo ./dockercmd --install-service     # Linux    — systemd (needs root)
+./dockercmd --install-service          # macOS    — launchd LaunchAgent (your user, NOT sudo)
+dockercmd.exe --install-service        # Windows  — SCM service (elevated PowerShell/cmd)
 
 dockercmd --service-status             # show service status
 sudo dockercmd --uninstall-service     # stop + remove (keeps the data dir)
@@ -100,9 +101,12 @@ On **Linux** it creates the dedicated `dockercmd` user in the `docker` group,
 copies itself to `/usr/local/bin/dockercmd`, installs the hardened unit and
 `enable --now`s it. On **macOS** it installs a per-user LaunchAgent under
 `~/Library` (no sudo — a system daemon can't reach Docker Desktop's user-owned
-socket). Uninstall leaves the data dir and user in place so reinstalling keeps
-the database and keys. **Windows** isn't covered by the subcommand yet — use the
-script below.
+socket). On **Windows** it copies itself to
+`%ProgramFiles%\docker-commander\dockercmd.exe`, registers a real Service
+Control Manager (SCM) service with auto-restart on failure, and starts it —
+see [Windows (native service)](#windows-native-service-or-scheduled-task)
+below. Uninstall leaves the data dir (and, on Linux, the service user) in
+place so reinstalling keeps the database and keys.
 
 Installing also drops a **`man dockercmd`** page (under
 `/usr/local/share/man/man1/`), so the full option/action reference is available
@@ -137,9 +141,10 @@ echo "deb [signed-by=/etc/apt/keyrings/dockercmd.asc] https://koduj-dev.github.i
 sudo apt update && sudo apt install dockercmd
 ```
 
-### Installer scripts (alternative; Windows)
-Equivalent idempotent installers also live in [`deploy/`](../deploy/) — handy for
-Windows, or to read exactly what gets installed:
+### Installer scripts (alternative)
+Equivalent idempotent installers also live in [`deploy/`](../deploy/) — handy to
+read exactly what gets installed, or on Windows if you'd rather use a
+Scheduled Task than the native SCM service:
 
 | OS | Command | Mechanism |
 |----|---------|-----------|
@@ -182,13 +187,21 @@ with Docker Desktop the daemon socket is owned by the logged-in user, so a root
 daemon usually can't reach it. The agent starts at login and is restarted
 automatically (`KeepAlive`); logs go to `~/Library/Logs/dockercmd.log`.
 
-### Windows (Scheduled Task)
-The binary is a plain console program, not a native Windows service (no Service
-Control Manager handshake), so `sc.exe create` / `New-Service` fail with error
-1053. `install-windows.ps1` instead registers a **Scheduled Task** that starts it
-at boot (or `-AtLogon`, if Docker Desktop only runs under your account) and
-restarts it on failure. For a "real" service, wrap the exe with
-[NSSM](https://nssm.cc) or WinSW — see the script header.
+### Windows (native service, or Scheduled Task)
+`dockercmd.exe --install-service` registers a real **Service Control Manager
+(SCM)** service: it copies itself to
+`%ProgramFiles%\docker-commander\dockercmd.exe`, creates the service (start
+type Automatic, delayed auto-start, with SCM recovery actions to restart on
+crash) and starts it. This needs an elevated (Administrator) prompt. Logs go to
+the **Event Viewer** (Windows Logs → Application, source `dockercmd`); data
+lives under `%ProgramData%\docker-commander\data`.
+
+`install-windows.ps1` remains as a dependency-free alternative: it registers a
+**Scheduled Task** instead, which starts at boot (or `-AtLogon`, if Docker
+Desktop only runs under your account) and restarts on failure. Useful if you'd
+rather not run as SYSTEM, or want to read exactly what gets installed without
+touching the SCM. Wrapping the exe with [NSSM](https://nssm.cc) or WinSW is
+also still an option, and no longer necessary just to get a "real" service.
 
 > **Compose/Projects disabled under systemd?** If the **Projects** page warns
 > that "the `docker compose` CLI isn't available", it's the `ProtectHome=true`

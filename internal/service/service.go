@@ -4,10 +4,17 @@
 //
 // Linux installs the hardened systemd unit (the same one in deploy/, embedded
 // here and kept identical by a test); macOS installs a per-user launchd
-// LaunchAgent. Windows is not supported here yet — use deploy/install-windows.ps1.
+// LaunchAgent; Windows registers a real Service Control Manager (SCM) service
+// (a plain console exe isn't a native service and the SCM gives up on it with
+// error 1053, which is why deploy/install-windows.ps1's Scheduled Task remains
+// available as an alternative that needs no elevation-per-boot subtleties).
 //
-// The OS-specific Install/Uninstall/Status live in service_{linux,darwin}.go;
-// this file holds the embedded templates and small shared helpers.
+// The OS-specific Install/Uninstall/Status live in
+// service_{linux,darwin,windows}.go; this file holds the embedded templates
+// and small shared helpers. service_windows.go additionally exposes
+// IsWindowsService/RunWindowsService, the SCM entry point used by
+// cmd/dockercmd when the process is started by the service manager rather
+// than a console; service_notwindows.go stubs those two out everywhere else.
 package service
 
 import (

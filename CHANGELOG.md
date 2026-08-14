@@ -7,6 +7,12 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Windows native service.** `--install-service` now registers dockercmd as a
+  real Service Control Manager (SCM) service on Windows — auto-restart on
+  crash, `services.msc`/`sc query` visibility — instead of failing with SCM
+  error 1053 (a plain console exe never speaks the service protocol). The
+  Task Scheduler installer (`deploy/install-windows.ps1`) remains available as
+  a dependency-free alternative.
 - **Collapsible sidebar groups.** Click a group heading (Workloads, Storage,
   Network, Observability, System) to fold/unfold it; state is remembered per
   browser. A collapsed group holding the current page auto-expands, so

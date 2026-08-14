@@ -1,0 +1,175 @@
+name: Windows service smoke test
+
+# internal/service/service_windows.go was written and cross-compiled entirely
+# on a Linux machine — there was no Windows host available to actually run
+# the SCM install/start/stop/uninstall path it implements. `go build` and
+# `go vet` under GOOS=windows prove the code compiles; they prove nothing
+# about whether the Service Control Manager actually accepts the service,
+# starts it, and can cleanly stop it, since that only happens inside a real
+# svchost.exe/services.exe on a real Windows kernel.
+#
+# This workflow closes that gap by doing the real thing on a windows-latest
+# GitHub-hosted runner: build the Windows binary, `--install-service`,
+# confirm the SCM shows it registered, start it and hit its own /healthz
+# over HTTP to prove the server actually came up (not just "the process
+# didn't crash"), stop it and confirm no orphaned process, then
+# `--uninstall-service` and confirm the SCM no longer knows about it.
+#
+# It runs on every push touching internal/service/** (where a regression
+# here would land) and on demand, rather than on every PR, since it doesn't
+# need to gate unrelated changes and a windows-latest runner is slower/pricier
+# than the Linux CI matrix.
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - "internal/service/**"
+      - "cmd/dockercmd/main.go"
+      - ".github/workflows/windows-service-smoke.yml"
+  pull_request:
+    paths:
+      - "internal/service/**"
+      - "cmd/dockercmd/main.go"
+      - ".github/workflows/windows-service-smoke.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v6
+        with:
+          go-version: "1.25"
+          cache: true
+
+      # web/dist is a committed build artifact (see CI's own "web/dist matches
+      # web/src" gate), so a plain `go build` embeds it without needing Node —
+      # no `make ui` step required here.
+      - name: Build dockercmd.exe
+        run: |
+          $env:CGO_ENABLED = "0"
+          go build -o dockercmd.exe ./cmd/dockercmd
+          if ($LASTEXITCODE -ne 0) { throw "go build failed" }
+
+      # GitHub's windows-latest runner executes job steps as an administrator
+      # with UAC token filtering disabled, so no explicit "Run as admin" is
+      # needed — but Install()/Uninstall() both fail closed on a non-elevated
+      # token (isElevated() in service_windows.go), so confirm that
+      # assumption explicitly instead of finding out via a confusing failure
+      # three steps down. `net session` only succeeds when elevated.
+      - name: Confirm this runner is elevated
+        run: |
+          net session > $null 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "runner is not elevated — install-service would fail closed" }
+          Write-Host "confirmed: running elevated"
+
+      - name: Install the service
+        run: |
+          .\dockercmd.exe --install-service
+          if ($LASTEXITCODE -ne 0) { throw "--install-service failed" }
+
+      # Registered + startable: the SCM knows about it and Install() already
+      # started it (SetRecoveryActions/Start happen inside Install), so this
+      # also exercises the "started successfully" half of "registered and can
+      # be started" without a redundant manual Start-Service.
+      - name: Verify the SCM sees it registered and running
+        run: |
+          sc.exe query dockercmd
+          $svc = Get-Service -Name dockercmd -ErrorAction Stop
+          Write-Host "status: $($svc.Status), starttype: $($svc.StartType)"
+          if ($svc.Status -ne 'Running') { throw "service did not reach Running after install (status: $($svc.Status))" }
+
+      # Confirm it isn't just "Running" per the SCM but actually up: an
+      # unhandled panic in the goroutine Execute() spawns would still leave
+      # svc.Running reported right up until the process dies, so hit the same
+      # unauthenticated /healthz probe LB/uptime checks use in production.
+      - name: Confirm the server responds on its health endpoint
+        run: |
+          $ok = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            try {
+              $r = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8470/healthz' -TimeoutSec 2
+              if ($r.StatusCode -eq 200 -and $r.Content -match '"status"\s*:\s*"ok"') { $ok = $true; break }
+            } catch {}
+            Start-Sleep -Seconds 1
+          }
+          if (-not $ok) { throw "dockercmd never answered /healthz as healthy" }
+          Write-Host "healthz OK"
+
+      - name: dockercmd --service-status agrees
+        run: .\dockercmd.exe --service-status
+
+      # Stop via the SCM (not the exe): this is what services.msc / a reboot
+      # actually does, and it's the path that exercises windowsHandler.Execute's
+      # Stop control-request handling end-to-end (unit tests only drive that
+      # over fake channels).
+      - name: Stop the service and confirm it stops cleanly
+        run: |
+          Stop-Service -Name dockercmd -ErrorAction Stop
+          $svc = Get-Service -Name dockercmd
+          if ($svc.Status -ne 'Stopped') { throw "service did not reach Stopped (status: $($svc.Status))" }
+          # No orphaned process: Execute() must have actually returned, not
+          # just told the SCM it did while the goroutine kept running.
+          $orphan = Get-Process -Name dockercmd -ErrorAction SilentlyContinue
+          if ($orphan) { throw "dockercmd process($($orphan.Id)) still alive after Stop" }
+          try {
+            Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8470/healthz' -TimeoutSec 2 | Out-Null
+            throw "server still answering /healthz after Stop"
+          } catch [System.Net.WebException] {
+            Write-Host "confirmed: no longer listening"
+          } catch {
+            Write-Host "confirmed: no longer listening ($($_.Exception.GetType().Name))"
+          }
+
+      # Start again via the SCM, separately from Install()'s own auto-start,
+      # to exercise a plain Start-Service against an already-registered
+      # service (the path an admin uses from services.msc after a stop).
+      - name: Start it again and confirm it comes back up
+        run: |
+          Start-Service -Name dockercmd -ErrorAction Stop
+          $svc = Get-Service -Name dockercmd
+          if ($svc.Status -ne 'Running') { throw "service did not reach Running on restart (status: $($svc.Status))" }
+          $ok = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            try {
+              $r = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8470/healthz' -TimeoutSec 2
+              if ($r.StatusCode -eq 200) { $ok = $true; break }
+            } catch {}
+            Start-Sleep -Seconds 1
+          }
+          if (-not $ok) { throw "dockercmd never answered /healthz after restart" }
+
+      # Uninstall() stops (if running) + deletes the SCM entry itself, so this
+      # also covers the stop-from-uninstall path, not just delete.
+      - name: Uninstall the service and confirm the SCM forgot it
+        run: |
+          .\dockercmd.exe --uninstall-service
+          if ($LASTEXITCODE -ne 0) { throw "--uninstall-service failed" }
+          $gone = Get-Service -Name dockercmd -ErrorAction SilentlyContinue
+          if ($gone) { throw "service still present after uninstall (status: $($gone.Status))" }
+          $orphan = Get-Process -Name dockercmd -ErrorAction SilentlyContinue
+          if ($orphan) { throw "dockercmd process($($orphan.Id)) still alive after uninstall" }
+          Write-Host "confirmed: service removed, no orphaned process"
+
+      # Belt-and-suspenders teardown: run even if an earlier step threw, so a
+      # failed run doesn't leave a registered service or a live process behind
+      # on the runner (which is thrown away anyway, but fail loudly not silently).
+      - name: Teardown
+        if: always()
+        run: |
+          Stop-Service -Name dockercmd -ErrorAction SilentlyContinue
+          $svc = Get-Service -Name dockercmd -ErrorAction SilentlyContinue
+          if ($svc) {
+            sc.exe delete dockercmd | Out-Null
+          }
+          Get-Process -Name dockercmd -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
