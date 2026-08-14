@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -842,8 +843,14 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 	// before this, so "last deployed profiles" never advances past a profile set
 	// that isn't actually running. Best-effort like the audit call below: the
 	// deploy itself already succeeded, so a write hiccup here shouldn't turn
-	// into a user-facing error.
-	_ = s.store.SetLastDeployedProfiles(r.Context(), p.ID, body.Profiles)
+	// into a user-facing error. But silent isn't the same as invisible — a
+	// failure here leaves the UI showing a stale/wrong "Deployed with" badge, so
+	// log it (matching how other best-effort store writes, e.g. monitor's
+	// InsertAlertEvent, surface a non-fatal error) even though the response
+	// still reports success.
+	if err := s.store.SetLastDeployedProfiles(r.Context(), p.ID, body.Profiles); err != nil {
+		log.Printf("project deploy: persist last deployed profiles for %q: %v", p.Slug, err)
+	}
 	s.audit(r, "project.deploy", p.Slug, strings.Join(body.Profiles, ","))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out, "note": note})
 }

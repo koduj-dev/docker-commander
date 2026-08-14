@@ -43,6 +43,21 @@ func freeDeployStack(slug string) {
 	_ = exec.Command("docker", args...).Run()
 }
 
+// runningServiceCount reports how many containers are currently running for a
+// given compose project + service, by label — so a test can assert what
+// actually got deployed, not just what got persisted.
+func runningServiceCount(t *testing.T, slug, service string) int {
+	t.Helper()
+	out, err := exec.Command("docker", "ps", "-q",
+		"--filter", "label=com.docker.compose.project="+slug,
+		"--filter", "label=com.docker.compose.service="+service,
+	).Output()
+	if err != nil {
+		t.Fatalf("docker ps: %v", err)
+	}
+	return len(strings.Fields(string(out)))
+}
+
 // deployTestServer sets up a store + a project folder on disk with the given
 // compose content, targeting the local daemon (host 0). Host 0 needs no
 // "hosts" permission, but every {id} route still resolves the project through
@@ -50,7 +65,16 @@ func freeDeployStack(slug string) {
 // user — so this also creates an admin to drive the requests as.
 func deployTestServer(t *testing.T, slug, compose string) (*Server, *store.Store, int64, int64) {
 	t.Helper()
-	st, err := store.Open(":memory:")
+	return deployTestServerAt(t, ":memory:", slug, compose)
+}
+
+// deployTestServerAt is deployTestServer with an explicit sqlite path instead
+// of an in-memory DB — needed by anything that must open a second raw
+// connection to the same database file (an in-memory DB is per-connection and
+// shares nothing across separate *sql.DB handles).
+func deployTestServerAt(t *testing.T, dbPath, slug, compose string) (*Server, *store.Store, int64, int64) {
+	t.Helper()
+	st, err := store.Open(dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,5 +232,89 @@ func TestHandleDeployProject_FailedDeployDoesNotUpdateProfiles(t *testing.T) {
 	}
 	if len(p.LastDeployedProfiles) != 0 {
 		t.Errorf("a failed deploy must not persist profiles, got %v", p.LastDeployedProfiles)
+	}
+}
+
+// A project's own .env file (auto-loaded by the compose CLI from its working
+// directory) or the server process's own environment can set COMPOSE_PROFILES,
+// which — left alone — activates MORE than the profiles actually selected in
+// the deploy request. That would badge a genuinely-running service as "not in
+// active profile" (see docs/gotchas.md), the exact bug this whole feature
+// exists to prevent, reintroduced by a side channel. ComposeUpFiles
+// neutralizes COMPOSE_PROFILES for the subprocess; this proves it against a
+// REAL `docker compose up`, not just that the persisted list matches the
+// request — persisting exactly body.Profiles would look identical even if the
+// neutralization did nothing, since the server always persists what was
+// *requested*, never what Compose actually activated.
+func TestHandleDeployProject_EnvFileComposeProfilesDoesNotLeakIn(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+
+	const slug = "dctest-deploy-profiles-envfile"
+	compose := `
+services:
+  web:
+    image: ` + deployTestImage + `
+    command: ["sleep", "300"]
+  worker:
+    image: ` + deployTestImage + `
+    command: ["sleep", "300"]
+    profiles: ["extra"]
+`
+	srv, st, pid, admin := deployTestServer(t, slug, compose)
+	// The project's own .env, auto-loaded by `docker compose` from its working
+	// directory, activates "extra" — which is NOT in the deploy request below.
+	if err := os.WriteFile(filepath.Join(srv.projectRoot(pid), ".env"), []byte("COMPOSE_PROFILES=extra\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = docker.ComposeDown(bg, srv.projectRoot(pid), slug, nil)
+		freeDeployStack(slug)
+	})
+
+	// Deploy with NO profiles selected — the reproducing case: Compose falls
+	// back to COMPOSE_PROFILES (env/.env) only when NO --profile flag is on the
+	// command line at all. A non-empty selection wouldn't reproduce the leak —
+	// see docs/gotchas.md: once any --profile flag is given, Compose uses it
+	// exclusively and ignores COMPOSE_PROFILES entirely.
+	w := deployRequest(srv, pid, admin, `{"profiles":[],"build":false}`)
+	if w.Code != 200 {
+		t.Fatalf("deploy request failed: %d %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		OK     bool   `json:"ok"`
+		Output string `json:"output"`
+		Error  string `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK {
+		t.Fatalf("deploy did not succeed: %s / %s", resp.Error, resp.Output)
+	}
+
+	p, err := st.ProjectByID(context.Background(), pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.LastDeployedProfiles) != 0 {
+		t.Errorf("last deployed profiles = %v, want none (request selected none)", p.LastDeployedProfiles)
+	}
+
+	// The real proof: "worker" (profile "extra", from the .env file, not the
+	// request) must NOT actually be running. If COMPOSE_PROFILES leaked
+	// through, this is where it would show up — the persisted list matching
+	// the request is necessary but not sufficient.
+	if n := runningServiceCount(t, slug, "worker"); n != 0 {
+		t.Errorf("worker should not be running (only .env's COMPOSE_PROFILES=extra activated it, not the deploy request), but %d container(s) running", n)
+	}
+	if n := runningServiceCount(t, slug, "web"); n != 1 {
+		t.Errorf("web should be running, got %d container(s)", n)
 	}
 }
