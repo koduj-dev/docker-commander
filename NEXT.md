@@ -123,6 +123,17 @@ feed the same model to the CLI/MCP instead of each surface re-deriving it.
   this image entirely), an optional **auto-rollback on failed healthcheck**,
   and post-deploy verification (healthcheck result, restart count, crash
   loop, alert status) before calling an update "kept".
+  **Auto-prune the superseded image** is a natural extension once "kept" is
+  reliable — a requested feature this list didn't have yet. It's a real
+  break from how this app treats destructive operations elsewhere (every
+  prune/remove today goes through an in-app confirm dialog, never
+  unattended — see docs/gotchas.md), so it needs its own guardrails, not
+  just a flag: **off by default**, opt-in **per project/stack** (its own
+  setting, not a global toggle), scoped to **only the specific image
+  version this redeploy just replaced** (never a general `docker image
+  prune`), gated behind the post-deploy verification above succeeding first
+  (so a bad update still has its old image to roll back to), and it must
+  write an **audit log** entry exactly like a manual prune would.
 
 ### GitOps and Compose sources
 
