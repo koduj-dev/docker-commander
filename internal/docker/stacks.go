@@ -114,6 +114,37 @@ func (m *Manager) StackContainerIDs(ctx context.Context, hostID int64, project s
 	return ids, nil
 }
 
+// StackActionOnIDs applies a lifecycle action (start/stop/restart) to exactly
+// the given container ids, without re-resolving stack membership.
+//
+// For a caller that already resolved a stack's container ids via
+// StackContainerIDs and sized something against that exact set — an MCP
+// rate-limit charge, for one — calling StackAction instead would re-query
+// membership internally via a SECOND StackContainerIDs call, and could act
+// on a DIFFERENT, larger set than the one just charged for if a concurrent
+// deploy added containers to the project in between: the limiter would have
+// spent units for N containers while this actually touched N+k. Acting on
+// the exact ids already resolved (not asking Docker again "what's in this
+// project right now") is what keeps the two in agreement.
+//
+// ids is trusted as-is — this is for internal callers that already resolved
+// it from StackContainerIDs, not for an externally-supplied id list. See
+// BulkStackContainerAction for the membership-VERIFYING equivalent used when
+// ids comes from an untrusted caller instead.
+func (m *Manager) StackActionOnIDs(ctx context.Context, hostID int64, ids []string, action string) error {
+	switch action {
+	case "start", "stop", "restart":
+		for _, id := range ids {
+			if err := m.ContainerAction(ctx, hostID, id, action); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		return ErrUnknownAction
+	}
+}
+
 // StackAction applies a lifecycle action to every container in a stack:
 // start / stop / restart, or remove (force-removes the containers and then the
 // project's Compose networks, leaving named volumes intact — like
@@ -133,12 +164,7 @@ func (m *Manager) StackAction(ctx context.Context, hostID int64, project, action
 
 	switch action {
 	case "start", "stop", "restart":
-		for _, id := range ids {
-			if err := m.ContainerAction(ctx, hostID, id, action); err != nil {
-				return err
-			}
-		}
-		return nil
+		return m.StackActionOnIDs(ctx, hostID, ids, action)
 
 	case "remove":
 		for _, id := range ids {

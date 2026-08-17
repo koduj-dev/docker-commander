@@ -109,6 +109,76 @@ func TestIntegrationStacks(t *testing.T) {
 	}
 }
 
+// TestStackActionOnIDsUnaffectedByLateArrivals is the FUP-SEC-002 regression:
+// a container that joins the project AFTER StackContainerIDs already
+// resolved the set to act on must not be touched — StackActionOnIDs acts on
+// exactly the ids it's given, not on whatever ListContainers would return if
+// asked again. This is what keeps an MCP rate-limit charge (sized from the
+// first resolution) honest against what actually runs: StackAction, by
+// contrast, re-resolves membership internally and WOULD pick up the late
+// arrival — see TestIntegrationStacks's plain StackAction calls for that
+// (intentionally different) behavior.
+func TestStackActionOnIDsUnaffectedByLateArrivals(t *testing.T) {
+	m, ctx := newManager(t)
+	ensureImage(ctx, t, m)
+
+	const project = "dctest_stack_late"
+	idA := createLabeled(ctx, t, m, "dctest_stack_late_a", map[string]string{
+		labelComposeProject: project, labelComposeService: "a",
+	})
+	idB := createLabeled(ctx, t, m, "dctest_stack_late_b", map[string]string{
+		labelComposeProject: project, labelComposeService: "b",
+	})
+
+	// The snapshot an MCP call would resolve and charge for — taken BEFORE
+	// the third container joins, simulating a concurrent deploy landing in
+	// the window between "resolve ids" and "act on them".
+	ids, err := m.StackContainerIDs(ctx, 0, project)
+	if err != nil {
+		t.Fatalf("StackContainerIDs: %v", err)
+	}
+	if len(ids) != 2 {
+		t.Fatalf("StackContainerIDs: got %d ids before the late arrival, want 2: %v", len(ids), ids)
+	}
+
+	idLate := createLabeled(ctx, t, m, "dctest_stack_late_c", map[string]string{
+		labelComposeProject: project, labelComposeService: "c",
+	})
+
+	if err := m.StackActionOnIDs(ctx, 0, ids, "stop"); err != nil {
+		t.Fatalf("StackActionOnIDs: %v", err)
+	}
+
+	running := func(id string) bool {
+		cs, err := m.ListContainers(ctx, 0)
+		if err != nil {
+			t.Fatalf("ListContainers: %v", err)
+		}
+		for _, c := range cs {
+			if c.ID == id {
+				return c.State == "running"
+			}
+		}
+		return false
+	}
+	// Poll: the same brief Engine-24 list-vs-inspect staleness
+	// TestIntegrationStacks works around applies here too.
+	deadline := time.Now().Add(2 * time.Second)
+	for running(idA) && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if running(idA) {
+		t.Errorf("idA (in the resolved snapshot) should have been stopped")
+	}
+	if running(idB) {
+		t.Errorf("idB (in the resolved snapshot) should have been stopped")
+	}
+	if !running(idLate) {
+		t.Errorf("SECURITY/correctness: idLate joined the project AFTER the snapshot was resolved and must " +
+			"not have been touched by an action sized/charged against that earlier snapshot, but it was stopped anyway")
+	}
+}
+
 // findStopped waits for the container list to agree that nothing is running,
 // bounded so a genuine failure to stop still fails the test promptly.
 func findStopped(t *testing.T, find func() *Stack) *Stack {

@@ -158,7 +158,12 @@ func (h *handler) runStackAction(ctx context.Context, p *principal, hostID int64
 		h.audit(p, "mcp.stack."+action, project, outcome(err))
 		return stackActionOut{}, err
 	}
-	derr := h.deps.Docker.StackAction(ctx, hostID, project, action)
+	// StackActionOnIDs, not StackAction: acting on the EXACT ids already
+	// resolved above (and charged for) — StackAction would re-resolve
+	// membership internally and could touch a different, larger set if a
+	// concurrent deploy added containers to the project in between,
+	// charging for N containers but acting on N+k.
+	derr := h.deps.Docker.StackActionOnIDs(ctx, hostID, ids, action)
 	// Audited whether it worked or not: an attempted stop that failed is
 	// exactly the kind of thing someone will later want to find.
 	h.audit(p, "mcp.stack."+action, project, outcome(derr))

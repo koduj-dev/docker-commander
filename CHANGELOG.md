@@ -19,6 +19,14 @@ All notable changes to Docker Commander are documented here. The format follows
   refused as a whole and spends nothing, rather than partially draining the
   bucket on a call that ultimately fails.
 
+  The action itself now runs on the exact container ids the charge was sized
+  against, not a second, independently-resolved snapshot of the stack: the
+  previous version resolved the stack's containers once to size the charge,
+  then called the ordinary `StackAction`, which resolves membership AGAIN
+  internally — a container added to the project in the gap between those two
+  resolutions (a concurrent deploy, for instance) would be acted on without
+  ever having been charged for.
+
 ### Added
 - **MCP: `restart_stack_containers` / `stop_stack_containers`.** Restart or stop
   a caller-chosen subset (up to 10) of one Compose stack's own containers over

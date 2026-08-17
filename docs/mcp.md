@@ -311,7 +311,11 @@ and authorize against it; see the security model below.
   than draining part of the budget on a call that ultimately fails. A batch
   larger than the limiter's own burst can never fit even against a
   fully-reset bucket — that refusal says so explicitly rather than "wait and
-  retry", since waiting cannot help.
+  retry", since waiting cannot help. And the resolved container ids the
+  charge is sized against are exactly what the action runs on — not a second,
+  independently re-resolved snapshot of the stack — so a container that joins
+  the project in between (a concurrent deploy landing mid-call) is neither
+  charged for nor touched.
 
 ## Tips
 - Keep MCP **behind a reverse proxy / HTTPS**; the OAuth and rate-limited
