@@ -63,6 +63,24 @@ func TestIntegrationStacks(t *testing.T) {
 		t.Errorf("services should be sorted (db, web): %+v", st.Containers)
 	}
 
+	// StackContainerIDs must match the same label filter StackAction uses
+	// internally — it exists so a caller (the MCP layer) can size a
+	// rate-limit charge to the stack's real container count before StackAction
+	// itself runs.
+	ids, err := m.StackContainerIDs(ctx, 0, project)
+	if err != nil {
+		t.Fatalf("StackContainerIDs: %v", err)
+	}
+	if len(ids) != 2 {
+		t.Fatalf("StackContainerIDs: got %d ids, want 2: %v", len(ids), ids)
+	}
+	wantIDs := map[string]bool{st.Containers[0].ID: true, st.Containers[1].ID: true}
+	for _, id := range ids {
+		if !wantIDs[id] {
+			t.Errorf("StackContainerIDs returned %q, not one of the stack's own containers", id)
+		}
+	}
+
 	// Stop the whole stack.
 	if err := m.StackAction(ctx, 0, project, "stop"); err != nil {
 		t.Fatalf("StackAction stop: %v", err)

@@ -6,6 +6,19 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+- **MCP whole-stack actions now cost one rate-limit unit per container, not one
+  per call.** `restart_stack`/`stop_stack`/`start_stack` charged a flat 1 unit
+  regardless of how many containers the stack actually had, while the
+  narrower `restart_stack_containers`/`stop_stack_containers` (added in the
+  same cycle) already charged per container and capped at 10 — so the
+  cheaper, unbounded path was the whole-stack tools, the opposite of the
+  intended narrowing. A 30+ container stack now costs 30+ units, same as
+  acting on that many containers any other way through MCP. The underlying
+  charge is also now atomic: a batch that doesn't fit the remaining budget is
+  refused as a whole and spends nothing, rather than partially draining the
+  bucket on a call that ultimately fails.
+
 ### Added
 - **MCP: `restart_stack_containers` / `stop_stack_containers`.** Restart or stop
   a caller-chosen subset (up to 10) of one Compose stack's own containers over

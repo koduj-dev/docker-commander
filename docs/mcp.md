@@ -302,6 +302,17 @@ and authorize against it; see the security model below.
   it in the same spirit as `restart_stack`/`stop_stack` — bounded by a stack the
   caller already identified, not by whatever ids a model chooses to name.
 
+  `restart_stack`/`stop_stack`/`start_stack` charge the same way: the limiter
+  spends one unit per container the stack actually has, resolved before the
+  action runs, not a flat one unit regardless of stack size — a 30-container
+  stack costs 30 units, the same as naming those 30 containers one call at a
+  time through the subset tools would. Charging is atomic (reserve-or-refuse):
+  a batch that doesn't fit is refused as a whole and spends nothing, rather
+  than draining part of the budget on a call that ultimately fails. A batch
+  larger than the limiter's own burst can never fit even against a
+  fully-reset bucket — that refusal says so explicitly rather than "wait and
+  retry", since waiting cannot help.
+
 ## Tips
 - Keep MCP **behind a reverse proxy / HTTPS**; the OAuth and rate-limited
   registration endpoints assume it.

@@ -95,6 +95,25 @@ func (m *Manager) ListStacks(ctx context.Context, hostID int64) ([]Stack, error)
 	return out, nil
 }
 
+// StackContainerIDs returns the ids of every container in hostID's project
+// (matched on the compose-project label), in no particular order. Exported so
+// a caller can size something — an MCP rate-limit charge, a confirmation
+// prompt — against a stack's actual container count before committing to an
+// action that touches all of them, the way StackAction itself is about to.
+func (m *Manager) StackContainerIDs(ctx context.Context, hostID int64, project string) ([]string, error) {
+	containers, err := m.ListContainers(ctx, hostID)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, c := range containers {
+		if c.Labels[labelComposeProject] == project {
+			ids = append(ids, c.ID)
+		}
+	}
+	return ids, nil
+}
+
 // StackAction applies a lifecycle action to every container in a stack:
 // start / stop / restart, or remove (force-removes the containers and then the
 // project's Compose networks, leaving named volumes intact — like
@@ -104,15 +123,9 @@ func (m *Manager) StackAction(ctx context.Context, hostID int64, project, action
 	if err != nil {
 		return err
 	}
-	containers, err := m.ListContainers(ctx, hostID)
+	ids, err := m.StackContainerIDs(ctx, hostID, project)
 	if err != nil {
 		return err
-	}
-	var ids []string
-	for _, c := range containers {
-		if c.Labels[labelComposeProject] == project {
-			ids = append(ids, c.ID)
-		}
 	}
 	if len(ids) == 0 {
 		return fmt.Errorf("no containers found for stack %q", project)

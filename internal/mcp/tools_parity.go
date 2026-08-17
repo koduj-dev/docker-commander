@@ -121,15 +121,51 @@ func (h *handler) stackActionTool(action string) func(context.Context, *mcpsdk.C
 		if strings.TrimSpace(in.Project) == "" {
 			return nil, stackActionOut{}, errors.New("project is required")
 		}
-		derr := h.deps.Docker.StackAction(ctx, in.HostID, in.Project, action)
-		// Audited whether it worked or not: an attempted stop that failed is
-		// exactly the kind of thing someone will later want to find.
-		h.audit(p, "mcp.stack."+action, in.Project, outcome(derr))
-		if derr != nil {
-			return nil, stackActionOut{}, derr
+		ids, err := h.deps.Docker.StackContainerIDs(ctx, in.HostID, in.Project)
+		if err != nil {
+			return nil, stackActionOut{}, err
 		}
-		return nil, stackActionOut{OK: true, Project: in.Project, Action: action}, nil
+		out, err := h.runStackAction(ctx, p, in.HostID, in.Project, action, ids)
+		return nil, out, err
 	}
+}
+
+// runStackAction charges the rate limiter for the stack's ACTUAL container
+// count — not the flat 1 unit authorize() already spent for the call itself —
+// before doing anything to Docker.
+//
+// Without this, restart_stack/stop_stack cost the same single unit whether
+// the stack has 1 container or 30+: chargeAdditionalContainers already bounds
+// restart_stack_containers/stop_stack_containers to at most
+// maxStackContainerIDs containers per call, but the whole-stack tools could
+// change an unbounded number of containers for that same one unit — the exact
+// asymmetry the "act on the whole stack instead" message in
+// validateStackContainerIDs pointed callers toward. Reusing
+// chargeAdditionalContainers here closes it: both tool families are governed
+// by the same per-container budget now.
+//
+// Split out of stackActionTool so the charge-then-act boundary is testable
+// directly against a synthetic id count, without a Docker daemon behind it —
+// same convention as chargeAdditionalContainers and validateStackContainerIDs
+// elsewhere in this file.
+func (h *handler) runStackAction(ctx context.Context, p *principal, hostID int64, project, action string, ids []string) (stackActionOut, error) {
+	if len(ids) == 0 {
+		err := fmt.Errorf("no containers found for stack %q", project)
+		h.audit(p, "mcp.stack."+action, project, outcome(err))
+		return stackActionOut{}, err
+	}
+	if err := h.chargeAdditionalContainers(p, len(ids)); err != nil {
+		h.audit(p, "mcp.stack."+action, project, outcome(err))
+		return stackActionOut{}, err
+	}
+	derr := h.deps.Docker.StackAction(ctx, hostID, project, action)
+	// Audited whether it worked or not: an attempted stop that failed is
+	// exactly the kind of thing someone will later want to find.
+	h.audit(p, "mcp.stack."+action, project, outcome(derr))
+	if derr != nil {
+		return stackActionOut{}, derr
+	}
+	return stackActionOut{OK: true, Project: project, Action: action}, nil
 }
 
 // ---- stack container subset lifecycle ----
@@ -182,15 +218,34 @@ func validateStackContainerIDs(ids []string) error {
 // matching the validateStackContainerIDs convention in this file, so the
 // charging boundary can be tested directly against the limiter without a
 // handler or a Docker daemon behind it.
+//
+// Charges atomically via reserve, not one unit at a time: a loop calling
+// allow() n-1 times would leave whatever it already spent in place the moment
+// the bucket ran dry, silently draining a caller's budget on a batch that
+// ends up refused as a whole anyway.
 func (h *handler) chargeAdditionalContainers(p *principal, n int) error {
-	for range n - 1 {
-		ok, firstTrip := h.limiter.allow(p.user.ID)
-		if !ok {
-			if firstTrip {
-				h.audit(p, "mcp.ratelimit", "containers", "control rate limit reached via MCP; changes refused")
-			}
-			return errControlRateLimited()
+	extra := n - 1
+	if extra <= 0 {
+		return nil
+	}
+	if float64(n) > h.limiter.burst {
+		// authorize() already spent 1 unit of this same bucket on this call, so
+		// burst is the true ceiling for n — and a batch bigger than that can
+		// never fit even against a fully-fresh bucket. Retrying won't help,
+		// unlike an ordinary rate-limit refusal, so say so instead of the
+		// generic "wait and retry" message.
+		return fmt.Errorf(
+			"this call would change %d containers, more than the %.0f-per-minute change budget can ever hold in "+
+				"one go — retrying will not help. Act on it in smaller batches (restart_stack_containers/"+
+				"stop_stack_containers, up to %d containers per call) or from the web UI",
+			n, h.limiter.burst, maxStackContainerIDs)
+	}
+	ok, firstTrip := h.limiter.reserve(p.user.ID, extra)
+	if !ok {
+		if firstTrip {
+			h.audit(p, "mcp.ratelimit", "containers", "control rate limit reached via MCP; changes refused")
 		}
+		return errControlRateLimited()
 	}
 	return nil
 }

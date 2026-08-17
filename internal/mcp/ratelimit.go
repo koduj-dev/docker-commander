@@ -74,41 +74,52 @@ func newControlLimiter() *controlLimiter {
 	}
 }
 
-// allow consumes one unit for the given user. It reports whether the change may
-// proceed, and whether this is the FIRST refusal of the current episode — the
-// caller audits on that so a compromised token leaves exactly one clear mark per
-// time it runs away, rather than none or thousands.
+// allow consumes one unit for the given user — the n=1 case of reserve. It
+// reports whether the change may proceed, and whether this is the FIRST
+// refusal of the current episode — the caller audits on that so a
+// compromised token leaves exactly one clear mark per time it runs away,
+// rather than none or thousands.
 //
 // A limiter that was never constructed allows everything, so a zero-value
 // handler in a test is not silently throttled.
 func (l *controlLimiter) allow(userID int64) (ok, firstTrip bool) {
+	return l.reserve(userID, 1)
+}
+
+// reserve atomically consumes n units for the given user: if fewer than n are
+// available after refill, NONE are charged. This is what makes charging for a
+// multi-container action safe — a loop that charged one unit at a time would
+// leave whatever it had already spent in place even when the call as a whole
+// gets refused, silently draining a caller's budget on a batch that never ran.
+func (l *controlLimiter) reserve(userID int64, n int) (ok, firstTrip bool) {
 	if l == nil {
 		return true, false
+	}
+	if n < 1 {
+		n = 1
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	now := l.now()
-	b, ok := l.buckets[userID]
-	if !ok {
-		// First change from this user: a full bucket, minus this one.
-		l.buckets[userID] = &controlBucket{tokens: l.burst - 1, last: now}
-		return true, false
-	}
-
-	if elapsed := now.Sub(b.last); elapsed > 0 {
+	b, exists := l.buckets[userID]
+	if !exists {
+		b = &controlBucket{tokens: l.burst, last: now}
+		l.buckets[userID] = b
+	} else if elapsed := now.Sub(b.last); elapsed > 0 {
 		b.tokens += float64(elapsed) / float64(l.refill)
 		if b.tokens > l.burst {
 			b.tokens = l.burst
 		}
 		b.last = now
 	}
-	if b.tokens < 1 {
+
+	if b.tokens < float64(n) {
 		first := !b.tripped
 		b.tripped = true
 		return false, first
 	}
-	b.tokens--
+	b.tokens -= float64(n)
 	// Back under the limit: the next overrun is a new episode worth recording.
 	b.tripped = false
 	return true, false
