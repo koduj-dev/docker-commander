@@ -349,13 +349,15 @@ function BulkResultList({ results, nameFor }: { results: BulkActionResult[]; nam
 function BulkPullModal({ ids, nameFor, onClose }: { ids: string[]; nameFor: (id: string) => string; onClose: () => void }) {
   const [frames, setFrames] = useState<Map<string, BulkPullFrame>>(new Map());
   const [layers, setLayers] = useState<Map<string, Map<string, PullProgress>>>(new Map());
-  const [refOrder, setRefOrder] = useState<string[]>([]);
   const [total, setTotal] = useState(0);
   const [finished, setFinished] = useState(false);
   const [results, setResults] = useState<BulkPullFrame["results"]>(undefined);
   const [connError, setConnError] = useState("");
   const wsRef = useRef<WebSocket | null>(null);
   const doneRef = useRef(false);
+  // Set by the Cancel button, so onclose can tell an intentional cancel from
+  // an actual connection drop and not show a false "closed before finishing".
+  const cancelledRef = useRef(false);
 
   useEffect(() => {
     const ws = new WebSocket(api.bulkPullImagesUrl(ids));
@@ -375,11 +377,12 @@ function BulkPullModal({ ids, nameFor, onClose }: { ids: string[]; nameFor: (id:
       }
       if (f.count) setTotal(f.count);
       setFrames((prev) => {
+        // A Map preserves insertion order, so first-occurrence order of
+        // f.ref IS display order — no separate ordered-list state needed.
         const next = new Map(prev);
         next.set(f.ref, f);
         return next;
       });
-      setRefOrder((prev) => (prev.includes(f.ref) ? prev : [...prev, f.ref]));
       if (f.progress?.id) {
         setLayers((prev) => {
           const next = new Map(prev);
@@ -393,14 +396,20 @@ function BulkPullModal({ ids, nameFor, onClose }: { ids: string[]; nameFor: (id:
     ws.onerror = () => setConnError("connection failed");
     ws.onclose = () => {
       setFinished(true);
-      if (!doneRef.current) setConnError((prev) => prev || "connection closed before finishing");
+      if (!doneRef.current && !cancelledRef.current) {
+        setConnError((prev) => prev || "connection closed before finishing");
+      }
     };
     return () => ws.close();
     // ids identifies one bulk-pull run; it does not change while this modal is open.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ids.join(",")]);
 
-  const cancel = () => wsRef.current?.close();
+  const cancel = () => {
+    cancelledRef.current = true;
+    wsRef.current?.close();
+  };
+  const refOrder = [...frames.keys()];
   const flatResults: BulkActionResult[] = (results ?? []).flatMap((r) => r.containerIds.map((id) => ({ id, ok: r.ok, error: r.error })));
 
   return (

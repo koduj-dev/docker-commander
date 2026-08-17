@@ -324,5 +324,8 @@ describe("bulk pull", () => {
     expect(ws.closed).toBe(false);
     await act(async () => button("Cancel").click());
     expect(ws.closed).toBe(true);
+    // An intentional Cancel is not a connection failure — must not show the
+    // "connection closed before finishing" error a real drop would.
+    expect(container.textContent).not.toContain("closed before finishing");
   });
 });

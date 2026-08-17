@@ -208,6 +208,27 @@ type bulkPullResult struct {
 	ContainerIDs []string `json:"containerIds"`
 }
 
+// normalizeImageRef makes dedup-by-image robust to the same image being
+// spelled with or without an explicit tag — a container created from "nginx"
+// and one created from "nginx:latest" run the identical image, and without
+// this they'd be treated as two distinct images to pull. Mirrors Docker's own
+// "no tag or digest means :latest" default. Only the last path segment is
+// checked for a ':', so a registry host:port prefix (e.g.
+// "localhost:5000/nginx") is never mistaken for a tag.
+func normalizeImageRef(ref string) string {
+	if strings.Contains(ref, "@") {
+		return ref // digest reference; no default tag applies
+	}
+	last := ref
+	if i := strings.LastIndexByte(ref, '/'); i >= 0 {
+		last = ref[i+1:]
+	}
+	if strings.Contains(last, ":") {
+		return ref // already has an explicit tag
+	}
+	return ref + ":latest"
+}
+
 // handleBulkPullImages resolves a caller-chosen set of containers to the
 // images they currently run, pulls each DISTINCT image once — containers
 // sharing an image are not pulled twice — and streams progress for each over
@@ -256,7 +277,6 @@ func (s *Server) handleBulkPullImages(w http.ResponseWriter, r *http.Request) {
 	// BulkStackContainerAction's membership check does, rather than silently
 	// skipping it.
 	var refs []string
-	seenRef := make(map[string]bool, len(ids))
 	containersByRef := make(map[string][]string, len(ids))
 	for _, id := range ids {
 		image, ok := imageByID[id]
@@ -264,11 +284,11 @@ func (s *Server) handleBulkPullImages(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, fmt.Sprintf("container %q not found", id))
 			return
 		}
-		containersByRef[image] = append(containersByRef[image], id)
-		if !seenRef[image] {
-			seenRef[image] = true
-			refs = append(refs, image)
+		ref := normalizeImageRef(image)
+		if _, seen := containersByRef[ref]; !seen {
+			refs = append(refs, ref)
 		}
+		containersByRef[ref] = append(containersByRef[ref], id)
 	}
 
 	opts := &websocket.AcceptOptions{}
@@ -284,9 +304,18 @@ func (s *Server) handleBulkPullImages(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
+	// A write failure means the client is gone (closed the tab, hit Cancel):
+	// cancel ctx so the in-flight PullImage call (which uses this same ctx for
+	// its daemon request) aborts instead of running to completion with no one
+	// left to report the outcome to, and so the loop below stops starting any
+	// further images in the batch.
 	send := func(f bulkPullFrame) {
-		if b, err := json.Marshal(f); err == nil {
-			_ = conn.Write(ctx, websocket.MessageText, b)
+		b, err := json.Marshal(f)
+		if err != nil {
+			return
+		}
+		if err := conn.Write(ctx, websocket.MessageText, b); err != nil {
+			cancel()
 		}
 	}
 
@@ -296,10 +325,19 @@ func (s *Server) handleBulkPullImages(w http.ResponseWriter, r *http.Request) {
 	// bulk restart/stop is.
 	results := make([]bulkPullResult, 0, len(refs))
 	for i, ref := range refs {
+		if ctx.Err() != nil {
+			break
+		}
 		send(bulkPullFrame{Ref: ref, Index: i + 1, Count: len(refs), Started: true})
 		pullErr := s.docker.PullImage(ctx, hostID, ref, func(p docker.PullProgress) {
 			send(bulkPullFrame{Ref: ref, Index: i + 1, Count: len(refs), Progress: &p})
 		})
+		if pullErr != nil && ctx.Err() != nil {
+			// Aborted because the client is gone, not a real pull failure —
+			// nothing left to send this to, and nothing worth auditing as a
+			// pull outcome nobody asked to see.
+			break
+		}
 		res := bulkPullResult{Ref: ref, ContainerIDs: containersByRef[ref]}
 		if pullErr != nil {
 			res.Error = pullErr.Error()
@@ -312,7 +350,9 @@ func (s *Server) handleBulkPullImages(w http.ResponseWriter, r *http.Request) {
 		}
 		results = append(results, res)
 	}
-	send(bulkPullFrame{AllDone: true, Results: results})
+	if ctx.Err() == nil {
+		send(bulkPullFrame{AllDone: true, Results: results})
+	}
 }
 
 func (s *Server) handleListNetworks(w http.ResponseWriter, r *http.Request) {

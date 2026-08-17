@@ -18,6 +18,27 @@ import (
 
 // --- validation, no daemon required -----------------------------------------
 
+func TestNormalizeImageRef(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"nginx", "nginx:latest"},
+		{"nginx:latest", "nginx:latest"},
+		{"nginx:1.27", "nginx:1.27"},
+		{"library/nginx", "library/nginx:latest"},
+		{"ghcr.io/koduj-dev/docker-commander", "ghcr.io/koduj-dev/docker-commander:latest"},
+		{"ghcr.io/koduj-dev/docker-commander:v1.6.0", "ghcr.io/koduj-dev/docker-commander:v1.6.0"},
+		// A registry host:port must never be mistaken for a tag.
+		{"localhost:5000/nginx", "localhost:5000/nginx:latest"},
+		{"localhost:5000/nginx:1.27", "localhost:5000/nginx:1.27"},
+		// Digest references are left untouched (no tag applies).
+		{"nginx@sha256:abc123", "nginx@sha256:abc123"},
+	}
+	for _, tc := range cases {
+		if got := normalizeImageRef(tc.in); got != tc.want {
+			t.Errorf("normalizeImageRef(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 // TestAPIBulkPullImagesValidation exercises the guards that run before this
 // handler ever touches the daemon or upgrades the connection: they must
 // respond as a normal HTTP 400, not attempt a WebSocket handshake first.
@@ -195,5 +216,47 @@ func TestAPIBulkPullImagesDedupesSharedImage(t *testing.T) {
 	}
 	if len(pulls) != 1 {
 		t.Errorf("want exactly 1 image.pull audit entry (deduped), got %d: %v", len(pulls), pulls)
+	}
+}
+
+// TestAPIBulkPullImagesDedupesUntaggedSpelling proves dedup survives the same
+// image being spelled two ways: one container created from a bare "alpine"
+// (no explicit tag) and one from "alpine:latest" run the identical image, and
+// without normalizeImageRef they'd read as two distinct ContainerSummary.Image
+// strings and pull twice.
+func TestAPIBulkPullImagesDedupesUntaggedSpelling(t *testing.T) {
+	a := newAPI(t)
+	if code, _ := a.do("POST", "/api/auth/setup", map[string]string{"username": "admin", "password": "correcthorse123"}); code != 200 {
+		t.Fatal("setup failed")
+	}
+	if testing.Short() {
+		t.Skip("docker integration test; skipped under -short")
+	}
+	if code, _ := a.do("GET", "/api/system", nil); code != 200 {
+		t.Skipf("docker daemon not available (%d)", code)
+	}
+	ctx := context.Background()
+	_ = a.dm.PullImage(ctx, 0, "alpine:latest", func(docker.PullProgress) {})
+	mk := func(name, image string) string {
+		id, err := a.dm.CreateContainer(ctx, 0, docker.CreateSpec{
+			Image: image, Name: name, Cmd: []string{"sleep", "300"}, Start: true,
+		})
+		if err != nil {
+			t.Skipf("cannot create container: %v", err)
+		}
+		t.Cleanup(func() {
+			if cli, err := a.dm.Client(ctx, 0); err == nil {
+				_ = cli.ContainerRemove(ctx, id, dockertypes.RemoveOptions{Force: true})
+			}
+		})
+		return id
+	}
+	idBare := mk("dctest_bulkpull_bare", "alpine")
+	idTagged := mk("dctest_bulkpull_tagged", "alpine:latest")
+
+	final := dialBulkPull(t, a, []string{idBare, idTagged})
+	results, ok := final["results"].([]any)
+	if !ok || len(results) != 1 {
+		t.Fatalf("results = %v, want exactly 1 (\"alpine\" and \"alpine:latest\" are the same image)", final["results"])
 	}
 }
