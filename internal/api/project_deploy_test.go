@@ -193,6 +193,83 @@ services:
 	}
 }
 
+// TestHandleDeployProject_NormalizesProfilesBeforePersistAndAudit is the
+// DC-COR-005 regression: a request selecting the same profile three
+// different ways (padded with whitespace, exact duplicate, and an empty
+// entry) must persist and audit the SAME normalized value the compose
+// command actually acted on ("extra", once) — not the raw three-element
+// slice, which would make the "Deployed with" badge and the audit log
+// disagree with what docker compose was actually told to run.
+func TestHandleDeployProject_NormalizesProfilesBeforePersistAndAudit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+
+	const slug = "dctest-deploy-profiles-norm"
+	compose := `
+services:
+  web:
+    image: ` + deployTestImage + `
+    command: ["sleep", "300"]
+  worker:
+    image: ` + deployTestImage + `
+    command: ["sleep", "300"]
+    profiles: ["extra"]
+`
+	srv, st, pid, admin := deployTestServer(t, slug, compose)
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = docker.ComposeDown(bg, srv.projectRoot(pid), slug, nil)
+		freeDeployStack(slug)
+	})
+
+	w := deployRequest(srv, pid, admin, `{"profiles":[" extra ","extra",""],"build":false}`)
+	if w.Code != 200 {
+		t.Fatalf("deploy request failed: %d %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		OK     bool   `json:"ok"`
+		Output string `json:"output"`
+		Error  string `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK {
+		t.Fatalf("deploy did not succeed: %s / %s", resp.Error, resp.Output)
+	}
+
+	p, err := st.ProjectByID(context.Background(), pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.LastDeployedProfiles) != 1 || p.LastDeployedProfiles[0] != "extra" {
+		t.Fatalf("last deployed profiles = %v, want the normalized [extra], not the raw 3-element request", p.LastDeployedProfiles)
+	}
+
+	entries, err := st.RecentAudit(context.Background(), 50, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, e := range entries {
+		if e.Action == "project.deploy" && e.Target == slug {
+			found = true
+			if e.Detail != "extra" {
+				t.Errorf("audit detail = %q, want the normalized %q, not the raw request", e.Detail, "extra")
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatal("no project.deploy audit entry found")
+	}
+}
+
 // A failed deploy must not advance "last deployed profiles" past a profile
 // set that isn't actually running — otherwise a badge could claim a service is
 // merely "not in the active profile" when the deploy that would have started

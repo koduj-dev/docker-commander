@@ -44,6 +44,32 @@ func composeProbe(ctx context.Context, bin string) bool {
 	return exec.CommandContext(cctx, bin, "compose", "version").Run() == nil
 }
 
+// NormalizeProfiles trims whitespace, drops empty entries, and deduplicates
+// (keeping first-occurrence order) a caller-supplied profile selection.
+//
+// This used to happen only inline inside ComposeUpFiles, while callers that
+// persist or audit "the profiles this deploy used" (handleDeployProject)
+// stored the raw, unnormalized input instead. A request like
+// [" prod ", "prod", ""] activated exactly one profile, "prod" — but the
+// stored "last deployed profiles" and the audit log read as three different
+// (and duplicate) values, so the UI's "Deployed with" badge and the audit
+// trail could both misrepresent what was actually running. Exported so a
+// caller can normalize once and pass the SAME slice to the compose command,
+// persistence, and audit, rather than each re-deriving it and risking drift.
+func NormalizeProfiles(profiles []string) []string {
+	seen := make(map[string]bool, len(profiles))
+	out := make([]string, 0, len(profiles))
+	for _, p := range profiles {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	return out
+}
+
 // ComposeUp runs `docker compose -p <slug> [--profile p…] up -d [--build]` in
 // dir and returns the combined stdout+stderr (for display) alongside any error.
 // env adds to the process environment (e.g. DOCKER_HOST to target a remote
@@ -65,11 +91,10 @@ func ComposeUp(ctx context.Context, dir, slug string, profiles []string, env []s
 // true. It is a no-op for services that declare no `build:`, so it costs nothing
 // on an image-only project.
 func ComposeUpFiles(ctx context.Context, dir, slug string, profiles, env, files []string, build bool) (string, error) {
+	profiles = NormalizeProfiles(profiles)
 	args := make([]string, 0, len(profiles)*2+3)
 	for _, p := range profiles {
-		if p = strings.TrimSpace(p); p != "" {
-			args = append(args, "--profile", p)
-		}
+		args = append(args, "--profile", p)
 	}
 	args = append(args, "up", "-d")
 	if build {

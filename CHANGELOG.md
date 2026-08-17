@@ -62,6 +62,16 @@ All notable changes to Docker Commander are documented here. The format follows
   resolutions (a concurrent deploy, for instance) would be acted on without
   ever having been charged for.
 
+### Fixed
+- **A deployed project's profile selection is normalized once, consistently.**
+  `docker compose`'s own `--profile` flags were already trimmed and deduped
+  before this, but the "last deployed profiles" persisted for the UI badge and
+  the `project.deploy` audit entry kept the raw request — so
+  `[" prod ", "prod", ""]` genuinely activated one profile, `prod`, while the
+  stored/audited value could read as three different (and duplicate) strings.
+  Normalized once in the handler now, and the same slice is reused for the
+  compose command, persistence, and the audit entry.
+
 ### Added
 - **MCP: `restart_stack_containers` / `stop_stack_containers`.** Restart or stop
   a caller-chosen subset (up to 10) of one Compose stack's own containers over

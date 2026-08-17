@@ -826,6 +826,12 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 		Build *bool `json:"build"`
 	}
 	_ = decodeJSON(r, &body) // body is optional (empty → no profiles, rebuild)
+	// Normalized ONCE, here, and reused for the compose command, persistence
+	// AND the audit entry below — so all three agree on what was actually
+	// selected instead of the compose command silently trimming/deduping its
+	// own copy while the stored/audited value kept the raw (and possibly
+	// misleading) input.
+	body.Profiles = docker.NormalizeProfiles(body.Profiles)
 	build := body.Build == nil || *body.Build
 	dir := s.projectRoot(p.ID)
 	env, files, note, cleanup, err := s.projectDeployEnv(r.Context(), p, dir)
