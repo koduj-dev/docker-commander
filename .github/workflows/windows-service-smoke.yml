@@ -113,6 +113,24 @@ jobs:
       - name: dockercmd --service-status agrees
         run: .\dockercmd.exe --service-status
 
+      # DC-SEC-001: the data dir must grant FullControl to SYSTEM and
+      # Administrators only — no inherited access for Users/Authenticated
+      # Users, which is what %ProgramData%'s default ACL would otherwise
+      # leave in place. This is the one thing that can only be proven against
+      # a real NTFS security subsystem, not by unit tests.
+      - name: Verify the data dir's ACL is locked down
+        run: |
+          $dataDir = "$env:ProgramData\docker-commander\data"
+          $acl = icacls $dataDir
+          Write-Host ($acl -join "`n")
+          $joined = $acl -join "`n"
+          if ($joined -notmatch 'NT AUTHORITY\\SYSTEM:\(.*F\)') { throw "SYSTEM does not have FullControl on $dataDir" }
+          if ($joined -notmatch 'BUILTIN\\Administrators:\(.*F\)') { throw "Administrators does not have FullControl on $dataDir" }
+          foreach ($forbidden in 'BUILTIN\\Users', 'Everyone', 'NT AUTHORITY\\Authenticated Users') {
+            if ($joined -match $forbidden) { throw "$forbidden has access to $dataDir — the DACL is not locked down" }
+          }
+          Write-Host "confirmed: only SYSTEM + Administrators have access"
+
       # Stop via the SCM (not the exe): this is what services.msc / a reboot
       # actually does, and it's the path that exercises windowsHandler.Execute's
       # Stop control-request handling end-to-end (unit tests only drive that
@@ -161,6 +179,39 @@ jobs:
             Start-Sleep -Seconds 1
           }
           if (-not $ok) { throw "dockercmd never answered /healthz after restart" }
+
+      # DC-COR-004: the native installer must refuse to run alongside the
+      # older Scheduled Task installer rather than silently registering a
+      # second copy. Uninstall the SCM service first (native vs. native
+      # reinstall is already covered by "Install the service" itself running
+      # a second time in effect via the reused runner), register a dummy
+      # 'DockerCommander' task, and confirm --install-service now aborts and
+      # does NOT create the SCM service.
+      - name: Uninstall before the dual-install check
+        run: |
+          .\dockercmd.exe --uninstall-service
+          if ($LASTEXITCODE -ne 0) { throw "--uninstall-service failed" }
+
+      - name: Register a conflicting Scheduled Task and confirm install refuses it
+        run: |
+          schtasks /Create /TN DockerCommander /TR "cmd /c exit" /SC ONSTART /RU SYSTEM /F | Out-Null
+          .\dockercmd.exe --install-service
+          if ($LASTEXITCODE -eq 0) { throw "--install-service succeeded despite a conflicting Scheduled Task" }
+          $svc = Get-Service -Name dockercmd -ErrorAction SilentlyContinue
+          if ($svc) { throw "the SCM service was registered even though install should have aborted" }
+          Write-Host "confirmed: install-service refused to run alongside the Scheduled Task"
+
+      - name: Remove the dummy Scheduled Task
+        if: always()
+        run: schtasks /Delete /TN DockerCommander /F 2>$null
+
+      # Re-install for real now that the conflicting task is gone, so the
+      # final uninstall step below (and its "confirm the SCM forgot it"
+      # assertion) still exercises a genuinely-installed service.
+      - name: Reinstall the service for the final uninstall check
+        run: |
+          .\dockercmd.exe --install-service
+          if ($LASTEXITCODE -ne 0) { throw "--install-service failed on reinstall" }
 
       # Uninstall() stops (if running) + deletes the SCM entry itself, so this
       # also covers the stop-from-uninstall path, not just delete.

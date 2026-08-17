@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
@@ -24,6 +26,9 @@ const (
 	winServiceName = "dockercmd"
 	winDisplayName = "Docker Commander"
 	winDescription = "Monitors and controls Docker containers. https://github.com/koduj-dev/docker-commander"
+	// scheduledTaskName must match deploy/install-windows.ps1's $TaskName —
+	// the older, dependency-free installer this one exists alongside.
+	scheduledTaskName = "DockerCommander"
 )
 
 // winInstallDir mirrors deploy/install-windows.ps1's $InstallDir so the two
@@ -62,6 +67,11 @@ func Install(w io.Writer) error {
 	if !isElevated() {
 		return errors.New("installing the Windows service needs an elevated (Administrator) PowerShell/cmd — right-click, \"Run as administrator\"")
 	}
+	if exists, err := scheduledTaskExists(scheduledTaskName); err != nil {
+		fmt.Fprintf(w, "note: could not check for a conflicting Scheduled Task (%v), continuing\n", err)
+	} else if exists {
+		return conflictingScheduledTaskError()
+	}
 
 	installDir := winInstallDir()
 	dataDir := winDataDir()
@@ -71,8 +81,21 @@ func Install(w io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("locate running binary: %w", err)
 	}
+	preexisting := dirExists(dataDir)
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return fmt.Errorf("create data dir: %w", err)
+	}
+	if preexisting {
+		// A dir left over from a prior install (or, worse, planted by
+		// someone else under %ProgramData% before this run) is not trusted
+		// just because it already has the right path — its ACL might already
+		// grant more than SYSTEM+Administrators.
+		if err := verifyDataDirACL(dataDir); err != nil {
+			return fmt.Errorf("refusing to reuse existing data dir %s: %w", dataDir, err)
+		}
+	}
+	if err := secureDataDirACL(dataDir); err != nil {
+		return fmt.Errorf("set data dir permissions: %w", err)
 	}
 
 	m, err := mgr.Connect()
@@ -86,11 +109,21 @@ func Install(w io.Writer) error {
 	// Stop it — and wait for Stopped — BEFORE touching binDest: that's very
 	// likely the running service's own executable, and Windows keeps a
 	// mapped-for-execution file locked, so overwriting it while the old
-	// process still has it open fails with a sharing violation.
+	// process still has it open fails with a sharing violation. Any failure
+	// here — the stop request itself, or the wait for Stopped — aborts
+	// before binDest is touched, rather than optimistically proceeding: the
+	// whole point of stopping first is that overwriting a locked binary
+	// fails ugly, not that it's merely unlikely to happen.
 	existing, openErr := m.OpenService(winServiceName)
 	if openErr == nil {
-		_, _ = existing.Control(svc.Stop)
-		waitStopped(existing, 15*time.Second)
+		if _, err := existing.Control(svc.Stop); err != nil && err != windows.ERROR_SERVICE_NOT_ACTIVE {
+			existing.Close()
+			return fmt.Errorf("stop existing service before reinstall: %w", err)
+		}
+		if err := waitStopped(existing.Query, 15*time.Second); err != nil {
+			existing.Close()
+			return fmt.Errorf("existing service did not stop cleanly, aborting reinstall (binary/service left untouched): %w", err)
+		}
 	}
 
 	if !strings.EqualFold(self, binDest) {
@@ -176,7 +209,9 @@ func Uninstall(w io.Writer) error {
 	if _, err := s.Control(svc.Stop); err != nil && err != windows.ERROR_SERVICE_NOT_ACTIVE {
 		fmt.Fprintf(w, "note: stop returned: %v (continuing)\n", err)
 	}
-	waitStopped(s, 15*time.Second)
+	if err := waitStopped(s.Query, 15*time.Second); err != nil {
+		fmt.Fprintf(w, "note: %v (continuing with delete)\n", err)
+	}
 
 	if err := s.Delete(); err != nil {
 		return fmt.Errorf("remove service: %w", err)
@@ -213,19 +248,163 @@ func Status(w io.Writer) error {
 	return nil
 }
 
-// waitStopped polls the service until it reports Stopped or the timeout
-// elapses. Delete() succeeds regardless, but giving a just-signalled Stop a
-// moment to land avoids racing the just-copied binary with a process that
-// still has it open on the next Install.
-func waitStopped(s *mgr.Service, timeout time.Duration) {
+// waitStopped polls query until it reports Stopped or timeout elapses,
+// returning an error on a genuine timeout or if query itself keeps failing —
+// callers that need to know the service actually stopped (Install, before
+// overwriting the binary) must not treat either as silent success. query is
+// normally a *mgr.Service's own Query method (a bound method value matches
+// this signature); tests inject a fake so the polling logic is verifiable
+// without a real SCM handle.
+func waitStopped(query func() (svc.Status, error), timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
+	var lastErr error
 	for time.Now().Before(deadline) {
-		st, err := s.Query()
-		if err != nil || st.State == svc.Stopped {
-			return
+		st, err := query()
+		if err != nil {
+			lastErr = err
+		} else if st.State == svc.Stopped {
+			return nil
+		} else {
+			lastErr = nil
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
+	if lastErr != nil {
+		return fmt.Errorf("querying service status: %w", lastErr)
+	}
+	return fmt.Errorf("service did not reach Stopped within %s", timeout)
+}
+
+// dirExists reports whether path already exists (any type) — used to tell a
+// freshly-created data dir from a pre-existing one, since os.MkdirAll returns
+// nil either way.
+func dirExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// secureDataDirACL applies a protected (non-inherited) DACL to path granting
+// FullControl to SYSTEM and Administrators only. The service normally runs as
+// LocalSystem with no ServiceStartName set, and this directory holds the
+// database, TLS private keys and an at-rest encryption key (docs/gotchas.md)
+// — an inherited ACL from %ProgramData% that grants Users/Authenticated Users
+// read access would expose all of it to any local account.
+func secureDataDirACL(path string) error {
+	systemSid, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
+	if err != nil {
+		return fmt.Errorf("resolve SYSTEM sid: %w", err)
+	}
+	adminSid, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
+	if err != nil {
+		return fmt.Errorf("resolve Administrators sid: %w", err)
+	}
+
+	inherit := uint32(windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE)
+	entries := []windows.EXPLICIT_ACCESS{
+		{
+			AccessPermissions: windows.GENERIC_ALL,
+			AccessMode:        windows.GRANT_ACCESS,
+			Inheritance:       inherit,
+			Trustee: windows.TRUSTEE{
+				TrusteeForm:  windows.TRUSTEE_IS_SID,
+				TrusteeType:  windows.TRUSTEE_IS_USER,
+				TrusteeValue: windows.TrusteeValueFromSID(systemSid),
+			},
+		},
+		{
+			AccessPermissions: windows.GENERIC_ALL,
+			AccessMode:        windows.GRANT_ACCESS,
+			Inheritance:       inherit,
+			Trustee: windows.TRUSTEE{
+				TrusteeForm:  windows.TRUSTEE_IS_SID,
+				TrusteeType:  windows.TRUSTEE_IS_GROUP,
+				TrusteeValue: windows.TrusteeValueFromSID(adminSid),
+			},
+		},
+	}
+
+	dacl, err := windows.ACLFromEntries(entries, nil)
+	if err != nil {
+		return fmt.Errorf("build ACL: %w", err)
+	}
+
+	// PROTECTED_DACL_SECURITY_INFORMATION strips inherited ACEs (e.g. a
+	// permissive one inherited from %ProgramData% itself) so only the two
+	// explicit grants above apply.
+	err = windows.SetNamedSecurityInfo(
+		path,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, dacl, nil,
+	)
+	if err != nil {
+		return fmt.Errorf("apply ACL to %s: %w", path, err)
+	}
+	return nil
+}
+
+// verifyDataDirACL refuses a pre-existing data dir whose DACL grants access
+// to anything beyond SYSTEM, Administrators, or CREATOR OWNER (an inherited
+// default that doesn't itself widen access). Called before secureDataDirACL
+// repairs a fresh/legitimate dir's ACL, so a dir that already grants broader
+// access — planted, misconfigured, or left over from something else entirely
+// — is surfaced for manual inspection instead of silently adopted and then
+// "fixed" as if it had always been fine.
+func verifyDataDirACL(path string) error {
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		return fmt.Errorf("read existing ACL: %w", err)
+	}
+	acl, _, err := sd.DACL()
+	if err != nil {
+		return fmt.Errorf("read existing DACL: %w", err)
+	}
+	if acl == nil {
+		return errors.New("existing data dir has no DACL (fully permissive) — remove it or repair its ACL by hand")
+	}
+	for i := uint16(0); i < acl.AceCount; i++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(acl, uint32(i), &ace); err != nil {
+			return fmt.Errorf("read ACE %d: %w", i, err)
+		}
+		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
+			continue // deny/audit ACEs aren't a disclosure risk
+		}
+		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		if !sid.IsWellKnown(windows.WinLocalSystemSid) &&
+			!sid.IsWellKnown(windows.WinBuiltinAdministratorsSid) &&
+			!sid.IsWellKnown(windows.WinCreatorOwnerSid) {
+			return fmt.Errorf("existing data dir grants access to unexpected SID %s — inspect it manually before reinstalling", sid.String())
+		}
+	}
+	return nil
+}
+
+// conflictingScheduledTaskError is its own function so its exact wording is
+// unit-testable without a real schtasks.exe.
+func conflictingScheduledTaskError() error {
+	return fmt.Errorf(
+		"Scheduled Task %q is already installed (deploy/install-windows.ps1) — stop and remove it first "+
+			"(Stop-ScheduledTask -TaskName %q; Unregister-ScheduledTask -TaskName %q -Confirm:$false) before "+
+			"installing the native service, to avoid two copies of dockercmd running at once",
+		scheduledTaskName, scheduledTaskName, scheduledTaskName)
+}
+
+// scheduledTaskExists shells out to schtasks.exe (rather than a Task
+// Scheduler COM binding) since it's always present on Windows and a simple
+// exit-code check is all that's needed: 0 if the task exists, non-zero if it
+// doesn't.
+func scheduledTaskExists(name string) (bool, error) {
+	err := exec.Command("schtasks", "/Query", "/TN", name).Run()
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return false, nil // schtasks' own "not found" signal
+	}
+	return false, err // schtasks.exe missing, PATH issue, etc — unknown, not "found"
 }
 
 // waitServiceGone polls until OpenService(name) fails (the SCM has actually

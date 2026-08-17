@@ -39,6 +39,16 @@ $admin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdent
   ).IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
 if (-not $admin) { throw "Run this from an elevated (Administrator) PowerShell." }
 
+# --- check for the native SCM service ----------------------------------------
+# 'dockercmd' must match winServiceName in internal/service/service_windows.go
+# — the native installer this Scheduled Task installer exists alongside.
+$existingSvc = Get-Service -Name 'dockercmd' -ErrorAction SilentlyContinue
+if ($existingSvc) {
+  throw "The native Windows service 'dockercmd' is already installed (dockercmd.exe --install-service). " +
+        "Stop and remove it first (Stop-Service dockercmd; sc.exe delete dockercmd) before installing " +
+        "the Scheduled Task, to avoid two copies of dockercmd running at once."
+}
+
 # --- locate the binary -------------------------------------------------------
 if (-not $BinPath) {
   foreach ($cand in '.\dockercmd.exe', '.\dockercmd-windows-amd64.exe', '.\dockercmd-windows-arm64.exe') {

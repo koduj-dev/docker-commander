@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -283,6 +284,80 @@ func TestWindowsHandlerExecute_StopTimeout(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Execute hung past serviceStopTimeout waiting for an unresponsive run()")
+	}
+}
+
+// TestWaitStopped_ReachesStopped: the ordinary case — query starts pending
+// and flips to Stopped before the timeout.
+func TestWaitStopped_ReachesStopped(t *testing.T) {
+	calls := 0
+	query := func() (svc.Status, error) {
+		calls++
+		if calls < 3 {
+			return svc.Status{State: svc.StopPending}, nil
+		}
+		return svc.Status{State: svc.Stopped}, nil
+	}
+	if err := waitStopped(query, time.Second); err != nil {
+		t.Fatalf("waitStopped() = %v, want nil once query reports Stopped", err)
+	}
+}
+
+// TestWaitStopped_QueryErrorIsReported proves a persistent Query() error is
+// no longer treated as success (the bug: "err != nil || st.State ==
+// svc.Stopped" returned on EITHER) — a caller deciding whether it's safe to
+// overwrite the service binary needs to know the service's state was never
+// actually confirmed, not have that silently read as "it stopped".
+func TestWaitStopped_QueryErrorIsReported(t *testing.T) {
+	persistent := errors.New("RPC server unavailable")
+	query := func() (svc.Status, error) { return svc.Status{}, persistent }
+	err := waitStopped(query, 100*time.Millisecond)
+	if err == nil {
+		t.Fatal("waitStopped() = nil, want an error — Query() never succeeded, let alone reported Stopped")
+	}
+	if !errors.Is(err, persistent) {
+		t.Errorf("waitStopped() error = %v, want it to wrap the underlying Query error", err)
+	}
+}
+
+// TestWaitStopped_TimeoutIsReported: query never errors and never reports
+// Stopped — falling off the end of the loop must be an error, not a silent
+// return, so a stuck service doesn't get treated as having stopped cleanly.
+func TestWaitStopped_TimeoutIsReported(t *testing.T) {
+	query := func() (svc.Status, error) { return svc.Status{State: svc.StopPending}, nil }
+	err := waitStopped(query, 100*time.Millisecond)
+	if err == nil {
+		t.Fatal("waitStopped() = nil after a real timeout, want an error")
+	}
+}
+
+// TestWaitStopped_RecoversFromTransientError: a transient Query blip
+// followed by a real Stopped must still succeed — proving the fix doesn't
+// overcorrect into failing on any single hiccup.
+func TestWaitStopped_RecoversFromTransientError(t *testing.T) {
+	calls := 0
+	query := func() (svc.Status, error) {
+		calls++
+		if calls == 1 {
+			return svc.Status{}, errors.New("transient RPC blip")
+		}
+		return svc.Status{State: svc.Stopped}, nil
+	}
+	if err := waitStopped(query, time.Second); err != nil {
+		t.Fatalf("waitStopped() = %v, want nil — a single transient error before a real Stopped should not fail the call", err)
+	}
+}
+
+// TestConflictingScheduledTaskErrorNamesTheTask proves the abort message
+// actually names the Scheduled Task and both PowerShell commands an operator
+// needs — this message is the whole point of the DC-COR-004 fix, so its
+// content is worth pinning down directly, not just its non-nil-ness.
+func TestConflictingScheduledTaskErrorNamesTheTask(t *testing.T) {
+	err := conflictingScheduledTaskError()
+	for _, want := range []string{scheduledTaskName, "Stop-ScheduledTask", "Unregister-ScheduledTask"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("conflictingScheduledTaskError() = %q, want it to mention %q", err.Error(), want)
+		}
 	}
 }
 

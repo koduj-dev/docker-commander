@@ -203,6 +203,21 @@ rather not run as SYSTEM, or want to read exactly what gets installed without
 touching the SCM. Wrapping the exe with [NSSM](https://nssm.cc) or WinSW is
 also still an option, and no longer necessary just to get a "real" service.
 
+Pick **one** of the two — running both at once means two copies of dockercmd
+racing over the same data dir and port. Each installer refuses to proceed if
+it detects the other is already installed (checks for the SCM service `dockercmd`
+or the Scheduled Task `DockerCommander` by name); migrate by stopping and
+removing the one you're leaving before installing the other.
+
+The data dir's ACL is set explicitly on install — `SYSTEM` and
+`Administrators` get Full Control, nothing else (not the inherited
+`%ProgramData%` default, which can otherwise leave it readable by any local
+account) — since it holds the database, TLS private keys, and the at-rest
+encryption key. Reinstalling over an existing data dir re-applies this ACL; if
+that dir's *existing* permissions already grant access beyond
+`SYSTEM`/`Administrators`/`CREATOR OWNER`, install refuses to proceed rather
+than silently trusting it — inspect it by hand first.
+
 > **Compose/Projects disabled under systemd?** If the **Projects** page warns
 > that "the `docker compose` CLI isn't available", it's the `ProtectHome=true`
 > hardening: it makes the service user's home inaccessible, which breaks the

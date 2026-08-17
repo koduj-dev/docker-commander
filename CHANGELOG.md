@@ -6,6 +6,30 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+- **Windows service: the data dir gets an explicit, locked-down ACL.** The
+  installer only created the dir with a Unix mode bit, which means nothing on
+  Windows — it inherited whatever `%ProgramData%`'s own ACL happened to grant,
+  potentially readable by any local account, for a dir holding the database,
+  TLS private keys, and the at-rest encryption key. `--install-service` now
+  sets an explicit DACL (SYSTEM + Administrators, Full Control, no inherited
+  access) on both a fresh dir and a reinstall over an existing one — and
+  refuses to proceed if an existing dir's ACL already grants access beyond
+  that, rather than silently trusting it.
+- **Windows service: a failed stop no longer lets a reinstall proceed
+  anyway.** `--install-service` re-run over a running service is supposed to
+  stop it before overwriting the binary, but the stop request's own error was
+  discarded and a timeout waiting for it to actually reach Stopped was
+  treated as success. The reinstall now aborts (binary and service left
+  untouched) if the existing service doesn't confirm it stopped.
+- **Windows service: refuses to install alongside the older Scheduled Task
+  installer.** Both install methods target the same binary/data paths on
+  purpose, but neither checked whether the other was already running —
+  installing both meant two copies of dockercmd racing over the same data
+  dir and port. `--install-service` now aborts if the `DockerCommander`
+  Scheduled Task exists; `install-windows.ps1` now aborts if the `dockercmd`
+  SCM service exists.
+
 ### Added
 - **MCP: `restart_stack_containers` / `stop_stack_containers`.** Restart or stop
   a caller-chosen subset (up to 10) of one Compose stack's own containers over
