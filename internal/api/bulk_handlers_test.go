@@ -30,11 +30,11 @@ func TestAPIBulkContainerActionValidation(t *testing.T) {
 		name string
 		body map[string]any
 	}{
-		// "kill" is a real ContainerAction verb, but not one this endpoint
-		// exposes — this is the "don't build a generic action-agnostic bulk
-		// endpoint" guard, not a generic bad-input check.
+		// "kill" and "pause" are real ContainerAction verbs, but not ones this
+		// endpoint exposes — this is the "don't build a generic
+		// action-agnostic bulk endpoint" guard, not a generic bad-input check.
 		{"disallowed action (kill)", map[string]any{"ids": []string{"x"}, "action": "kill"}},
-		{"disallowed action (start)", map[string]any{"ids": []string{"x"}, "action": "start"}},
+		{"disallowed action (pause)", map[string]any{"ids": []string{"x"}, "action": "pause"}},
 		{"unknown action", map[string]any{"ids": []string{"x"}, "action": "nope"}},
 		{"missing action", map[string]any{"ids": []string{"x"}}},
 		{"empty ids", map[string]any{"ids": []string{}, "action": "stop"}},
@@ -52,16 +52,16 @@ func TestAPIBulkContainerActionValidation(t *testing.T) {
 }
 
 // TestAPIBulkContainerActionRestartAndStopAreAllowed proves the inverse of the
-// validation test: "restart" and "stop" are not rejected by the action guard.
-// Without a daemon the call still fails downstream (no such container), but
-// that must be a 200 with a per-item error, never the 400 the disallowed
-// actions get — that distinction is exactly what the guard is for.
+// validation test: "restart", "stop", and "start" are not rejected by the
+// action guard. Without a daemon the call still fails downstream (no such
+// container), but that must be a 200 with a per-item error, never the 400 the
+// disallowed actions get — that distinction is exactly what the guard is for.
 func TestAPIBulkContainerActionRestartAndStopAreAllowed(t *testing.T) {
 	a := newAPI(t)
 	if code, _ := a.do("POST", "/api/auth/setup", map[string]string{"username": "admin", "password": "correcthorse123"}); code != 200 {
 		t.Fatal("setup failed")
 	}
-	for _, action := range []string{"restart", "stop"} {
+	for _, action := range []string{"restart", "stop", "start"} {
 		code, resp := a.do("POST", "/api/containers/bulk-action", map[string]any{"ids": []string{"nope"}, "action": action})
 		if code != 200 {
 			t.Errorf("action %q: got %d, want 200 (%v)", action, code, resp)
@@ -165,5 +165,55 @@ func TestAPIBulkContainerActionSummaryAndAudit(t *testing.T) {
 	detail, _ := failEntry["detail"].(string)
 	if detail == "" {
 		t.Errorf("failed entry detail is empty, want the daemon's error text identifying why %q failed", bogus)
+	}
+}
+
+// TestAPIBulkContainerActionStartWorksEndToEnd proves "start" is not merely
+// accepted by the validation guard but actually reaches the daemon and starts
+// a stopped container, auditing container.start — the same end-to-end
+// standard TestAPIBulkContainerActionSummaryAndAudit holds restart to.
+func TestAPIBulkContainerActionStartWorksEndToEnd(t *testing.T) {
+	a := newAPI(t)
+	if code, _ := a.do("POST", "/api/auth/setup", map[string]string{"username": "admin", "password": "correcthorse123"}); code != 200 {
+		t.Fatal("setup failed")
+	}
+	if testing.Short() {
+		t.Skip("docker integration test; skipped under -short")
+	}
+	if code, _ := a.do("GET", "/api/system", nil); code != 200 {
+		t.Skipf("docker daemon not available (%d)", code)
+	}
+	ctx := context.Background()
+	_ = a.dm.PullImage(ctx, 0, "alpine:latest", func(docker.PullProgress) {})
+	// Created but not started: bulk "start" is what's under test here.
+	id, err := a.dm.CreateContainer(ctx, 0, docker.CreateSpec{
+		Image: "alpine:latest", Name: "dctest_apibulkstart", Cmd: []string{"sleep", "300"},
+	})
+	if err != nil {
+		t.Skipf("cannot create container: %v", err)
+	}
+	t.Cleanup(func() {
+		if cli, err := a.dm.Client(ctx, 0); err == nil {
+			_ = cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true})
+		}
+	})
+
+	code, resp := a.do("POST", "/api/containers/bulk-action", map[string]any{"ids": []string{id}, "action": "start"})
+	if code != 200 {
+		t.Fatalf("bulk-action start: %d %v", code, resp)
+	}
+	if resp["succeeded"] != float64(1) {
+		t.Fatalf("succeeded = %v, want 1: %v", resp["succeeded"], resp)
+	}
+
+	_, entries := a.getJSONArray("/api/audit")
+	found := false
+	for _, e := range entries {
+		if e["action"] == "container.start" && e["target"] == id {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no container.start audit entry for %q: %v", id, entries)
 	}
 }

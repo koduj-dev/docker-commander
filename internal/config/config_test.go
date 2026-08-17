@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"flag"
 	"net"
 	"os"
@@ -43,6 +44,56 @@ func TestLoad(t *testing.T) {
 	}
 	if len(c.TrustedProxies) != 0 {
 		t.Errorf("trusted proxies should be empty by default, got %v", c.TrustedProxies)
+	}
+}
+
+// TestLoadCallsSecureDataDir proves Load's wiring: it actually invokes
+// secureDataDir (not just MkdirAll) with the resolved data dir, on every
+// call — not just a fresh directory. The real Windows ACL implementation is
+// only exercised on windows-latest CI (see
+// .github/workflows/windows-service-smoke.yml); this proves the
+// platform-independent part, that Load reaches the hook at all, on whatever
+// platform the test suite runs on.
+func TestLoadCallsSecureDataDir(t *testing.T) {
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	defer func() { os.Args, flag.CommandLine = oldArgs, oldFS }()
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = []string{"dockercmd"}
+
+	oldSecure := secureDataDir
+	defer func() { secureDataDir = oldSecure }()
+	var gotDir string
+	secureDataDir = func(dir string) error {
+		gotDir = dir
+		return nil
+	}
+
+	dir := t.TempDir()
+	t.Setenv("DC_DATA_DIR", dir)
+	if _, err := Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if gotDir != dir {
+		t.Errorf("secureDataDir called with %q, want the resolved data dir %q", gotDir, dir)
+	}
+}
+
+// TestLoadPropagatesSecureDataDirFailure is the DC-SEC-001 regression: a
+// directory that can't be secured must fail Load outright, not start the
+// server against a data dir whose permissions couldn't be confirmed.
+func TestLoadPropagatesSecureDataDirFailure(t *testing.T) {
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	defer func() { os.Args, flag.CommandLine = oldArgs, oldFS }()
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = []string{"dockercmd"}
+
+	oldSecure := secureDataDir
+	defer func() { secureDataDir = oldSecure }()
+	secureDataDir = func(dir string) error { return errors.New("simulated ACL failure") }
+
+	t.Setenv("DC_DATA_DIR", t.TempDir())
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() = nil error, want it to propagate a secureDataDir failure rather than start anyway")
 	}
 }
 

@@ -6,6 +6,62 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+- **Windows: the data dir gets an explicit, locked-down ACL, on every
+  startup.** The dir was only ever created with a Unix mode bit, which means
+  nothing on Windows — it inherited whatever `%ProgramData%`'s own ACL
+  happened to grant, potentially readable by any local account, for a dir
+  holding the database, TLS private keys, and the at-rest encryption key.
+  Every dockercmd startup now sets an explicit DACL (SYSTEM + Administrators,
+  Full Control, no inherited access) on the resolved data dir — not just the
+  one set up by `--install-service`, so a foreground run or the Scheduled Task
+  installer (`deploy/install-windows.ps1`) get the same protection.
+  `--install-service` additionally refuses to proceed if an *existing* dir's
+  ACL already grants access beyond that — and now also checks the dir's
+  **owner**, not just its ACL: a Windows object's owner can always rewrite
+  its own DACL regardless of what that DACL currently says, so a directory
+  someone else already owns is refused even if its ACL looks fine on paper.
+  A **reparse point** (a symlink or NTFS junction) at the data dir path is
+  refused outright too, and both the read and the write of the security
+  descriptor happen against one already-open handle rather than two
+  independent path lookups, closing the swap window a path-based
+  check-then-fix would otherwise leave open.
+- **Windows service: a failed stop no longer lets a reinstall proceed
+  anyway.** `--install-service` re-run over a running service is supposed to
+  stop it before overwriting the binary, but the stop request's own error was
+  discarded and a timeout waiting for it to actually reach Stopped was
+  treated as success. The reinstall now aborts (binary and service left
+  untouched) if the existing service doesn't confirm it stopped.
+- **Windows service: refuses to install alongside the older Scheduled Task
+  installer.** Both install methods target the same binary/data paths on
+  purpose, but neither checked whether the other was already running —
+  installing both meant two copies of dockercmd racing over the same data
+  dir and port. `--install-service` now aborts if the `DockerCommander`
+  Scheduled Task exists; `install-windows.ps1` now aborts if the `dockercmd`
+  SCM service exists. Both checks fail **closed**: an inconclusive result
+  (access denied, the Task Scheduler/SCM being unreachable, ...) aborts the
+  install rather than being read as "no conflict" and proceeding anyway —
+  the previous version treated any detection error that way.
+- **MCP whole-stack actions now cost one rate-limit unit per container, not one
+  per call.** `restart_stack`/`stop_stack`/`start_stack` charged a flat 1 unit
+  regardless of how many containers the stack actually had, while the
+  narrower `restart_stack_containers`/`stop_stack_containers` (added in the
+  same cycle) already charged per container and capped at 10 — so the
+  cheaper, unbounded path was the whole-stack tools, the opposite of the
+  intended narrowing. A 30+ container stack now costs 30+ units, same as
+  acting on that many containers any other way through MCP. The underlying
+  charge is also now atomic: a batch that doesn't fit the remaining budget is
+  refused as a whole and spends nothing, rather than partially draining the
+  bucket on a call that ultimately fails.
+
+  The action itself now runs on the exact container ids the charge was sized
+  against, not a second, independently-resolved snapshot of the stack: the
+  previous version resolved the stack's containers once to size the charge,
+  then called the ordinary `StackAction`, which resolves membership AGAIN
+  internally — a container added to the project in the gap between those two
+  resolutions (a concurrent deploy, for instance) would be acted on without
+  ever having been charged for.
+
 ### Fixed
 - **A deployed project's profile selection is normalized once, consistently.**
   `docker compose`'s own `--profile` flags were already trimmed and deduped
@@ -38,8 +94,36 @@ All notable changes to Docker Commander are documented here. The format follows
   the daemon's error text on failures — a failed attempt leaves the same
   trace a successful one does, not a silent gap in the log.
   Reuses the existing `containers` section write permission; no new
-  permission model. Pull and per-host RBAC scoping for bulk operations are not
-  part of this pass — see `NEXT.md`.
+  permission model. Per-host RBAC scoping for bulk operations is not part of
+  this pass — see `NEXT.md`.
+- **Bulk start for containers, and bulk pull.** The bulk toolbar's Restart/Stop
+  now sits alongside **Start** (same preview/confirm/per-container-summary
+  flow, reusing `BulkContainerAction` — no new plumbing) and **Pull**, which
+  downloads the current image for every selected container without touching
+  the container itself (no restart, no recreate). Pull resolves each selected
+  container to the image it runs and pulls each **distinct** image once —
+  containers sharing a base image, even spelled differently (`nginx` vs.
+  `nginx:latest`), are not pulled redundantly — with live per-image, per-layer
+  progress streamed over one WebSocket (`/containers/bulk-pull`), the same
+  progress UI the Images page's single pull already uses. Cancelling actually
+  stops the daemon from downloading the rest of the batch, not just the
+  browser from listening; a pull that got cancelled mid-image is audited as
+  cancelled, not silently dropped.
+
+  Bulk pull takes container ids, never a raw image reference — sent as the
+  WebSocket's first message rather than in the URL, since up to 200 full
+  container ids would not reliably fit the request-line limits some reverse
+  proxies enforce. Every id is verified against the host's real container
+  list before anything is pulled, and an id that doesn't resolve refuses the
+  **whole** request rather than pulling the ones that do. It requires **both**
+  the `containers` section (to name which containers to resolve images for)
+  **and** the `images` section (the pull itself attaches a stored registry
+  credential and mutates the shared image store, the same capability
+  `/images/pull` requires `images` write for) — a role holding only one of
+  the two cannot reach it. A container whose image was untagged out from
+  under it (e.g. `docker rmi -f` while it kept running) gets a clear "no tag
+  left to pull" result instead of the daemon's confusing rejection of a
+  bogus reference.
 - **Windows native service.** `--install-service` now registers dockercmd as a
   real Service Control Manager (SCM) service on Windows — auto-restart on
   crash, `services.msc`/`sc query` visibility — instead of failing with SCM
