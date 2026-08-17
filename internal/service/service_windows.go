@@ -3,6 +3,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -68,8 +69,11 @@ func Install(w io.Writer) error {
 	if !isElevated() {
 		return errors.New("installing the Windows service needs an elevated (Administrator) PowerShell/cmd — right-click, \"Run as administrator\"")
 	}
+	// Fail closed: an inconclusive check must abort, not proceed as if it had
+	// come back clean — otherwise a detection error becomes a way past the
+	// exact conflict this guard exists to prevent.
 	if exists, err := scheduledTaskExists(scheduledTaskName); err != nil {
-		fmt.Fprintf(w, "note: could not check for a conflicting Scheduled Task (%v), continuing\n", err)
+		return fmt.Errorf("could not check for a conflicting Scheduled Task: %w", err)
 	} else if exists {
 		return conflictingScheduledTaskError()
 	}
@@ -295,19 +299,42 @@ func conflictingScheduledTaskError() error {
 }
 
 // scheduledTaskExists shells out to schtasks.exe (rather than a Task
-// Scheduler COM binding) since it's always present on Windows and a simple
-// exit-code check is all that's needed: 0 if the task exists, non-zero if it
-// doesn't.
+// Scheduler COM binding) since it's always present on Windows.
+//
+// schtasks exits non-zero for several distinct reasons — the task doesn't
+// exist, but also access denied, the Task Scheduler service being
+// unavailable, an RPC hiccup, and more — and only the first of those means
+// "no conflict". Treating every non-zero exit as "not found" (the previous
+// implementation) makes the whole guard fail OPEN: a detection error would
+// silently read as "safe to proceed" and let a real dual-instance conflict
+// through, defeating the point of checking at all. So this distinguishes
+// schtasks' own "not found" message from everything else, and surfaces
+// anything else as an error the caller must refuse to proceed on.
 func scheduledTaskExists(name string) (bool, error) {
-	err := exec.Command("schtasks", "/Query", "/TN", name).Run()
+	cmd := exec.Command("schtasks", "/Query", "/TN", name)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
 	if err == nil {
 		return true, nil
 	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		return false, nil // schtasks' own "not found" signal
+		if schtasksNotFound(stderr.String()) {
+			return false, nil
+		}
+		return false, fmt.Errorf("schtasks /Query /TN %q: %w: %s", name, err, strings.TrimSpace(stderr.String()))
 	}
-	return false, err // schtasks.exe missing, PATH issue, etc — unknown, not "found"
+	return false, err // schtasks.exe missing, PATH issue, etc.
+}
+
+// schtasksNotFound reports whether stderr is schtasks' own "no such task"
+// message, as opposed to any other failure (access denied, the Task
+// Scheduler service being unavailable, an RPC hiccup, ...). Split out so the
+// found/not-found/ambiguous-error classification is unit-testable directly
+// against captured message text, without a real schtasks.exe.
+func schtasksNotFound(stderr string) bool {
+	return strings.Contains(strings.ToLower(stderr), "cannot find the file specified")
 }
 
 // waitServiceGone polls until OpenService(name) fails (the SCM has actually

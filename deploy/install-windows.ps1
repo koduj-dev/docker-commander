@@ -42,7 +42,21 @@ if (-not $admin) { throw "Run this from an elevated (Administrator) PowerShell."
 # --- check for the native SCM service ----------------------------------------
 # 'dockercmd' must match winServiceName in internal/service/service_windows.go
 # — the native installer this Scheduled Task installer exists alongside.
-$existingSvc = Get-Service -Name 'dockercmd' -ErrorAction SilentlyContinue
+#
+# Fail CLOSED on an inconclusive check: -ErrorAction SilentlyContinue would
+# swallow any Get-Service failure (not just "no such service") and let
+# install proceed as if it had come back clean, defeating the point of
+# checking at all. ServiceCommandException with FQEID
+# NoServiceFoundForGivenName is specifically "genuinely doesn't exist" —
+# only that one is treated as "no conflict".
+$existingSvc = $null
+try {
+  $existingSvc = Get-Service -Name 'dockercmd' -ErrorAction Stop
+} catch {
+  if ($_.FullyQualifiedErrorId -notmatch '^NoServiceFoundForGivenName') {
+    throw "could not check whether the native 'dockercmd' service is already installed: $_"
+  }
+}
 if ($existingSvc) {
   throw "The native Windows service 'dockercmd' is already installed (dockercmd.exe --install-service). " +
         "Stop and remove it first (Stop-Service dockercmd; sc.exe delete dockercmd) before installing " +

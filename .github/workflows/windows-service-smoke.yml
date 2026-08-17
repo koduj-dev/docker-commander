@@ -77,6 +77,69 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "runner is not elevated — install-service would fail closed" }
           Write-Host "confirmed: running elevated"
 
+      # FUP-SEC-001: a reparse point (junction/symlink) at the data dir path
+      # must be refused outright — CreateFile with FILE_FLAG_OPEN_REPARSE_POINT
+      # (internal/config/securedatadir_windows.go) opens the reparse point
+      # itself rather than being silently redirected through it. Run before
+      # the real install so the data dir starts from a clean slate.
+      - name: Verify a reparse-point data dir is refused
+        run: |
+          $dataDir = "$env:ProgramData\docker-commander\data"
+          $realTarget = "$env:ProgramData\docker-commander\data-real-target"
+          New-Item -ItemType Directory -Force -Path (Split-Path $dataDir), $realTarget | Out-Null
+          if (Test-Path $dataDir) { throw "test setup: $dataDir already exists, expected a clean runner" }
+          cmd /c mklink /J "$dataDir" "$realTarget" | Out-Null
+          .\dockercmd.exe --install-service
+          # dockercmd.exe is EXPECTED to exit non-zero — see the "capture-then-
+          # clear $LASTEXITCODE" note on the Scheduled Task conflict check below.
+          $installExit = $LASTEXITCODE
+          $global:LASTEXITCODE = 0
+          if ($installExit -eq 0) { throw "--install-service succeeded against a reparse-point data dir" }
+          $svc = Get-Service -Name dockercmd -ErrorAction SilentlyContinue
+          if ($svc) { throw "the SCM service was registered despite a reparse-point data dir" }
+          Write-Host "confirmed: install-service refused a reparse-point data dir"
+
+      - name: Remove the reparse-point data dir
+        if: always()
+        run: |
+          # rmdir on a junction removes the LINK, not the target's contents —
+          # Remove-Item -Recurse is documented to sometimes follow a
+          # directory reparse point instead of just unlinking it, which would
+          # delete data-real-target's contents rather than the junction.
+          cmd /c rmdir "$env:ProgramData\docker-commander\data" 2>$null
+          Remove-Item -Recurse -Force "$env:ProgramData\docker-commander\data-real-target" -ErrorAction SilentlyContinue
+
+      # FUP-SEC-001's other half: a pre-existing data dir owned by anyone
+      # other than SYSTEM/Administrators must be refused too, independently
+      # of what its DACL says — a Windows object's owner can always rewrite
+      # its own DACL (implicit WRITE_DAC), so a dir "helpfully" pre-created
+      # (or planted) by some other local account, even with an
+      # innocuous-looking DACL, must not be silently adopted and re-secured
+      # as if it had always been fine.
+      - name: Verify a foreign-owned data dir is refused
+        run: |
+          $dataDir = "$env:ProgramData\docker-commander\data"
+          New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+          icacls $dataDir /setowner "BUILTIN\Users" | Out-Null
+          Write-Host (Get-Acl $dataDir).Owner
+          .\dockercmd.exe --install-service
+          $installExit = $LASTEXITCODE
+          $global:LASTEXITCODE = 0
+          if ($installExit -eq 0) { throw "--install-service succeeded against a data dir it doesn't own" }
+          $svc = Get-Service -Name dockercmd -ErrorAction SilentlyContinue
+          if ($svc) { throw "the SCM service was registered despite a foreign-owned data dir" }
+          Write-Host "confirmed: install-service refused a foreign-owned data dir"
+
+      - name: Remove the foreign-owned data dir
+        if: always()
+        run: |
+          $dataDir = "$env:ProgramData\docker-commander\data"
+          if (Test-Path $dataDir) {
+            takeown /F $dataDir /R /D Y | Out-Null
+            icacls $dataDir /reset /T | Out-Null
+            Remove-Item -Recurse -Force $dataDir -ErrorAction SilentlyContinue
+          }
+
       - name: Install the service
         run: |
           .\dockercmd.exe --install-service
@@ -113,11 +176,16 @@ jobs:
       - name: dockercmd --service-status agrees
         run: .\dockercmd.exe --service-status
 
-      # DC-SEC-001: the data dir must grant FullControl to SYSTEM and
-      # Administrators only — no inherited access for Users/Authenticated
-      # Users, which is what %ProgramData%'s default ACL would otherwise
-      # leave in place. This is the one thing that can only be proven against
-      # a real NTFS security subsystem, not by unit tests.
+      # DC-SEC-001/FUP-SEC-001: the data dir must grant FullControl to SYSTEM
+      # and Administrators (and, best-effort, whichever specific account
+      # actually ran this — SecureDataDirACL adds that third principal so a
+      # non-Administrators foreground user isn't locked out of a dir their
+      # own process just secured; see FUP-COR-001) — no inherited access for
+      # generic Users/Everyone/Authenticated Users, which is what
+      # %ProgramData%'s default ACL would otherwise leave in place, and the
+      # owner must be Administrators, not whoever happened to run install.
+      # This is the one thing that can only be proven against a real NTFS
+      # security subsystem, not by unit tests.
       - name: Verify the data dir's ACL is locked down
         run: |
           $dataDir = "$env:ProgramData\docker-commander\data"
@@ -129,7 +197,9 @@ jobs:
           foreach ($forbidden in 'BUILTIN\\Users', 'Everyone', 'NT AUTHORITY\\Authenticated Users') {
             if ($joined -match $forbidden) { throw "$forbidden has access to $dataDir — the DACL is not locked down" }
           }
-          Write-Host "confirmed: only SYSTEM + Administrators have access"
+          $owner = (Get-Acl $dataDir).Owner
+          if ($owner -ne 'BUILTIN\Administrators') { throw "data dir owner is '$owner', want BUILTIN\Administrators" }
+          Write-Host "confirmed: SYSTEM + Administrators have access, no generic group does, owner is Administrators"
 
       # Stop via the SCM (not the exe): this is what services.msc / a reboot
       # actually does, and it's the path that exercises windowsHandler.Execute's

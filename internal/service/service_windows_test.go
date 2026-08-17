@@ -361,6 +361,35 @@ func TestConflictingScheduledTaskErrorNamesTheTask(t *testing.T) {
 	}
 }
 
+// TestSchtasksNotFound is the FUP-COR-002 regression: only schtasks' own
+// "cannot find the file specified" message means "no conflicting task" —
+// every other failure (access denied, an unavailable Task Scheduler
+// service, a truncated/unexpected message) must be treated as ambiguous, not
+// silently read as "not found". The previous implementation treated ANY
+// non-zero schtasks exit as "not found", which made the whole dual-install
+// guard fail open on a detection error.
+func TestSchtasksNotFound(t *testing.T) {
+	cases := []struct {
+		name   string
+		stderr string
+		want   bool
+	}{
+		{"the real not-found message", "ERROR: The system cannot find the file specified.\n", true},
+		{"case-insensitive", "error: THE SYSTEM CANNOT FIND THE FILE SPECIFIED.", true},
+		{"access denied is NOT not-found", "ERROR: Access is denied.\n", false},
+		{"RPC unavailable is NOT not-found", "ERROR: The RPC server is unavailable.\n", false},
+		{"empty output is NOT not-found", "", false},
+		{"unrelated text is NOT not-found", "something else went wrong", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := schtasksNotFound(tc.stderr); got != tc.want {
+				t.Errorf("schtasksNotFound(%q) = %v, want %v", tc.stderr, got, tc.want)
+			}
+		})
+	}
+}
+
 func mustRecvStatus(t *testing.T, ch <-chan svc.Status, want svc.State) svc.Status {
 	t.Helper()
 	select {

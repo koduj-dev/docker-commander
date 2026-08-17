@@ -17,8 +17,15 @@ All notable changes to Docker Commander are documented here. The format follows
   one set up by `--install-service`, so a foreground run or the Scheduled Task
   installer (`deploy/install-windows.ps1`) get the same protection.
   `--install-service` additionally refuses to proceed if an *existing* dir's
-  ACL already grants access beyond that, rather than silently trusting and
-  "fixing" it.
+  ACL already grants access beyond that — and now also checks the dir's
+  **owner**, not just its ACL: a Windows object's owner can always rewrite
+  its own DACL regardless of what that DACL currently says, so a directory
+  someone else already owns is refused even if its ACL looks fine on paper.
+  A **reparse point** (a symlink or NTFS junction) at the data dir path is
+  refused outright too, and both the read and the write of the security
+  descriptor happen against one already-open handle rather than two
+  independent path lookups, closing the swap window a path-based
+  check-then-fix would otherwise leave open.
 - **Windows service: a failed stop no longer lets a reinstall proceed
   anyway.** `--install-service` re-run over a running service is supposed to
   stop it before overwriting the binary, but the stop request's own error was
@@ -31,7 +38,10 @@ All notable changes to Docker Commander are documented here. The format follows
   installing both meant two copies of dockercmd racing over the same data
   dir and port. `--install-service` now aborts if the `DockerCommander`
   Scheduled Task exists; `install-windows.ps1` now aborts if the `dockercmd`
-  SCM service exists.
+  SCM service exists. Both checks fail **closed**: an inconclusive result
+  (access denied, the Task Scheduler/SCM being unreachable, ...) aborts the
+  install rather than being read as "no conflict" and proceeding anyway —
+  the previous version treated any detection error that way.
 
 ### Added
 - **MCP: `restart_stack_containers` / `stop_stack_containers`.** Restart or stop
