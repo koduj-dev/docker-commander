@@ -209,7 +209,7 @@ func TestPentestRBACEndToEndReadOnlyAccountBeatsWritableRole(t *testing.T) {
 		t.Errorf("SECURITY: a read-only ACCOUNT wrote via a writable role (%d)", code)
 	}
 	// The privileged GETs are writes too, and must be refused just the same.
-	for _, p := range []string{"/api/containers/abc/exec", "/api/images/pull"} {
+	for _, p := range []string{"/api/containers/abc/exec", "/api/images/pull", "/api/containers/bulk-pull?ids=abc"} {
 		if code, _ := ro.do("GET", p, nil); code != http.StatusForbidden {
 			t.Errorf("SECURITY: a read-only account reached the privileged GET %s (%d)", p, code)
 		}
@@ -258,5 +258,68 @@ func TestRBACEndToEndBulkContainerAction(t *testing.T) {
 	nobody := loginWithRoles(t, admin, "bulknobody", true, nil, nil)
 	if code, _ := nobody.do("POST", "/api/containers/bulk-action", body); code != http.StatusForbidden {
 		t.Errorf("SECURITY: a zero-grant account performed a bulk write (%d)", code)
+	}
+}
+
+// TestRBACEndToEndBulkPullImages proves /containers/bulk-pull is gated by the
+// "containers" section, not "images" — deliberate, since it only ever pulls
+// the image of a container the caller already named (see the handler's own
+// comment), so it belongs to the same permission surface as bulk
+// restart/stop, not to image pull's own section. A role holding only
+// "images" must still be refused; a role holding "containers" write must not
+// be permission-denied (a daemon/validation error for the fake id is fine —
+// the point is RBAC let the request through).
+func TestRBACEndToEndBulkPullImages(t *testing.T) {
+	admin := rbacFixture(t)
+
+	code, resp := admin.do("POST", "/api/roles", map[string]any{
+		"name":     "ContainersRWPull",
+		"sections": []map[string]any{{"section": "containers", "write": true}},
+	})
+	if code != 200 {
+		t.Fatalf("create writable containers role: %d %v", code, resp)
+	}
+	rwID := int64(resp["id"].(float64))
+
+	code, resp = admin.do("POST", "/api/roles", map[string]any{
+		"name":     "ContainersROPull",
+		"sections": []map[string]any{{"section": "containers", "write": false}},
+	})
+	if code != 200 {
+		t.Fatalf("create read-only containers role: %d %v", code, resp)
+	}
+	roID := int64(resp["id"].(float64))
+
+	code, resp = admin.do("POST", "/api/roles", map[string]any{
+		"name":     "ImagesRWPull",
+		"sections": []map[string]any{{"section": "images", "write": true}},
+	})
+	if code != 200 {
+		t.Fatalf("create writable images role: %d %v", code, resp)
+	}
+	imgID := int64(resp["id"].(float64))
+
+	rw := loginWithRoles(t, admin, "pullrw", false, nil, []int64{rwID})
+	ro := loginWithRoles(t, admin, "pullro", false, nil, []int64{roID})
+	imgOnly := loginWithRoles(t, admin, "pullimgonly", false, nil, []int64{imgID})
+
+	path := "/api/containers/bulk-pull?ids=abc"
+	if code, _ := rw.do("GET", path, nil); code == http.StatusForbidden {
+		t.Error("a writable containers role should be permitted to reach bulk-pull")
+	}
+	if code, _ := ro.do("GET", path, nil); code != http.StatusForbidden {
+		t.Errorf("SECURITY: a read-only containers role reached bulk-pull (%d)", code)
+	}
+	// The section boundary this test exists for: an "images" grant must NOT
+	// substitute for "containers" here, even though bulk-pull ends up pulling
+	// images — it is scoped to the container-selection surface, not the
+	// Images page's own pull.
+	if code, _ := imgOnly.do("GET", path, nil); code != http.StatusForbidden {
+		t.Errorf("SECURITY: an images-only role reached the containers-gated bulk-pull (%d)", code)
+	}
+
+	nobody := loginWithRoles(t, admin, "pullnobody", true, nil, nil)
+	if code, _ := nobody.do("GET", path, nil); code != http.StatusForbidden {
+		t.Errorf("SECURITY: a zero-grant account reached bulk-pull (%d)", code)
 	}
 }

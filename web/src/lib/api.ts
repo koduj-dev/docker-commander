@@ -297,9 +297,15 @@ export const api = {
   container: (id: string) => req<ContainerDetail>("GET", `/api/containers/${id}${hostParam()}`),
   containerAction: (id: string, action: string) =>
     req<{ ok: boolean }>("POST", `/api/containers/${id}/${action}${hostParam()}`),
-  // restart/stop only — see internal/api/docker_handlers.go's bulkContainerActions.
-  bulkContainerAction: (ids: string[], action: "restart" | "stop") =>
+  // restart/stop/start only — see internal/api/docker_handlers.go's bulkContainerActions.
+  bulkContainerAction: (ids: string[], action: "restart" | "stop" | "start") =>
     req<BulkActionResponse>("POST", `/api/containers/bulk-action${hostParam()}`, { ids, action }),
+  // Returns the WebSocket URL for handleBulkPullImages — the caller opens it
+  // directly (see PullPanel in Images.tsx for the same pattern with a single ref).
+  bulkPullImagesUrl: (ids: string[]) => {
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    return `${proto}://${location.host}/api/containers/bulk-pull?ids=${encodeURIComponent(ids.join(","))}${hostParam("&")}`;
+  },
   containerDiff: (id: string) => req<DiffEntry[]>("GET", `/api/containers/${id}/diff${hostParam()}`),
   containerTop: (id: string) => req<TopResult>("GET", `/api/containers/${id}/top${hostParam()}`),
 

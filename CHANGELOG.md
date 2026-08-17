@@ -28,8 +28,26 @@ All notable changes to Docker Commander are documented here. The format follows
   the daemon's error text on failures — a failed attempt leaves the same
   trace a successful one does, not a silent gap in the log.
   Reuses the existing `containers` section write permission; no new
-  permission model. Pull and per-host RBAC scoping for bulk operations are not
-  part of this pass — see `NEXT.md`.
+  permission model. Per-host RBAC scoping for bulk operations is not part of
+  this pass — see `NEXT.md`.
+- **Bulk start for containers, and bulk pull.** The bulk toolbar's Restart/Stop
+  now sits alongside **Start** (same preview/confirm/per-container-summary
+  flow, reusing `BulkContainerAction` — no new plumbing) and **Pull**, which
+  downloads the current image for every selected container without touching
+  the container itself (no restart, no recreate). Pull resolves each selected
+  container to the image it runs and pulls each **distinct** image once —
+  several containers sharing a base image are not pulled redundantly — with
+  live per-image, per-layer progress streamed over one WebSocket
+  (`/containers/bulk-pull`), the same progress UI the Images page's single
+  pull already uses.
+
+  Bulk pull takes container ids, never a raw image reference: every id is
+  verified against the host's real container list before anything is pulled,
+  and an id that doesn't resolve refuses the **whole** request rather than
+  pulling the ones that do. That's also why it's gated by the `containers`
+  section rather than `images` — it can only ever pull what a named container
+  is already running, so it belongs on the same permission surface as bulk
+  restart/stop, not on image pull's own.
 - **Windows native service.** `--install-service` now registers dockercmd as a
   real Service Control Manager (SCM) service on Windows — auto-restart on
   crash, `services.msc`/`sc query` visibility — instead of failing with SCM

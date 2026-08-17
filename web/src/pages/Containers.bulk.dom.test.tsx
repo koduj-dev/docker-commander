@@ -14,16 +14,40 @@ import { DialogProvider } from "../components/Dialog";
 
 const containers = vi.hoisted(() => vi.fn());
 const bulkContainerAction = vi.hoisted(() => vi.fn());
+const bulkPullImagesUrl = vi.hoisted(() => vi.fn(() => "ws://test/bulk-pull"));
 
 vi.mock("../lib/api", () => ({
   api: {
     containers,
     containerAction: vi.fn().mockResolvedValue({ ok: true }),
     bulkContainerAction,
+    bulkPullImagesUrl,
     hosts: () => Promise.resolve([]),
     version: () => Promise.resolve({ version: "test" }),
   },
 }));
+
+// A minimal fake WebSocket so BulkPullModal's flow can be driven frame by
+// frame without a real network — the modal only ever uses onmessage/onerror/
+// onclose and close(), so that's all this needs to implement.
+class FakeWebSocket {
+  static instances: FakeWebSocket[] = [];
+  onmessage: ((ev: { data: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  onclose: (() => void) | null = null;
+  closed = false;
+  constructor(_url: string) {
+    FakeWebSocket.instances.push(this);
+  }
+  close() {
+    if (this.closed) return;
+    this.closed = true;
+    this.onclose?.();
+  }
+  emit(frame: unknown) {
+    this.onmessage?.({ data: JSON.stringify(frame) });
+  }
+}
 
 const TWO_CONTAINERS = [
   { id: "aaa111", name: "web", image: "nginx:latest", state: "running", status: "Up 3 hours", networks: [], ports: [] },
@@ -75,6 +99,8 @@ beforeEach(async () => {
     succeeded: 2,
     failed: 0,
   });
+  FakeWebSocket.instances = [];
+  vi.stubGlobal("WebSocket", FakeWebSocket);
 });
 
 afterEach(() => {
@@ -82,6 +108,7 @@ afterEach(() => {
   root = undefined;
   container.remove();
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("bulk select is gated behind withControls", () => {
@@ -208,5 +235,94 @@ describe("post-action summary", () => {
     await act(async () => ok!.click());
 
     expect(container.textContent).not.toContain("selected");
+  });
+});
+
+describe("bulk start", () => {
+  it("previews, confirms, and calls bulkContainerAction with the start action", async () => {
+    await renderTable();
+    await act(async () => checkbox("Select all containers").click());
+    await act(async () => button("Start").click());
+    expect(bulkContainerAction).not.toHaveBeenCalled();
+    expect(dialogText()).toContain("web");
+    expect(dialogText()).toContain("db");
+
+    const confirm = dialogButton("Start");
+    expect(confirm, "the dialog should offer a Start button").toBeDefined();
+    await act(async () => confirm!.click());
+    expect(bulkContainerAction).toHaveBeenCalledWith(["aaa111", "bbb222"], "start");
+  });
+
+  it("is not danger-styled, unlike Stop", async () => {
+    await renderTable();
+    await act(async () => checkbox("Select web").click());
+    await act(async () => button("Start").click());
+    const confirm = dialogButton("Start");
+    expect(confirm?.className).not.toContain("btn-danger");
+  });
+});
+
+describe("bulk pull", () => {
+  it("previews the DISTINCT images behind the selection before doing anything", async () => {
+    await renderTable();
+    await act(async () => checkbox("Select all containers").click());
+    await act(async () => button("Pull").click());
+    expect(dialogText()).toContain("nginx:latest");
+    expect(dialogText()).toContain("postgres:16");
+    expect(FakeWebSocket.instances).toHaveLength(0); // not connected until confirmed
+  });
+
+  it("does not connect when the confirm dialog is dismissed", async () => {
+    await renderTable();
+    await act(async () => checkbox("Select web").click());
+    await act(async () => button("Pull").click());
+    await act(async () => dialogButton("Cancel")!.click());
+    expect(FakeWebSocket.instances).toHaveLength(0);
+  });
+
+  it("streams per-image progress and shows a final per-container summary, without restarting anything", async () => {
+    await renderTable();
+    await act(async () => checkbox("Select all containers").click());
+    await act(async () => button("Pull").click());
+    await act(async () => dialogButton("Pull")!.click());
+
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    const ws = FakeWebSocket.instances[0];
+
+    await act(async () => {
+      ws.emit({ ref: "nginx:latest", index: 1, count: 2, started: true });
+      ws.emit({ ref: "nginx:latest", index: 1, count: 2, progress: { id: "layer1", status: "Downloading", current: 50, total: 100 } });
+      ws.emit({ ref: "nginx:latest", index: 1, count: 2, refDone: true, ok: true });
+      ws.emit({ ref: "postgres:16", index: 2, count: 2, started: true });
+      ws.emit({ ref: "postgres:16", index: 2, count: 2, refDone: true, ok: false, error: "no such host" });
+      ws.emit({
+        allDone: true,
+        results: [
+          { ref: "nginx:latest", ok: true, containerIds: ["aaa111"] },
+          { ref: "postgres:16", ok: false, error: "no such host", containerIds: ["bbb222"] },
+        ],
+      });
+    });
+
+    expect(container.textContent).toContain("nginx:latest");
+    expect(container.textContent).toContain("postgres:16");
+    expect(container.textContent).toContain("no such host");
+    // The per-container summary names both containers by name, not just by ref.
+    expect(container.textContent).toContain("web");
+    expect(container.textContent).toContain("db");
+    // bulkContainerAction (restart/stop/start) must never be called by a pull.
+    expect(bulkContainerAction).not.toHaveBeenCalled();
+  });
+
+  it("Cancel closes the WebSocket before it finishes", async () => {
+    await renderTable();
+    await act(async () => checkbox("Select web").click());
+    await act(async () => button("Pull").click());
+    await act(async () => dialogButton("Pull")!.click());
+
+    const ws = FakeWebSocket.instances[0];
+    expect(ws.closed).toBe(false);
+    await act(async () => button("Cancel").click());
+    expect(ws.closed).toBe(true);
   });
 });

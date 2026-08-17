@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Play, Plus, RotateCw, Square, Pause, Zap, X, Check } from "lucide-react";
+import { Play, Plus, RotateCw, Square, Pause, Zap, X, Check, Download, Loader2 } from "lucide-react";
 import { api } from "../lib/api";
-import type { BulkActionResult, ContainerSummary } from "../lib/types";
+import type { BulkActionResult, BulkPullFrame, ContainerSummary, PullProgress } from "../lib/types";
 import { shortId } from "../lib/format";
 import { StateBadge, EmptyState, Spinner } from "../components/ui";
 import { PageHeader } from "../layout/Shell";
 import { useListControls, SearchBar, Pager, type StatusOption } from "../components/ListControls";
 import { CreateContainerModal } from "../components/CreateContainerModal";
 import { useDialogs } from "../components/Dialog";
+import { LayerRow } from "./Images";
 
 const CONTAINER_STATUSES: StatusOption<ContainerSummary>[] = [
   { value: "all", label: "All states" },
@@ -38,6 +39,8 @@ export function ContainerTable({ runningOnly = false, withControls = false, refr
   // grow checkboxes or a bulk toolbar they weren't asked for.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  // Set while a bulk pull's progress modal is open; null otherwise.
+  const [pullTargets, setPullTargets] = useState<ContainerSummary[] | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -91,14 +94,14 @@ export function ContainerTable({ runningOnly = false, withControls = false, refr
     });
   };
 
-  // Bulk restart/stop: preview exactly which containers are targeted inside
-  // the confirm dialog (never a one-click bulk action — matches every other
-  // destructive-ish action in this app), then fire the request and show a
-  // per-container success/failure summary rather than a single toast.
-  const bulkAct = async (action: "restart" | "stop") => {
+  // Bulk restart/stop/start: preview exactly which containers are targeted
+  // inside the confirm dialog (never a one-click bulk action — matches every
+  // other destructive-ish action in this app), then fire the request and show
+  // a per-container success/failure summary rather than a single toast.
+  const bulkAct = async (action: "restart" | "stop" | "start") => {
     const targets = (list ?? []).filter((c) => selected.has(c.id));
     if (targets.length === 0) return;
-    const label = action === "restart" ? "Restart" : "Stop";
+    const label = action === "restart" ? "Restart" : action === "stop" ? "Stop" : "Start";
     const ok = await dialogs.confirm({
       title: `${label} ${targets.length} container${targets.length === 1 ? "" : "s"}?`,
       message: (
@@ -127,6 +130,35 @@ export function ContainerTable({ runningOnly = false, withControls = false, refr
     } finally {
       setBulkBusy(false);
     }
+  };
+
+  // Bulk pull: preview the DISTINCT images behind the selection (several
+  // containers often share one image), then hand the ids to BulkPullModal,
+  // which opens the WebSocket and owns the rest of the flow. Containers are
+  // not restarted or recreated — this only downloads the new image, same as
+  // pulling one image on the Images page.
+  const bulkPull = async () => {
+    const targets = (list ?? []).filter((c) => selected.has(c.id));
+    if (targets.length === 0) return;
+    const images = [...new Set(targets.map((c) => c.image))];
+    const ok = await dialogs.confirm({
+      title: `Pull ${images.length} image${images.length === 1 ? "" : "s"}?`,
+      message: (
+        <div className="space-y-2">
+          <div>
+            This will pull the current image for {targets.length} selected container{targets.length === 1 ? "" : "s"}
+            {images.length !== targets.length ? ` (${images.length} distinct image${images.length === 1 ? "" : "s"})` : ""}:
+          </div>
+          <ul className="max-h-48 overflow-y-auto space-y-0.5 text-sm font-mono bg-panel2/50 rounded-md p-2">
+            {images.map((img) => <li key={img}>{img}</li>)}
+          </ul>
+          <div className="text-xs text-muted">Containers are not restarted or recreated — this only downloads the image.</div>
+        </div>
+      ),
+      confirmLabel: "Pull",
+    });
+    if (!ok) return;
+    setPullTargets(targets);
   };
 
   // Kill is SIGKILL: no shutdown handler runs, nothing is flushed. Stop asks
@@ -173,11 +205,17 @@ export function ContainerTable({ runningOnly = false, withControls = false, refr
         <button className="btn-ghost px-2 py-1.5 text-sm ml-auto" disabled={bulkBusy} onClick={() => setSelected(new Set())}>
           Clear
         </button>
+        <button className="btn-ghost px-2 py-1.5 text-sm" disabled={bulkBusy} onClick={() => bulkAct("start")}>
+          {bulkBusy ? <Spinner className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />} Start
+        </button>
         <button className="btn-ghost px-2 py-1.5 text-sm" disabled={bulkBusy} onClick={() => bulkAct("restart")}>
           {bulkBusy ? <Spinner className="h-3.5 w-3.5" /> : <RotateCw className="h-3.5 w-3.5" />} Restart
         </button>
         <button className="btn-ghost px-2 py-1.5 text-sm text-danger hover:bg-danger/15" disabled={bulkBusy} onClick={() => bulkAct("stop")}>
           {bulkBusy ? <Spinner className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />} Stop
+        </button>
+        <button className="btn-ghost px-2 py-1.5 text-sm" disabled={bulkBusy} onClick={bulkPull}>
+          <Download className="h-3.5 w-3.5" /> Pull
         </button>
       </div>
     )}
@@ -273,6 +311,13 @@ export function ContainerTable({ runningOnly = false, withControls = false, refr
       </table>
     </div>
     {withControls && <Pager controls={controls} />}
+    {pullTargets && (
+      <BulkPullModal
+        ids={pullTargets.map((c) => c.id)}
+        nameFor={(id) => pullTargets.find((c) => c.id === id)?.name ?? shortId(id)}
+        onClose={() => setPullTargets(null)}
+      />
+    )}
    </div>
   );
 }
@@ -294,6 +339,111 @@ function BulkResultList({ results, nameFor }: { results: BulkActionResult[]; nam
         </li>
       ))}
     </ul>
+  );
+}
+
+// BulkPullModal owns the /containers/bulk-pull WebSocket for a set of
+// container ids: one card per distinct image, with the same per-layer
+// progress rows as the Images page's single pull, and a final per-container
+// success/failure summary once every image is done.
+function BulkPullModal({ ids, nameFor, onClose }: { ids: string[]; nameFor: (id: string) => string; onClose: () => void }) {
+  const [frames, setFrames] = useState<Map<string, BulkPullFrame>>(new Map());
+  const [layers, setLayers] = useState<Map<string, Map<string, PullProgress>>>(new Map());
+  const [refOrder, setRefOrder] = useState<string[]>([]);
+  const [total, setTotal] = useState(0);
+  const [finished, setFinished] = useState(false);
+  const [results, setResults] = useState<BulkPullFrame["results"]>(undefined);
+  const [connError, setConnError] = useState("");
+  const wsRef = useRef<WebSocket | null>(null);
+  const doneRef = useRef(false);
+
+  useEffect(() => {
+    const ws = new WebSocket(api.bulkPullImagesUrl(ids));
+    wsRef.current = ws;
+    ws.onmessage = (ev) => {
+      let f: BulkPullFrame;
+      try {
+        f = JSON.parse(ev.data as string);
+      } catch {
+        return;
+      }
+      if (f.allDone) {
+        doneRef.current = true;
+        setFinished(true);
+        setResults(f.results);
+        return;
+      }
+      if (f.count) setTotal(f.count);
+      setFrames((prev) => {
+        const next = new Map(prev);
+        next.set(f.ref, f);
+        return next;
+      });
+      setRefOrder((prev) => (prev.includes(f.ref) ? prev : [...prev, f.ref]));
+      if (f.progress?.id) {
+        setLayers((prev) => {
+          const next = new Map(prev);
+          const forRef = new Map(next.get(f.ref) ?? []);
+          forRef.set(f.progress!.id!, f.progress!);
+          next.set(f.ref, forRef);
+          return next;
+        });
+      }
+    };
+    ws.onerror = () => setConnError("connection failed");
+    ws.onclose = () => {
+      setFinished(true);
+      if (!doneRef.current) setConnError((prev) => prev || "connection closed before finishing");
+    };
+    return () => ws.close();
+    // ids identifies one bulk-pull run; it does not change while this modal is open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ids.join(",")]);
+
+  const cancel = () => wsRef.current?.close();
+  const flatResults: BulkActionResult[] = (results ?? []).flatMap((r) => r.containerIds.map((id) => ({ id, ok: r.ok, error: r.error })));
+
+  return (
+    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={finished ? onClose : undefined}>
+      <div className="card w-[70vw] max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-3 p-4 border-b border-border">
+          <Download className="h-4 w-4 text-accent" />
+          <div className="font-medium">Pulling {total || refOrder.length || ids.length} image{(total || refOrder.length) === 1 ? "" : "s"}</div>
+          {finished ? (
+            <button type="button" className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
+          ) : (
+            <button type="button" className="btn-ghost px-2 py-1.5 ml-auto text-sm" onClick={cancel}><X className="h-4 w-4" /> Cancel</button>
+          )}
+        </div>
+        <div className="p-4 space-y-3 overflow-y-auto">
+          {connError && <div className="text-danger text-sm">{connError}</div>}
+          {refOrder.map((ref) => {
+            const f = frames.get(ref);
+            const ls = [...(layers.get(ref)?.values() ?? [])];
+            return (
+              <div key={ref} className="rounded-md bg-panel2 p-3 text-xs font-mono space-y-1.5">
+                <div className="flex items-center gap-2 text-text">
+                  {f?.refDone ? (
+                    f.ok ? <Check className="h-3.5 w-3.5 text-accent shrink-0" /> : <X className="h-3.5 w-3.5 text-danger shrink-0" />
+                  ) : (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+                  )}
+                  <span className="font-medium truncate">{ref}</span>
+                  {f?.index && f?.count && <span className="text-muted shrink-0">({f.index}/{f.count})</span>}
+                </div>
+                {f?.error && <div className="text-danger">{f.error}</div>}
+                {ls.map((l) => <LayerRow key={l.id} p={l} />)}
+              </div>
+            );
+          })}
+        </div>
+        {finished && results && (
+          <div className="p-4 border-t border-border">
+            <BulkResultList results={flatResults} nameFor={nameFor} />
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
