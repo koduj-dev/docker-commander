@@ -140,19 +140,24 @@ export function ContainerTable({ runningOnly = false, withControls = false, refr
   const bulkPull = async () => {
     const targets = (list ?? []).filter((c) => selected.has(c.id));
     if (targets.length === 0) return;
+    // A raw Set is a preview hint, not a promise: two containers can run the
+    // identical image under differently-spelled refs (e.g. "nginx" vs
+    // "nginx:latest"), which this can't tell apart without reimplementing
+    // Docker's own reference normalization here too. The server resolves and
+    // dedupes authoritatively — its "Pulling N image(s)" is the real count.
     const images = [...new Set(targets.map((c) => c.image))];
     const ok = await dialogs.confirm({
-      title: `Pull ${images.length} image${images.length === 1 ? "" : "s"}?`,
+      title: `Pull image${targets.length === 1 ? "" : "s"} for ${targets.length} container${targets.length === 1 ? "" : "s"}?`,
       message: (
         <div className="space-y-2">
-          <div>
-            This will pull the current image for {targets.length} selected container{targets.length === 1 ? "" : "s"}
-            {images.length !== targets.length ? ` (${images.length} distinct image${images.length === 1 ? "" : "s"})` : ""}:
-          </div>
+          <div>This will pull the current image for the following container{targets.length === 1 ? "" : "s"}:</div>
           <ul className="max-h-48 overflow-y-auto space-y-0.5 text-sm font-mono bg-panel2/50 rounded-md p-2">
             {images.map((img) => <li key={img}>{img}</li>)}
           </ul>
-          <div className="text-xs text-muted">Containers are not restarted or recreated — this only downloads the image.</div>
+          <div className="text-xs text-muted">
+            Containers are not restarted or recreated — this only downloads the image(s). An image shared by more than
+            one container is only pulled once.
+          </div>
         </div>
       ),
       confirmLabel: "Pull",
@@ -360,8 +365,11 @@ function BulkPullModal({ ids, nameFor, onClose }: { ids: string[]; nameFor: (id:
   const cancelledRef = useRef(false);
 
   useEffect(() => {
-    const ws = new WebSocket(api.bulkPullImagesUrl(ids));
+    const ws = new WebSocket(api.bulkPullImagesUrl());
     wsRef.current = ws;
+    // Ids are sent as the first message, not put in the connection URL — see
+    // api.bulkPullImagesUrl's comment for why.
+    ws.onopen = () => ws.send(JSON.stringify({ ids }));
     ws.onmessage = (ev) => {
       let f: BulkPullFrame;
       try {
@@ -372,7 +380,8 @@ function BulkPullModal({ ids, nameFor, onClose }: { ids: string[]; nameFor: (id:
       if (f.allDone) {
         doneRef.current = true;
         setFinished(true);
-        setResults(f.results);
+        if (f.error) setConnError(f.error);
+        else setResults(f.results);
         return;
       }
       if (f.count) setTotal(f.count);
@@ -393,7 +402,9 @@ function BulkPullModal({ ids, nameFor, onClose }: { ids: string[]; nameFor: (id:
         });
       }
     };
-    ws.onerror = () => setConnError("connection failed");
+    ws.onerror = () => {
+      if (!cancelledRef.current) setConnError("connection failed");
+    };
     ws.onclose = () => {
       setFinished(true);
       if (!doneRef.current && !cancelledRef.current) {

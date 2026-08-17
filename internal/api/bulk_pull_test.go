@@ -3,13 +3,12 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	dockertypes "github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 
 	"github.com/coder/websocket"
 
@@ -39,9 +38,50 @@ func TestNormalizeImageRef(t *testing.T) {
 	}
 }
 
+// dialBulkPull opens the bulk-pull WebSocket, sends {ids} as the first
+// message (the real wire protocol — see bulkPullRequest's doc comment for why
+// ids travel in a message rather than the connection URL), then reads frames
+// until an allDone frame (or the deadline hits), returning its raw fields.
+// Works for both the success and validation-failure paths: a validation
+// failure is itself sent as an allDone frame carrying only "error".
+func dialBulkPull(t *testing.T, a *apiClient, ids []string) map[string]any {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	u := "ws" + strings.TrimPrefix(a.url, "http") + "/api/containers/bulk-pull"
+	conn, _, err := websocket.Dial(ctx, u, &websocket.DialOptions{HTTPClient: a.c})
+	if err != nil {
+		t.Fatalf("dial bulk-pull: %v", err)
+	}
+	defer conn.CloseNow()
+	conn.SetReadLimit(1 << 20)
+
+	body, err := json.Marshal(map[string]any{"ids": ids})
+	if err != nil {
+		t.Fatalf("marshal ids: %v", err)
+	}
+	if err := conn.Write(ctx, websocket.MessageText, body); err != nil {
+		t.Fatalf("send ids: %v", err)
+	}
+
+	for {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		var f map[string]any
+		if json.Unmarshal(data, &f) != nil {
+			continue
+		}
+		if allDone, _ := f["allDone"].(bool); allDone {
+			return f
+		}
+	}
+}
+
 // TestAPIBulkPullImagesValidation exercises the guards that run before this
-// handler ever touches the daemon or upgrades the connection: they must
-// respond as a normal HTTP 400, not attempt a WebSocket handshake first.
+// handler touches the daemon: they must come back as an allDone frame
+// carrying "error", never a partial pull.
 func TestAPIBulkPullImagesValidation(t *testing.T) {
 	a := newAPI(t)
 	if code, _ := a.do("POST", "/api/auth/setup", map[string]string{"username": "admin", "password": "correcthorse123"}); code != 200 {
@@ -64,13 +104,13 @@ func TestAPIBulkPullImagesValidation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			path := "/api/containers/bulk-pull"
-			if tc.ids != nil {
-				path += "?ids=" + url.QueryEscape(strings.Join(tc.ids, ","))
+			f := dialBulkPull(t, a, tc.ids)
+			errMsg, _ := f["error"].(string)
+			if errMsg == "" {
+				t.Errorf("%s: got no error, want the request refused: %v", tc.name, f)
 			}
-			code, resp := a.do("GET", path, nil)
-			if code != 400 {
-				t.Errorf("%s: got %d, want 400 (%v)", tc.name, code, resp)
+			if _, hasResults := f["results"]; hasResults {
+				t.Errorf("%s: got results %v on a request that should have been refused", tc.name, f["results"])
 			}
 		})
 	}
@@ -78,41 +118,12 @@ func TestAPIBulkPullImagesValidation(t *testing.T) {
 
 // --- daemon-backed: fail-closed on an unknown id, and image dedup -----------
 
-// dialBulkPull opens the bulk-pull WebSocket and reads frames until an
-// allDone frame (or the connection closes / the deadline hits), returning the
-// decoded allDone frame's raw fields.
-func dialBulkPull(t *testing.T, a *apiClient, ids []string) map[string]any {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	u := "ws" + strings.TrimPrefix(a.url, "http") + "/api/containers/bulk-pull?ids=" + url.QueryEscape(strings.Join(ids, ","))
-	conn, _, err := websocket.Dial(ctx, u, &websocket.DialOptions{HTTPClient: a.c})
-	if err != nil {
-		t.Fatalf("dial bulk-pull: %v", err)
-	}
-	defer conn.CloseNow()
-	conn.SetReadLimit(1 << 20)
-	for {
-		_, data, err := conn.Read(ctx)
-		if err != nil {
-			t.Fatalf("read: %v", err)
-		}
-		var f map[string]any
-		if json.Unmarshal(data, &f) != nil {
-			continue
-		}
-		if allDone, _ := f["allDone"].(bool); allDone {
-			return f
-		}
-	}
-}
-
 // TestAPIBulkPullImagesUnknownContainerRefusesWholeRequest is the fail-closed
 // pentest: a batch mixing one real container id with one that doesn't exist
 // must refuse the WHOLE request before pulling anything — never pull the
-// valid one and skip the invalid one. Proven by asserting a plain HTTP 400
-// (the guard runs, and refuses, before the WebSocket upgrade) AND that no
-// image.pull audit entry was created — the pull genuinely never ran.
+// valid one and skip the invalid one. Proven by asserting the connection ends
+// in an error (never a partial "results") AND that no image.pull audit entry
+// was created — the pull genuinely never ran.
 func TestAPIBulkPullImagesUnknownContainerRefusesWholeRequest(t *testing.T) {
 	a := newAPI(t)
 	if code, _ := a.do("POST", "/api/auth/setup", map[string]string{"username": "admin", "password": "correcthorse123"}); code != 200 {
@@ -139,9 +150,13 @@ func TestAPIBulkPullImagesUnknownContainerRefusesWholeRequest(t *testing.T) {
 	})
 
 	const bogus = "dctest-bulkpull-does-not-exist"
-	code, resp := a.do("GET", "/api/containers/bulk-pull?ids="+url.QueryEscape(id+","+bogus), nil)
-	if code != http.StatusBadRequest {
-		t.Fatalf("SECURITY: mixed valid/unknown id batch got %d, want 400 (refuse the whole request): %v", code, resp)
+	f := dialBulkPull(t, a, []string{id, bogus})
+	errMsg, _ := f["error"].(string)
+	if errMsg == "" {
+		t.Fatalf("SECURITY: mixed valid/unknown id batch was not refused: %v", f)
+	}
+	if _, hasResults := f["results"]; hasResults {
+		t.Errorf("SECURITY: got partial results %v — the whole request must be refused, not just the bad id skipped", f["results"])
 	}
 
 	_, entries := a.getJSONArray("/api/audit")
@@ -258,5 +273,102 @@ func TestAPIBulkPullImagesDedupesUntaggedSpelling(t *testing.T) {
 	results, ok := final["results"].([]any)
 	if !ok || len(results) != 1 {
 		t.Fatalf("results = %v, want exactly 1 (\"alpine\" and \"alpine:latest\" are the same image)", final["results"])
+	}
+}
+
+// TestAPIBulkPullImagesStopsOnDisconnect proves a client disconnect (Cancel,
+// or the tab closing) actually aborts the in-flight pull and stops the batch
+// from continuing — not just that the client-side socket closes.
+//
+// This needs a real timing window to be meaningful: if the target image were
+// already cached locally, PullImage would return near-instantly regardless
+// of whether the disconnect was noticed, and the test would prove nothing.
+// So the target image is explicitly evicted from the local daemon first,
+// forcing an actual registry round-trip, which comfortably outlasts how long
+// a local TCP close takes to be noticed.
+func TestAPIBulkPullImagesStopsOnDisconnect(t *testing.T) {
+	a := newAPI(t)
+	if code, _ := a.do("POST", "/api/auth/setup", map[string]string{"username": "admin", "password": "correcthorse123"}); code != 200 {
+		t.Fatal("setup failed")
+	}
+	if testing.Short() {
+		t.Skip("docker integration test; skipped under -short")
+	}
+	if code, _ := a.do("GET", "/api/system", nil); code != 200 {
+		t.Skipf("docker daemon not available (%d)", code)
+	}
+	ctx := context.Background()
+
+	// A distinct, otherwise-unused tag so evicting it can't affect any other
+	// test's fixtures. Pulled once so a container can reference it, then
+	// evicted again right before the WS dial — ContainerCreate requires the
+	// image to exist locally, but PullImage doesn't, so this ordering is the
+	// only way to get "container exists, image locally absent."
+	const targetImage = "alpine:3.19"
+	cli, err := a.dm.Client(ctx, 0)
+	if err != nil {
+		t.Skipf("cannot get docker client: %v", err)
+	}
+	if pullErr := a.dm.PullImage(ctx, 0, targetImage, func(docker.PullProgress) {}); pullErr != nil {
+		t.Skipf("cannot pull %s: %v", targetImage, pullErr)
+	}
+	id, err := a.dm.CreateContainer(ctx, 0, docker.CreateSpec{
+		Image: targetImage, Name: "dctest_bulkpull_cancel", Cmd: []string{"sleep", "300"},
+	})
+	if err != nil {
+		t.Skipf("cannot create container: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cli.ContainerRemove(ctx, id, dockertypes.RemoveOptions{Force: true})
+	})
+	if _, err := cli.ImageRemove(ctx, targetImage, image.RemoveOptions{Force: true}); err != nil {
+		t.Skipf("cannot evict %s to force a fresh pull: %v", targetImage, err)
+	}
+
+	wsCtx, wsCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer wsCancel()
+	u := "ws" + strings.TrimPrefix(a.url, "http") + "/api/containers/bulk-pull"
+	conn, _, err := websocket.Dial(wsCtx, u, &websocket.DialOptions{HTTPClient: a.c})
+	if err != nil {
+		t.Fatalf("dial bulk-pull: %v", err)
+	}
+	conn.SetReadLimit(1 << 20)
+	body, _ := json.Marshal(map[string]any{"ids": []string{id}})
+	if err := conn.Write(wsCtx, websocket.MessageText, body); err != nil {
+		t.Fatalf("send ids: %v", err)
+	}
+	// Read exactly the Started marker for the (freshly-evicted, still
+	// downloading) image, then hang up immediately — the user hitting
+	// Cancel right after the pull began.
+	if _, _, err := conn.Read(wsCtx); err != nil {
+		t.Fatalf("read first frame: %v", err)
+	}
+	conn.Close(websocket.StatusNormalClosure, "")
+
+	// Poll rather than a single fixed sleep: the audit write happens on the
+	// server shortly after the disconnect is noticed, not synchronously with
+	// the client's close() call.
+	var pulls []map[string]any
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		_, entries := a.getJSONArray("/api/audit")
+		pulls = nil
+		for _, e := range entries {
+			if e["action"] == "image.pull" {
+				pulls = append(pulls, e)
+			}
+		}
+		if len(pulls) > 0 {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if len(pulls) != 1 {
+		t.Fatalf("want exactly 1 image.pull audit entry, got %d: %v", len(pulls), pulls)
+	}
+	detail, _ := pulls[0]["detail"].(string)
+	if !strings.Contains(detail, "cancelled") {
+		t.Errorf("the entry's detail = %q, want it to say the pull was cancelled by a client disconnect — "+
+			"if it succeeded instead, the disconnect was not actually noticed until after the pull completed", detail)
 	}
 }

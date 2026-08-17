@@ -28,16 +28,24 @@ vi.mock("../lib/api", () => ({
 }));
 
 // A minimal fake WebSocket so BulkPullModal's flow can be driven frame by
-// frame without a real network — the modal only ever uses onmessage/onerror/
-// onclose and close(), so that's all this needs to implement.
+// frame without a real network — the modal only ever uses onopen/onmessage/
+// onerror/onclose, send() and close(), so that's all this needs to implement.
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
+  onopen: (() => void) | null = null;
   onmessage: ((ev: { data: string }) => void) | null = null;
   onerror: (() => void) | null = null;
   onclose: (() => void) | null = null;
   closed = false;
+  sent: string[] = [];
   constructor(_url: string) {
     FakeWebSocket.instances.push(this);
+    // Deferred so the caller's onopen assignment (right after `new
+    // WebSocket(...)`) runs first, same ordering a real connection has.
+    queueMicrotask(() => this.onopen?.());
+  }
+  send(data: string) {
+    this.sent.push(data);
   }
   close() {
     if (this.closed) return;
@@ -288,6 +296,12 @@ describe("bulk pull", () => {
 
     expect(FakeWebSocket.instances).toHaveLength(1);
     const ws = FakeWebSocket.instances[0];
+
+    // Ids travel as the first message once the socket is open, not in the
+    // connection URL (200 full container ids wouldn't reliably fit there
+    // through a reverse proxy).
+    await act(async () => {});
+    expect(ws.sent).toEqual([JSON.stringify({ ids: ["aaa111", "bbb222"] })]);
 
     await act(async () => {
       ws.emit({ ref: "nginx:latest", index: 1, count: 2, started: true });

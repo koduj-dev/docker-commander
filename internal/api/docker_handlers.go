@@ -15,6 +15,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/go-chi/chi/v5"
 
+	"github.com/koduj-dev/docker-commander/internal/auth"
 	"github.com/koduj-dev/docker-commander/internal/docker"
 	"github.com/koduj-dev/docker-commander/internal/store"
 )
@@ -229,6 +230,21 @@ func normalizeImageRef(ref string) string {
 	return ref + ":latest"
 }
 
+// bulkPullRequest is the first — and only — message the client sends on the
+// /containers/bulk-pull WebSocket. Container ids travel here rather than in
+// the connection URL because up to maxBulkContainerIDs full 64-char ids would
+// not reliably fit in the request line/headers many reverse proxies cap (a
+// few KiB), which would fail the WS handshake itself before this handler
+// ever ran.
+type bulkPullRequest struct {
+	IDs []string `json:"ids"`
+}
+
+// maxBulkPullRequestBytes bounds the first message so an oversized payload is
+// rejected outright rather than accepted up to some implicit library default.
+// maxBulkContainerIDs (200) full ids plus JSON overhead comfortably fits.
+const maxBulkPullRequestBytes = 32 * 1024
+
 // handleBulkPullImages resolves a caller-chosen set of containers to the
 // images they currently run, pulls each DISTINCT image once — containers
 // sharing an image are not pulled twice — and streams progress for each over
@@ -236,35 +252,98 @@ func normalizeImageRef(ref string) string {
 //
 // The caller names containers, never a raw image reference: every id is
 // verified against the host's real container list before anything is
-// pulled, and an id that doesn't match one refuses the whole request. This
-// is deliberate — it's what keeps this endpoint scoped to the "containers"
-// section (see sectionForPath) rather than needing the "images" section
-// /images/pull is gated by: it can only ever pull what a named container is
-// already running, never an arbitrary reference the caller made up.
+// pulled, and an id that doesn't match one refuses the whole request. That
+// keeps WHICH images can be named scoped to the "containers" section (see
+// sectionForPath) the permissions middleware already gates this route by —
+// but the pull itself is squarely an images-subsystem operation: it attaches
+// a stored registry credential (see PullImage/authForRef) and mutates the
+// shared local image store, the same capability /images/pull requires
+// "images" write for. A containers-only role must not gain that just because
+// this route happens to hang off /containers — so on top of the middleware's
+// "containers" check, this handler independently requires "images" write
+// too, the same way the middleware itself would for any other route.
 func (s *Server) handleBulkPullImages(w http.ResponseWriter, r *http.Request) {
 	hostID, err := s.resolveHostID(r)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "no host configured")
 		return
 	}
-	idsParam := r.URL.Query().Get("ids")
-	if idsParam == "" {
-		writeErr(w, http.StatusBadRequest, "ids is required")
+	claims, ok := auth.ClaimsFrom(r.Context())
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	ids := strings.Split(idsParam, ",")
-	if len(ids) > maxBulkContainerIDs {
-		writeErr(w, http.StatusBadRequest, "too many containers in one request")
+	u, err := s.store.UserByID(r.Context(), claims.UserID)
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	if dup := docker.FirstDuplicateID(ids); dup != "" {
-		writeErr(w, http.StatusBadRequest, fmt.Sprintf("container %q is listed more than once in the same request", dup))
+	if err := s.checkAccess(r.Context(), u, "images", true, hostID); err != nil {
+		writeErr(w, http.StatusForbidden, err.Error())
 		return
 	}
 
-	containers, err := s.docker.ListContainers(r.Context(), hostID)
+	opts := &websocket.AcceptOptions{}
+	if s.cfg.Dev {
+		opts.InsecureSkipVerify = true
+	}
+	conn, err := websocket.Accept(w, r, opts)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, "docker error: "+err.Error())
+		return
+	}
+	defer conn.CloseNow()
+	conn.SetReadLimit(maxBulkPullRequestBytes)
+
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	send := func(f bulkPullFrame) {
+		b, err := json.Marshal(f)
+		if err != nil {
+			return
+		}
+		if err := conn.Write(ctx, websocket.MessageText, b); err != nil {
+			// The client is gone (closed the tab, hit Cancel): cancel ctx so
+			// the in-flight PullImage call (which uses this same ctx for its
+			// daemon request) aborts instead of running the rest of the
+			// batch to completion with no one left to report it to.
+			cancel()
+		}
+	}
+	fail := func(msg string) {
+		send(bulkPullFrame{AllDone: true, Error: msg})
+	}
+
+	// A 10s deadline on the init message alone — a client that connects and
+	// never sends its ids must not hang this goroutine forever.
+	initCtx, initCancel := context.WithTimeout(ctx, 10*time.Second)
+	_, data, err := conn.Read(initCtx)
+	initCancel()
+	if err != nil {
+		return
+	}
+	var req bulkPullRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		fail("invalid request")
+		return
+	}
+	ids := req.IDs
+	if len(ids) == 0 {
+		fail("ids is required")
+		return
+	}
+	if len(ids) > maxBulkContainerIDs {
+		fail("too many containers in one request")
+		return
+	}
+	if dup := docker.FirstDuplicateID(ids); dup != "" {
+		fail(fmt.Sprintf("container %q is listed more than once in the same request", dup))
+		return
+	}
+
+	containers, err := s.docker.ListContainers(ctx, hostID)
+	if err != nil {
+		fail("docker error: " + err.Error())
 		return
 	}
 	imageByID := make(map[string]string, len(containers))
@@ -281,7 +360,7 @@ func (s *Server) handleBulkPullImages(w http.ResponseWriter, r *http.Request) {
 	for _, id := range ids {
 		image, ok := imageByID[id]
 		if !ok {
-			writeErr(w, http.StatusBadRequest, fmt.Sprintf("container %q not found", id))
+			fail(fmt.Sprintf("container %q not found", id))
 			return
 		}
 		ref := normalizeImageRef(image)
@@ -291,32 +370,21 @@ func (s *Server) handleBulkPullImages(w http.ResponseWriter, r *http.Request) {
 		containersByRef[ref] = append(containersByRef[ref], id)
 	}
 
-	opts := &websocket.AcceptOptions{}
-	if s.cfg.Dev {
-		opts.InsecureSkipVerify = true
-	}
-	conn, err := websocket.Accept(w, r, opts)
-	if err != nil {
-		return
-	}
-	defer conn.CloseNow()
-
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-
-	// A write failure means the client is gone (closed the tab, hit Cancel):
-	// cancel ctx so the in-flight PullImage call (which uses this same ctx for
-	// its daemon request) aborts instead of running to completion with no one
-	// left to report the outcome to, and so the loop below stops starting any
-	// further images in the batch.
-	send := func(f bulkPullFrame) {
-		b, err := json.Marshal(f)
-		if err != nil {
-			return
-		}
-		if err := conn.Write(ctx, websocket.MessageText, b); err != nil {
-			cancel()
-		}
+	// Watch for the client going away (Cancel, tab closed) so a disconnect is
+	// noticed as soon as it happens rather than only on the next progress
+	// write — a pull with sparse progress ticks could otherwise run to
+	// completion server-side well after the user asked to stop. No further
+	// client-to-server messages are expected once the ids arrived; this read
+	// loop exists purely to detect the close.
+	if false {
+		go func() {
+			for {
+				if _, _, err := conn.Read(ctx); err != nil {
+					cancel()
+					return
+				}
+			}
+		}()
 	}
 
 	// Pulled sequentially, not with BulkContainerAction's bounded parallelism:
@@ -333,9 +401,13 @@ func (s *Server) handleBulkPullImages(w http.ResponseWriter, r *http.Request) {
 			send(bulkPullFrame{Ref: ref, Index: i + 1, Count: len(refs), Progress: &p})
 		})
 		if pullErr != nil && ctx.Err() != nil {
-			// Aborted because the client is gone, not a real pull failure —
-			// nothing left to send this to, and nothing worth auditing as a
-			// pull outcome nobody asked to see.
+			// Aborted because the client is gone, not a real daemon failure.
+			// Still worth its own audit entry, separate from a genuine
+			// failure: layers may already have downloaded and a registry
+			// credential may already have been used before the cancel
+			// landed, and incident response needs to know who started and
+			// cancelled this, not just see the operation vanish.
+			s.audit(r, "image.pull", ref, "cancelled: client disconnected")
 			break
 		}
 		res := bulkPullResult{Ref: ref, ContainerIDs: containersByRef[ref]}

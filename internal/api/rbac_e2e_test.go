@@ -261,65 +261,62 @@ func TestRBACEndToEndBulkContainerAction(t *testing.T) {
 	}
 }
 
-// TestRBACEndToEndBulkPullImages proves /containers/bulk-pull is gated by the
-// "containers" section, not "images" — deliberate, since it only ever pulls
-// the image of a container the caller already named (see the handler's own
-// comment), so it belongs to the same permission surface as bulk
-// restart/stop, not to image pull's own section. A role holding only
-// "images" must still be refused; a role holding "containers" write must not
-// be permission-denied (a daemon/validation error for the fake id is fine —
-// the point is RBAC let the request through).
+// TestRBACEndToEndBulkPullImages proves /containers/bulk-pull requires BOTH
+// "containers" write (the middleware's route-level gate — it names which
+// containers to resolve images for) AND "images" write (checked inside the
+// handler itself — the pull attaches a registry credential and mutates the
+// shared image store, the same capability /images/pull needs "images" write
+// for). Neither section alone is enough: a containers-only role must not
+// gain a pull capability just because this route hangs off /containers, and
+// an images-only role must not reach it without also being able to select
+// containers on this host.
 func TestRBACEndToEndBulkPullImages(t *testing.T) {
 	admin := rbacFixture(t)
 
-	code, resp := admin.do("POST", "/api/roles", map[string]any{
-		"name":     "ContainersRWPull",
-		"sections": []map[string]any{{"section": "containers", "write": true}},
+	mkRole := func(name string, sections []map[string]any) int64 {
+		code, resp := admin.do("POST", "/api/roles", map[string]any{"name": name, "sections": sections})
+		if code != 200 {
+			t.Fatalf("create role %s: %d %v", name, code, resp)
+		}
+		return int64(resp["id"].(float64))
+	}
+	containersOnlyID := mkRole("ContainersOnlyPull", []map[string]any{{"section": "containers", "write": true}})
+	imagesOnlyID := mkRole("ImagesOnlyPull", []map[string]any{{"section": "images", "write": true}})
+	bothID := mkRole("ContainersAndImagesPull", []map[string]any{
+		{"section": "containers", "write": true}, {"section": "images", "write": true},
 	})
-	if code != 200 {
-		t.Fatalf("create writable containers role: %d %v", code, resp)
-	}
-	rwID := int64(resp["id"].(float64))
-
-	code, resp = admin.do("POST", "/api/roles", map[string]any{
-		"name":     "ContainersROPull",
-		"sections": []map[string]any{{"section": "containers", "write": false}},
+	containersRWImagesROID := mkRole("ContainersRWImagesRO", []map[string]any{
+		{"section": "containers", "write": true}, {"section": "images", "write": false},
 	})
-	if code != 200 {
-		t.Fatalf("create read-only containers role: %d %v", code, resp)
-	}
-	roID := int64(resp["id"].(float64))
 
-	code, resp = admin.do("POST", "/api/roles", map[string]any{
-		"name":     "ImagesRWPull",
-		"sections": []map[string]any{{"section": "images", "write": true}},
-	})
-	if code != 200 {
-		t.Fatalf("create writable images role: %d %v", code, resp)
-	}
-	imgID := int64(resp["id"].(float64))
+	containersOnly := loginWithRoles(t, admin, "pullcontainersonly", false, nil, []int64{containersOnlyID})
+	imagesOnly := loginWithRoles(t, admin, "pullimagesonly", false, nil, []int64{imagesOnlyID})
+	both := loginWithRoles(t, admin, "pullboth", false, nil, []int64{bothID})
+	imagesReadOnly := loginWithRoles(t, admin, "pullimgro", false, nil, []int64{containersRWImagesROID})
 
-	rw := loginWithRoles(t, admin, "pullrw", false, nil, []int64{rwID})
-	ro := loginWithRoles(t, admin, "pullro", false, nil, []int64{roID})
-	imgOnly := loginWithRoles(t, admin, "pullimgonly", false, nil, []int64{imgID})
-
-	path := "/api/containers/bulk-pull?ids=abc"
-	if code, _ := rw.do("GET", path, nil); code == http.StatusForbidden {
-		t.Error("a writable containers role should be permitted to reach bulk-pull")
+	// The pre-DC-SEC-002 shape: containers write alone must now be refused —
+	// this is the exact gap the fix closes, so it's the one case here worth
+	// naming SECURITY on failure.
+	if code, _ := containersOnly.do("GET", "/api/containers/bulk-pull", nil); code != http.StatusForbidden {
+		t.Errorf("SECURITY: a containers-only role reached bulk-pull (%d) — it must also need images write", code)
 	}
-	if code, _ := ro.do("GET", path, nil); code != http.StatusForbidden {
-		t.Errorf("SECURITY: a read-only containers role reached bulk-pull (%d)", code)
+	if code, _ := imagesOnly.do("GET", "/api/containers/bulk-pull", nil); code != http.StatusForbidden {
+		t.Errorf("SECURITY: an images-only role reached bulk-pull (%d) — it must also need containers write", code)
 	}
-	// The section boundary this test exists for: an "images" grant must NOT
-	// substitute for "containers" here, even though bulk-pull ends up pulling
-	// images — it is scoped to the container-selection surface, not the
-	// Images page's own pull.
-	if code, _ := imgOnly.do("GET", path, nil); code != http.StatusForbidden {
-		t.Errorf("SECURITY: an images-only role reached the containers-gated bulk-pull (%d)", code)
+	// Read access to images isn't write access: a role with containers write
+	// but only images READ must still be refused.
+	if code, _ := imagesReadOnly.do("GET", "/api/containers/bulk-pull", nil); code != http.StatusForbidden {
+		t.Errorf("SECURITY: a role with images read-only (not write) reached bulk-pull (%d)", code)
+	}
+	// Holding both is not permission-denied (a validation/daemon error for no
+	// ids sent is fine over a plain GET with no WS handshake — the point is
+	// RBAC itself let the request through).
+	if code, _ := both.do("GET", "/api/containers/bulk-pull", nil); code == http.StatusForbidden {
+		t.Error("a role with both containers and images write should be permitted to reach bulk-pull")
 	}
 
 	nobody := loginWithRoles(t, admin, "pullnobody", true, nil, nil)
-	if code, _ := nobody.do("GET", path, nil); code != http.StatusForbidden {
+	if code, _ := nobody.do("GET", "/api/containers/bulk-pull", nil); code != http.StatusForbidden {
 		t.Errorf("SECURITY: a zero-grant account reached bulk-pull (%d)", code)
 	}
 }
