@@ -196,14 +196,24 @@ jobs:
         run: |
           schtasks /Create /TN DockerCommander /TR "cmd /c exit" /SC ONSTART /RU SYSTEM /F | Out-Null
           .\dockercmd.exe --install-service
-          if ($LASTEXITCODE -eq 0) { throw "--install-service succeeded despite a conflicting Scheduled Task" }
+          # dockercmd.exe is EXPECTED to exit non-zero here — that's the thing
+          # under test. $LASTEXITCODE from it would otherwise linger (Get-Service/
+          # Write-Host below don't reset it, being cmdlets not native exes) and
+          # fail this step even after the assertions below all pass, since the
+          # GitHub Actions pwsh runner checks $LASTEXITCODE after the script
+          # exits, not just whether a `throw` was raised. Capture-then-clear it.
+          $installExit = $LASTEXITCODE
+          $global:LASTEXITCODE = 0
+          if ($installExit -eq 0) { throw "--install-service succeeded despite a conflicting Scheduled Task" }
           $svc = Get-Service -Name dockercmd -ErrorAction SilentlyContinue
           if ($svc) { throw "the SCM service was registered even though install should have aborted" }
           Write-Host "confirmed: install-service refused to run alongside the Scheduled Task"
 
       - name: Remove the dummy Scheduled Task
         if: always()
-        run: schtasks /Delete /TN DockerCommander /F 2>$null
+        run: |
+          schtasks /Delete /TN DockerCommander /F 2>$null
+          $global:LASTEXITCODE = 0 # best-effort cleanup; don't fail the job if it's already gone
 
       # Re-install for real now that the conflicting task is gone, so the
       # final uninstall step below (and its "confirm the SCM forgot it"
