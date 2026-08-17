@@ -7,15 +7,18 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Security
-- **Windows service: the data dir gets an explicit, locked-down ACL.** The
-  installer only created the dir with a Unix mode bit, which means nothing on
-  Windows — it inherited whatever `%ProgramData%`'s own ACL happened to grant,
-  potentially readable by any local account, for a dir holding the database,
-  TLS private keys, and the at-rest encryption key. `--install-service` now
-  sets an explicit DACL (SYSTEM + Administrators, Full Control, no inherited
-  access) on both a fresh dir and a reinstall over an existing one — and
-  refuses to proceed if an existing dir's ACL already grants access beyond
-  that, rather than silently trusting it.
+- **Windows: the data dir gets an explicit, locked-down ACL, on every
+  startup.** The dir was only ever created with a Unix mode bit, which means
+  nothing on Windows — it inherited whatever `%ProgramData%`'s own ACL
+  happened to grant, potentially readable by any local account, for a dir
+  holding the database, TLS private keys, and the at-rest encryption key.
+  Every dockercmd startup now sets an explicit DACL (SYSTEM + Administrators,
+  Full Control, no inherited access) on the resolved data dir — not just the
+  one set up by `--install-service`, so a foreground run or the Scheduled Task
+  installer (`deploy/install-windows.ps1`) get the same protection.
+  `--install-service` additionally refuses to proceed if an *existing* dir's
+  ACL already grants access beyond that, rather than silently trusting and
+  "fixing" it.
 - **Windows service: a failed stop no longer lets a reinstall proceed
   anyway.** `--install-service` re-run over a running service is supposed to
   stop it before overwriting the binary, but the stop request's own error was

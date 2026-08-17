@@ -12,11 +12,12 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-	"unsafe"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
+
+	"github.com/koduj-dev/docker-commander/internal/config"
 )
 
 // winServiceName is both the SCM service name and the name Run/IsWindowsService
@@ -90,11 +91,11 @@ func Install(w io.Writer) error {
 		// someone else under %ProgramData% before this run) is not trusted
 		// just because it already has the right path — its ACL might already
 		// grant more than SYSTEM+Administrators.
-		if err := verifyDataDirACL(dataDir); err != nil {
+		if err := config.VerifyDataDirACL(dataDir); err != nil {
 			return fmt.Errorf("refusing to reuse existing data dir %s: %w", dataDir, err)
 		}
 	}
-	if err := secureDataDirACL(dataDir); err != nil {
+	if err := config.SecureDataDirACL(dataDir); err != nil {
 		return fmt.Errorf("set data dir permissions: %w", err)
 	}
 
@@ -281,104 +282,6 @@ func waitStopped(query func() (svc.Status, error), timeout time.Duration) error 
 func dirExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
-}
-
-// secureDataDirACL applies a protected (non-inherited) DACL to path granting
-// FullControl to SYSTEM and Administrators only. The service normally runs as
-// LocalSystem with no ServiceStartName set, and this directory holds the
-// database, TLS private keys and an at-rest encryption key (docs/gotchas.md)
-// — an inherited ACL from %ProgramData% that grants Users/Authenticated Users
-// read access would expose all of it to any local account.
-func secureDataDirACL(path string) error {
-	systemSid, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
-	if err != nil {
-		return fmt.Errorf("resolve SYSTEM sid: %w", err)
-	}
-	adminSid, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
-	if err != nil {
-		return fmt.Errorf("resolve Administrators sid: %w", err)
-	}
-
-	inherit := uint32(windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE)
-	entries := []windows.EXPLICIT_ACCESS{
-		{
-			AccessPermissions: windows.GENERIC_ALL,
-			AccessMode:        windows.GRANT_ACCESS,
-			Inheritance:       inherit,
-			Trustee: windows.TRUSTEE{
-				TrusteeForm:  windows.TRUSTEE_IS_SID,
-				TrusteeType:  windows.TRUSTEE_IS_USER,
-				TrusteeValue: windows.TrusteeValueFromSID(systemSid),
-			},
-		},
-		{
-			AccessPermissions: windows.GENERIC_ALL,
-			AccessMode:        windows.GRANT_ACCESS,
-			Inheritance:       inherit,
-			Trustee: windows.TRUSTEE{
-				TrusteeForm:  windows.TRUSTEE_IS_SID,
-				TrusteeType:  windows.TRUSTEE_IS_GROUP,
-				TrusteeValue: windows.TrusteeValueFromSID(adminSid),
-			},
-		},
-	}
-
-	dacl, err := windows.ACLFromEntries(entries, nil)
-	if err != nil {
-		return fmt.Errorf("build ACL: %w", err)
-	}
-
-	// PROTECTED_DACL_SECURITY_INFORMATION strips inherited ACEs (e.g. a
-	// permissive one inherited from %ProgramData% itself) so only the two
-	// explicit grants above apply.
-	err = windows.SetNamedSecurityInfo(
-		path,
-		windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil, nil, dacl, nil,
-	)
-	if err != nil {
-		return fmt.Errorf("apply ACL to %s: %w", path, err)
-	}
-	return nil
-}
-
-// verifyDataDirACL refuses a pre-existing data dir whose DACL grants access
-// to anything beyond SYSTEM, Administrators, or CREATOR OWNER (an inherited
-// default that doesn't itself widen access). Called before secureDataDirACL
-// repairs a fresh/legitimate dir's ACL, so a dir that already grants broader
-// access — planted, misconfigured, or left over from something else entirely
-// — is surfaced for manual inspection instead of silently adopted and then
-// "fixed" as if it had always been fine.
-func verifyDataDirACL(path string) error {
-	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.OWNER_SECURITY_INFORMATION)
-	if err != nil {
-		return fmt.Errorf("read existing ACL: %w", err)
-	}
-	acl, _, err := sd.DACL()
-	if err != nil {
-		return fmt.Errorf("read existing DACL: %w", err)
-	}
-	if acl == nil {
-		return errors.New("existing data dir has no DACL (fully permissive) — remove it or repair its ACL by hand")
-	}
-	for i := uint16(0); i < acl.AceCount; i++ {
-		var ace *windows.ACCESS_ALLOWED_ACE
-		if err := windows.GetAce(acl, uint32(i), &ace); err != nil {
-			return fmt.Errorf("read ACE %d: %w", i, err)
-		}
-		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
-			continue // deny/audit ACEs aren't a disclosure risk
-		}
-		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
-		if !sid.IsWellKnown(windows.WinLocalSystemSid) &&
-			!sid.IsWellKnown(windows.WinBuiltinAdministratorsSid) &&
-			!sid.IsWellKnown(windows.WinCreatorOwnerSid) {
-			return fmt.Errorf("existing data dir grants access to unexpected SID %s — inspect it manually before reinstalling", sid.String())
-		}
-	}
-	return nil
 }
 
 // conflictingScheduledTaskError is its own function so its exact wording is

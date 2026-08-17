@@ -209,14 +209,17 @@ it detects the other is already installed (checks for the SCM service `dockercmd
 or the Scheduled Task `DockerCommander` by name); migrate by stopping and
 removing the one you're leaving before installing the other.
 
-The data dir's ACL is set explicitly on install — `SYSTEM` and
-`Administrators` get Full Control, nothing else (not the inherited
-`%ProgramData%` default, which can otherwise leave it readable by any local
-account) — since it holds the database, TLS private keys, and the at-rest
-encryption key. Reinstalling over an existing data dir re-applies this ACL; if
-that dir's *existing* permissions already grant access beyond
-`SYSTEM`/`Administrators`/`CREATOR OWNER`, install refuses to proceed rather
-than silently trusting it — inspect it by hand first.
+The data dir's ACL is set explicitly on **every startup**, not just install —
+`SYSTEM` and `Administrators` get Full Control, nothing else (not the
+inherited `%ProgramData%` default, which can otherwise leave it readable by
+any local account) — since it holds the database, TLS private keys, and the
+at-rest encryption key. This applies the same way whether dockercmd is
+running as the native SCM service, under the Scheduled Task installer, or
+just in a console for testing. `--install-service` additionally checks an
+*existing* data dir before reinstalling over it: if its permissions already
+grant access beyond `SYSTEM`/`Administrators`/`CREATOR OWNER`, install refuses
+to proceed rather than silently trusting and "fixing" it — inspect it by hand
+first.
 
 > **Compose/Projects disabled under systemd?** If the **Projects** page warns
 > that "the `docker compose` CLI isn't available", it's the `ProtectHome=true`

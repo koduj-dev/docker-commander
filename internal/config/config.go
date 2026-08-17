@@ -5,6 +5,7 @@ package config
 import (
 	"errors"
 	"flag"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -172,6 +173,17 @@ func Load() (Config, error) {
 
 	if err := os.MkdirAll(c.DataDir, 0o700); err != nil {
 		return c, err
+	}
+	// A no-op on Unix (0o700 above already restricts it); on Windows this is
+	// the actual enforcement — MkdirAll's mode bits don't translate to an NTFS
+	// ACL there. Runs on every startup regardless of how dockercmd was
+	// launched (foreground, the Scheduled Task installer, or the native SCM
+	// service — internal/service's Windows installer applies the same
+	// SecureDataDirACL at install time too, plus a stricter check a
+	// pre-existing dir isn't already misconfigured), not just a freshly
+	// created dir.
+	if err := secureDataDir(c.DataDir); err != nil {
+		return c, fmt.Errorf("restrict data dir permissions: %w", err)
 	}
 	return c, nil
 }
