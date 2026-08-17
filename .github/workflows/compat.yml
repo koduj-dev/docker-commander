@@ -93,18 +93,91 @@ jobs:
       combos: ${{ steps.pick.outputs.combos }}
     steps:
       - id: pick
+        env:
+          # workflow_dispatch inputs land in env, not textually inside the
+          # shell script — a value containing a single quote (or worse) must
+          # not be able to break out of an assignment and inject a command.
+          # workflow_dispatch requires repo write access to trigger, so this
+          # isn't an anonymous-attacker path, but it's still unnecessary code
+          # execution on a runner with job-environment access.
+          INPUT_VERSIONS: ${{ inputs.versions }}
+          INPUT_COMPOSE_VERSIONS: ${{ inputs.compose_versions }}
+          INPUT_PATCH_VERSIONS: ${{ inputs.patch_versions }}
         run: |
-          want='${{ inputs.versions }}'
+          set -euo pipefail
+
+          # Confirms $2 is a JSON array of strings each matching allowlist
+          # regex $3, or aborts the whole run — done as one jq -e call (not a
+          # `| while read` loop piping into `exit`, which runs in a subshell
+          # and can't actually fail the script under `set -e`).
+          #
+          # Requires a NON-EMPTY array: `all(.[]; ...)` is vacuously true for
+          # `[]`, so without the explicit length check, versions=[] passed
+          # validation and produced zero jobs — a silently-skipped compat
+          # matrix that still reported success. versions/compose_versions are
+          # this workflow's whole point (the "which majors/composes work"
+          # axes) and must never resolve to nothing silently.
+          validate() {
+            echo "$2" | jq -e --arg re "$3" \
+              'type == "array" and length > 0 and all(.[]; type == "string" and test($re))' \
+              >/dev/null \
+              || { echo "::error::$1 failed validation (must be a non-empty array matching $3): $2"; exit 1; }
+          }
+          # patch_versions, by contrast, MAY legitimately be empty: it's the
+          # supplementary "does this exact patch work" axis (see the
+          # top-of-file comment), not one of the two axes this workflow
+          # exists to cover — an operator disabling it on purpose via
+          # workflow_dispatch is a real, intended use of `[]` here.
+          validate_optional() {
+            echo "$2" | jq -e --arg re "$3" \
+              'type == "array" and all(.[]; type == "string" and test($re))' \
+              >/dev/null \
+              || { echo "::error::$1 failed validation: $2"; exit 1; }
+          }
+
+          docker_re='^[0-9]{1,3}(\.[0-9]{1,3}){0,2}$'          # "24" or "24.0.9"
+          compose_re='^v[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$'   # "v5.4.0"
+
+          want="$INPUT_VERSIONS"
           if [ -z "$want" ]; then
             want='["24","25","26","27","28"]'
           fi
-          compose_want='${{ inputs.compose_versions }}'
+          validate "versions" "$want" "$docker_re"
+
+          compose_want="$INPUT_COMPOSE_VERSIONS"
           if [ -z "$compose_want" ]; then
             # Newest first. Three recent minors, latest patch of each — see the
             # top-of-file comment for why not every release.
             compose_want='["v5.4.0","v5.3.1","v5.2.0"]'
           fi
-          patch_want='${{ inputs.patch_versions }}'
+          validate "compose_versions" "$compose_want" "$compose_re"
+
+          # Pinned checksums for docker-compose-linux-x86_64, recorded HERE —
+          # not trusted from the release itself (see the Install step below).
+          # The release's own .sha256 file is downloaded from the SAME GitHub
+          # release as the binary, so it only proves the download matches
+          # what GitHub is serving right now, not that the release asset
+          # itself is what it was when someone actually looked at it: an
+          # attacker able to replace the binary in a compromised/hijacked
+          # release can replace the matching .sha256 right alongside it. Only
+          # a tag recorded here may be selected — including via
+          # workflow_dispatch — which is what makes this an actual pin and
+          # not just a second same-origin check: dispatch cannot point this
+          # workflow at a version nobody has reviewed the checksum for.
+          #
+          # To add a version: download it once, verify it out-of-band (the
+          # project's own release notes, a second mirror, PGP if published),
+          # then record the sha256 here.
+          checksums='{
+            "v5.4.0": "837fd1d35bf6a494f41b5b5988269a7be79de337cf1a1a6ff0e45ab51bb4e9be",
+            "v5.3.1": "f9ebc6ebdb19d769b793c245a736caaeb198c62587f13b25c660c13b4987f959",
+            "v5.2.0": "018f9612ecabc5f2d7aaa53d6f5f44453a87611e2d72c8ef84d7b1eca070e719"
+          }'
+          echo "$compose_want" | jq -e --argjson cs "$checksums" \
+            'all(.[]; . as $v | $cs | has($v))' >/dev/null \
+            || { echo "::error::compose_versions names a tag with no pinned checksum recorded in this workflow (see \$checksums) — add it there first, after verifying it out-of-band: $compose_want"; exit 1; }
+
+          patch_want="$INPUT_PATCH_VERSIONS"
           if [ -z "$patch_want" ]; then
             # Newest first. The newest published patch of the two newest
             # majors — see the top-of-file comment for why not every patch
@@ -112,18 +185,21 @@ jobs:
             # is no registry lookup here, same as the compose list above.
             patch_want='["28.5.2","27.5.1"]'
           fi
+          validate_optional "patch_versions" "$patch_want" "$docker_re"
 
           # Every Engine major x the newest Compose release, plus the newest
           # Engine major x the remaining (older) Compose releases, plus each
           # pinned Engine patch x the newest Compose release. Assumes all
           # three input arrays are ordered oldest-to-... / newest-first as
-          # documented on the inputs above.
-          combos=$(jq -nc --argjson want "$want" --argjson compose "$compose_want" --argjson patch "$patch_want" '
+          # documented on the inputs above. Each combo carries the pinned
+          # checksum for whichever Compose tag it uses, so the Install step
+          # never has to look one up itself.
+          combos=$(jq -nc --argjson want "$want" --argjson compose "$compose_want" --argjson patch "$patch_want" --argjson cs "$checksums" '
             ($want[-1]) as $newest_docker |
             ($compose[0]) as $newest_compose |
-            [ $want[] | {docker: ., compose: $newest_compose} ]
-              + [ $compose[1:][] | {docker: $newest_docker, compose: .} ]
-              + [ $patch[] | {docker: ., compose: $newest_compose} ]
+            [ $want[] | {docker: ., compose: $newest_compose, checksum: $cs[$newest_compose]} ]
+              + [ $compose[1:][] | {docker: $newest_docker, compose: ., checksum: $cs[.]} ]
+              + [ $patch[] | {docker: ., compose: $newest_compose, checksum: $cs[$newest_compose]} ]
           ')
           echo "combos=$combos" >> "$GITHUB_OUTPUT"
           echo "running: $combos"
@@ -153,22 +229,48 @@ jobs:
       # install (apt's docker-compose-plugin lands under /usr/lib/docker/cli-plugins),
       # so dropping the pinned binary there overrides it without touching apt.
       - name: Install docker compose ${{ matrix.compose }}
+        env:
+          COMPOSE_TAG: ${{ matrix.compose }}
+          COMPOSE_SHA256: ${{ matrix.checksum }}
         run: |
+          set -euo pipefail
           mkdir -p ~/.docker/cli-plugins
-          curl -sSL -o ~/.docker/cli-plugins/docker-compose \
-            "https://github.com/docker/compose/releases/download/${{ matrix.compose }}/docker-compose-linux-x86_64"
-          chmod +x ~/.docker/cli-plugins/docker-compose
+          workdir="$(mktemp -d)"
+          asset="docker-compose-linux-x86_64"
+          base="https://github.com/docker/compose/releases/download/${COMPOSE_TAG}"
+
+          # --fail so a 4xx/5xx (e.g. a bad tag) is a hard error instead of
+          # silently writing the error page as if it were the binary.
+          #
+          # Verified against COMPOSE_SHA256 — the checksum PINNED in the
+          # choose job (not downloaded from the same release as the binary
+          # itself). A same-origin .sha256 file only proves the download
+          # wasn't corrupted in transit; it proves nothing about whether the
+          # release asset was tampered with, since whoever could replace the
+          # binary could replace its matching checksum file too. The pinned
+          # value is this workflow's own record of what the asset was when
+          # someone actually looked at it.
+          curl --fail --show-error --proto '=https' --tlsv1.2 -sSL \
+            -o "$workdir/$asset" "$base/$asset"
+          echo "${COMPOSE_SHA256}  $asset" > "$workdir/$asset.sha256"
+          ( cd "$workdir" && sha256sum -c "$asset.sha256" ) \
+            || { echo "::error::docker-compose $COMPOSE_TAG failed checksum verification against the pinned value — the release asset does not match what was reviewed and recorded in this workflow"; exit 1; }
+
+          install -m 0755 "$workdir/$asset" ~/.docker/cli-plugins/docker-compose
+          rm -rf "$workdir"
           docker compose version
 
       # A privileged dind sidecar, not the runner's own daemon: the point is to
       # pin the Engine version, and the runner's is whatever GitHub ships.
       # Loopback-only, TLS off — it is torn down with the job.
       - name: Start docker:${{ matrix.docker }}-dind
+        env:
+          DOCKER_TAG: ${{ matrix.docker }}
         run: |
           docker run -d --name dc-compat --privileged \
             -e DOCKER_TLS_CERTDIR="" \
             -p 127.0.0.1:12375:2375 \
-            docker:${{ matrix.docker }}-dind \
+            "docker:${DOCKER_TAG}-dind" \
             --host=tcp://0.0.0.0:2375 --tls=false
           for i in $(seq 1 60); do
             curl -sf http://127.0.0.1:12375/_ping >/dev/null && break
@@ -189,9 +291,12 @@ jobs:
 
       - name: Summarise
         if: always()
+        env:
+          DOCKER_TAG: ${{ matrix.docker }}
+          COMPOSE_TAG: ${{ matrix.compose }}
         run: |
           {
-            echo "### docker:${{ matrix.docker }}-dind × compose ${{ matrix.compose }}"
+            echo "### docker:${DOCKER_TAG}-dind × compose ${COMPOSE_TAG}"
             echo
             echo '```'
             python3 -c "import json;d=json.load(open('/tmp/version.json'));print('engine', d['Version'], 'api', d['ApiVersion'], 'min-api', d['MinAPIVersion'])" || true
