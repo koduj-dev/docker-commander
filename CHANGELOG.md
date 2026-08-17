@@ -54,7 +54,10 @@ All notable changes to Docker Commander are documented here. The format follows
   **and** the `images` section (the pull itself attaches a stored registry
   credential and mutates the shared image store, the same capability
   `/images/pull` requires `images` write for) — a role holding only one of
-  the two cannot reach it.
+  the two cannot reach it. A container whose image was untagged out from
+  under it (e.g. `docker rmi -f` while it kept running) gets a clear "no tag
+  left to pull" result instead of the daemon's confusing rejection of a
+  bogus reference.
 - **Windows native service.** `--install-service` now registers dockercmd as a
   real Service Control Manager (SCM) service on Windows — auto-restart on
   crash, `services.msc`/`sc query` visibility — instead of failing with SCM
