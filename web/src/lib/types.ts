@@ -258,6 +258,29 @@ export interface PullProgress {
   done?: boolean;
 }
 
+// One message from the /containers/bulk-pull WebSocket — see bulkPullFrame in
+// internal/api/docker_handlers.go. Frames name which image (ref) they're
+// about, since more than one image pulls over a single connection.
+export interface BulkPullFrame {
+  ref: string;
+  index?: number;
+  count?: number;
+  started?: boolean;
+  progress?: PullProgress;
+  refDone?: boolean;
+  ok?: boolean;
+  error?: string;
+  allDone?: boolean;
+  results?: BulkPullResult[];
+}
+
+export interface BulkPullResult {
+  ref: string;
+  ok: boolean;
+  error?: string;
+  containerIds: string[];
+}
+
 export interface FileEntry {
   name: string;
   isDir: boolean;

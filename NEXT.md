@@ -343,14 +343,14 @@ the security property alone, independent of the NAT-traversal convenience.
 
 ### Smaller, well-scoped
 
-- **Bulk operations — remaining scope.** Restart/stop across a multi-selection
-  shipped (preview, confirmation, bounded parallelism, per-container
+- **Bulk operations — remaining scope.** Restart/stop/start and pull across a
+  multi-selection all shipped (preview, confirmation, per-container
   success/failure summary; reuses the existing `containers` section write
-  permission). Still open: **pull** as a third bulk action, **start** (the
-  fourth verb from the original roadmap wording), and **per-host RBAC**
-  granularity for bulk actions specifically (today a bulk request is scoped
-  the same way any single container action is — the section-level grant, not
-  a separate per-host bulk permission).
+  permission — bulk pull resolves container ids to images itself, so it never
+  needs the `images` section). Still open: **per-host RBAC** granularity for
+  bulk actions specifically (today a bulk request is scoped the same way any
+  single container action is — the section-level grant, not a separate
+  per-host bulk permission).
 - **Log bookmarks** — save a time range plus filters, link it to an incident, share
   it with users who have the rights, export a small diagnostic bundle without
   secrets.

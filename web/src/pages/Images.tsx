@@ -444,7 +444,7 @@ function PullPanel({ onPulled }: { onPulled: () => void }) {
   );
 }
 
-function LayerRow({ p }: { p: PullProgress }) {
+export function LayerRow({ p }: { p: PullProgress }) {
   const pct = p.total && p.total > 0 ? Math.min(100, Math.round(((p.current ?? 0) / p.total) * 100)) : null;
   return (
     <div className="flex items-center gap-2 text-muted">
