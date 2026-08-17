@@ -408,7 +408,11 @@ function BulkPullModal({ ids, nameFor, onClose }: { ids: string[]; nameFor: (id:
       <div className="card w-[70vw] max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <Download className="h-4 w-4 text-accent" />
-          <div className="font-medium">Pulling {total || refOrder.length || ids.length} image{(total || refOrder.length) === 1 ? "" : "s"}</div>
+          <div className="font-medium">
+            {total > 0
+              ? `Pulling ${total} image${total === 1 ? "" : "s"}`
+              : "Connecting…"}
+          </div>
           {finished ? (
             <button type="button" className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
           ) : (
