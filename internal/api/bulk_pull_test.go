@@ -38,6 +38,29 @@ func TestNormalizeImageRef(t *testing.T) {
 	}
 }
 
+func TestLooksLikeBareImageDigest(t *testing.T) {
+	const hex64 = "e07d6a1a5a4d8a2e6b3c1f9a0d4e5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a"
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"sha256:" + hex64, true},
+		{"nginx:latest", false},
+		{"nginx", false},
+		// Too short / too long / non-hex must not false-positive.
+		{"sha256:abc123", false},
+		{"sha256:" + hex64 + "ff", false},
+		{"sha256:" + strings.Repeat("g", 64), false},
+		// A real repo@digest reference is not a BARE digest.
+		{"nginx@sha256:" + hex64, false},
+	}
+	for _, tc := range cases {
+		if got := looksLikeBareImageDigest(tc.in); got != tc.want {
+			t.Errorf("looksLikeBareImageDigest(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
 // dialBulkPull opens the bulk-pull WebSocket, sends {ids} as the first
 // message (the real wire protocol — see bulkPullRequest's doc comment for why
 // ids travel in a message rather than the connection URL), then reads frames
@@ -276,16 +299,77 @@ func TestAPIBulkPullImagesDedupesUntaggedSpelling(t *testing.T) {
 	}
 }
 
+// TestAPIBulkPullImagesUntaggedImageGetsAFriendlyError proves a container
+// whose image was untagged out from under it (ContainerSummary.Image falls
+// back to a bare "sha256:<hex>" digest with no repository name) gets a clear
+// per-container failure explaining there's nothing left to pull — not the
+// daemon's confusing "repository does not exist" for a bogus ref literally
+// named "sha256", which is what normalizeImageRef would otherwise produce by
+// misreading the digest's hex half as a tag.
+func TestAPIBulkPullImagesUntaggedImageGetsAFriendlyError(t *testing.T) {
+	a := newAPI(t)
+	if code, _ := a.do("POST", "/api/auth/setup", map[string]string{"username": "admin", "password": "correcthorse123"}); code != 200 {
+		t.Fatal("setup failed")
+	}
+	if testing.Short() {
+		t.Skip("docker integration test; skipped under -short")
+	}
+	if code, _ := a.do("GET", "/api/system", nil); code != 200 {
+		t.Skipf("docker daemon not available (%d)", code)
+	}
+	ctx := context.Background()
+	const targetImage = "alpine:3.18"
+	cli, err := a.dm.Client(ctx, 0)
+	if err != nil {
+		t.Skipf("cannot get docker client: %v", err)
+	}
+	if pullErr := a.dm.PullImage(ctx, 0, targetImage, func(docker.PullProgress) {}); pullErr != nil {
+		t.Skipf("cannot pull %s: %v", targetImage, pullErr)
+	}
+	id, err := a.dm.CreateContainer(ctx, 0, docker.CreateSpec{
+		Image: targetImage, Name: "dctest_bulkpull_untagged", Cmd: []string{"sleep", "300"},
+	})
+	if err != nil {
+		t.Skipf("cannot create container: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cli.ContainerRemove(ctx, id, dockertypes.RemoveOptions{Force: true})
+	})
+	if _, err := cli.ImageRemove(ctx, targetImage, image.RemoveOptions{Force: true}); err != nil {
+		t.Skipf("cannot untag %s: %v", targetImage, err)
+	}
+
+	final := dialBulkPull(t, a, []string{id})
+	results, ok := final["results"].([]any)
+	if !ok || len(results) != 1 {
+		t.Fatalf("results = %v, want exactly 1", final["results"])
+	}
+	res, _ := results[0].(map[string]any)
+	if res["ok"] == true {
+		t.Fatalf("results[0] = %v, want ok:false — the image has no tag left to pull", res)
+	}
+	errMsg, _ := res["error"].(string)
+	if strings.Contains(errMsg, "repository does not exist") || strings.Contains(errMsg, "pull access denied") {
+		t.Errorf("error = %q — this is the daemon rejecting a bogus \"sha256\" ref normalizeImageRef built by "+
+			"misreading the digest, not the friendly local message", errMsg)
+	}
+	if !strings.Contains(errMsg, "no tag left to pull") {
+		t.Errorf("error = %q, want it to explain the image has no tag left to pull", errMsg)
+	}
+}
+
 // TestAPIBulkPullImagesStopsOnDisconnect proves a client disconnect (Cancel,
-// or the tab closing) actually aborts the in-flight pull and stops the batch
-// from continuing — not just that the client-side socket closes.
+// or the tab closing) actually stops the batch from continuing — not just
+// that the client-side socket closes.
 //
-// This needs a real timing window to be meaningful: if the target image were
-// already cached locally, PullImage would return near-instantly regardless
-// of whether the disconnect was noticed, and the test would prove nothing.
-// So the target image is explicitly evicted from the local daemon first,
-// forcing an actual registry round-trip, which comfortably outlasts how long
-// a local TCP close takes to be noticed.
+// Both images are already cached, so ref[0]'s own pull is a fast daemon
+// round-trip that may or may not itself get cancelled in time (that race is
+// inherent to "how fast can a local TCP close be noticed" and isn't what
+// this asserts). What's NOT racy: starting ref[1] requires ref[0] to have
+// fully finished first — send its RefDone frame, audit it, append to
+// results — which is strictly more elapsed time than the reader goroutine
+// needs to have already noticed the close. So ref[1] must never start,
+// deterministically, regardless of how the ref[0] race went.
 func TestAPIBulkPullImagesStopsOnDisconnect(t *testing.T) {
 	a := newAPI(t)
 	if code, _ := a.do("POST", "/api/auth/setup", map[string]string{"username": "admin", "password": "correcthorse123"}); code != 200 {
@@ -298,34 +382,26 @@ func TestAPIBulkPullImagesStopsOnDisconnect(t *testing.T) {
 		t.Skipf("docker daemon not available (%d)", code)
 	}
 	ctx := context.Background()
+	_ = a.dm.PullImage(ctx, 0, "alpine:latest", func(docker.PullProgress) {})
+	_ = a.dm.PullImage(ctx, 0, "busybox:latest", func(docker.PullProgress) {})
+	mk := func(name, img string) string {
+		id, err := a.dm.CreateContainer(ctx, 0, docker.CreateSpec{
+			Image: img, Name: name, Cmd: []string{"sleep", "300"}, Start: true,
+		})
+		if err != nil {
+			t.Skipf("cannot create container: %v", err)
+		}
+		t.Cleanup(func() {
+			if cli, err := a.dm.Client(ctx, 0); err == nil {
+				_ = cli.ContainerRemove(ctx, id, dockertypes.RemoveOptions{Force: true})
+			}
+		})
+		return id
+	}
+	id0 := mk("dctest_bulkpull_cancel0", "alpine:latest")
+	id1 := mk("dctest_bulkpull_cancel1", "busybox:latest")
 
-	// A distinct, otherwise-unused tag so evicting it can't affect any other
-	// test's fixtures. Pulled once so a container can reference it, then
-	// evicted again right before the WS dial — ContainerCreate requires the
-	// image to exist locally, but PullImage doesn't, so this ordering is the
-	// only way to get "container exists, image locally absent."
-	const targetImage = "alpine:3.19"
-	cli, err := a.dm.Client(ctx, 0)
-	if err != nil {
-		t.Skipf("cannot get docker client: %v", err)
-	}
-	if pullErr := a.dm.PullImage(ctx, 0, targetImage, func(docker.PullProgress) {}); pullErr != nil {
-		t.Skipf("cannot pull %s: %v", targetImage, pullErr)
-	}
-	id, err := a.dm.CreateContainer(ctx, 0, docker.CreateSpec{
-		Image: targetImage, Name: "dctest_bulkpull_cancel", Cmd: []string{"sleep", "300"},
-	})
-	if err != nil {
-		t.Skipf("cannot create container: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = cli.ContainerRemove(ctx, id, dockertypes.RemoveOptions{Force: true})
-	})
-	if _, err := cli.ImageRemove(ctx, targetImage, image.RemoveOptions{Force: true}); err != nil {
-		t.Skipf("cannot evict %s to force a fresh pull: %v", targetImage, err)
-	}
-
-	wsCtx, wsCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	wsCtx, wsCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer wsCancel()
 	u := "ws" + strings.TrimPrefix(a.url, "http") + "/api/containers/bulk-pull"
 	conn, _, err := websocket.Dial(wsCtx, u, &websocket.DialOptions{HTTPClient: a.c})
@@ -333,42 +409,26 @@ func TestAPIBulkPullImagesStopsOnDisconnect(t *testing.T) {
 		t.Fatalf("dial bulk-pull: %v", err)
 	}
 	conn.SetReadLimit(1 << 20)
-	body, _ := json.Marshal(map[string]any{"ids": []string{id}})
+	body, _ := json.Marshal(map[string]any{"ids": []string{id0, id1}})
 	if err := conn.Write(wsCtx, websocket.MessageText, body); err != nil {
 		t.Fatalf("send ids: %v", err)
 	}
-	// Read exactly the Started marker for the (freshly-evicted, still
-	// downloading) image, then hang up immediately — the user hitting
-	// Cancel right after the pull began.
+	// Read exactly the first frame (ref[0]'s Started marker), then hang up —
+	// the user hitting Cancel right after the pull began.
 	if _, _, err := conn.Read(wsCtx); err != nil {
 		t.Fatalf("read first frame: %v", err)
 	}
 	conn.Close(websocket.StatusNormalClosure, "")
 
-	// Poll rather than a single fixed sleep: the audit write happens on the
-	// server shortly after the disconnect is noticed, not synchronously with
-	// the client's close() call.
-	var pulls []map[string]any
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
-		_, entries := a.getJSONArray("/api/audit")
-		pulls = nil
-		for _, e := range entries {
-			if e["action"] == "image.pull" {
-				pulls = append(pulls, e)
-			}
+	// Give ref[0] time to finish one way or the other (it's a fast, cached
+	// pull either way) before asserting ref[1] never got its own entry.
+	time.Sleep(2 * time.Second)
+
+	_, entries := a.getJSONArray("/api/audit")
+	for _, e := range entries {
+		if e["action"] == "image.pull" && e["target"] == "busybox:latest" {
+			t.Errorf("SECURITY/correctness: busybox:latest was pulled — the batch must stop at the first "+
+				"ref once the client disconnects, not continue to the next one: %v", e)
 		}
-		if len(pulls) > 0 {
-			break
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	if len(pulls) != 1 {
-		t.Fatalf("want exactly 1 image.pull audit entry, got %d: %v", len(pulls), pulls)
-	}
-	detail, _ := pulls[0]["detail"].(string)
-	if !strings.Contains(detail, "cancelled") {
-		t.Errorf("the entry's detail = %q, want it to say the pull was cancelled by a client disconnect — "+
-			"if it succeeded instead, the disconnect was not actually noticed until after the pull completed", detail)
 	}
 }

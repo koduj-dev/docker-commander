@@ -230,6 +230,27 @@ func normalizeImageRef(ref string) string {
 	return ref + ":latest"
 }
 
+// looksLikeBareImageDigest reports whether ref is a bare "sha256:<64 hex>"
+// value with no repository name attached. ContainerSummary.Image falls back
+// to exactly this shape once an image's tag has been removed (e.g. `docker
+// rmi -f`) while a container built from it is still around — normalizeImageRef
+// would otherwise misread the digest's hex half as a TAG on a repository
+// literally named "sha256", which the daemon then rejects with a confusing
+// "repository does not exist" rather than the real story: this container's
+// image has nothing left to pull by name.
+func looksLikeBareImageDigest(ref string) bool {
+	hex, ok := strings.CutPrefix(ref, "sha256:")
+	if !ok || len(hex) != 64 {
+		return false
+	}
+	for _, c := range hex {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 // bulkPullRequest is the first — and only — message the client sends on the
 // /containers/bulk-pull WebSocket. Container ids travel here rather than in
 // the connection URL because up to maxBulkContainerIDs full 64-char ids would
@@ -376,16 +397,14 @@ func (s *Server) handleBulkPullImages(w http.ResponseWriter, r *http.Request) {
 	// completion server-side well after the user asked to stop. No further
 	// client-to-server messages are expected once the ids arrived; this read
 	// loop exists purely to detect the close.
-	if false {
-		go func() {
-			for {
-				if _, _, err := conn.Read(ctx); err != nil {
-					cancel()
-					return
-				}
+	go func() {
+		for {
+			if _, _, err := conn.Read(ctx); err != nil {
+				cancel()
+				return
 			}
-		}()
-	}
+		}
+	}()
 
 	// Pulled sequentially, not with BulkContainerAction's bounded parallelism:
 	// concurrent pulls would interleave progress frames from different images
@@ -397,9 +416,14 @@ func (s *Server) handleBulkPullImages(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		send(bulkPullFrame{Ref: ref, Index: i + 1, Count: len(refs), Started: true})
-		pullErr := s.docker.PullImage(ctx, hostID, ref, func(p docker.PullProgress) {
-			send(bulkPullFrame{Ref: ref, Index: i + 1, Count: len(refs), Progress: &p})
-		})
+		var pullErr error
+		if looksLikeBareImageDigest(ref) {
+			pullErr = fmt.Errorf("this container's image has no tag left to pull — it was likely removed from the local image store while the container kept running")
+		} else {
+			pullErr = s.docker.PullImage(ctx, hostID, ref, func(p docker.PullProgress) {
+				send(bulkPullFrame{Ref: ref, Index: i + 1, Count: len(refs), Progress: &p})
+			})
+		}
 		if pullErr != nil && ctx.Err() != nil {
 			// Aborted because the client is gone, not a real daemon failure.
 			// Still worth its own audit entry, separate from a genuine
