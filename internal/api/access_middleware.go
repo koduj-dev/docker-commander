@@ -136,7 +136,7 @@ func isWriteRequest(r *http.Request) bool {
 	// /stats/ports is a GET that opens a TCP connection to every published port
 	// on the host and fingerprints what answers — an active network action, the
 	// same category as /scan, so a read-only account must not be able to launch it.
-	for _, suffix := range []string{"/exec", "/pull", "/push", "/scan", "/stats/ports"} {
+	for _, suffix := range []string{"/exec", "/pull", "/push", "/scan", "/stats/ports", "/bulk-pull"} {
 		if strings.HasSuffix(r.URL.Path, suffix) {
 			return true
 		}

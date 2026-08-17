@@ -408,6 +408,115 @@ func TestStackActionRequiresAProject(t *testing.T) {
 	}
 }
 
+// TestChargeAdditionalContainersRefusalChargesNothing proves reserve's
+// all-or-nothing charging: DC-SEC-003's second bug was that the old
+// one-unit-at-a-time loop left whatever tokens it had already spent in place
+// even when the batch as a whole got refused. With 5 tokens left, a batch
+// needing 6 must be refused AND leave exactly 5 tokens behind — not fewer.
+func TestChargeAdditionalContainersRefusalChargesNothing(t *testing.T) {
+	h, uid := newTestHandler(t, nil)
+	h.limiter.burst = 10
+	ctx := context.Background()
+	u, err := h.deps.Store.UserByID(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &principal{user: u}
+
+	for i := 0; i < 5; i++ {
+		h.limiter.allow(uid)
+	} // 10 - 5 = 5 remain
+
+	if err := h.chargeAdditionalContainers(p, 7); err == nil { // needs 6 extra; only 5 remain
+		t.Fatal("a batch needing 6 extra tokens with only 5 available should be refused")
+	}
+	for i := 0; i < 5; i++ {
+		if ok, _ := h.limiter.allow(uid); !ok {
+			t.Fatalf("only %d of 5 remaining tokens survived a refused batch — the refusal partially charged", i)
+		}
+	}
+	if ok, _ := h.limiter.allow(uid); ok {
+		t.Error("a 6th token survived — more than the 5 that should have remained")
+	}
+}
+
+// TestChargeAdditionalContainersRefusesImpossibleBatchWithDistinctMessage: a
+// batch bigger than the burst can never fit even against a fully-fresh
+// bucket, so retrying can never help — the message must say so instead of
+// the generic "wait and retry" one, which would send a caller into a retry
+// loop against a request that can never succeed.
+func TestChargeAdditionalContainersRefusesImpossibleBatchWithDistinctMessage(t *testing.T) {
+	h, uid := newTestHandler(t, nil)
+	h.limiter.burst = 30
+	u, err := h.deps.Store.UserByID(context.Background(), uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &principal{user: u}
+
+	err = h.chargeAdditionalContainers(p, 40) // > burst even fully fresh
+	if err == nil {
+		t.Fatal("a 40-container batch must be refused: no bucket size can ever cover it")
+	}
+	if strings.Contains(err.Error(), "Wait before retrying") {
+		t.Errorf("this refusal is permanent (no bucket size covers it) — must not suggest waiting: %v", err)
+	}
+}
+
+// TestChargeAdditionalContainersScalesForLargeStacks proves a big batch
+// (deliberately > the old per-call flat cost of 1) genuinely costs one unit
+// per container, closing the exact "stop a 30+ container stack for one
+// token" gap the review flagged for restart_stack/stop_stack.
+func TestChargeAdditionalContainersScalesForLargeStacks(t *testing.T) {
+	h, uid := newTestHandler(t, nil)
+	h.limiter.burst = 40
+	u, err := h.deps.Store.UserByID(context.Background(), uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &principal{user: u}
+
+	h.limiter.allow(uid) // authorize()'s own unit for the call itself
+	if err := h.chargeAdditionalContainers(p, 31); err != nil {
+		t.Fatalf("a 31-container stack should fit in a burst of 40 (1 + 30 extra): %v", err)
+	}
+	// chargeAdditionalContainers(31) spends 30 (n-1) beyond authorize()'s own
+	// 1, so 40 - 1 - 30 = 9 remain.
+	for i := 0; i < 9; i++ {
+		if ok, _ := h.limiter.allow(uid); !ok {
+			t.Fatalf("unit %d of the 9 that should remain is missing", i)
+		}
+	}
+	if ok, _ := h.limiter.allow(uid); ok {
+		t.Fatal("the bucket should be fully drained after a 31-container action costing 31 of 40 units")
+	}
+}
+
+// TestRunStackActionRefusesLargeStackBeforeTouchingDocker proves
+// stackActionTool's wiring — not just chargeAdditionalContainers in
+// isolation — actually charges per container before reaching Docker.
+// h.deps.Docker is nil here (newTestHandler never sets it); StackAction
+// would panic if reached, so this passing IS the proof the limiter refused
+// first — the same "the test passing at all is the evidence" convention
+// TestStackContainersActionRejectsDuplicateIDs already relies on.
+func TestRunStackActionRefusesLargeStackBeforeTouchingDocker(t *testing.T) {
+	h, uid := newTestHandler(t, nil)
+	h.limiter.burst = 10 // less than 31
+	u, err := h.deps.Store.UserByID(context.Background(), uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &principal{user: u}
+	ids := make([]string, 31)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("c%d", i)
+	}
+
+	if _, err := h.runStackAction(context.Background(), p, 0, "web", "restart", ids); err == nil {
+		t.Fatal("a 31-container stack action should have been refused by the limiter before any Docker call")
+	}
+}
+
 // TestPreviewDeployIsAReadNotAWrite.
 //
 // A preview exists to be reached BEFORE the deploy it protects. Gating it as a
