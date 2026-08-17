@@ -7,6 +7,41 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Security
+- **Windows: the data dir gets an explicit, locked-down ACL, on every
+  startup.** The dir was only ever created with a Unix mode bit, which means
+  nothing on Windows — it inherited whatever `%ProgramData%`'s own ACL
+  happened to grant, potentially readable by any local account, for a dir
+  holding the database, TLS private keys, and the at-rest encryption key.
+  Every dockercmd startup now sets an explicit DACL (SYSTEM + Administrators,
+  Full Control, no inherited access) on the resolved data dir — not just the
+  one set up by `--install-service`, so a foreground run or the Scheduled Task
+  installer (`deploy/install-windows.ps1`) get the same protection.
+  `--install-service` additionally refuses to proceed if an *existing* dir's
+  ACL already grants access beyond that — and now also checks the dir's
+  **owner**, not just its ACL: a Windows object's owner can always rewrite
+  its own DACL regardless of what that DACL currently says, so a directory
+  someone else already owns is refused even if its ACL looks fine on paper.
+  A **reparse point** (a symlink or NTFS junction) at the data dir path is
+  refused outright too, and both the read and the write of the security
+  descriptor happen against one already-open handle rather than two
+  independent path lookups, closing the swap window a path-based
+  check-then-fix would otherwise leave open.
+- **Windows service: a failed stop no longer lets a reinstall proceed
+  anyway.** `--install-service` re-run over a running service is supposed to
+  stop it before overwriting the binary, but the stop request's own error was
+  discarded and a timeout waiting for it to actually reach Stopped was
+  treated as success. The reinstall now aborts (binary and service left
+  untouched) if the existing service doesn't confirm it stopped.
+- **Windows service: refuses to install alongside the older Scheduled Task
+  installer.** Both install methods target the same binary/data paths on
+  purpose, but neither checked whether the other was already running —
+  installing both meant two copies of dockercmd racing over the same data
+  dir and port. `--install-service` now aborts if the `DockerCommander`
+  Scheduled Task exists; `install-windows.ps1` now aborts if the `dockercmd`
+  SCM service exists. Both checks fail **closed**: an inconclusive result
+  (access denied, the Task Scheduler/SCM being unreachable, ...) aborts the
+  install rather than being read as "no conflict" and proceeding anyway —
+  the previous version treated any detection error that way.
 - **MCP whole-stack actions now cost one rate-limit unit per container, not one
   per call.** `restart_stack`/`stop_stack`/`start_stack` charged a flat 1 unit
   regardless of how many containers the stack actually had, while the

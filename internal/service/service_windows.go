@@ -3,11 +3,13 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -15,6 +17,8 @@ import (
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
+
+	"github.com/koduj-dev/docker-commander/internal/config"
 )
 
 // winServiceName is both the SCM service name and the name Run/IsWindowsService
@@ -24,6 +28,9 @@ const (
 	winServiceName = "dockercmd"
 	winDisplayName = "Docker Commander"
 	winDescription = "Monitors and controls Docker containers. https://github.com/koduj-dev/docker-commander"
+	// scheduledTaskName must match deploy/install-windows.ps1's $TaskName —
+	// the older, dependency-free installer this one exists alongside.
+	scheduledTaskName = "DockerCommander"
 )
 
 // winInstallDir mirrors deploy/install-windows.ps1's $InstallDir so the two
@@ -62,6 +69,14 @@ func Install(w io.Writer) error {
 	if !isElevated() {
 		return errors.New("installing the Windows service needs an elevated (Administrator) PowerShell/cmd — right-click, \"Run as administrator\"")
 	}
+	// Fail closed: an inconclusive check must abort, not proceed as if it had
+	// come back clean — otherwise a detection error becomes a way past the
+	// exact conflict this guard exists to prevent.
+	if exists, err := scheduledTaskExists(scheduledTaskName); err != nil {
+		return fmt.Errorf("could not check for a conflicting Scheduled Task: %w", err)
+	} else if exists {
+		return conflictingScheduledTaskError()
+	}
 
 	installDir := winInstallDir()
 	dataDir := winDataDir()
@@ -71,8 +86,21 @@ func Install(w io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("locate running binary: %w", err)
 	}
+	preexisting := dirExists(dataDir)
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return fmt.Errorf("create data dir: %w", err)
+	}
+	if preexisting {
+		// A dir left over from a prior install (or, worse, planted by
+		// someone else under %ProgramData% before this run) is not trusted
+		// just because it already has the right path — its ACL might already
+		// grant more than SYSTEM+Administrators.
+		if err := config.VerifyDataDirACL(dataDir); err != nil {
+			return fmt.Errorf("refusing to reuse existing data dir %s: %w", dataDir, err)
+		}
+	}
+	if err := config.SecureDataDirACL(dataDir); err != nil {
+		return fmt.Errorf("set data dir permissions: %w", err)
 	}
 
 	m, err := mgr.Connect()
@@ -86,11 +114,21 @@ func Install(w io.Writer) error {
 	// Stop it — and wait for Stopped — BEFORE touching binDest: that's very
 	// likely the running service's own executable, and Windows keeps a
 	// mapped-for-execution file locked, so overwriting it while the old
-	// process still has it open fails with a sharing violation.
+	// process still has it open fails with a sharing violation. Any failure
+	// here — the stop request itself, or the wait for Stopped — aborts
+	// before binDest is touched, rather than optimistically proceeding: the
+	// whole point of stopping first is that overwriting a locked binary
+	// fails ugly, not that it's merely unlikely to happen.
 	existing, openErr := m.OpenService(winServiceName)
 	if openErr == nil {
-		_, _ = existing.Control(svc.Stop)
-		waitStopped(existing, 15*time.Second)
+		if _, err := existing.Control(svc.Stop); err != nil && err != windows.ERROR_SERVICE_NOT_ACTIVE {
+			existing.Close()
+			return fmt.Errorf("stop existing service before reinstall: %w", err)
+		}
+		if err := waitStopped(existing.Query, 15*time.Second); err != nil {
+			existing.Close()
+			return fmt.Errorf("existing service did not stop cleanly, aborting reinstall (binary/service left untouched): %w", err)
+		}
 	}
 
 	if !strings.EqualFold(self, binDest) {
@@ -176,7 +214,9 @@ func Uninstall(w io.Writer) error {
 	if _, err := s.Control(svc.Stop); err != nil && err != windows.ERROR_SERVICE_NOT_ACTIVE {
 		fmt.Fprintf(w, "note: stop returned: %v (continuing)\n", err)
 	}
-	waitStopped(s, 15*time.Second)
+	if err := waitStopped(s.Query, 15*time.Second); err != nil {
+		fmt.Fprintf(w, "note: %v (continuing with delete)\n", err)
+	}
 
 	if err := s.Delete(); err != nil {
 		return fmt.Errorf("remove service: %w", err)
@@ -213,19 +253,88 @@ func Status(w io.Writer) error {
 	return nil
 }
 
-// waitStopped polls the service until it reports Stopped or the timeout
-// elapses. Delete() succeeds regardless, but giving a just-signalled Stop a
-// moment to land avoids racing the just-copied binary with a process that
-// still has it open on the next Install.
-func waitStopped(s *mgr.Service, timeout time.Duration) {
+// waitStopped polls query until it reports Stopped or timeout elapses,
+// returning an error on a genuine timeout or if query itself keeps failing —
+// callers that need to know the service actually stopped (Install, before
+// overwriting the binary) must not treat either as silent success. query is
+// normally a *mgr.Service's own Query method (a bound method value matches
+// this signature); tests inject a fake so the polling logic is verifiable
+// without a real SCM handle.
+func waitStopped(query func() (svc.Status, error), timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
+	var lastErr error
 	for time.Now().Before(deadline) {
-		st, err := s.Query()
-		if err != nil || st.State == svc.Stopped {
-			return
+		st, err := query()
+		if err != nil {
+			lastErr = err
+		} else if st.State == svc.Stopped {
+			return nil
+		} else {
+			lastErr = nil
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
+	if lastErr != nil {
+		return fmt.Errorf("querying service status: %w", lastErr)
+	}
+	return fmt.Errorf("service did not reach Stopped within %s", timeout)
+}
+
+// dirExists reports whether path already exists (any type) — used to tell a
+// freshly-created data dir from a pre-existing one, since os.MkdirAll returns
+// nil either way.
+func dirExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// conflictingScheduledTaskError is its own function so its exact wording is
+// unit-testable without a real schtasks.exe.
+func conflictingScheduledTaskError() error {
+	return fmt.Errorf(
+		"Scheduled Task %q is already installed (deploy/install-windows.ps1) — stop and remove it first "+
+			"(Stop-ScheduledTask -TaskName %q; Unregister-ScheduledTask -TaskName %q -Confirm:$false) before "+
+			"installing the native service, to avoid two copies of dockercmd running at once",
+		scheduledTaskName, scheduledTaskName, scheduledTaskName)
+}
+
+// scheduledTaskExists shells out to schtasks.exe (rather than a Task
+// Scheduler COM binding) since it's always present on Windows.
+//
+// schtasks exits non-zero for several distinct reasons — the task doesn't
+// exist, but also access denied, the Task Scheduler service being
+// unavailable, an RPC hiccup, and more — and only the first of those means
+// "no conflict". Treating every non-zero exit as "not found" (the previous
+// implementation) makes the whole guard fail OPEN: a detection error would
+// silently read as "safe to proceed" and let a real dual-instance conflict
+// through, defeating the point of checking at all. So this distinguishes
+// schtasks' own "not found" message from everything else, and surfaces
+// anything else as an error the caller must refuse to proceed on.
+func scheduledTaskExists(name string) (bool, error) {
+	cmd := exec.Command("schtasks", "/Query", "/TN", name)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		if schtasksNotFound(stderr.String()) {
+			return false, nil
+		}
+		return false, fmt.Errorf("schtasks /Query /TN %q: %w: %s", name, err, strings.TrimSpace(stderr.String()))
+	}
+	return false, err // schtasks.exe missing, PATH issue, etc.
+}
+
+// schtasksNotFound reports whether stderr is schtasks' own "no such task"
+// message, as opposed to any other failure (access denied, the Task
+// Scheduler service being unavailable, an RPC hiccup, ...). Split out so the
+// found/not-found/ambiguous-error classification is unit-testable directly
+// against captured message text, without a real schtasks.exe.
+func schtasksNotFound(stderr string) bool {
+	return strings.Contains(strings.ToLower(stderr), "cannot find the file specified")
 }
 
 // waitServiceGone polls until OpenService(name) fails (the SCM has actually

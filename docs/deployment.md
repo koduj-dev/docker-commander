@@ -203,6 +203,34 @@ rather not run as SYSTEM, or want to read exactly what gets installed without
 touching the SCM. Wrapping the exe with [NSSM](https://nssm.cc) or WinSW is
 also still an option, and no longer necessary just to get a "real" service.
 
+Pick **one** of the two — running both at once means two copies of dockercmd
+racing over the same data dir and port. Each installer refuses to proceed if
+it detects the other is already installed (checks for the SCM service `dockercmd`
+or the Scheduled Task `DockerCommander` by name), and fails **closed** if that
+check itself can't get a clear answer (permissions, an unreachable SCM/Task
+Scheduler, ...) rather than assuming "no conflict" and proceeding anyway;
+migrate by stopping and removing the one you're leaving before installing the
+other.
+
+The data dir's ACL is set explicitly on **every startup**, not just install —
+`SYSTEM` and `Administrators` get Full Control, nothing else (not the
+inherited `%ProgramData%` default, which can otherwise leave it readable by
+any local account) — since it holds the database, TLS private keys, and the
+at-rest encryption key. This applies the same way whether dockercmd is
+running as the native SCM service, under the Scheduled Task installer, or
+just in a console for testing (a non-Administrator account running it
+directly is added to the grant too, so it isn't locked out of a dir its own
+process just secured).
+
+`--install-service` additionally checks an *existing* data dir before
+reinstalling over it: if its permissions already grant access beyond
+`SYSTEM`/`Administrators`/`CREATOR OWNER`, or it's **owned** by anything other
+than `SYSTEM`/`Administrators` (an object's owner can always rewrite its own
+ACL, regardless of what that ACL currently allows), or it's a **reparse
+point** (a symlink or junction that could quietly redirect a privileged
+process's reads/writes elsewhere), install refuses to proceed rather than
+silently trusting and "fixing" it — inspect it by hand first.
+
 > **Compose/Projects disabled under systemd?** If the **Projects** page warns
 > that "the `docker compose` CLI isn't available", it's the `ProtectHome=true`
 > hardening: it makes the service user's home inaccessible, which breaks the
