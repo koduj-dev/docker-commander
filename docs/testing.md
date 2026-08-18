@@ -284,6 +284,17 @@ re-verified by reading the named lines before it is believed, let alone fixed. T
 same discipline applies in the other direction — a finding that survives
 verification is not softened because it is inconvenient.
 
+**A second, per-PR pass with a different model.** Separate from the periodic
+Claude Fable 5 sweep above, individual PRs/diffs also get a quick review from
+**ChatGPT Codex** (currently `gpt-5.6-terra medium`) before merge — a different
+model on the same diff surfaces different blind spots than either the author or
+Claude alone would catch. Its output is written to a local, gitignored
+`codex-review.md` at the repo root (refreshed per review, never committed — a
+baseline for the next look, not a record of past ones) and is subject to the
+exact same discipline as any other machine reviewer: every finding gets
+verified against the named lines before being believed, per *Treat every
+finding as a claim* above.
+
 ## Running the tests
 
 ```bash
