@@ -7,6 +7,24 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Security
+- **Session tokens in the URL query string are now accepted only on a real
+  WebSocket upgrade**, never on a plain REST request. The middleware fell
+  back to `?token=` whenever no cookie or `Authorization` header was
+  present, on every authenticated route — contrary to what its own comment
+  claimed. A token in a URL routinely ends up in access logs, browser
+  history, and proxies; anyone who obtained one that way could reuse it
+  until it expired or was revoked.
+- **Dev-mode CORS no longer reflects an arbitrary `Origin`.** `--dev` mode
+  mirrored whatever `Origin` header a request carried into
+  `Access-Control-Allow-Origin` while also setting
+  `Access-Control-Allow-Credentials: true`, letting any same-site origin
+  (e.g. another local port) read the API in the developer's session. It now
+  allows only the Vite dev server's own origins.
+- **SSH `known_hosts` fallback now matches by the actual host being
+  connected to.** It was invoked with an empty hostname and an empty
+  address, which can never match a recorded entry — a host key already
+  trusted in the operator's own `~/.ssh/known_hosts` was silently treated
+  as unknown instead of being honored (fails closed, but not as designed).
 - **Windows: the data dir gets an explicit, locked-down ACL, on every
   startup.** The dir was only ever created with a Unix mode bit, which means
   nothing on Windows — it inherited whatever `%ProgramData%`'s own ACL

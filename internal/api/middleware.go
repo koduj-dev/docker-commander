@@ -17,11 +17,22 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
+// devOrigins are the only origins devCORS trusts — the Vite dev server
+// (web/vite.config.ts pins its port to 5173), on both loopback names a
+// browser may use. Reflecting an arbitrary Origin with credentials enabled
+// would let any same-site origin (another local port) read the API in the
+// developer's session.
+var devOrigins = map[string]bool{
+	"http://localhost:5173": true,
+	"http://127.0.0.1:5173": true,
+}
+
 // devCORS permits the Vite dev server origin during development only.
 func devCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin != "" {
+		if devOrigins[origin] {
+			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
