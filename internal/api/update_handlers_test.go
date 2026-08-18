@@ -5,9 +5,29 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestApplyErrorMessage_ReadOnlyFilesystemGetsGuidance(t *testing.T) {
+	err := errors.New("rename /usr/local/bin/.dockercmd-upgrade-123 /usr/local/bin/dockercmd: read-only file system")
+	got := applyErrorMessage(err)
+	if !strings.Contains(got, err.Error()) {
+		t.Errorf("message should still contain the raw error, got %q", got)
+	}
+	if !strings.Contains(got, "ReadWritePaths") {
+		t.Errorf("a read-only-filesystem failure should point at ReadWritePaths, got %q", got)
+	}
+}
+
+func TestApplyErrorMessage_OtherErrorsAreUnchanged(t *testing.T) {
+	err := errors.New("checksum mismatch")
+	want := "update failed: checksum mismatch"
+	if got := applyErrorMessage(err); got != want {
+		t.Errorf("applyErrorMessage(%q) = %q, want %q", err, got, want)
+	}
+}
 
 func TestUpdateCheckerDisabled(t *testing.T) {
 	u := newUpdateChecker("1.2.0", false, true)
