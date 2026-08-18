@@ -150,6 +150,26 @@ feed the same model to the CLI/MCP instead of each surface re-deriving it.
   does today, and the next admin to log in sees a "you're now on vX.Y.Z —
   applied automatically on <date>" notice rather than discovering it
   silently. Off by default, same spirit as the image-update opt-in.
+- **Self-upgrade: check write permission before downloading, and offer to
+  elevate on the CLI.** `--self-upgrade` currently downloads the full release
+  asset first and only then finds out it can't write the target directory —
+  hit in practice as a bare `fatal: open /usr/local/bin/.dockercmd-upgrade-…:
+  permission denied` after a ~30 MiB download, run as a non-root user against
+  the standard installer's root-owned `/usr/local/bin`. Add a preflight
+  write-access check on the executable's directory (`internal/selfupdate`,
+  before `download()` runs) that fails fast with a clear message instead of
+  wasting the transfer. For the **CLI** path specifically (a human at a
+  terminal), go further and offer to re-exec elevated when the check fails
+  and a terminal is attached: `sudo` on Linux/macOS, the `runas` verb via
+  `ShellExecuteEx` for Windows UAC — always as an explicit prompt, never
+  silent. **Does not apply to the web UI's "Update & restart" button**: that
+  runs headless as the service process with no terminal or desktop session to
+  show a native elevation prompt to, so the permission has to already be
+  granted at install time instead (which is what `ReadWritePaths` in the
+  systemd unit — see v1.6.2's CHANGELOG entry — already does). `pkexec`/polkit
+  was considered and set aside: it's a desktop-GUI pattern, a poor fit for a
+  headless server CLI tool, and needs its own policy file to avoid a scary
+  generic "run arbitrary command as root" consent dialog.
 
 ### GitOps and Compose sources
 
