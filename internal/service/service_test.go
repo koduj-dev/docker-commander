@@ -1,8 +1,10 @@
 package service
 
 import (
+	"context"
 	"encoding/xml"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"text/template"
@@ -65,5 +67,30 @@ func TestLaunchdPlistEscapesValues(t *testing.T) {
 	// The whole document must parse as well-formed XML.
 	if err := xml.Unmarshal([]byte(got), new(struct{ XMLName xml.Name })); err != nil {
 		t.Errorf("rendered plist is not valid XML: %v", err)
+	}
+}
+
+// TestIsWindowsServiceFalseInTestBinary runs on every OS: a `go test` process
+// is never started by the Windows Service Control Manager, so IsWindowsService
+// must report false everywhere — including the real windows/svc-backed check
+// on a Windows build, not just the !windows stub.
+func TestIsWindowsServiceFalseInTestBinary(t *testing.T) {
+	if IsWindowsService() {
+		t.Error("IsWindowsService() = true in a go test binary, want false")
+	}
+}
+
+// TestRunWindowsServiceStubErrorsOnNonWindows guards the !windows stub in
+// service_notwindows.go: cmd/dockercmd calls RunWindowsService unconditionally
+// (behind an IsWindowsService() check that's always false here), so the stub
+// must fail loudly instead of silently doing nothing if it were ever reached.
+// Skipped on windows, where RunWindowsService is the real svc.Run and has
+// entirely different (blocking, SCM-dependent) behavior.
+func TestRunWindowsServiceStubErrorsOnNonWindows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("RunWindowsService is the real SCM entry point on windows, not this stub")
+	}
+	if err := RunWindowsService(func(context.Context) error { return nil }); err == nil {
+		t.Error("RunWindowsService() on a non-Windows stub returned nil error, want an error")
 	}
 }

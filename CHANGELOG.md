@@ -4,6 +4,180 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [1.6.1] — 2026-08-18
+
+### Security
+- **Session tokens in the URL query string are now accepted only on a real
+  WebSocket upgrade**, never on a plain REST request. The middleware fell
+  back to `?token=` whenever no cookie or `Authorization` header was
+  present, on every authenticated route — contrary to what its own comment
+  claimed. A token in a URL routinely ends up in access logs, browser
+  history, and proxies; anyone who obtained one that way could reuse it
+  until it expired or was revoked.
+- **Dev-mode CORS no longer reflects an arbitrary `Origin`.** `--dev` mode
+  mirrored whatever `Origin` header a request carried into
+  `Access-Control-Allow-Origin` while also setting
+  `Access-Control-Allow-Credentials: true`, letting any same-site origin
+  (e.g. another local port) read the API in the developer's session. It now
+  allows only the Vite dev server's own origins.
+- **SSH `known_hosts` fallback now matches by the actual host being
+  connected to.** It was invoked with an empty hostname and an empty
+  address, which can never match a recorded entry — a host key already
+  trusted in the operator's own `~/.ssh/known_hosts` was silently treated
+  as unknown instead of being honored (fails closed, but not as designed).
+- **Windows: the data dir gets an explicit, locked-down ACL, on every
+  startup.** The dir was only ever created with a Unix mode bit, which means
+  nothing on Windows — it inherited whatever `%ProgramData%`'s own ACL
+  happened to grant, potentially readable by any local account, for a dir
+  holding the database, TLS private keys, and the at-rest encryption key.
+  Every dockercmd startup now sets an explicit DACL (SYSTEM + Administrators,
+  Full Control, no inherited access) on the resolved data dir — not just the
+  one set up by `--install-service`, so a foreground run or the Scheduled Task
+  installer (`deploy/install-windows.ps1`) get the same protection.
+  `--install-service` additionally refuses to proceed if an *existing* dir's
+  ACL already grants access beyond that — and now also checks the dir's
+  **owner**, not just its ACL: a Windows object's owner can always rewrite
+  its own DACL regardless of what that DACL currently says, so a directory
+  someone else already owns is refused even if its ACL looks fine on paper.
+  A **reparse point** (a symlink or NTFS junction) at the data dir path is
+  refused outright too, and both the read and the write of the security
+  descriptor happen against one already-open handle rather than two
+  independent path lookups, closing the swap window a path-based
+  check-then-fix would otherwise leave open.
+- **Windows service: a failed stop no longer lets a reinstall proceed
+  anyway.** `--install-service` re-run over a running service is supposed to
+  stop it before overwriting the binary, but the stop request's own error was
+  discarded and a timeout waiting for it to actually reach Stopped was
+  treated as success. The reinstall now aborts (binary and service left
+  untouched) if the existing service doesn't confirm it stopped.
+- **Windows service: refuses to install alongside the older Scheduled Task
+  installer.** Both install methods target the same binary/data paths on
+  purpose, but neither checked whether the other was already running —
+  installing both meant two copies of dockercmd racing over the same data
+  dir and port. `--install-service` now aborts if the `DockerCommander`
+  Scheduled Task exists; `install-windows.ps1` now aborts if the `dockercmd`
+  SCM service exists. Both checks fail **closed**: an inconclusive result
+  (access denied, the Task Scheduler/SCM being unreachable, ...) aborts the
+  install rather than being read as "no conflict" and proceeding anyway —
+  the previous version treated any detection error that way.
+- **MCP whole-stack actions now cost one rate-limit unit per container, not one
+  per call.** `restart_stack`/`stop_stack`/`start_stack` charged a flat 1 unit
+  regardless of how many containers the stack actually had, while the
+  narrower `restart_stack_containers`/`stop_stack_containers` (added in the
+  same cycle) already charged per container and capped at 10 — so the
+  cheaper, unbounded path was the whole-stack tools, the opposite of the
+  intended narrowing. A 30+ container stack now costs 30+ units, same as
+  acting on that many containers any other way through MCP. The underlying
+  charge is also now atomic: a batch that doesn't fit the remaining budget is
+  refused as a whole and spends nothing, rather than partially draining the
+  bucket on a call that ultimately fails.
+
+  The action itself now runs on the exact container ids the charge was sized
+  against, not a second, independently-resolved snapshot of the stack: the
+  previous version resolved the stack's containers once to size the charge,
+  then called the ordinary `StackAction`, which resolves membership AGAIN
+  internally — a container added to the project in the gap between those two
+  resolutions (a concurrent deploy, for instance) would be acted on without
+  ever having been charged for.
+
+### Fixed
+- **A deployed project's profile selection is normalized once, consistently.**
+  `docker compose`'s own `--profile` flags were already trimmed and deduped
+  before this, but the "last deployed profiles" persisted for the UI badge and
+  the `project.deploy` audit entry kept the raw request — so
+  `[" prod ", "prod", ""]` genuinely activated one profile, `prod`, while the
+  stored/audited value could read as three different (and duplicate) strings.
+  Normalized once in the handler now, and the same slice is reused for the
+  compose command, persistence, and the audit entry.
+
+### Added
+- **MCP: `restart_stack_containers` / `stop_stack_containers`.** Restart or stop
+  a caller-chosen subset (up to 10) of one Compose stack's own containers over
+  MCP. Every container id is verified server-side to belong to the named
+  project before anything runs — a mismatched id refuses the whole call rather
+  than skipping it — and the 10-container cap keeps a single call within the
+  blast radius the existing MCP control rate limit assumes (one call ≈ one
+  container). Scoping to a project the caller already named keeps this no
+  wider in spirit than the existing whole-stack `restart_stack`/`stop_stack`
+  tools. The control rate limit now charges per container acted on, not per
+  call, so a batch of up to 10 costs up to 10 units instead of 1 — and a
+  `container_ids` list naming the same container twice is refused outright,
+  naming the duplicate, before anything runs or is charged.
+- **Bulk restart/stop for containers.** Select several containers on the
+  Containers page and restart or stop them together: a preview lists exactly
+  which containers are targeted, the app's own confirm dialog gates the action
+  (never one click), the calls run with bounded parallelism, and a
+  per-container success/failure summary follows — not just a single toast.
+  Every container acted on gets its own audit entry, success or failure, with
+  the daemon's error text on failures — a failed attempt leaves the same
+  trace a successful one does, not a silent gap in the log.
+  Reuses the existing `containers` section write permission; no new
+  permission model. Per-host RBAC scoping for bulk operations is not part of
+  this pass — see `NEXT.md`.
+- **Bulk start for containers, and bulk pull.** The bulk toolbar's Restart/Stop
+  now sits alongside **Start** (same preview/confirm/per-container-summary
+  flow, reusing `BulkContainerAction` — no new plumbing) and **Pull**, which
+  downloads the current image for every selected container without touching
+  the container itself (no restart, no recreate). Pull resolves each selected
+  container to the image it runs and pulls each **distinct** image once —
+  containers sharing a base image, even spelled differently (`nginx` vs.
+  `nginx:latest`), are not pulled redundantly — with live per-image, per-layer
+  progress streamed over one WebSocket (`/containers/bulk-pull`), the same
+  progress UI the Images page's single pull already uses. Cancelling actually
+  stops the daemon from downloading the rest of the batch, not just the
+  browser from listening; a pull that got cancelled mid-image is audited as
+  cancelled, not silently dropped.
+
+  Bulk pull takes container ids, never a raw image reference — sent as the
+  WebSocket's first message rather than in the URL, since up to 200 full
+  container ids would not reliably fit the request-line limits some reverse
+  proxies enforce. Every id is verified against the host's real container
+  list before anything is pulled, and an id that doesn't resolve refuses the
+  **whole** request rather than pulling the ones that do. It requires **both**
+  the `containers` section (to name which containers to resolve images for)
+  **and** the `images` section (the pull itself attaches a stored registry
+  credential and mutates the shared image store, the same capability
+  `/images/pull` requires `images` write for) — a role holding only one of
+  the two cannot reach it. A container whose image was untagged out from
+  under it (e.g. `docker rmi -f` while it kept running) gets a clear "no tag
+  left to pull" result instead of the daemon's confusing rejection of a
+  bogus reference.
+- **Windows native service.** `--install-service` now registers dockercmd as a
+  real Service Control Manager (SCM) service on Windows — auto-restart on
+  crash, `services.msc`/`sc query` visibility — instead of failing with SCM
+  error 1053 (a plain console exe never speaks the service protocol). The
+  Task Scheduler installer (`deploy/install-windows.ps1`) remains available as
+  a dependency-free alternative.
+- **Collapsible sidebar groups.** Click a group heading (Workloads, Storage,
+  Network, Observability, System) to fold/unfold it; state is remembered per
+  browser. A collapsed group holding the current page auto-expands, so
+  navigating there directly never hides where you are.
+- **Compose profiles: "deployed" vs "selected", and per-service state badges.**
+  Projects now persists the profiles used on a project's last successful deploy,
+  and the project editor shows them ("Deployed with: …") right next to the toggle
+  chips you use to pick profiles for the *next* deploy — the two can differ until
+  you redeploy. The compose summary also badges each service's real state, and a
+  service left out by the deployed profile set reads **"Not in active profile"**
+  rather than "Stopped" — so a compose file with several profiles doesn't read as
+  half-broken just because most of it was never selected to run.
+
+  Deploys with no profiles selected now also neutralize `COMPOSE_PROFILES` for
+  the `docker compose` subprocess: without this, an operator's own environment
+  or a project's `.env` file could activate profiles the deploy request never
+  asked for, so a genuinely-running service would be misbadged "Not in active
+  profile" — the exact bug this feature exists to fix, reintroduced by a
+  side channel. A failure to persist the deployed profile set is now also
+  logged server-side (it no longer fails the deploy itself, matching the
+  existing best-effort behavior, but it's no longer silent either).
+- **Compat matrix pins exact Engine patches, not just majors.** `docker:NN-dind`
+  always floats to whatever patch of that major is newest when pulled, so the
+  nightly compat workflow only ever proved the latest patch of each major
+  works. It now also runs a handful of exact `docker:X.Y.Z-dind` patch tags
+  (the newest published patch of the two newest majors) alongside the
+  existing major and Compose-version pins, so a specific patch regression is
+  caught by name instead of silently disappearing once the major tag moves
+  past it.
+
 ## [1.6.0] — 2026-08-07
 
 ### Security
@@ -1782,6 +1956,7 @@ Initial release: a single CGO-free Go binary with an embedded React UI.
   per-section permissions / read-only, feature flags, audit log, optional LDAP;
   secrets encrypted at rest.
 
+[1.6.1]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.1
 [1.6.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.0
 [1.5.1]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.5.1
 [1.5.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.5.0

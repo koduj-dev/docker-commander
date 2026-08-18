@@ -23,6 +23,12 @@ type Project struct {
 	// refused because we can't see what they hold. Off by default; enabling it
 	// requires the "hosts" permission and is audited.
 	AllowRemoteHostPaths bool
+	// LastDeployedProfiles is the profile list passed to the last successful
+	// `compose up` for this project — what's actually running, as opposed to
+	// whatever profiles a user has since selected for the NEXT deploy (that
+	// selection is a client-only preference; see web/src/pages/Projects.tsx).
+	// nil/empty means never successfully deployed, or deployed with no profiles.
+	LastDeployedProfiles []string
 	CreatedBy            string
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
@@ -49,7 +55,7 @@ func (s *Store) CreateProject(ctx context.Context, p *Project) (int64, error) {
 // ListProjects returns all projects ordered by name.
 func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, slug, compose_file, host_id, allow_remote_host_paths, created_by, created_at, updated_at
+		SELECT id, name, slug, compose_file, host_id, allow_remote_host_paths, last_deployed_profiles, created_by, created_at, updated_at
 		FROM projects ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -69,7 +75,7 @@ func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
 // ProjectByID looks up a project by primary key.
 func (s *Store) ProjectByID(ctx context.Context, id int64) (*Project, error) {
 	return scanProjectRow(s.db.QueryRowContext(ctx, `
-		SELECT id, name, slug, compose_file, host_id, allow_remote_host_paths, created_by, created_at, updated_at
+		SELECT id, name, slug, compose_file, host_id, allow_remote_host_paths, last_deployed_profiles, created_by, created_at, updated_at
 		FROM projects WHERE id = ?`, id))
 }
 
@@ -89,6 +95,17 @@ func (s *Store) TouchProject(ctx context.Context, id int64) error {
 	return err
 }
 
+// SetLastDeployedProfiles records the profiles used on a project's last
+// successful `compose up`, so the UI can tell "currently deployed" apart from
+// whatever's merely selected for the next deploy. Called only after a deploy
+// actually succeeds — a failed deploy must not overwrite what's still running.
+func (s *Store) SetLastDeployedProfiles(ctx context.Context, id int64, profiles []string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE projects SET last_deployed_profiles = ?, updated_at = ? WHERE id = ?`,
+		marshalSections(profiles), time.Now().UTC().Format(time.RFC3339), id)
+	return err
+}
+
 // DeleteProject removes the project row (the caller removes the folder).
 func (s *Store) DeleteProject(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM projects WHERE id = ?`, id)
@@ -97,9 +114,9 @@ func (s *Store) DeleteProject(ctx context.Context, id int64) error {
 
 func scanProjectRow(row scanner) (*Project, error) {
 	var p Project
-	var createdAt, updatedAt string
+	var createdAt, updatedAt, lastDeployedProfiles string
 	var allowRemote int
-	err := row.Scan(&p.ID, &p.Name, &p.Slug, &p.ComposeFile, &p.HostID, &allowRemote, &p.CreatedBy, &createdAt, &updatedAt)
+	err := row.Scan(&p.ID, &p.Name, &p.Slug, &p.ComposeFile, &p.HostID, &allowRemote, &lastDeployedProfiles, &p.CreatedBy, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -107,6 +124,7 @@ func scanProjectRow(row scanner) (*Project, error) {
 		return nil, err
 	}
 	p.AllowRemoteHostPaths = allowRemote != 0
+	p.LastDeployedProfiles = unmarshalSections(lastDeployedProfiles)
 	p.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 	p.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
 	return &p, nil

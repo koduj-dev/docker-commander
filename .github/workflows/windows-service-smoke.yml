@@ -1,0 +1,319 @@
+name: Windows service smoke test
+
+# internal/service/service_windows.go was written and cross-compiled entirely
+# on a Linux machine — there was no Windows host available to actually run
+# the SCM install/start/stop/uninstall path it implements. `go build` and
+# `go vet` under GOOS=windows prove the code compiles; they prove nothing
+# about whether the Service Control Manager actually accepts the service,
+# starts it, and can cleanly stop it, since that only happens inside a real
+# svchost.exe/services.exe on a real Windows kernel.
+#
+# This workflow closes that gap by doing the real thing on a windows-latest
+# GitHub-hosted runner: build the Windows binary, `--install-service`,
+# confirm the SCM shows it registered, start it and hit its own /healthz
+# over HTTP to prove the server actually came up (not just "the process
+# didn't crash"), stop it and confirm no orphaned process, then
+# `--uninstall-service` and confirm the SCM no longer knows about it.
+#
+# It runs on every push touching internal/service/** (where a regression
+# here would land) and on demand, rather than on every PR, since it doesn't
+# need to gate unrelated changes and a windows-latest runner is slower/pricier
+# than the Linux CI matrix.
+
+on:
+  workflow_dispatch: {}
+  # main and the active release/vX.Y.Z branch (see git-workflow skill) — a PR
+  # merge into either lands as a merge commit that the PR's own pull_request
+  # run never re-validates, so a regression that only shows up on the merged
+  # result (not the PR branch alone) would otherwise ship unnoticed.
+  push:
+    branches: [main, "release/v*"]
+    paths:
+      - "internal/service/**"
+      - "cmd/dockercmd/main.go"
+      - ".github/workflows/windows-service-smoke.yml"
+  pull_request:
+    paths:
+      - "internal/service/**"
+      - "cmd/dockercmd/main.go"
+      - ".github/workflows/windows-service-smoke.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v6
+        with:
+          go-version: "1.25"
+          cache: true
+
+      # web/dist is a committed build artifact (see CI's own "web/dist matches
+      # web/src" gate), so a plain `go build` embeds it without needing Node —
+      # no `make ui` step required here.
+      - name: Build dockercmd.exe
+        run: |
+          $env:CGO_ENABLED = "0"
+          go build -o dockercmd.exe ./cmd/dockercmd
+          if ($LASTEXITCODE -ne 0) { throw "go build failed" }
+
+      # GitHub's windows-latest runner executes job steps as an administrator
+      # with UAC token filtering disabled, so no explicit "Run as admin" is
+      # needed — but Install()/Uninstall() both fail closed on a non-elevated
+      # token (isElevated() in service_windows.go), so confirm that
+      # assumption explicitly instead of finding out via a confusing failure
+      # three steps down. `net session` only succeeds when elevated.
+      - name: Confirm this runner is elevated
+        run: |
+          net session > $null 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "runner is not elevated — install-service would fail closed" }
+          Write-Host "confirmed: running elevated"
+
+      # FUP-SEC-001: a reparse point (junction/symlink) at the data dir path
+      # must be refused outright — CreateFile with FILE_FLAG_OPEN_REPARSE_POINT
+      # (internal/config/securedatadir_windows.go) opens the reparse point
+      # itself rather than being silently redirected through it. Run before
+      # the real install so the data dir starts from a clean slate.
+      - name: Verify a reparse-point data dir is refused
+        run: |
+          $dataDir = "$env:ProgramData\docker-commander\data"
+          $realTarget = "$env:ProgramData\docker-commander\data-real-target"
+          New-Item -ItemType Directory -Force -Path (Split-Path $dataDir), $realTarget | Out-Null
+          if (Test-Path $dataDir) { throw "test setup: $dataDir already exists, expected a clean runner" }
+          cmd /c mklink /J "$dataDir" "$realTarget" | Out-Null
+          .\dockercmd.exe --install-service
+          # dockercmd.exe is EXPECTED to exit non-zero — see the "capture-then-
+          # clear $LASTEXITCODE" note on the Scheduled Task conflict check below.
+          $installExit = $LASTEXITCODE
+          $global:LASTEXITCODE = 0
+          if ($installExit -eq 0) { throw "--install-service succeeded against a reparse-point data dir" }
+          $svc = Get-Service -Name dockercmd -ErrorAction SilentlyContinue
+          if ($svc) { throw "the SCM service was registered despite a reparse-point data dir" }
+          Write-Host "confirmed: install-service refused a reparse-point data dir"
+
+      - name: Remove the reparse-point data dir
+        if: always()
+        run: |
+          # rmdir on a junction removes the LINK, not the target's contents —
+          # Remove-Item -Recurse is documented to sometimes follow a
+          # directory reparse point instead of just unlinking it, which would
+          # delete data-real-target's contents rather than the junction.
+          cmd /c rmdir "$env:ProgramData\docker-commander\data" 2>$null
+          Remove-Item -Recurse -Force "$env:ProgramData\docker-commander\data-real-target" -ErrorAction SilentlyContinue
+
+      # FUP-SEC-001's other half: a pre-existing data dir owned by anyone
+      # other than SYSTEM/Administrators must be refused too, independently
+      # of what its DACL says — a Windows object's owner can always rewrite
+      # its own DACL (implicit WRITE_DAC), so a dir "helpfully" pre-created
+      # (or planted) by some other local account, even with an
+      # innocuous-looking DACL, must not be silently adopted and re-secured
+      # as if it had always been fine.
+      - name: Verify a foreign-owned data dir is refused
+        run: |
+          $dataDir = "$env:ProgramData\docker-commander\data"
+          New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+          icacls $dataDir /setowner "BUILTIN\Users" | Out-Null
+          Write-Host (Get-Acl $dataDir).Owner
+          .\dockercmd.exe --install-service
+          $installExit = $LASTEXITCODE
+          $global:LASTEXITCODE = 0
+          if ($installExit -eq 0) { throw "--install-service succeeded against a data dir it doesn't own" }
+          $svc = Get-Service -Name dockercmd -ErrorAction SilentlyContinue
+          if ($svc) { throw "the SCM service was registered despite a foreign-owned data dir" }
+          Write-Host "confirmed: install-service refused a foreign-owned data dir"
+
+      - name: Remove the foreign-owned data dir
+        if: always()
+        run: |
+          $dataDir = "$env:ProgramData\docker-commander\data"
+          if (Test-Path $dataDir) {
+            takeown /F $dataDir /R /D Y | Out-Null
+            icacls $dataDir /reset /T | Out-Null
+            Remove-Item -Recurse -Force $dataDir -ErrorAction SilentlyContinue
+          }
+
+      - name: Install the service
+        run: |
+          .\dockercmd.exe --install-service
+          if ($LASTEXITCODE -ne 0) { throw "--install-service failed" }
+
+      # Registered + startable: the SCM knows about it and Install() already
+      # started it (SetRecoveryActions/Start happen inside Install), so this
+      # also exercises the "started successfully" half of "registered and can
+      # be started" without a redundant manual Start-Service.
+      - name: Verify the SCM sees it registered and running
+        run: |
+          sc.exe query dockercmd
+          $svc = Get-Service -Name dockercmd -ErrorAction Stop
+          Write-Host "status: $($svc.Status), starttype: $($svc.StartType)"
+          if ($svc.Status -ne 'Running') { throw "service did not reach Running after install (status: $($svc.Status))" }
+
+      # Confirm it isn't just "Running" per the SCM but actually up: an
+      # unhandled panic in the goroutine Execute() spawns would still leave
+      # svc.Running reported right up until the process dies, so hit the same
+      # unauthenticated /healthz probe LB/uptime checks use in production.
+      - name: Confirm the server responds on its health endpoint
+        run: |
+          $ok = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            try {
+              $r = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8470/healthz' -TimeoutSec 2
+              if ($r.StatusCode -eq 200 -and $r.Content -match '"status"\s*:\s*"ok"') { $ok = $true; break }
+            } catch {}
+            Start-Sleep -Seconds 1
+          }
+          if (-not $ok) { throw "dockercmd never answered /healthz as healthy" }
+          Write-Host "healthz OK"
+
+      - name: dockercmd --service-status agrees
+        run: .\dockercmd.exe --service-status
+
+      # DC-SEC-001/FUP-SEC-001: the data dir must grant FullControl to SYSTEM
+      # and Administrators (and, best-effort, whichever specific account
+      # actually ran this — SecureDataDirACL adds that third principal so a
+      # non-Administrators foreground user isn't locked out of a dir their
+      # own process just secured; see FUP-COR-001) — no inherited access for
+      # generic Users/Everyone/Authenticated Users, which is what
+      # %ProgramData%'s default ACL would otherwise leave in place, and the
+      # owner must be Administrators, not whoever happened to run install.
+      # This is the one thing that can only be proven against a real NTFS
+      # security subsystem, not by unit tests.
+      - name: Verify the data dir's ACL is locked down
+        run: |
+          $dataDir = "$env:ProgramData\docker-commander\data"
+          $acl = icacls $dataDir
+          Write-Host ($acl -join "`n")
+          $joined = $acl -join "`n"
+          if ($joined -notmatch 'NT AUTHORITY\\SYSTEM:\(.*F\)') { throw "SYSTEM does not have FullControl on $dataDir" }
+          if ($joined -notmatch 'BUILTIN\\Administrators:\(.*F\)') { throw "Administrators does not have FullControl on $dataDir" }
+          foreach ($forbidden in 'BUILTIN\\Users', 'Everyone', 'NT AUTHORITY\\Authenticated Users') {
+            if ($joined -match $forbidden) { throw "$forbidden has access to $dataDir — the DACL is not locked down" }
+          }
+          $owner = (Get-Acl $dataDir).Owner
+          if ($owner -ne 'BUILTIN\Administrators') { throw "data dir owner is '$owner', want BUILTIN\Administrators" }
+          Write-Host "confirmed: SYSTEM + Administrators have access, no generic group does, owner is Administrators"
+
+      # Stop via the SCM (not the exe): this is what services.msc / a reboot
+      # actually does, and it's the path that exercises windowsHandler.Execute's
+      # Stop control-request handling end-to-end (unit tests only drive that
+      # over fake channels).
+      - name: Stop the service and confirm it stops cleanly
+        run: |
+          Stop-Service -Name dockercmd -ErrorAction Stop
+          $svc = Get-Service -Name dockercmd
+          if ($svc.Status -ne 'Stopped') { throw "service did not reach Stopped (status: $($svc.Status))" }
+          # No orphaned process: Execute() must have actually returned, not
+          # just told the SCM it did while the goroutine kept running.
+          $orphan = Get-Process -Name dockercmd -ErrorAction SilentlyContinue
+          if ($orphan) { throw "dockercmd process($($orphan.Id)) still alive after Stop" }
+          # Request outside the try/catch's own control flow: a request that
+          # succeeds (the failure case we're checking for) must not be able
+          # to land in the generic `catch` below and get logged as success —
+          # `throw` inside a `try` is itself catchable, so asserting failure
+          # from inside the try block that's supposed to prove absence would
+          # silently swallow its own assertion.
+          $stillUp = $false
+          try {
+            Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8470/healthz' -TimeoutSec 2 | Out-Null
+            $stillUp = $true
+          } catch {
+            # Connection refused/reset — the server is actually gone, which is
+            # what we want. Any other failure shape would also mean "not
+            # answering", so no need to distinguish exception types here.
+          }
+          if ($stillUp) { throw "server still answering /healthz after Stop" }
+          Write-Host "confirmed: no longer listening"
+
+      # Start again via the SCM, separately from Install()'s own auto-start,
+      # to exercise a plain Start-Service against an already-registered
+      # service (the path an admin uses from services.msc after a stop).
+      - name: Start it again and confirm it comes back up
+        run: |
+          Start-Service -Name dockercmd -ErrorAction Stop
+          $svc = Get-Service -Name dockercmd
+          if ($svc.Status -ne 'Running') { throw "service did not reach Running on restart (status: $($svc.Status))" }
+          $ok = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            try {
+              $r = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8470/healthz' -TimeoutSec 2
+              if ($r.StatusCode -eq 200) { $ok = $true; break }
+            } catch {}
+            Start-Sleep -Seconds 1
+          }
+          if (-not $ok) { throw "dockercmd never answered /healthz after restart" }
+
+      # DC-COR-004: the native installer must refuse to run alongside the
+      # older Scheduled Task installer rather than silently registering a
+      # second copy. Uninstall the SCM service first (native vs. native
+      # reinstall is already covered by "Install the service" itself running
+      # a second time in effect via the reused runner), register a dummy
+      # 'DockerCommander' task, and confirm --install-service now aborts and
+      # does NOT create the SCM service.
+      - name: Uninstall before the dual-install check
+        run: |
+          .\dockercmd.exe --uninstall-service
+          if ($LASTEXITCODE -ne 0) { throw "--uninstall-service failed" }
+
+      - name: Register a conflicting Scheduled Task and confirm install refuses it
+        run: |
+          schtasks /Create /TN DockerCommander /TR "cmd /c exit" /SC ONSTART /RU SYSTEM /F | Out-Null
+          .\dockercmd.exe --install-service
+          # dockercmd.exe is EXPECTED to exit non-zero here — that's the thing
+          # under test. $LASTEXITCODE from it would otherwise linger (Get-Service/
+          # Write-Host below don't reset it, being cmdlets not native exes) and
+          # fail this step even after the assertions below all pass, since the
+          # GitHub Actions pwsh runner checks $LASTEXITCODE after the script
+          # exits, not just whether a `throw` was raised. Capture-then-clear it.
+          $installExit = $LASTEXITCODE
+          $global:LASTEXITCODE = 0
+          if ($installExit -eq 0) { throw "--install-service succeeded despite a conflicting Scheduled Task" }
+          $svc = Get-Service -Name dockercmd -ErrorAction SilentlyContinue
+          if ($svc) { throw "the SCM service was registered even though install should have aborted" }
+          Write-Host "confirmed: install-service refused to run alongside the Scheduled Task"
+
+      - name: Remove the dummy Scheduled Task
+        if: always()
+        run: |
+          schtasks /Delete /TN DockerCommander /F 2>$null
+          $global:LASTEXITCODE = 0 # best-effort cleanup; don't fail the job if it's already gone
+
+      # Re-install for real now that the conflicting task is gone, so the
+      # final uninstall step below (and its "confirm the SCM forgot it"
+      # assertion) still exercises a genuinely-installed service.
+      - name: Reinstall the service for the final uninstall check
+        run: |
+          .\dockercmd.exe --install-service
+          if ($LASTEXITCODE -ne 0) { throw "--install-service failed on reinstall" }
+
+      # Uninstall() stops (if running) + deletes the SCM entry itself, so this
+      # also covers the stop-from-uninstall path, not just delete.
+      - name: Uninstall the service and confirm the SCM forgot it
+        run: |
+          .\dockercmd.exe --uninstall-service
+          if ($LASTEXITCODE -ne 0) { throw "--uninstall-service failed" }
+          $gone = Get-Service -Name dockercmd -ErrorAction SilentlyContinue
+          if ($gone) { throw "service still present after uninstall (status: $($gone.Status))" }
+          $orphan = Get-Process -Name dockercmd -ErrorAction SilentlyContinue
+          if ($orphan) { throw "dockercmd process($($orphan.Id)) still alive after uninstall" }
+          Write-Host "confirmed: service removed, no orphaned process"
+
+      # Belt-and-suspenders teardown: run even if an earlier step threw, so a
+      # failed run doesn't leave a registered service or a live process behind
+      # on the runner (which is thrown away anyway, but fail loudly not silently).
+      - name: Teardown
+        if: always()
+        run: |
+          Stop-Service -Name dockercmd -ErrorAction SilentlyContinue
+          $svc = Get-Service -Name dockercmd -ErrorAction SilentlyContinue
+          if ($svc) {
+            sc.exe delete dockercmd | Out-Null
+          }
+          Get-Process -Name dockercmd -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue

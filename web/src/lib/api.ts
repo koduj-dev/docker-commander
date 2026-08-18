@@ -13,6 +13,7 @@ import type {
   ManagedUser,
   ContainerDetail,
   ContainerSummary,
+  BulkActionResponse,
   CreateSpec,
   DiffEntry,
   FileEntry,
@@ -296,6 +297,18 @@ export const api = {
   container: (id: string) => req<ContainerDetail>("GET", `/api/containers/${id}${hostParam()}`),
   containerAction: (id: string, action: string) =>
     req<{ ok: boolean }>("POST", `/api/containers/${id}/${action}${hostParam()}`),
+  // restart/stop/start only — see internal/api/docker_handlers.go's bulkContainerActions.
+  bulkContainerAction: (ids: string[], action: "restart" | "stop" | "start") =>
+    req<BulkActionResponse>("POST", `/api/containers/bulk-action${hostParam()}`, { ids, action }),
+  // Returns the WebSocket URL for handleBulkPullImages — the caller opens it
+  // directly (see PullPanel in Images.tsx for the same pattern with a single
+  // ref) and sends {ids} as its first message once open. Ids travel in that
+  // first message, not the URL: up to 200 full container ids would not
+  // reliably fit in the request line/headers many reverse proxies cap.
+  bulkPullImagesUrl: () => {
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    return `${proto}://${location.host}/api/containers/bulk-pull${hostParam("?")}`;
+  },
   containerDiff: (id: string) => req<DiffEntry[]>("GET", `/api/containers/${id}/diff${hostParam()}`),
   containerTop: (id: string) => req<TopResult>("GET", `/api/containers/${id}/top${hostParam()}`),
 

@@ -483,6 +483,43 @@ func TestPentestSession_PasswordChangeInvalidatesIssuedTokens(t *testing.T) {
 	}
 }
 
+// PENTEST/regression for CR-001: a session token in the query string must be
+// accepted only on a real WebSocket upgrade, never on a plain REST request —
+// otherwise the token leaks into access logs, browser history and proxies.
+func TestPentestSession_QueryTokenRejectedOnPlainRESTRequest(t *testing.T) {
+	svc, ctx := newService(t)
+	svc.Setup(ctx, "admin", "correcthorse123")
+	res, err := svc.Login(ctx, "ip", "admin", "correcthorse123", false, SessionInfo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mw := NewMiddleware(svc.tokens, epochStore{svc})
+	reached := false
+	h := mw.RequireSession(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { reached = true }))
+
+	r := httptest.NewRequest("GET", "/api/users?token="+res.Token, nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if reached {
+		t.Error("SECURITY: a plain REST request was authenticated via a query-string token")
+	}
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("want 401, got %d", w.Code)
+	}
+
+	// The same token, on a request that actually looks like a WebSocket
+	// upgrade, must still work — that's the one legitimate use.
+	reached = false
+	r = httptest.NewRequest("GET", "/api/ws?token="+res.Token, nil)
+	r.Header.Set("Upgrade", "websocket")
+	r.Header.Set("Connection", "Upgrade")
+	h.ServeHTTP(httptest.NewRecorder(), r)
+	if !reached {
+		t.Error("a query token on a genuine WebSocket upgrade should still be accepted")
+	}
+}
+
 // PENTEST: deleting an account must stop its tokens too, including on routes
 // that carry no section and therefore never reload the user.
 func TestPentestSession_DeletedAccountsTokenIsRefused(t *testing.T) {

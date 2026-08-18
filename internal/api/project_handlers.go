@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -71,16 +72,27 @@ type projectJSON struct {
 	// deploy path can explain why external binds were allowed through.
 	AllowRemoteHostPaths bool   `json:"allowRemoteHostPaths"`
 	HostName             string `json:"hostName,omitempty"` // resolved label; "" = local
-	CreatedBy            string `json:"createdBy"`
-	CreatedAt            string `json:"createdAt"`
-	UpdatedAt            string `json:"updatedAt"`
+	// LastDeployedProfiles is what's ACTUALLY running (the profiles used on the
+	// last successful deploy), distinct from whatever the UI has selected for
+	// the next deploy (a client-only preference — see Projects.tsx). Always an
+	// array (never omitted) so the frontend can tell "never deployed"/"deployed
+	// with no profiles" (empty array) apart from a field that's simply missing.
+	LastDeployedProfiles []string `json:"lastDeployedProfiles"`
+	CreatedBy            string   `json:"createdBy"`
+	CreatedAt            string   `json:"createdAt"`
+	UpdatedAt            string   `json:"updatedAt"`
 }
 
 func toProjectJSON(p store.Project, hostName string) projectJSON {
+	profiles := p.LastDeployedProfiles
+	if profiles == nil {
+		profiles = []string{}
+	}
 	return projectJSON{
 		ID: p.ID, Name: p.Name, Slug: p.Slug, ComposeFile: p.ComposeFile,
 		HostID: p.HostID, HostName: hostName,
 		AllowRemoteHostPaths: p.AllowRemoteHostPaths,
+		LastDeployedProfiles: profiles,
 		CreatedBy:            p.CreatedBy,
 		CreatedAt:            p.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:            p.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -814,6 +826,12 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 		Build *bool `json:"build"`
 	}
 	_ = decodeJSON(r, &body) // body is optional (empty → no profiles, rebuild)
+	// Normalized ONCE, here, and reused for the compose command, persistence
+	// AND the audit entry below — so all three agree on what was actually
+	// selected instead of the compose command silently trimming/deduping its
+	// own copy while the stored/audited value kept the raw (and possibly
+	// misleading) input.
+	body.Profiles = docker.NormalizeProfiles(body.Profiles)
 	build := body.Build == nil || *body.Build
 	dir := s.projectRoot(p.ID)
 	env, files, note, cleanup, err := s.projectDeployEnv(r.Context(), p, dir)
@@ -826,6 +844,18 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "output": out})
 		return
+	}
+	// Persist what was actually deployed with — a failed deploy above returns
+	// before this, so "last deployed profiles" never advances past a profile set
+	// that isn't actually running. Best-effort like the audit call below: the
+	// deploy itself already succeeded, so a write hiccup here shouldn't turn
+	// into a user-facing error. But silent isn't the same as invisible — a
+	// failure here leaves the UI showing a stale/wrong "Deployed with" badge, so
+	// log it (matching how other best-effort store writes, e.g. monitor's
+	// InsertAlertEvent, surface a non-fatal error) even though the response
+	// still reports success.
+	if err := s.store.SetLastDeployedProfiles(r.Context(), p.ID, body.Profiles); err != nil {
+		log.Printf("project deploy: persist last deployed profiles for %q: %v", p.Slug, err)
 	}
 	s.audit(r, "project.deploy", p.Slug, strings.Join(body.Profiles, ","))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out, "note": note})

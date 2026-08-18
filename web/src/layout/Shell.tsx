@@ -1,6 +1,6 @@
 import { Link, NavLink, useNavigate, useLocation, useNavigationType } from "react-router-dom";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Activity, Bell, Blocks, Boxes, Container, Database, FolderGit2, KeyRound, Layers, LayoutDashboard, LayoutTemplate, Network, Plug, ScrollText, Server, Settings, Share2, Terminal, Users, LogOut, CircleUser, ArrowUpCircle, ExternalLink, X, Loader2 } from "lucide-react";
+import { Activity, Bell, Blocks, Boxes, ChevronDown, Container, Database, FolderGit2, KeyRound, Layers, LayoutDashboard, LayoutTemplate, Network, Plug, ScrollText, Server, Settings, Share2, Terminal, Users, LogOut, CircleUser, ArrowUpCircle, ExternalLink, X, Loader2 } from "lucide-react";
 import clsx from "clsx";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../lib/api";
@@ -9,6 +9,7 @@ import { useToasts, type ToastTone } from "../components/Toasts";
 import type { Host, UpdateStatus } from "../lib/types";
 import { getHostId, setHostId } from "../lib/host";
 import { getPref, setPref } from "../lib/prefs";
+import { getCollapsedGroups, setGroupCollapsed } from "../lib/sidebarGroups";
 import { useDocumentTitle } from "../lib/title";
 import { useDialogs } from "../components/Dialog";
 
@@ -64,6 +65,14 @@ const navGroups: { title: string; items: NavItem[] }[] = [
     ],
   },
 ];
+
+// pathMatches tells whether a nav item is "active" for a given pathname, using
+// the same rule as NavLink's `end` prop: an `end` item must match exactly,
+// others also match any sub-path (so /containers/:id keeps Containers active).
+function pathMatches(pathname: string, item: NavItem): boolean {
+  if (item.end) return pathname === item.to;
+  return pathname === item.to || pathname.startsWith(`${item.to}/`);
+}
 
 // loadHosts memoises the host list so the switcher and the per-page badge don't
 // each refetch it. A host change reloads the page, which clears this cache.
@@ -188,10 +197,23 @@ function useScrollRestoration(ref: React.RefObject<HTMLElement | null>) {
 export function Shell({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [unread, setUnread] = useState(0);
   const toasts = useToasts();
   const mainRef = useRef<HTMLElement>(null);
   useScrollRestoration(mainRef);
+
+  // Collapsed sidebar groups, persisted in localStorage (see lib/sidebarGroups).
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => getCollapsedGroups());
+  const toggleGroup = (title: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(title)) next.delete(title);
+      else next.add(title);
+      setGroupCollapsed(title, next.has(title));
+      return next;
+    });
+  };
 
   // One shared poll drives the badge, the toasts and the Alerts table, so a
   // toast can never lag behind the row it is announcing.
@@ -226,12 +248,25 @@ export function Shell({ children }: { children: ReactNode }) {
             const allowed = new Set(user?.sections ?? []);
             const items = group.items.filter((n) => (n.adminOnly ? isAdmin : !n.section || allowed.has(n.section)));
             if (items.length === 0) return null;
+            // A group containing the active route always shows it, even if the
+            // group is otherwise collapsed — so navigating there directly (or
+            // via a deep link) never hides where you are.
+            const hasActiveItem = items.some((n) => pathMatches(location.pathname, n));
+            const isCollapsed = group.title !== "" && collapsedGroups.has(group.title) && !hasActiveItem;
             return (
             <div key={gi} className="space-y-1">
               {group.title && (
-                <div className="px-3 pt-2 pb-0.5 text-[10px] uppercase tracking-wider text-muted/60 font-semibold">{group.title}</div>
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(group.title)}
+                  aria-expanded={!isCollapsed}
+                  className="w-full flex items-center gap-1 px-3 pt-2 pb-0.5 text-[10px] uppercase tracking-wider text-muted/60 font-semibold hover:text-muted transition-colors"
+                >
+                  <ChevronDown className={clsx("h-3 w-3 shrink-0 transition-transform", isCollapsed && "-rotate-90")} />
+                  <span className="flex-1 text-left">{group.title}</span>
+                </button>
               )}
-              {items.map((n) => (
+              {!isCollapsed && items.map((n) => (
                 <NavLink
                   key={n.to}
                   to={n.to}

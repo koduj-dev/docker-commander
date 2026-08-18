@@ -153,6 +153,19 @@ export interface ContainerSummary {
   labels: Record<string, string> | null;
 }
 
+// One container's outcome within a bulk restart/stop request.
+export interface BulkActionResult {
+  id: string;
+  ok: boolean;
+  error?: string;
+}
+
+export interface BulkActionResponse {
+  results: BulkActionResult[];
+  succeeded: number;
+  failed: number;
+}
+
 export interface MountInfo {
   type: string;
   source: string;
@@ -243,6 +256,29 @@ export interface PullProgress {
   total?: number;
   error?: string;
   done?: boolean;
+}
+
+// One message from the /containers/bulk-pull WebSocket — see bulkPullFrame in
+// internal/api/docker_handlers.go. Frames name which image (ref) they're
+// about, since more than one image pulls over a single connection.
+export interface BulkPullFrame {
+  ref: string;
+  index?: number;
+  count?: number;
+  started?: boolean;
+  progress?: PullProgress;
+  refDone?: boolean;
+  ok?: boolean;
+  error?: string;
+  allDone?: boolean;
+  results?: BulkPullResult[];
+}
+
+export interface BulkPullResult {
+  ref: string;
+  ok: boolean;
+  error?: string;
+  containerIds: string[];
 }
 
 export interface FileEntry {
@@ -410,6 +446,13 @@ export interface Project {
    * needs write access to the "hosts" section.
    */
   allowRemoteHostPaths?: boolean;
+  /**
+   * Profiles used on the last successful `compose up` for this project — what's
+   * ACTUALLY running. Distinct from whatever's selected client-side for the
+   * NEXT deploy (see `projects.profiles.<slug>` in prefs). Always an array;
+   * empty means never deployed, or deployed with no profiles.
+   */
+  lastDeployedProfiles: string[];
   createdBy: string;
   createdAt: string;
   updatedAt: string;

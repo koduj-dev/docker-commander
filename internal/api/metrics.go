@@ -69,6 +69,11 @@ func (s *Server) metricsAuthorized(r *http.Request) bool {
 	if h := r.Header.Get("Authorization"); h == "Bearer "+s.metricsToken {
 		return true
 	}
+	// The query-string form exists for scrapers (Prometheus) that can't easily
+	// set an Authorization header, and risks the token leaking into access
+	// logs/proxies. It is a scrape-only credential, distinct from and scoped
+	// far narrower than a session token — prefer the header form, or front
+	// this endpoint with a proxy that strips the query string from its logs.
 	return r.URL.Query().Get("token") == s.metricsToken
 }
 

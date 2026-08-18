@@ -1,4 +1,4 @@
-//go:build !linux && !darwin
+//go:build !linux && !darwin && !windows
 
 package service
 
@@ -7,9 +7,8 @@ import (
 	"io"
 )
 
-// errUnsupported explains that self-install isn't wired up for this OS yet.
-var errUnsupported = errors.New("`--install-service` is only supported on Linux and macOS; " +
-	"on Windows use deploy/install-windows.ps1 (Scheduled Task)")
+// errUnsupported explains that self-install isn't wired up for this OS.
+var errUnsupported = errors.New("`--install-service` is only supported on Linux, macOS and Windows")
 
 func Install(io.Writer) error   { return errUnsupported }
 func Uninstall(io.Writer) error { return errUnsupported }

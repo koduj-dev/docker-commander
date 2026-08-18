@@ -24,6 +24,7 @@ export function stateColor(state: string): string {
     case "running":
       return "text-ok";
     case "paused":
+    case "partial":
       return "text-warn";
     case "exited":
     case "dead":

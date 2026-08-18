@@ -3,12 +3,13 @@
   Install Docker Commander to run in the background on Windows.
 
 .DESCRIPTION
-  dockercmd is a plain console program, not a native Windows service (it doesn't
-  implement the Service Control Manager protocol), so `sc.exe create` / New-Service
-  would fail with error 1053 ("did not respond in time"). Instead we register a
-  Scheduled Task that starts it at boot and restarts it on failure — no extra
-  dependencies. For a "real" Windows service, wrap the exe with NSSM (https://nssm.cc)
-  or WinSW; this script is the dependency-free option.
+  Registers a Scheduled Task that starts dockercmd at boot and restarts it on
+  failure — no extra dependencies, and no SYSTEM-owned Service Control Manager
+  entry. For a native SCM service instead (auto-restart via SCM recovery
+  actions, `sc query`/services.msc visibility), run
+  `dockercmd.exe --install-service` from an elevated prompt — see
+  docs/deployment.md. Wrapping the exe with NSSM (https://nssm.cc) or WinSW is
+  also still an option.
 
 .PARAMETER BinPath
   Path to dockercmd.exe (default: .\dockercmd.exe, then .\dockercmd-windows-amd64.exe).
@@ -37,6 +38,30 @@ $DataDir = "$env:ProgramData\docker-commander\data"
 $admin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
   ).IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
 if (-not $admin) { throw "Run this from an elevated (Administrator) PowerShell." }
+
+# --- check for the native SCM service ----------------------------------------
+# 'dockercmd' must match winServiceName in internal/service/service_windows.go
+# — the native installer this Scheduled Task installer exists alongside.
+#
+# Fail CLOSED on an inconclusive check: -ErrorAction SilentlyContinue would
+# swallow any Get-Service failure (not just "no such service") and let
+# install proceed as if it had come back clean, defeating the point of
+# checking at all. ServiceCommandException with FQEID
+# NoServiceFoundForGivenName is specifically "genuinely doesn't exist" —
+# only that one is treated as "no conflict".
+$existingSvc = $null
+try {
+  $existingSvc = Get-Service -Name 'dockercmd' -ErrorAction Stop
+} catch {
+  if ($_.FullyQualifiedErrorId -notmatch '^NoServiceFoundForGivenName') {
+    throw "could not check whether the native 'dockercmd' service is already installed: $_"
+  }
+}
+if ($existingSvc) {
+  throw "The native Windows service 'dockercmd' is already installed (dockercmd.exe --install-service). " +
+        "Stop and remove it first (Stop-Service dockercmd; sc.exe delete dockercmd) before installing " +
+        "the Scheduled Task, to avoid two copies of dockercmd running at once."
+}
 
 # --- locate the binary -------------------------------------------------------
 if (-not $BinPath) {

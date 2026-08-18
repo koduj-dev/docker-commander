@@ -182,6 +182,7 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/containers/{id}/update", s.handleUpdateContainer)
 			r.Post("/containers/{id}/commit", s.handleCommitContainer)
 			r.Post("/containers/{id}/probe", s.handleProbePorts)
+			r.Post("/containers/bulk-action", s.handleBulkContainerAction)
 			r.Post("/containers/{id}/{action}", s.handleContainerAction)
 
 			// Compose stacks (grouped by the compose project label).
@@ -331,6 +332,9 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/ws", s.handleWebSocket)
 			// WebSocket for an interactive container shell (exec TTY).
 			r.Get("/containers/{id}/exec", s.handleExec)
+			// WebSocket streaming bulk image pull for a container selection —
+			// resolves ids to images itself, so it takes container ids, not refs.
+			r.Get("/containers/bulk-pull", s.handleBulkPullImages)
 			// WebSocket streaming image pull / push progress.
 			r.Get("/images/pull", s.handlePullImage)
 			r.Get("/images/push", s.handlePushImage)

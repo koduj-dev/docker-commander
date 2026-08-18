@@ -62,6 +62,22 @@ every guard and the fixture traps that come with a real Docker daemon.
   Engine 24 reported a container as `running` for ~250 ms while `inspect` already
   said `exited`. The app polls, so it is only a problem for tests that assume
   instantaneous consistency.
+- **`COMPOSE_PROFILES` has three sources, and they don't merge the way you'd
+  guess.** Verified empirically against a real `docker compose up` (Compose
+  v5.4.0): when `--profile` is passed on the command line at all, Compose uses
+  *only* the `--profile` flags and ignores `COMPOSE_PROFILES` entirely — no
+  union. `COMPOSE_PROFILES` (from the shell/process environment, or the
+  project's own `.env` file, which `compose` auto-loads from its working
+  directory) only takes effect when **no** `--profile` flag is given at all —
+  exactly the "no profiles selected" deploy case. And between the two
+  `COMPOSE_PROFILES` sources, process/shell env wins over `.env`: setting it to
+  the empty string in the subprocess's env (last entry wins in `exec.Cmd.Env`)
+  suppresses a project's own `.env` setting too, it isn't only a shell-level
+  override. `ComposeUpFiles` relies on exactly this: it always sets
+  `COMPOSE_PROFILES=` on the subprocess so its explicit `--profile` list is the
+  sole source, closing the gap where an operator's env or a project's `.env`
+  could silently activate more than what gets persisted as "last deployed
+  profiles".
 
 ## HTTP timeouts and streaming
 
@@ -140,3 +156,30 @@ every guard and the fixture traps that come with a real Docker daemon.
 - **A plain file write follows a symlink at the destination.** Anywhere the app
   writes next to a user-controlled path, write to a temp file and rename — rename
   replaces the link instead of writing through it.
+
+## Frontend build
+
+- **A local `make ui` rebuild of `web/dist` is not guaranteed to match CI's.**
+  Same `web/src`, same `web/package-lock.json`, same Node/npm version (checked
+  by installing CI's exact `node -v` via nvm) — and the committed CSS still
+  came out smaller locally than CI's own rebuild: CI's included 10 extra
+  Tailwind v4 utility classes (`transform`, `transition`, `underline`,
+  `blur`, `isolate`, `list-item`, `invert`, `ease-in`/`ease-in-out`/`ease-out`)
+  that a local rebuild pruned. Root cause not fully pinned down — suspected is
+  Tailwind v4's automatic content-candidate scanning behaving differently
+  based on something environment-specific beyond Node/npm version — but the
+  practical fix is procedural: **when a `web/dist` gate failure looks
+  surprising, trust CI's own rebuild over a local one.** Download it
+  (`gh run download <run-id> -n <artifact>` after a temporary
+  `actions/upload-artifact` step on `web/dist`, or just let a pushed branch's
+  own CI run be the thing you commit from) rather than assuming your local
+  build is right and re-pushing it repeatedly.
+- **`ci.yml`'s push trigger only covered `main`+`release/v*`; the `web/dist`
+  gate had never actually run against several already-merged commits on
+  `release/v1.6.1`.** Every individual PR's `pull_request`-triggered check
+  validated *that PR's own diff* correctly, but the *merge commits* combining
+  them (a manual conflict-resolution merge, a forwarded Dependabot merge) were
+  never independently re-checked until push-triggered CI was extended to
+  `release/v*` — which is exactly when the above discrepancy surfaced. A
+  merge commit needs its own CI run, not just trust in its parents' green
+  checks.

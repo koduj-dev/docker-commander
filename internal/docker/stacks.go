@@ -95,6 +95,56 @@ func (m *Manager) ListStacks(ctx context.Context, hostID int64) ([]Stack, error)
 	return out, nil
 }
 
+// StackContainerIDs returns the ids of every container in hostID's project
+// (matched on the compose-project label), in no particular order. Exported so
+// a caller can size something — an MCP rate-limit charge, a confirmation
+// prompt — against a stack's actual container count before committing to an
+// action that touches all of them, the way StackAction itself is about to.
+func (m *Manager) StackContainerIDs(ctx context.Context, hostID int64, project string) ([]string, error) {
+	containers, err := m.ListContainers(ctx, hostID)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, c := range containers {
+		if c.Labels[labelComposeProject] == project {
+			ids = append(ids, c.ID)
+		}
+	}
+	return ids, nil
+}
+
+// StackActionOnIDs applies a lifecycle action (start/stop/restart) to exactly
+// the given container ids, without re-resolving stack membership.
+//
+// For a caller that already resolved a stack's container ids via
+// StackContainerIDs and sized something against that exact set — an MCP
+// rate-limit charge, for one — calling StackAction instead would re-query
+// membership internally via a SECOND StackContainerIDs call, and could act
+// on a DIFFERENT, larger set than the one just charged for if a concurrent
+// deploy added containers to the project in between: the limiter would have
+// spent units for N containers while this actually touched N+k. Acting on
+// the exact ids already resolved (not asking Docker again "what's in this
+// project right now") is what keeps the two in agreement.
+//
+// ids is trusted as-is — this is for internal callers that already resolved
+// it from StackContainerIDs, not for an externally-supplied id list. See
+// BulkStackContainerAction for the membership-VERIFYING equivalent used when
+// ids comes from an untrusted caller instead.
+func (m *Manager) StackActionOnIDs(ctx context.Context, hostID int64, ids []string, action string) error {
+	switch action {
+	case "start", "stop", "restart":
+		for _, id := range ids {
+			if err := m.ContainerAction(ctx, hostID, id, action); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		return ErrUnknownAction
+	}
+}
+
 // StackAction applies a lifecycle action to every container in a stack:
 // start / stop / restart, or remove (force-removes the containers and then the
 // project's Compose networks, leaving named volumes intact — like
@@ -104,15 +154,9 @@ func (m *Manager) StackAction(ctx context.Context, hostID int64, project, action
 	if err != nil {
 		return err
 	}
-	containers, err := m.ListContainers(ctx, hostID)
+	ids, err := m.StackContainerIDs(ctx, hostID, project)
 	if err != nil {
 		return err
-	}
-	var ids []string
-	for _, c := range containers {
-		if c.Labels[labelComposeProject] == project {
-			ids = append(ids, c.ID)
-		}
 	}
 	if len(ids) == 0 {
 		return fmt.Errorf("no containers found for stack %q", project)
@@ -120,12 +164,7 @@ func (m *Manager) StackAction(ctx context.Context, hostID int64, project, action
 
 	switch action {
 	case "start", "stop", "restart":
-		for _, id := range ids {
-			if err := m.ContainerAction(ctx, hostID, id, action); err != nil {
-				return err
-			}
-		}
-		return nil
+		return m.StackActionOnIDs(ctx, hostID, ids, action)
 
 	case "remove":
 		for _, id := range ids {

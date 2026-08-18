@@ -120,9 +120,36 @@ feed the same model to the CLI/MCP instead of each surface re-deriving it.
   roughly this shape (scheduled polling + auto-update toggle + Discord/email
   notification) — worth using as a reference, not a spec. Round it out with
   per-image controls (ignore this version / ignore major versions / ignore
-  this image entirely), an optional **auto-rollback on failed healthcheck**,
+  this image entirely, and a **minimum-age/cooldown gate** so auto-apply
+  doesn't grab a tag the moment it's published — Arcane's issue tracker asks
+  for exactly this), an optional **auto-rollback on failed healthcheck**,
   and post-deploy verification (healthcheck result, restart count, crash
-  loop, alert status) before calling an update "kept".
+  loop, alert status) before calling an update "kept". The "update
+  available" notification should **link the image's changelog/release
+  notes** where discoverable, not just announce a version bump.
+  **Auto-prune the superseded image** is a natural extension once "kept" is
+  reliable — a requested feature this list didn't have yet. It's a real
+  break from how this app treats destructive operations elsewhere (every
+  prune/remove today goes through an in-app confirm dialog, never
+  unattended — see docs/gotchas.md), so it needs its own guardrails, not
+  just a flag: **off by default**, opt-in **per project/stack** (its own
+  setting, not a global toggle), scoped to **only the specific image
+  version this redeploy just replaced** (never a general `docker image
+  prune`), gated behind the post-deploy verification above succeeding first
+  (so a bad update still has its old image to roll back to), and it must
+  write an **audit log** entry exactly like a manual prune would.
+- **Self-update auto-apply policy.** Self-update (banner + one-tap +
+  `--self-upgrade`, SHA-256-verified atomic replace) already ships, but only
+  as something an admin triggers by hand. The same poll/policy/audit/notify
+  shape as **Controlled image updates** above, applied to DC's own binary
+  instead of a workload: an admin opts in and picks a granularity (major /
+  minor / patch — patch-and-minor-only is the common WordPress-style
+  default, not "auto-apply everything"), the existing update check already
+  running server-side applies the release automatically when it matches,
+  the event lands in the audit log the same way a manual `update.apply`
+  does today, and the next admin to log in sees a "you're now on vX.Y.Z —
+  applied automatically on <date>" notice rather than discovering it
+  silently. Off by default, same spirit as the image-update opt-in.
 
 ### GitOps and Compose sources
 
@@ -316,22 +343,42 @@ the security property alone, independent of the NAT-traversal convenience.
 
 ### Smaller, well-scoped
 
-- **Compose profiles — finish the UX.** Deploy-time profile selection already
-  works end to end (`docker compose --profile`, `ComposeProfiles` lists what a
-  project defines, and Projects has a toggle-chip picker that persists per
-  project). What's still missing is *state reflection*: per-service profile
-  badges, a clear "profiles currently deployed" vs. "profiles selected for
-  next deploy" distinction, and not showing a profile-excluded service as
-  stopped/errored when it's simply not part of the active profile set — this
-  exact gap (profile-disabled services misrepresented in stack state) is a
-  recurring complaint against Portainer, Dockge and Arcane alike. Narrower
-  and cheaper than it first looks, since the backend piece already shipped.
-- **Bulk operations** (restart/start/stop/pull across a selection) with preview,
-  confirmation, bounded parallelism, per-host RBAC and a clear success/failure
-  summary.
+- **Bulk operations — remaining scope.** Restart/stop/start and pull across a
+  multi-selection all shipped (preview, confirmation, per-container
+  success/failure summary; reuses the existing `containers` section write
+  permission — bulk pull resolves container ids to images itself, so it never
+  needs the `images` section). Still open: **per-host RBAC** granularity for
+  bulk actions specifically (today a bulk request is scoped the same way any
+  single container action is — the section-level grant, not a separate
+  per-host bulk permission).
 - **Log bookmarks** — save a time range plus filters, link it to an incident, share
   it with users who have the rights, export a small diagnostic bundle without
   secrets.
+- **Plain log download/export**, distinct from and much smaller than Log
+  bookmarks above — no incident/bookmark model needed, just a button that
+  saves the currently-filtered view as a file. Arcane gets asked for this
+  directly. Worth also considering **log forwarding** (push matched/filtered
+  lines to an external endpoint over WS or a webhook) as a separate,
+  optional extension for people who want lines to land somewhere other than
+  reading the `.log` file by hand — bigger scope than the plain download,
+  so don't block the small win on it.
+- **Sub-path / base-path deployment** — run Docker Commander itself under a
+  path prefix behind a reverse proxy (`https://host/dockercmd/`), not just
+  on its own (sub)domain. Three independent asks for this shape across
+  Arcane, Dockge (a `trustProxy`-style setting) and Portainer (whose own
+  locale JSON loading breaks under a path prefix — a concrete failure mode
+  to test for, not just a routing nicety). Touches the frontend's asset/API
+  base path and cookie path, not just a config flag.
+- **Archive/hide inactive stacks and projects** from the main list — filed
+  independently twice against Portainer. Archiving only pulls its weight if
+  there's also a way back: an archive view and a restore action, not just a
+  one-way hide.
+- **Bulk-ignore/dismiss known CVEs** across images from a Trivy scan —
+  scanning and a severity/CVE table already ship; there's no way to triage
+  a batch of already-reviewed, accepted findings today.
+- **Login form autocomplete attributes** — a password manager should be able
+  to fill the login form; likely a small, correct `autocomplete`/field-name
+  fix rather than a real feature.
 - **Native Slack / Teams / Discord notifications** as a UX layer over the generic
   webhook, which stays the base mechanism.
 - **Host maintenance mode**, as distinct from `disabled`: monitoring continues,
@@ -341,18 +388,6 @@ the security property alone, independent of the NAT-traversal convenience.
 - **ACME / Let's Encrypt** for public hosts. Self-signed `--make-certs` ships;
   lower priority because production usually sits behind a reverse proxy. Testable
   locally against Pebble.
-- **Windows native service.** `--install-service` covers systemd and launchd. A
-  console exe is not a native service (SCM error 1053), so this needs
-  `golang.org/x/sys/windows/svc`; the Task Scheduler script remains the supported
-  path meanwhile.
-- **Collapsible sidebar groups.** The sidebar is already grouped (Compute,
-  Network, Observability, System); the groups just don't fold. Worth doing only if
-  the list grows enough that folding beats scrolling.
-- **Version matrix — narrower axes.** It pins Engine **majors**, so a regression in
-  a specific patch isn't caught the moment it ships; and it does not pin the
-  **Compose plugin**, which comes from the runner. Compose is the more likely one
-  to bite, since the README claims "v2 or newer" while CI only ever exercises
-  whatever it happens to have (v5 today).
 
 ---
 
@@ -389,7 +424,14 @@ doesn't get lost or re-asked from scratch.
   resource limits, labels — flagging secret-looking env vars and anonymous
   volumes along the way. A migration/onboarding path for exactly the
   "everything is `docker run` and label-discovered Stacks" users DC already
-  targets. Not yet discussed with the user.
+  targets.
+  Overlaps with a narrower, independently-requested ask (Arcane, 24👍):
+  **editing a standalone container's env/ports/volumes in place**, which
+  needs recreation either way — worth deciding whether that's a cut-down
+  version of this same flow or its own smaller feature before scoping
+  either. Container Settings today already covers live rename and
+  limits/restart-policy without recreation; this is specifically the
+  recreate-required fields.
 - **Compose Watch / development mode.** Expose `develop.watch` (sync-on-change
   / rebuild-on-change) as a live UI panel — positions DC as a local dev
   cockpit, not just an ops tool. A bigger scope question than the others

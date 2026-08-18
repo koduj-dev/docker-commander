@@ -221,6 +221,61 @@ func TestIntegrationContainerLifecycle(t *testing.T) {
 	}
 }
 
+// TestIntegrationBulkContainerAction exercises BulkContainerAction against
+// real containers: an all-success batch, then a batch mixing a real container
+// with a bogus id so one result succeeds and one fails — proving each
+// container gets its own outcome rather than the batch failing as a whole.
+func TestIntegrationBulkContainerAction(t *testing.T) {
+	m, ctx := newManager(t)
+	id1 := startTestContainer(ctx, t, m, "dctest_bulk1")
+	id2 := startTestContainer(ctx, t, m, "dctest_bulk2")
+
+	results, err := m.BulkContainerAction(ctx, 0, []string{id1, id2}, "restart")
+	if err != nil {
+		t.Fatalf("BulkContainerAction: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("want 2 results, got %d", len(results))
+	}
+	for _, r := range results {
+		if !r.OK || r.Error != "" {
+			t.Errorf("expected success restarting %s, got %+v", r.ID, r)
+		}
+	}
+
+	// Partial failure: id1 is real and running, the second id names nothing.
+	mixed, err := m.BulkContainerAction(ctx, 0, []string{id1, "dctest-bulk-does-not-exist"}, "stop")
+	if err != nil {
+		t.Fatalf("BulkContainerAction: %v", err)
+	}
+	if len(mixed) != 2 {
+		t.Fatalf("want 2 results, got %d", len(mixed))
+	}
+	if mixed[0].ID != id1 || !mixed[0].OK || mixed[0].Error != "" {
+		t.Errorf("expected %s to stop cleanly, got %+v", id1, mixed[0])
+	}
+	if mixed[1].ID != "dctest-bulk-does-not-exist" || mixed[1].OK || mixed[1].Error == "" {
+		t.Errorf("expected the bogus id to fail with an error message, got %+v", mixed[1])
+	}
+	// Restore id1 for other tests / cleanup expecting a running container.
+	_ = m.ContainerAction(ctx, 0, id1, "start")
+
+	// A duplicate id must be refused outright, naming the duplicate, and must
+	// act on NOTHING — not even once. Proven against the real daemon: if the
+	// guard were absent this would fire two concurrent restarts at the same
+	// running container.
+	dupResults, dupErr := m.BulkContainerAction(ctx, 0, []string{id1, id1}, "restart")
+	if dupErr == nil {
+		t.Fatal("a batch naming the same container twice should be refused")
+	}
+	if !strings.Contains(dupErr.Error(), id1) {
+		t.Errorf("the refusal should name the duplicate id %s: %v", id1, dupErr)
+	}
+	if dupResults != nil {
+		t.Errorf("a refused duplicate batch must produce no results: got %+v", dupResults)
+	}
+}
+
 func TestIntegrationImagesTransfer(t *testing.T) {
 	m, ctx := newManager(t)
 	ensureImage(ctx, t, m)

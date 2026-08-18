@@ -153,6 +153,13 @@ reach for when diagnosing.
 - **acknowledge_alert** — records who acknowledged; it changes nothing about the container, but it is attributed, so a read-only principal cannot make that claim on someone's behalf
 - **start / stop / restart** a Compose **stack** by project name — the whole stack,
   so prefer the per-container tools when one service is the problem
+- **restart_stack_containers / stop_stack_containers** — act on a caller-chosen
+  **subset** (up to 10) of one stack's own containers, by project name and
+  container ids. Every id is verified server-side to belong to that project;
+  if even one doesn't, the whole call is refused and nothing runs. This sits
+  between the single-container tools and the whole-stack tools: narrower than
+  "the whole stack", broader than "one container", but still can't reach a
+  container outside the project the caller already named
 - **scan_image** — a Trivy vulnerability scan: severity summary plus the most
   serious findings. Gated as a write because it shells out and will pull the image
   if it is missing; it reports Trivy being absent rather than failing
@@ -217,6 +224,7 @@ then decides *where* each one may act.
 | `acknowledge_alert` | alerts | **W** | Record that a human saw it, attributed to the caller |
 | `start_container` / `stop_container` / `restart_container` | containers | **W** | One container's lifecycle |
 | `start_stack` / `stop_stack` / `restart_stack` | containers | **W** | A whole Compose stack by project name |
+| `restart_stack_containers` / `stop_stack_containers` | containers | **W** | Up to 10 of one stack's own containers, membership verified server-side |
 | `scan_image` | images | **W** | Trivy scan — a write because it shells out and may pull the image |
 | `deploy_project` / `down_project` | projects (+ `hosts` for a remote target) | **W** | `docker compose up -d --build` / `down` on a managed project |
 
@@ -284,6 +292,30 @@ and authorize against it; see the security model below.
   audit entry per episode, not one per rejected call, so a runaway cannot bury
   the evidence of itself. A large batch of changes made on purpose belongs in the
   web UI.
+
+  That assumption — one call, roughly one container — is also why
+  `restart_stack_containers`/`stop_stack_containers` carry their own 10-container
+  cap and a server-side membership check, rather than accepting an arbitrary list
+  of ids: without a cap of its own, a single call under this same rate limit
+  could still act on an unbounded number of containers, silently defeating what
+  the limit is actually counting. Scoping every call to one named project keeps
+  it in the same spirit as `restart_stack`/`stop_stack` — bounded by a stack the
+  caller already identified, not by whatever ids a model chooses to name.
+
+  `restart_stack`/`stop_stack`/`start_stack` charge the same way: the limiter
+  spends one unit per container the stack actually has, resolved before the
+  action runs, not a flat one unit regardless of stack size — a 30-container
+  stack costs 30 units, the same as naming those 30 containers one call at a
+  time through the subset tools would. Charging is atomic (reserve-or-refuse):
+  a batch that doesn't fit is refused as a whole and spends nothing, rather
+  than draining part of the budget on a call that ultimately fails. A batch
+  larger than the limiter's own burst can never fit even against a
+  fully-reset bucket — that refusal says so explicitly rather than "wait and
+  retry", since waiting cannot help. And the resolved container ids the
+  charge is sized against are exactly what the action runs on — not a second,
+  independently re-resolved snapshot of the stack — so a container that joins
+  the project in between (a concurrent deploy landing mid-call) is neither
+  charged for nor touched.
 
 ## Tips
 - Keep MCP **behind a reverse proxy / HTTPS**; the OAuth and rate-limited
