@@ -184,11 +184,26 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, "already up to date")
 		return
 	case err != nil:
-		writeErr(w, http.StatusBadGateway, "update failed: "+err.Error())
+		writeErr(w, http.StatusBadGateway, applyErrorMessage(err))
 		return
 	}
 	s.audit(r, "update.apply", res.From, res.To)
 	writeJSON(w, http.StatusOK, map[string]any{"from": res.From, "to": res.To, "restartRequired": true})
+}
+
+// applyErrorMessage formats an apply() failure for the UI. A bare OS error is
+// enough for most failures, but "read-only file system" almost always means
+// the service's sandbox (systemd ProtectSystem=strict without the binary's
+// directory in ReadWritePaths) refused the swap, not a transient problem —
+// that's worth a pointer to the fix rather than leaving the operator to guess.
+func applyErrorMessage(err error) string {
+	msg := "update failed: " + err.Error()
+	if strings.Contains(err.Error(), "read-only file system") {
+		msg += " — the binary's directory isn't writable in this environment " +
+			"(e.g. a systemd unit's ProtectSystem=strict without the binary's " +
+			"directory listed in ReadWritePaths); see docs/deployment.md#self-update"
+	}
+	return msg
 }
 
 // handleRestart gracefully restarts the process (re-exec of the on-disk binary),

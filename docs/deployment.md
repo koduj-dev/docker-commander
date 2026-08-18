@@ -330,9 +330,15 @@ disable the outbound call on air-gapped hosts.
 **verifies its SHA-256** (fail-closed — never installs unverified code),
 atomically replaces the binary and restarts the process **in place** (a re-exec,
 same PID — no supervisor required), then the UI reconnects on the new version.
-The binary must be writable by the service user. Disable web-triggered updates
-with `DC_SELF_UPDATE=0` (the banner still shows). Not offered on Windows —
-restart the service manually after updating.
+The binary's directory must be writable by the service user — the swap writes
+its temp file there and renames over the binary. On the [hardened systemd
+unit](../deploy/dockercmd.service), `ReadWritePaths` includes `/usr/local/bin`
+for exactly this reason; a unit with `ProtectSystem=strict` and that directory
+*not* listed will fail the button with "read-only file system" even though the
+binary's own permissions look fine — remove it from `ReadWritePaths` if you'd
+rather require `sudo dockercmd --self-upgrade` outside the service instead.
+Disable web-triggered updates with `DC_SELF_UPDATE=0` (the banner still
+shows). Not offered on Windows — restart the service manually after updating.
 
 **From the CLI** (equivalent, for scripted or headless upgrades):
 

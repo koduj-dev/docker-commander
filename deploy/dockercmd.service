@@ -41,7 +41,15 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/var/lib/dockercmd
+# /usr/local/bin is here so the in-app "Update & restart" button and
+# `dockercmd --self-upgrade` can replace the binary in place: the swap writes
+# its temp file into the executable's own directory and renames over it
+# (atomic, same filesystem), which ProtectSystem=strict would otherwise refuse
+# with "read-only file system" even though the download is SHA-256-verified
+# and only an already-authenticated admin can trigger it. Remove this line to
+# require self-update to run outside the service (e.g. `sudo dockercmd
+# --self-upgrade` after `systemctl stop dockercmd`) instead.
+ReadWritePaths=/var/lib/dockercmd /usr/local/bin
 StateDirectory=dockercmd
 # The daemon socket is reached via the docker group, not raw device access.
 

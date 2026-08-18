@@ -4,6 +4,19 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [1.6.2] — 2026-08-18
+
+### Fixed
+- **The in-app "Update & restart" button failed with "read-only file system"
+  under the hardened systemd unit.** `ProtectSystem=strict` made the whole
+  filesystem read-only except `/var/lib/dockercmd`, but the self-update swap
+  writes its temp file into the binary's own directory and renames over it —
+  so `/usr/local/bin` needed to be writable too. `deploy/dockercmd.service`
+  now lists it in `ReadWritePaths`; `dockercmd --self-upgrade` from a normal
+  shell was never affected, since it runs outside the service's sandbox. A
+  "read-only file system" failure from any other cause now also gets a hint
+  pointing at `ReadWritePaths` instead of a bare OS error string.
+
 ## [1.6.1] — 2026-08-18
 
 ### Security
@@ -1956,6 +1969,7 @@ Initial release: a single CGO-free Go binary with an embedded React UI.
   per-section permissions / read-only, feature flags, audit log, optional LDAP;
   secrets encrypted at rest.
 
+[1.6.2]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.2
 [1.6.1]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.1
 [1.6.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.0
 [1.5.1]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.5.1
