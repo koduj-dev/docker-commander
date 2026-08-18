@@ -97,14 +97,32 @@ func (m *Middleware) extract(r *http.Request) (*Claims, error) {
 		raw = c.Value
 	} else if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
 		raw = strings.TrimPrefix(h, "Bearer ")
-	} else if q := r.URL.Query().Get("token"); q != "" {
-		// Allowed only for WebSocket upgrades where headers are awkward to set.
+	} else if q := r.URL.Query().Get("token"); q != "" && isWebSocketUpgrade(r) {
+		// Allowed only for WebSocket upgrades, where the browser's WebSocket API
+		// cannot set an Authorization header. Every other route must use the
+		// cookie or a Bearer header — a query token otherwise ends up in access
+		// logs, browser history and proxies, which is a bearer credential leak.
 		raw = q
 	}
 	if raw == "" {
 		return nil, http.ErrNoCookie
 	}
 	return m.tokens.Parse(raw)
+}
+
+// isWebSocketUpgrade reports whether r is a WebSocket upgrade handshake, per
+// RFC 6455: an Upgrade: websocket header and Connection containing "upgrade"
+// among its (possibly comma-separated) tokens.
+func isWebSocketUpgrade(r *http.Request) bool {
+	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		return false
+	}
+	for _, tok := range strings.Split(r.Header.Get("Connection"), ",") {
+		if strings.EqualFold(strings.TrimSpace(tok), "upgrade") {
+			return true
+		}
+	}
+	return false
 }
 
 // ClaimsFrom returns the authenticated claims stored in the request context.

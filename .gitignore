@@ -42,3 +42,6 @@ web/tsconfig.tsbuildinfo
 # Throwaway git worktrees. .claude/skills/ IS tracked; this is transient scaffolding
 # that would otherwise be swept up by `git add -A`.
 .claude/worktrees/
+
+# Local Codex review report (intentionally not committed).
+codex-review.md

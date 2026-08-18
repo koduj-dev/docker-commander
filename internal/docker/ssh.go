@@ -99,8 +99,8 @@ func dialSSH(h *store.Host) (*ssh.Client, error) {
 	cfg := &ssh.ClientConfig{
 		User: user,
 		Auth: auth,
-		HostKeyCallback: func(_ string, _ net.Addr, key ssh.PublicKey) error {
-			if err := verifyHostKey(h, key); err != nil {
+		HostKeyCallback: func(hostname string, _ net.Addr, key ssh.PublicKey) error {
+			if err := verifyHostKey(h, hostname, key); err != nil {
 				hostKeyErr = err
 				return err
 			}
@@ -147,7 +147,7 @@ func parseSSHAddress(s string) (user, hostPort string, err error) {
 //     review the fingerprint and explicitly trust it.
 //
 // This replaces the previous InsecureIgnoreHostKey, which trusted any key.
-func verifyHostKey(h *store.Host, key ssh.PublicKey) error {
+func verifyHostKey(h *store.Host, hostname string, key ssh.PublicKey) error {
 	if h.HostKey != "" {
 		pinned, _, _, _, err := ssh.ParseAuthorizedKey([]byte(h.HostKey))
 		if err == nil && keysEqual(pinned, key) {
@@ -157,7 +157,14 @@ func verifyHostKey(h *store.Host, key ssh.PublicKey) error {
 	}
 
 	if cb := knownHostsCallback(); cb != nil {
-		err := cb("", &net.IPAddr{}, key) // hostname matching is irrelevant here; we compare keys
+		// hostname is the host:port ssh.Dial handshook against; passing it lets
+		// the knownhosts callback actually find a matching known_hosts entry
+		// (an empty hostname never matches any recorded line). The callback
+		// also requires remote.String() to itself parse as host:port — it
+		// splits that *before* even looking at hostname — so an empty
+		// net.IPAddr{} fails immediately regardless of hostname; hostAddr
+		// below satisfies that with the same host:port.
+		err := cb(hostname, hostAddr(hostname), key)
 		if err == nil {
 			return nil
 		}
@@ -171,6 +178,13 @@ func verifyHostKey(h *store.Host, key ssh.PublicKey) error {
 
 	return &HostKeyUnknownError{Fingerprint: ssh.FingerprintSHA256(key), KeyType: key.Type()}
 }
+
+// hostAddr adapts a "host:port" string to net.Addr, which is all the
+// knownhosts callback needs from it (it calls .String()).
+type hostAddr string
+
+func (a hostAddr) Network() string { return "tcp" }
+func (a hostAddr) String() string  { return string(a) }
 
 // knownHostsCallback returns a callback backed by ~/.ssh/known_hosts, or nil if
 // the file is absent/unreadable (in which case only DB-pinned keys are trusted).
