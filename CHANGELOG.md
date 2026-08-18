@@ -4,7 +4,7 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.6.1] — 2026-08-18
 
 ### Security
 - **Session tokens in the URL query string are now accepted only on a real
@@ -1956,6 +1956,7 @@ Initial release: a single CGO-free Go binary with an embedded React UI.
   per-section permissions / read-only, feature flags, audit log, optional LDAP;
   secrets encrypted at rest.
 
+[1.6.1]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.1
 [1.6.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.0
 [1.5.1]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.5.1
 [1.5.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.5.0
