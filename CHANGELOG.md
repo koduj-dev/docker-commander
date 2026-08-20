@@ -4,6 +4,13 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- **The Docker version compatibility matrix now also covers Engine 29** (nightly
+  `compat.yml`, plus a pinned `29.7.2` patch job), following its GA. Docs updated
+  to match ("Tested Engine majors", tier 6 in `docs/testing.md`).
+
 ## [1.6.2] — 2026-08-18
 
 ### Fixed
