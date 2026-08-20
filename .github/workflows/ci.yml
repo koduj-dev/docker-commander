@@ -40,6 +40,12 @@ jobs:
             echo "::error::web/dist is stale. Rebuild with 'make ui' and commit the result."
             exit 1
           fi
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist-debug
+          path: web/dist
+          retention-days: 1
       - run: npm run test --prefix web
       - run: gofmt -l $(git ls-files '*.go') | tee /tmp/fmt && test ! -s /tmp/fmt
       - run: go vet ./...
