@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"syscall"
 
 	"golang.org/x/sys/windows"
 )
@@ -52,17 +53,19 @@ func elevateAndRerun() error {
 	return nil // unreachable
 }
 
-// quoteWindowsArgs joins args into a single command-line string, quoting any
-// argument that contains whitespace or an embedded quote — the same minimal
-// quoting CreateProcess/ShellExecute expect, since there is no argv array
-// here, just one string the shell re-splits.
+// quoteWindowsArgs joins args into a single command-line string using the
+// stdlib's own CommandLineToArgvW-compatible escaping (syscall.EscapeArg) —
+// there is no argv array here, just one string the shell re-splits, and a
+// naive `"`-only escape mis-parses an argument with a trailing backslash
+// before a quote (e.g. a path like `C:\Program Files\Docker Commander\`):
+// Windows' rule is that N backslashes immediately before a quote must become
+// 2N, or that quote is read as escaping them instead of closing the
+// argument. syscall.EscapeArg implements that rule; hand-rolling it here
+// would just be re-deriving the same MSDN algorithm worse.
 func quoteWindowsArgs(args []string) string {
 	quoted := make([]string, len(args))
 	for i, a := range args {
-		if strings.ContainsAny(a, " \t\"") {
-			a = `"` + strings.ReplaceAll(a, `"`, `\"`) + `"`
-		}
-		quoted[i] = a
+		quoted[i] = syscall.EscapeArg(a)
 	}
 	return strings.Join(quoted, " ")
 }
