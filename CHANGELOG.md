@@ -15,6 +15,11 @@ All notable changes to Docker Commander are documented here. The format follows
   and as an MCP tool (`run_diagnostics`), gated by a new `diagnostics`
   permission section.
 
+### Changed
+- **The Docker version compatibility matrix now also covers Engine 29** (nightly
+  `compat.yml`, plus a pinned `29.7.2` patch job), following its GA. Docs updated
+  to match ("Tested Engine majors", tier 6 in `docs/testing.md`).
+
 ## [1.6.2] — 2026-08-18
 
 ### Fixed
