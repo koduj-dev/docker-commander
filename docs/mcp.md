@@ -121,10 +121,16 @@ refresh tokens). No external identity provider is required.
   (`docker diff`); paths only, never contents
 - **search_logs** — find a string or regex **across** the containers on a host,
   for when you don't yet know which one to look at
+- **run_diagnostics** — a battery of sanity checks against a host: overlapping
+  Docker network subnets, duplicate port bindings, log drivers with no
+  rotation limit, and dangling networks/volumes. Each check reports
+  ok/warn/fail/skipped. Unlike the other three, this one is **write-gated**
+  (blocked for read-only tokens/users) — it actively inspects the target
+  host rather than just reading Docker's own records
 
-All three are read-only and bounded. They exist so an assistant can answer
-"what's it doing?" and "what changed?" without `exec` — a shell would answer the
-same questions and a great many others nobody intended to allow.
+The first three are read-only and bounded. They exist so an assistant can
+answer "what's it doing?" and "what changed?" without `exec` — a shell would
+answer the same questions and a great many others nobody intended to allow.
 
 **Alerting:**
 
@@ -205,6 +211,7 @@ then decides *where* each one may act.
 | `search_logs` | logs | R | A substring or regex **across** the containers on a host |
 | `container_processes` | containers | R | What is running inside a container (`docker top`) |
 | `container_changes` | containers | R | Files added/modified/deleted since it started (`docker diff`) — paths only |
+| `run_diagnostics` | diagnostics | W | Sanity-check battery for a host: network overlaps, duplicate ports, log rotation, dangling resources |
 | `list_images` | images | R | Images on a host: tags, size, age, whether in use |
 | `list_volumes` | volumes | R | Volumes and who mounts them — never their contents |
 | `list_networks` | networks | R | Networks: driver, scope, subnets, attached containers |

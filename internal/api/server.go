@@ -303,6 +303,7 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/stats/ports", s.handleHostPorts)
 			r.Get("/metrics/history", s.handleMetricsHistory)
 			r.Get("/audit", s.handleAudit)
+			r.Post("/diagnostics/run", s.handleRunDiagnostics)
 
 			// Alerting: webhooks, rules, and the in-app event feed.
 			r.Get("/webhooks", s.handleListWebhooks)

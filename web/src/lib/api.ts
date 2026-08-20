@@ -9,6 +9,7 @@ import type {
   UpdateStatus,
   ComposeModel,
   AuditEntry,
+  DiagnosticsReport,
   LdapConfig,
   ManagedUser,
   ContainerDetail,
@@ -721,6 +722,7 @@ export const api = {
   hostSystem: (id: number) => req<SystemInfo>("GET", `/api/system?host=${id}`),
   audit: (limit = 50, before?: number) =>
     req<AuditEntry[]>("GET", `/api/audit?limit=${limit}${before ? `&before=${before}` : ""}`),
+  runDiagnostics: () => req<DiagnosticsReport>("POST", `/api/diagnostics/run${hostParam()}`),
 
   // Alerting
   webhooks: () => req<Webhook[]>("GET", "/api/webhooks"),

@@ -46,6 +46,7 @@ level filters, regex search and structured parsing.
 - **Logs** — per-container tail, plus a global **aggregated** view with level detection, **regex search** and saved **parsing rules** that turn lines into structured columns.
 - Live **events** feed, container **diff** / **top**, **disk usage**, and raw JSON **inspect** for any object.
 - **Networks & topology** — an interactive containers ↔ networks graph (force-directed, pan / zoom / fullscreen, **search**, **filter by compose stack**) with a compact **list view** (state, image, stack, ports, networks).
+- **Troubleshooting** — a battery of read-only sanity checks against a host: overlapping Docker network subnets, duplicate host port bindings, containers logging without a rotation limit, and dangling (unused) networks/volumes, each reported as OK/warning/failed/skipped.
 
 **Control**
 - Containers: **create/run**, start/stop/restart/pause/unpause/**kill**, **rename**, **update** limits & restart policy, **commit** to an image, an interactive **shell** (xterm.js), and **bulk restart/stop** across a multi-selection (preview, confirmation, bounded parallelism, per-container success/failure summary).
