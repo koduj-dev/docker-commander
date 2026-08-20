@@ -29,6 +29,11 @@ All notable changes to Docker Commander are documented here. The format follows
   `compat.yml`, plus a pinned `29.7.2` patch job), following its GA. Docs updated
   to match ("Tested Engine majors", tier 6 in `docs/testing.md`).
 
+### Fixed
+- **The login form now works with password managers.** The username, password
+  and 2FA code fields had no `name`/`autocomplete` attributes, so a password
+  manager had no reliable way to recognise or fill them.
+
 ## [1.6.2] — 2026-08-18
 
 ### Fixed
