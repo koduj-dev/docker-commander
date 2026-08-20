@@ -14,6 +14,10 @@ All notable changes to Docker Commander are documented here. The format follows
   networks/volumes. Exposed via the REST API (`POST /api/diagnostics/run`)
   and as an MCP tool (`run_diagnostics`), gated by a new `diagnostics`
   permission section.
+- **Logs: download the currently-filtered view as a `.log` file** — the
+  aggregated Logs page respects whatever source/level/search filter is
+  active and exports exactly what's on screen, one line per entry with a
+  full timestamp.
 - **Troubleshooting now also checks the host itself**: a Docker network's
   subnet overlapping one of the host's real network interfaces (the
   corporate-LAN/VPN collision that prompted this feature), a bridge

@@ -374,14 +374,10 @@ the security property alone, independent of the NAT-traversal convenience.
 - **Log bookmarks** — save a time range plus filters, link it to an incident, share
   it with users who have the rights, export a small diagnostic bundle without
   secrets.
-- **Plain log download/export**, distinct from and much smaller than Log
-  bookmarks above — no incident/bookmark model needed, just a button that
-  saves the currently-filtered view as a file. Arcane gets asked for this
-  directly. Worth also considering **log forwarding** (push matched/filtered
-  lines to an external endpoint over WS or a webhook) as a separate,
-  optional extension for people who want lines to land somewhere other than
-  reading the `.log` file by hand — bigger scope than the plain download,
-  so don't block the small win on it.
+- **Log forwarding** — push matched/filtered lines to an external endpoint
+  over WS or a webhook, for people who want lines to land somewhere other
+  than reading the `.log` file by hand (the plain per-view download already
+  ships). Bigger scope than the download button was, so it stayed separate.
 - **Sub-path / base-path deployment** — run Docker Commander itself under a
   path prefix behind a reverse proxy (`https://host/dockercmd/`), not just
   on its own (sub)domain. Three independent asks for this shape across

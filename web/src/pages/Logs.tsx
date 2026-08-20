@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Pause, Play, Search, X, Table2, Settings2 } from "lucide-react";
+import { Pause, Play, Search, X, Table2, Settings2, Download } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import type { ContainerSummary, LogLine, ParseRule } from "../lib/types";
@@ -13,7 +13,7 @@ import { Spinner } from "../components/ui";
 const MAX_LINES = 3000;
 const STORAGE_KEY = "dc.logs.selected";
 
-interface Entry {
+export interface Entry {
   containerId: string;
   source: string;
   color: string;
@@ -37,6 +37,29 @@ function parseTs(ts?: string): number {
 }
 
 const LEVELS: Level[] = ["error", "warn", "info", "debug", "other"];
+
+// formatLogEntries renders the currently-filtered view as plain lines, one
+// per entry — full ISO timestamp (not the truncated HH:MM:SS shown on
+// screen, which isn't enough to grep or correlate against other systems),
+// source, stream, and the message. Exported so its output shape is testable
+// without a DOM.
+export function formatLogEntries(entries: Entry[]): string {
+  return entries
+    .map((e) => `${e.timestamp ?? new Date(e.t).toISOString()} [${e.source}] (${e.stream}) ${e.message}`)
+    .join("\n");
+}
+
+// downloadLogEntries saves the given entries as a local .log file.
+function downloadLogEntries(entries: Entry[]) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const blob = new Blob([formatLogEntries(entries)], { type: "text/plain" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `docker-commander-logs-${stamp}.log`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 function loadSelected(): Set<string> {
   try {
@@ -272,6 +295,14 @@ export function Logs() {
               </select>
               <button className="btn-ghost px-1.5 py-1.5" title="Manage parse rules" onClick={() => setManageOpen(true)}><Settings2 className="h-4 w-4" /></button>
             </div>
+            <button
+              className="btn-ghost px-2 py-1.5"
+              title="Download the currently-filtered view as a .log file"
+              disabled={filtered.length === 0}
+              onClick={() => downloadLogEntries(filtered)}
+            >
+              <Download className="h-4 w-4" />
+            </button>
             <button className="btn-ghost px-2 py-1.5" title="Clear" onClick={() => { setEntries([]); buf.current = []; }}>
               <X className="h-4 w-4" />
             </button>
