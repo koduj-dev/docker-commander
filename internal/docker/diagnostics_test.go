@@ -221,7 +221,10 @@ func TestRunDiagnostics_Live(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantIDs := []string{"network_overlap", "duplicate_port_bindings", "log_driver_rotation", "dangling_resources"}
+	wantIDs := []string{
+		"network_overlap", "network_host_overlap", "mtu_mismatch",
+		"duplicate_port_bindings", "log_driver_rotation", "disk_space", "dangling_resources",
+	}
 	if len(report.Checks) != len(wantIDs) {
 		t.Fatalf("got %d checks, want %d: %+v", len(report.Checks), len(wantIDs), report.Checks)
 	}

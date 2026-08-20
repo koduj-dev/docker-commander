@@ -14,6 +14,15 @@ All notable changes to Docker Commander are documented here. The format follows
   networks/volumes. Exposed via the REST API (`POST /api/diagnostics/run`)
   and as an MCP tool (`run_diagnostics`), gated by a new `diagnostics`
   permission section.
+- **Troubleshooting now also checks the host itself**: a Docker network's
+  subnet overlapping one of the host's real network interfaces (the
+  corporate-LAN/VPN collision that prompted this feature), a bridge
+  network's MTU not matching the host's default interface, and low free
+  disk space where Docker actually stores its data. These probe the host
+  over SSH for a remote host (adapting to whatever `ip`/`ifconfig`/`ipconfig`
+  the target offers — Linux, macOS or Windows) or directly for the local
+  daemon; a host reached only over plain TCP, with no shell access, reports
+  these checks as **skipped** rather than guessing.
 
 ## [1.6.2] — 2026-08-18
 

@@ -74,16 +74,22 @@ func (m *Manager) RunDiagnostics(ctx context.Context, hostID int64) (*Diagnostic
 		return nil, err
 	}
 
+	// Computed once and shared by the two checks that need it: probing a
+	// remote host's interfaces is the most expensive step in the battery, and
+	// both checks report the same "skipped" reason when it fails.
+	probe := m.hostProbeFor(ctx, hostID)
+
 	report := &DiagnosticsReport{HostID: hostID, GeneratedAt: time.Now()}
 	report.Checks = append(report.Checks, checkNetworkOverlap(nets))
-	// Slots 2 (network_host_overlap), 3 (mtu_mismatch) and 6 (disk_space) are
-	// filled in by the host-introspection checks — see diagnostics_hostchecks.go.
+	report.Checks = append(report.Checks, checkNetworkHostOverlap(nets, probe))
+	report.Checks = append(report.Checks, m.checkMTUMismatch(ctx, hostID, nets, probe))
 	report.Checks = append(report.Checks, checkDuplicatePortBindings(containers))
 	logDriver, err := m.checkLogDriverRotation(ctx, hostID, containers, info)
 	if err != nil {
 		return nil, err
 	}
 	report.Checks = append(report.Checks, logDriver)
+	report.Checks = append(report.Checks, m.checkDiskSpace(ctx, hostID, info))
 	report.Checks = append(report.Checks, checkDanglingResources(nets, vols))
 	return report, nil
 }
