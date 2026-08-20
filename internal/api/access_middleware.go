@@ -53,6 +53,8 @@ func sectionForPath(path string) string {
 		return "registries"
 	case "audit":
 		return "audit"
+	case "diagnostics":
+		return "diagnostics"
 	case "users", "roles", "settings", "ldap", "update", "mcp-admin":
 		return "__admin"
 	case "stats":

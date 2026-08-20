@@ -1,6 +1,6 @@
 import { Link, NavLink, useNavigate, useLocation, useNavigationType } from "react-router-dom";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Activity, Bell, Blocks, Boxes, ChevronDown, Container, Database, FolderGit2, KeyRound, Layers, LayoutDashboard, LayoutTemplate, Network, Plug, ScrollText, Server, Settings, Share2, Terminal, Users, LogOut, CircleUser, ArrowUpCircle, ExternalLink, X, Loader2 } from "lucide-react";
+import { Activity, Bell, Blocks, Boxes, ChevronDown, Container, Database, FolderGit2, KeyRound, Layers, LayoutDashboard, LayoutTemplate, Network, Plug, ScrollText, Server, Settings, Share2, Stethoscope, Terminal, Users, LogOut, CircleUser, ArrowUpCircle, ExternalLink, X, Loader2 } from "lucide-react";
 import clsx from "clsx";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../lib/api";
@@ -58,6 +58,7 @@ const navGroups: { title: string; items: NavItem[] }[] = [
       { to: "/hosts", label: "Hosts", icon: Server, section: "hosts" },
       { to: "/registries", label: "Registries", icon: KeyRound, section: "registries" },
       { to: "/audit", label: "Audit log", icon: ScrollText, section: "audit" },
+      { to: "/troubleshooting", label: "Troubleshooting", icon: Stethoscope, section: "diagnostics" },
       { to: "/mcp-tokens", label: "MCP Access", icon: KeyRound },
       { to: "/mcp-admin", label: "MCP Admin", icon: Plug, adminOnly: true },
       { to: "/users", label: "Users", icon: Users, adminOnly: true },

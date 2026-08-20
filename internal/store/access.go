@@ -9,7 +9,7 @@ import (
 // permissions and the global feature flags are both expressed as sets of these.
 var Sections = []string{
 	"dashboard", "containers", "projects", "images", "volumes", "networks", "topology",
-	"logs", "events", "alerts", "hosts", "registries", "audit",
+	"logs", "events", "alerts", "hosts", "registries", "audit", "diagnostics",
 }
 
 // ValidSection reports whether key is a known section.

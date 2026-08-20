@@ -72,7 +72,7 @@ func TestBuiltinRolesSeeded(t *testing.T) {
 			t.Errorf("Operator must not grant %q by default", sec)
 		}
 	}
-	for _, sec := range []string{"containers", "projects", "images", "alerts"} {
+	for _, sec := range []string{"containers", "projects", "images", "alerts", "diagnostics"} {
 		if !granted[sec] {
 			t.Errorf("Operator should grant %q", sec)
 		}

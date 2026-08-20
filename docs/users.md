@@ -13,7 +13,7 @@ _Admin only._ Manage accounts and what each can do.
   create… — is blocked).
 
 ## Named roles
-A **role** is a reusable bundle of section grants, so you don't tick thirteen
+A **role** is a reusable bundle of section grants, so you don't tick fourteen
 checkboxes per account. Each section in a role is either **read-only** or
 **writable**, which is finer-grained than the account-level read-only flag.
 
@@ -24,7 +24,7 @@ work:
 | Role | Grants |
 |---|---|
 | **Viewer** | Every section, read-only. |
-| **Operator** | Day-to-day work — containers, projects, images, volumes, networks, topology, logs, events, alerts — writable. Deliberately **not** hosts, registries or the audit log, which are authority over the installation itself. |
+| **Operator** | Day-to-day work — containers, projects, images, volumes, networks, topology, logs, events, alerts, diagnostics — writable. Deliberately **not** hosts, registries or the audit log, which are authority over the installation itself. |
 
 A user can hold several roles, and can still have per-account sections on top.
 Their **effective access** is the union, so the more permissive grant wins.
@@ -36,7 +36,7 @@ Their **effective access** is the union, so the more permissive grant wins.
 Manage them on **Users & roles → Roles**. Each card shows the role's grants, how
 many accounts hold it, whether it's limited to specific hosts, and whether it's
 built-in or yours. The editor sets every
-section to **—** (not granted), **read** or **write**, with all thirteen visible at
+section to **—** (not granted), **read** or **write**, with all fourteen visible at
 once. Built-in roles open read-only — use **Duplicate** for an editable copy.
 
 ## Managing accounts

@@ -43,7 +43,7 @@ against a username they guessed.
 
 ## Every action, by area
 
-All **143** of them, generated from the source and kept in step with it by a
+All **144** of them, generated from the source and kept in step with it by a
 test: an audited action with no entry here fails the build, and an entry the code
 never writes fails it too. The `auth.*` table above explains the ones worth reading
 when something feels wrong; this is the complete set, for looking up what you found
@@ -74,6 +74,8 @@ in the log.
 **Networks** — `network.connect`, `network.create`, `network.disconnect`, `network.prune`, `network.remove`
 
 **Hosts** — `host.create`, `host.delete`, `host.ports.scan`, `host.trust`, `host.update`
+
+**Diagnostics** — `diagnostics.run`
 
 **Registries** — `registry.create`, `registry.delete`
 

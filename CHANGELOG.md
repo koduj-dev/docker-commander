@@ -4,6 +4,17 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **A new Troubleshooting tab** runs a battery of read-only sanity checks
+  against the selected Docker host and reports each as OK/warning/failed/
+  skipped: overlapping Docker network subnets, duplicate host port bindings,
+  containers logging without a rotation limit, and dangling (unused)
+  networks/volumes. Exposed via the REST API (`POST /api/diagnostics/run`)
+  and as an MCP tool (`run_diagnostics`), gated by a new `diagnostics`
+  permission section.
+
 ## [1.6.2] — 2026-08-18
 
 ### Fixed

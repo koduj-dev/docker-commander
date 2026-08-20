@@ -54,6 +54,13 @@ func (h *handler) registerDiagnosticTools(s *mcpsdk.Server) {
 		Description: "The configured alert rules with their thresholds. An alert message like 'MEM 61% of limit > 5%' " +
 			"cannot be judged without the rule behind it — this is how to tell a real problem from a badly chosen threshold.",
 	}, h.listAlertRules)
+
+	mcpsdk.AddTool(s, &mcpsdk.Tool{
+		Name: "run_diagnostics",
+		Description: "Run a battery of read-only sanity checks against a Docker host — overlapping network subnets, " +
+			"duplicate port bindings, log drivers with no rotation limit, and dangling networks/volumes (plus, where " +
+			"the host is reachable for it, host-network and disk-space checks). Each check reports ok/warn/fail/skipped.",
+	}, h.runDiagnostics)
 }
 
 // ---- container_processes ----
@@ -262,6 +269,30 @@ func (h *handler) listAlertRules(ctx context.Context, req *mcpsdk.CallToolReques
 		})
 	}
 	return nil, out, nil
+}
+
+// ---- run_diagnostics ----
+
+type runDiagnosticsInput struct {
+	HostID int64 `json:"host_id,omitempty" jsonschema:"Docker host id; 0 or omitted = the default local host"`
+}
+
+type runDiagnosticsOut struct {
+	Report docker.DiagnosticsReport `json:"report"`
+}
+
+// write:true (unlike this file's other diagnostics, which are pure reads):
+// the host-network checks run commands on the target host to inspect it,
+// the same active-action category the REST API write-gates for /stats/ports.
+func (h *handler) runDiagnostics(ctx context.Context, req *mcpsdk.CallToolRequest, in runDiagnosticsInput) (*mcpsdk.CallToolResult, runDiagnosticsOut, error) {
+	if _, err := h.authorize(ctx, req, "diagnostics", true, in.HostID); err != nil {
+		return nil, runDiagnosticsOut{}, err
+	}
+	report, err := h.deps.Docker.RunDiagnostics(ctx, in.HostID)
+	if err != nil {
+		return nil, runDiagnosticsOut{}, err
+	}
+	return nil, runDiagnosticsOut{Report: *report}, nil
 }
 
 // errors returned to the caller as tool errors.

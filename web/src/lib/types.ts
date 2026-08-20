@@ -743,6 +743,22 @@ export interface AuditEntry {
   createdAt: string;
 }
 
+export type CheckStatus = "ok" | "warn" | "fail" | "skipped";
+
+export interface CheckResult {
+  id: string;
+  name: string;
+  status: CheckStatus;
+  message: string;
+  details?: string[];
+}
+
+export interface DiagnosticsReport {
+  hostId: number;
+  generatedAt: string;
+  checks: CheckResult[];
+}
+
 // MCP access token (self-service personal token for the remote MCP server).
 // The secret is returned only once at creation and never again.
 export interface MCPToken {
