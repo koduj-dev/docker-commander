@@ -58,6 +58,93 @@ func TestVerifyDigest(t *testing.T) {
 	}
 }
 
+func TestPreflightWritable(t *testing.T) {
+	t.Run("writable dir passes", func(t *testing.T) {
+		if err := preflightWritable(t.TempDir()); err != nil {
+			t.Errorf("writable dir should pass: %v", err)
+		}
+	})
+
+	t.Run("unwritable dir fails as ErrNotWritable", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("chmod-based permission denial doesn't apply on Windows")
+		}
+		if os.Geteuid() == 0 {
+			t.Skip("running as root: chmod-based permission denial doesn't apply")
+		}
+		dir := t.TempDir()
+		if err := os.Chmod(dir, 0o555); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o755) }) // let TempDir's own cleanup remove it
+
+		err := preflightWritable(dir)
+		var notWritable *ErrNotWritable
+		if !errors.As(err, &notWritable) {
+			t.Fatalf("err = %v (%T), want *ErrNotWritable", err, err)
+		}
+		if notWritable.Dir != dir {
+			t.Errorf("Dir = %q, want %q", notWritable.Dir, dir)
+		}
+	})
+}
+
+// PENTEST-adjacent: installRelease must refuse BEFORE the (potentially large)
+// asset download, not after. Proven here by pointing the release server's
+// download endpoint at a handler that fails the test if it's ever hit.
+func TestInstallRelease_UnwritableDirFailsBeforeDownload(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod-based permission denial doesn't apply on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: chmod-based permission denial doesn't apply")
+	}
+
+	downloaded := false
+	asset := platformAsset()
+	var base string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if filepath.Base(r.URL.Path) == "download" {
+			downloaded = true
+			_, _ = w.Write([]byte("SHOULD NEVER BE FETCHED"))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"tag_name": "v9.9.9", "assets": []map[string]any{
+				{"name": asset, "browser_download_url": base + "/download", "digest": "sha256:deadbeef"},
+			},
+		})
+	}))
+	defer srv.Close()
+	base = srv.URL
+	prevBase := apiBaseURL
+	apiBaseURL = srv.URL
+	defer func() { apiBaseURL = prevBase }()
+
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "dockercmd")
+	if err := os.WriteFile(exe, []byte("OLD"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prevExe := osExecutable
+	osExecutable = func() (string, error) { return exe, nil }
+	defer func() { osExecutable = prevExe }()
+
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(dir, 0o755)
+
+	_, err := Apply(context.Background(), "1.0.0")
+	var notWritable *ErrNotWritable
+	if !errors.As(err, &notWritable) {
+		t.Fatalf("err = %v, want *ErrNotWritable", err)
+	}
+	if downloaded {
+		t.Error("SECURITY/WASTE: the asset was downloaded despite the target directory being unwritable")
+	}
+}
+
 func TestAssetForPlatform(t *testing.T) {
 	name := "dockercmd-" + runtime.GOOS + "-" + runtime.GOARCH
 	if runtime.GOOS == "windows" {
