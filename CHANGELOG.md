@@ -37,6 +37,11 @@ All notable changes to Docker Commander are documented here. The format follows
 - **The Docker version compatibility matrix now also covers Engine 29** (nightly
   `compat.yml`, plus a pinned `29.7.2` patch job), following its GA. Docs updated
   to match ("Tested Engine majors", tier 6 in `docs/testing.md`).
+- **`dockercmd --self-upgrade` now checks write access before downloading**,
+  instead of fetching the full release asset and only then discovering it
+  can't write the target directory. From an interactive terminal, a failed
+  check now offers to re-exec elevated (`sudo` on Linux/macOS, a UAC prompt
+  on Windows) rather than just failing.
 
 ### Fixed
 - **The login form now works with password managers.** The username, password

@@ -68,6 +68,42 @@ func wantsSelfUpgrade() (yes, checkOnly bool) {
 	return yes, checkOnly
 }
 
+// elevateAndRerunFn is elevateAndRerun behind a variable so tests can stub it —
+// the real one either replaces this process (Unix) or exits it (Windows),
+// neither of which a test can survive.
+var elevateAndRerunFn = elevateAndRerun
+
+// runSelfUpgrade drives `--self-upgrade`. When the install would fail because
+// the executable's directory isn't writable and a terminal is attached, it
+// offers to re-exec elevated (sudo / Windows UAC) rather than just printing
+// the permission error — the check-only path never reaches this, since
+// selfupdate.Run only installs (and so only preflight-checks) when checkOnly
+// is false.
+func runSelfUpgrade(checkOnly bool) error {
+	err := selfupdate.Run(context.Background(), version, os.Stdout, checkOnly)
+	var notWritable *selfupdate.ErrNotWritable
+	if !errors.As(err, &notWritable) || !term.IsTerminal(int(os.Stdin.Fd())) {
+		return err
+	}
+	if !confirmElevate(err, os.Stdout, os.Stdin) {
+		return err
+	}
+	return elevateAndRerunFn()
+}
+
+// confirmElevate prints cause and a y/N prompt to out, and reports whether the
+// reply from in agreed to re-exec elevated. Split out from runSelfUpgrade so
+// the prompt-parsing logic is testable without a real terminal.
+func confirmElevate(cause error, out io.Writer, in io.Reader) bool {
+	fmt.Fprintf(out, "%v\nRe-run elevated now? [y/N] ", cause)
+	line, err := bufio.NewReader(in).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false
+	}
+	answer := strings.ToLower(strings.TrimSpace(line))
+	return answer == "y" || answer == "yes"
+}
+
 // serviceAction reports the standalone service-management action the user asked
 // for (install/uninstall/status), or "" to start the server normally. Like
 // `--self-upgrade`, these run instead of the server.
@@ -375,7 +411,7 @@ func run() error {
 		return makeCerts(hosts)
 	}
 	if up, checkOnly := wantsSelfUpgrade(); up {
-		return selfupdate.Run(context.Background(), version, os.Stdout, checkOnly)
+		return runSelfUpgrade(checkOnly)
 	}
 	switch serviceAction() {
 	case "install":

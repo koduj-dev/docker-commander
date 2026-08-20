@@ -43,6 +43,40 @@ var (
 // ErrUpToDate is returned by Apply when the running version is already current.
 var ErrUpToDate = errors.New("already up to date")
 
+// ErrNotWritable is returned when the executable's directory can't be written
+// to — surfaced before any download happens (see preflightWritable). The CLI
+// path (Run, called from `--self-upgrade`) can offer to re-exec elevated when
+// it sees this; the in-app path (Apply, behind the web UI's "Update &
+// restart") has no terminal to prompt on and just reports it — that surface
+// needs the permission granted at install time instead (see ReadWritePaths in
+// deploy/dockercmd.service, added in v1.6.2).
+type ErrNotWritable struct {
+	Dir string
+	Err error
+}
+
+func (e *ErrNotWritable) Error() string {
+	return fmt.Sprintf("cannot write to %s: %v", e.Dir, e.Err)
+}
+
+func (e *ErrNotWritable) Unwrap() error { return e.Err }
+
+// preflightWritable checks that dir — the directory the executable lives in,
+// and so the directory the swap will write into — actually accepts a write,
+// by creating and removing a throwaway file. Checking this before the
+// release asset is downloaded turns a doomed upgrade into an instant, clear
+// failure instead of a ~30 MiB download followed by "permission denied".
+func preflightWritable(dir string) error {
+	f, err := os.CreateTemp(dir, ".dockercmd-writetest-*")
+	if err != nil {
+		return &ErrNotWritable{Dir: dir, Err: err}
+	}
+	name := f.Name()
+	_ = f.Close()
+	_ = os.Remove(name)
+	return nil
+}
+
 // Result describes a completed upgrade.
 type Result struct {
 	From   string `json:"from"`   // version before the upgrade
@@ -137,6 +171,9 @@ func installRelease(ctx context.Context, current string, rel *ghRelease, w io.Wr
 	}
 	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = resolved
+	}
+	if err := preflightWritable(filepath.Dir(exe)); err != nil {
+		return Result{}, err
 	}
 
 	want, err := expectedSHA256(ctx, rel, asset)
