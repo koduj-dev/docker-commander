@@ -20,6 +20,15 @@ All notable changes to Docker Commander are documented here. The format follows
   `DC_ACME_EMAIL`, `DC_ACME_CACHE_DIR` and `DC_ACME_DIRECTORY_URL` (to test
   against Let's Encrypt's staging directory) round it out. Uses the `tls-alpn-01` challenge, so no separate port-80
   listener is needed.
+- **Image vulnerability scans can now be triaged.** Select one or more CVEs in
+  a Trivy scan's results and **ignore** them in bulk — the decision is global
+  (keyed by CVE id, not per-image), so reviewing one finding once hides it
+  wherever else it turns up. Ignored rows hide by default; a "Show ignored"
+  toggle brings them back with an un-ignore action.
+- **Logs: download the currently-filtered view as a `.log` file** — the
+  aggregated Logs page respects whatever source/level/search filter is
+  active and exports exactly what's on screen, one line per entry with a
+  full timestamp.
 - **Troubleshooting now also checks the host itself**: a Docker network's
   subnet overlapping one of the host's real network interfaces (the
   corporate-LAN/VPN collision that prompted this feature), a bridge
@@ -34,6 +43,16 @@ All notable changes to Docker Commander are documented here. The format follows
 - **The Docker version compatibility matrix now also covers Engine 29** (nightly
   `compat.yml`, plus a pinned `29.7.2` patch job), following its GA. Docs updated
   to match ("Tested Engine majors", tier 6 in `docs/testing.md`).
+- **`dockercmd --self-upgrade` now checks write access before downloading**,
+  instead of fetching the full release asset and only then discovering it
+  can't write the target directory. From an interactive terminal, a failed
+  check now offers to re-exec elevated (`sudo` on Linux/macOS, a UAC prompt
+  on Windows) rather than just failing.
+
+### Fixed
+- **The login form now works with password managers.** The username, password
+  and 2FA code fields had no `name`/`autocomplete` attributes, so a password
+  manager had no reliable way to recognise or fill them.
 
 ## [1.6.2] — 2026-08-18
 

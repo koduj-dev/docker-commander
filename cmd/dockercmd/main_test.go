@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"go/ast"
 	"go/parser"
@@ -15,6 +16,31 @@ import (
 	"github.com/koduj-dev/docker-commander/internal/config"
 	"github.com/koduj-dev/docker-commander/internal/store"
 )
+
+func TestConfirmElevate(t *testing.T) {
+	cases := map[string]bool{
+		"y\n":       true,
+		"Y\n":       true,
+		"yes\n":     true,
+		"YES\n":     true,
+		"  y  \n":   true,
+		"n\n":       false,
+		"no\n":      false,
+		"\n":        false, // plain Enter = the "N" default
+		"garbage\n": false,
+		"":          false, // EOF with nothing typed
+	}
+	for input, want := range cases {
+		var out bytes.Buffer
+		got := confirmElevate(errors.New("cannot write to /usr/local/bin: permission denied"), &out, strings.NewReader(input))
+		if got != want {
+			t.Errorf("confirmElevate(%q) = %v, want %v", input, got, want)
+		}
+		if !strings.Contains(out.String(), "permission denied") {
+			t.Errorf("prompt should surface the underlying error, got: %q", out.String())
+		}
+	}
+}
 
 func TestLoadOrCreateSecret(t *testing.T) {
 	st, err := store.Open(":memory:")

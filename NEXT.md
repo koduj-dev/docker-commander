@@ -150,26 +150,6 @@ feed the same model to the CLI/MCP instead of each surface re-deriving it.
   does today, and the next admin to log in sees a "you're now on vX.Y.Z —
   applied automatically on <date>" notice rather than discovering it
   silently. Off by default, same spirit as the image-update opt-in.
-- **Self-upgrade: check write permission before downloading, and offer to
-  elevate on the CLI.** `--self-upgrade` currently downloads the full release
-  asset first and only then finds out it can't write the target directory —
-  hit in practice as a bare `fatal: open /usr/local/bin/.dockercmd-upgrade-…:
-  permission denied` after a ~30 MiB download, run as a non-root user against
-  the standard installer's root-owned `/usr/local/bin`. Add a preflight
-  write-access check on the executable's directory (`internal/selfupdate`,
-  before `download()` runs) that fails fast with a clear message instead of
-  wasting the transfer. For the **CLI** path specifically (a human at a
-  terminal), go further and offer to re-exec elevated when the check fails
-  and a terminal is attached: `sudo` on Linux/macOS, the `runas` verb via
-  `ShellExecuteEx` for Windows UAC — always as an explicit prompt, never
-  silent. **Does not apply to the web UI's "Update & restart" button**: that
-  runs headless as the service process with no terminal or desktop session to
-  show a native elevation prompt to, so the permission has to already be
-  granted at install time instead (which is what `ReadWritePaths` in the
-  systemd unit — see v1.6.2's CHANGELOG entry — already does). `pkexec`/polkit
-  was considered and set aside: it's a desktop-GUI pattern, a poor fit for a
-  headless server CLI tool, and needs its own policy file to avoid a scary
-  generic "run arbitrary command as root" consent dialog.
 
 ### GitOps and Compose sources
 
@@ -374,14 +354,10 @@ the security property alone, independent of the NAT-traversal convenience.
 - **Log bookmarks** — save a time range plus filters, link it to an incident, share
   it with users who have the rights, export a small diagnostic bundle without
   secrets.
-- **Plain log download/export**, distinct from and much smaller than Log
-  bookmarks above — no incident/bookmark model needed, just a button that
-  saves the currently-filtered view as a file. Arcane gets asked for this
-  directly. Worth also considering **log forwarding** (push matched/filtered
-  lines to an external endpoint over WS or a webhook) as a separate,
-  optional extension for people who want lines to land somewhere other than
-  reading the `.log` file by hand — bigger scope than the plain download,
-  so don't block the small win on it.
+- **Log forwarding** — push matched/filtered lines to an external endpoint
+  over WS or a webhook, for people who want lines to land somewhere other
+  than reading the `.log` file by hand (the plain per-view download already
+  ships). Bigger scope than the download button was, so it stayed separate.
 - **Sub-path / base-path deployment** — run Docker Commander itself under a
   path prefix behind a reverse proxy (`https://host/dockercmd/`), not just
   on its own (sub)domain. Three independent asks for this shape across
@@ -393,12 +369,6 @@ the security property alone, independent of the NAT-traversal convenience.
   independently twice against Portainer. Archiving only pulls its weight if
   there's also a way back: an archive view and a restore action, not just a
   one-way hide.
-- **Bulk-ignore/dismiss known CVEs** across images from a Trivy scan —
-  scanning and a severity/CVE table already ship; there's no way to triage
-  a batch of already-reviewed, accepted findings today.
-- **Login form autocomplete attributes** — a password manager should be able
-  to fill the login form; likely a small, correct `autocomplete`/field-name
-  fix rather than a real feature.
 - **Native Slack / Teams / Discord notifications** as a UX layer over the generic
   webhook, which stays the base mechanism.
 - **Host maintenance mode**, as distinct from `disabled`: monitoring continues,

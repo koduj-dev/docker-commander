@@ -388,7 +388,12 @@ dockercmd --self-upgrade --check   # only report whether an update is waiting
 SHA-256**, and atomically replaces the running binary (preserving its
 permissions). The binary must be writable by the invoking user; **restart** the
 service afterwards to run the new version. (Installed from a package manager?
-Update through that instead.)
+Update through that instead.) Write access to the binary's directory is
+checked **before** the (multi-MiB) release asset is downloaded, so a
+permission problem fails fast with a clear message rather than after the
+transfer. Run from an interactive terminal without that permission, it offers
+to re-exec elevated — `sudo` on Linux/macOS, a UAC prompt on Windows — always
+as an explicit `[y/N]` prompt, never silently.
 
 ## Locked out
 
