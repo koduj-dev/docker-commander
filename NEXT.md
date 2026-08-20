@@ -375,10 +375,6 @@ the security property alone, independent of the NAT-traversal convenience.
   events are still recorded, notifications are suppressed or tagged, and write
   operations can optionally be blocked. Overlaps with silences above — design them
   together.
-- **ACME / Let's Encrypt** for public hosts. Self-signed `--make-certs` ships;
-  lower priority because production usually sits behind a reverse proxy. Testable
-  locally against Pebble.
-
 ---
 
 ## 📦 Backlog

@@ -14,6 +14,12 @@ All notable changes to Docker Commander are documented here. The format follows
   networks/volumes. Exposed via the REST API (`POST /api/diagnostics/run`)
   and as an MCP tool (`run_diagnostics`), gated by a new `diagnostics`
   permission section.
+- **Automatic HTTPS via ACME (Let's Encrypt).** `DC_ACME_DOMAINS` obtains and
+  renews a browser-trusted certificate for a public host with no reverse
+  proxy in front, instead of a static `DC_TLS_CERT`/`DC_TLS_KEY` pair —
+  `DC_ACME_EMAIL`, `DC_ACME_CACHE_DIR` and `DC_ACME_DIRECTORY_URL` (to test
+  against Let's Encrypt's staging directory) round it out. Uses the `tls-alpn-01` challenge, so no separate port-80
+  listener is needed.
 - **Image vulnerability scans can now be triaged.** Select one or more CVEs in
   a Trivy scan's results and **ignore** them in bulk — the decision is global
   (keyed by CVE id, not per-image), so reviewing one finding once hides it
