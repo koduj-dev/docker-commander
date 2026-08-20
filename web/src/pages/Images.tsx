@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Download, Trash2, Layers, Loader2, X, Boxes, Eraser, FileSearch, History, Upload, Hammer, HardDriveDownload, ShieldAlert } from "lucide-react";
+import { Download, Trash2, Layers, Loader2, X, Boxes, Eraser, FileSearch, History, Upload, Hammer, HardDriveDownload, ShieldAlert, EyeOff, Eye, BellOff } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
-import type { HistoryEntry, ImageSummary, PullProgress, ScanResult } from "../lib/types";
+import type { HistoryEntry, ImageSummary, IgnoredCVE, PullProgress, ScanResult } from "../lib/types";
 import { hostParam } from "../lib/host";
 import { bytes, relTime, shortId } from "../lib/format";
 import { PageHeader } from "../layout/Shell";
@@ -256,12 +256,26 @@ const sevColor: Record<string, string> = {
   UNKNOWN: "bg-zinc-500/20 text-zinc-300 border-zinc-500/40",
 };
 
-// ScanModal runs and shows a Trivy vulnerability scan for an image.
-function ScanModal({ img, onClose }: { img: ImageSummary; onClose: () => void }) {
+// ScanModal runs and shows a Trivy vulnerability scan for an image. Findings
+// can be triaged: select one or more rows and "Ignore selected" records them
+// (globally, by CVE id — see the backend schema comment) as reviewed/accepted,
+// so this and every other image's scan stops re-flagging them. Ignored rows
+// hide by default; "Show ignored" brings them back, each with an Un-ignore.
+export function ScanModal({ img, onClose }: { img: ImageSummary; onClose: () => void }) {
+  const dialogs = useDialogs();
   const ref = (img.repoTags ?? [])[0] || img.id;
   const [result, setResult] = useState<ScanResult | null>(null);
   const [state, setState] = useState<"scanning" | "done" | "error" | "unavailable">("scanning");
   const [error, setError] = useState("");
+  const [ignored, setIgnored] = useState<Map<string, IgnoredCVE>>(new Map());
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [showIgnored, setShowIgnored] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const refreshIgnored = useCallback(() => {
+    api.ignoredCVEs().then((list) => setIgnored(new Map(list.map((c) => [c.id, c])))).catch(() => {});
+  }, []);
+
   useEffect(() => {
     let alive = true;
     api.scanImage(ref).then((r) => {
@@ -270,8 +284,9 @@ function ScanModal({ img, onClose }: { img: ImageSummary; onClose: () => void })
       if (!r.ok || !r.result) { setState("error"); setError(r.error ?? "scan failed"); return; }
       setResult(r.result); setState("done");
     }).catch((e) => { if (alive) { setState("error"); setError(e instanceof Error ? e.message : "scan failed"); } });
+    refreshIgnored();
     return () => { alive = false; };
-  }, [ref]);
+  }, [ref, refreshIgnored]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
@@ -279,6 +294,50 @@ function ScanModal({ img, onClose }: { img: ImageSummary; onClose: () => void })
   }, [onClose]);
 
   const total = result ? SEVERITIES.reduce((n, s) => n + (result.summary[s] ?? 0), 0) : 0;
+  const visibleVulns = (result?.vulns ?? []).filter((v) => showIgnored || !ignored.has(v.id));
+  const ignoredCount = (result?.vulns ?? []).filter((v) => ignored.has(v.id)).length;
+
+  const toggleSelected = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  const ignoreSelected = async () => {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    // A plain confirm, not a prompt: the shared dialog resolves an
+    // EMPTY-but-submitted prompt the same as a cancelled one (see Dialog.tsx),
+    // which would make "ignore with no reason" indistinguishable from
+    // "changed my mind" — the reason itself lives in the store as an optional
+    // field the API layer already accepts blank.
+    const ok = await dialogs.confirm({
+      title: `Ignore ${ids.length} CVE${ids.length === 1 ? "" : "s"}?`,
+      message: "Treated as reviewed and accepted — hidden from this and every other image's scan until un-ignored.",
+      confirmLabel: "Ignore",
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await api.ignoreCVEs(ids, "");
+      refreshIgnored();
+      setSelected(new Set());
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const unignore = async (id: string) => {
+    setBusy(true);
+    try {
+      await api.unignoreCVE(id);
+      refreshIgnored();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
       <div className="card w-full max-w-4xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
@@ -301,34 +360,75 @@ function ScanModal({ img, onClose }: { img: ImageSummary; onClose: () => void })
           {state === "error" && <div className="text-sm text-danger break-all">{error}</div>}
           {state === "done" && result && (
             <div className="space-y-3">
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {SEVERITIES.map((s) => (
                   <span key={s} className={clsx("text-xs px-2 py-1 rounded-md border", sevColor[s])}>{s} {result.summary[s] ?? 0}</span>
                 ))}
+                {ignoredCount > 0 && (
+                  <button
+                    className="btn-ghost px-2 py-1 text-xs ml-auto"
+                    onClick={() => setShowIgnored((v) => !v)}
+                    title={showIgnored ? "Hide ignored findings" : "Show ignored findings"}
+                  >
+                    {showIgnored ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                    {showIgnored ? "Hide" : "Show"} ignored ({ignoredCount})
+                  </button>
+                )}
               </div>
+              {selected.size > 0 && (
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-muted">{selected.size} selected</span>
+                  <button className="btn-ghost px-2 py-1 text-xs" disabled={busy} onClick={ignoreSelected}>
+                    <BellOff className="h-3.5 w-3.5" /> Ignore selected
+                  </button>
+                </div>
+              )}
               {total === 0 ? (
                 <div className="text-sm text-ok">No known vulnerabilities found. 🎉</div>
+              ) : visibleVulns.length === 0 ? (
+                <div className="text-sm text-muted">Every finding here has been ignored.</div>
               ) : (
                 <table className="w-full text-xs">
                   <thead className="text-muted uppercase tracking-wide">
                     <tr className="border-b border-border text-left">
+                      <th className="py-2 pr-3 font-medium w-4"></th>
                       <th className="py-2 pr-3 font-medium">Severity</th>
                       <th className="py-2 pr-3 font-medium">CVE</th>
                       <th className="py-2 pr-3 font-medium">Package</th>
                       <th className="py-2 pr-3 font-medium">Installed</th>
                       <th className="py-2 pr-3 font-medium">Fixed in</th>
+                      <th className="py-2 pr-3 font-medium"></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {result.vulns.map((v, i) => (
-                      <tr key={i} className="border-b border-border/40 align-top">
-                        <td className="py-1.5 pr-3"><span className={clsx("px-1.5 py-0.5 rounded border", sevColor[v.severity] ?? sevColor.UNKNOWN)}>{v.severity}</span></td>
-                        <td className="py-1.5 pr-3 font-mono whitespace-nowrap">{safeHttpUrl(v.url) ? <a href={v.url} target="_blank" rel="noreferrer" className="text-accent hover:underline">{v.id}</a> : v.id}</td>
-                        <td className="py-1.5 pr-3 font-mono break-all">{v.package}</td>
-                        <td className="py-1.5 pr-3 font-mono break-all">{v.version}</td>
-                        <td className="py-1.5 pr-3 font-mono break-all text-ok">{v.fixedVersion || "—"}</td>
-                      </tr>
-                    ))}
+                    {visibleVulns.map((v, i) => {
+                      const isIgnored = ignored.has(v.id);
+                      return (
+                        <tr key={i} className={clsx("border-b border-border/40 align-top", isIgnored && "opacity-50")}>
+                          <td className="py-1.5 pr-3">
+                            {!isIgnored && (
+                              <input
+                                type="checkbox"
+                                checked={selected.has(v.id)}
+                                onChange={() => toggleSelected(v.id)}
+                              />
+                            )}
+                          </td>
+                          <td className="py-1.5 pr-3"><span className={clsx("px-1.5 py-0.5 rounded border", sevColor[v.severity] ?? sevColor.UNKNOWN)}>{v.severity}</span></td>
+                          <td className="py-1.5 pr-3 font-mono whitespace-nowrap">{safeHttpUrl(v.url) ? <a href={v.url} target="_blank" rel="noreferrer" className="text-accent hover:underline">{v.id}</a> : v.id}</td>
+                          <td className="py-1.5 pr-3 font-mono break-all">{v.package}</td>
+                          <td className="py-1.5 pr-3 font-mono break-all">{v.version}</td>
+                          <td className="py-1.5 pr-3 font-mono break-all text-ok">{v.fixedVersion || "—"}</td>
+                          <td className="py-1.5 pr-3">
+                            {isIgnored && (
+                              <button className="btn-ghost px-1.5 py-0.5" disabled={busy} title="Un-ignore" onClick={() => unignore(v.id)}>
+                                <X className="h-3 w-3" />
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               )}

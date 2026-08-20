@@ -414,6 +414,17 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
 	expires_at  TEXT NOT NULL DEFAULT '',
 	created_at  TEXT NOT NULL
 );
+
+-- A vulnerability a human has reviewed and accepted, so a Trivy scan stops
+-- re-flagging it. Keyed by CVE id alone, not per-image: the identifier is
+-- global, and the same CVE turning up in a different image is still the same
+-- reviewed finding, not a new one to triage again.
+CREATE TABLE IF NOT EXISTS ignored_cves (
+	id         TEXT PRIMARY KEY,        -- e.g. "CVE-2023-12345"
+	reason     TEXT NOT NULL DEFAULT '',
+	added_by   TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL
+);
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err

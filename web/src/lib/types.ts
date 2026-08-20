@@ -241,6 +241,15 @@ export interface ScanResponse {
   result?: ScanResult;
 }
 
+// A CVE a human has reviewed and accepted, so future scans stop re-flagging
+// it. Keyed by CVE id alone, not per-image — see the backend schema comment.
+export interface IgnoredCVE {
+  id: string;
+  reason: string;
+  addedBy: string;
+  createdAt: string;
+}
+
 // One Docker Hub search hit, used for image-name autocomplete.
 export interface ImageSearchResult {
   name: string;

@@ -393,9 +393,6 @@ the security property alone, independent of the NAT-traversal convenience.
   independently twice against Portainer. Archiving only pulls its weight if
   there's also a way back: an archive view and a restore action, not just a
   one-way hide.
-- **Bulk-ignore/dismiss known CVEs** across images from a Trivy scan —
-  scanning and a severity/CVE table already ship; there's no way to triage
-  a batch of already-reviewed, accepted findings today.
 - **Login form autocomplete attributes** — a password manager should be able
   to fill the login form; likely a small, correct `autocomplete`/field-name
   fix rather than a real feature.

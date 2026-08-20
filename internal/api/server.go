@@ -263,6 +263,9 @@ func (s *Server) Handler() http.Handler {
 			// round-trip cleanly through path matching/decoding.
 			r.Delete("/images", s.handleRemoveImage)
 			r.Post("/images/prune", s.handlePruneImages)
+			r.Get("/images/ignored-cves", s.handleListIgnoredCVEs)
+			r.Post("/images/ignored-cves", s.handleIgnoreCVEs)
+			r.Delete("/images/ignored-cves/{id}", s.handleUnignoreCVE)
 
 			// Registry credentials (secrets encrypted at rest).
 			r.Get("/registries", s.handleListRegistries)
