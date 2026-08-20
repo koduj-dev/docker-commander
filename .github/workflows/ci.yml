@@ -36,6 +36,7 @@ jobs:
       - name: committed web/dist matches web/src
         run: |
           if ! git diff --quiet -- web/dist; then
+            git diff -- web/dist/index.html
             git diff --stat -- web/dist
             echo "::error::web/dist is stale. Rebuild with 'make ui' and commit the result."
             exit 1
