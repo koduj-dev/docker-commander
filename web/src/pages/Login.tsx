@@ -151,6 +151,8 @@ export function Login() {
             <form onSubmit={submitCode} className="space-y-4">
               <input
                 className="input text-center tracking-[0.5em] text-lg font-mono"
+                name="otp"
+                autoComplete="one-time-code"
                 value={code}
                 onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
                 inputMode="numeric"
@@ -198,12 +200,30 @@ export function Login() {
     <AuthShell title="Sign in" subtitle="Welcome back. Sign in to continue.">
       <form onSubmit={submitPassword} className="space-y-4">
         <div>
-          <label className="label">Username</label>
-          <input className="input" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus required />
+          <label className="label" htmlFor="login-username">Username</label>
+          <input
+            id="login-username"
+            className="input"
+            name="username"
+            autoComplete="username"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            autoFocus
+            required
+          />
         </div>
         <div>
-          <label className="label">Password</label>
-          <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+          <label className="label" htmlFor="login-password">Password</label>
+          <input
+            id="login-password"
+            className="input"
+            type="password"
+            name="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+          />
         </div>
         {err && <p className="text-sm text-danger">{err}</p>}
         <button className="btn-primary w-full" disabled={busy}>

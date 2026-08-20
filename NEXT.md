@@ -392,9 +392,6 @@ the security property alone, independent of the NAT-traversal convenience.
 - **Bulk-ignore/dismiss known CVEs** across images from a Trivy scan —
   scanning and a severity/CVE table already ship; there's no way to triage
   a batch of already-reviewed, accepted findings today.
-- **Login form autocomplete attributes** — a password manager should be able
-  to fill the login form; likely a small, correct `autocomplete`/field-name
-  fix rather than a real feature.
 - **Native Slack / Teams / Discord notifications** as a UX layer over the generic
   webhook, which stays the base mechanism.
 - **Host maintenance mode**, as distinct from `disabled`: monitoring continues,
