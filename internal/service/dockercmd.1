@@ -158,7 +158,8 @@ Directory to cache the ACME certificate/account state (default:
 .TP
 .BI \-acme-directory-url " url"
 Override the ACME directory URL (default: Let's Encrypt production) \(em e.g.
-its staging directory, or a local Pebble instance for testing.
+its staging directory. Not a local Pebble instance, which this server cannot
+obtain a certificate through.
 .TP
 .B \-mcp-enabled
 Enable the remote MCP server + OAuth endpoints (off by default; requires HTTPS).

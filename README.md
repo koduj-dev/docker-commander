@@ -274,7 +274,7 @@ list. The Docker connection also honours the standard `DOCKER_HOST` /
 | `-acme-domains`      | `DC_ACME_DOMAINS`      | (off)              | Comma-separated public hostname(s): automatic **HTTPS** via ACME/Let's Encrypt instead of a static cert. Mutually exclusive with `-tls-cert`/`-tls-key`. |
 | `-acme-email`        | `DC_ACME_EMAIL`        | (unset)            | Contact email registered with the ACME account (optional). |
 | `-acme-cache-dir`    | `DC_ACME_CACHE_DIR`    | `<data-dir>/acme`  | Where issued ACME certificate/account state is cached between restarts. |
-| `-acme-directory-url`| `DC_ACME_DIRECTORY_URL`| Let's Encrypt prod | Override the ACME directory — e.g. the staging directory, or a local Pebble instance for testing. |
+| `-acme-directory-url`| `DC_ACME_DIRECTORY_URL`| Let's Encrypt prod | Override the ACME directory — e.g. the staging directory. **Not** a local Pebble instance, which this server cannot obtain a certificate through — see [Deployment](docs/deployment.md#https). |
 | `-mcp-enabled`       | `DC_MCP_ENABLED=1`     | off                | Enable the remote **MCP** server for AI tools. Off by default; serve behind HTTPS. See [MCP](docs/mcp.md). |
 | `-mcp-public-url`    | `DC_MCP_PUBLIC_URL`    | (unset)            | Externally reachable base URL (`https://host`) — required for the MCP **OAuth** flow (bearer tokens work without it). |
 | `-data-dir`          | `DC_DATA_DIR`          | OS config dir      | SQLite DB + signing/encryption keys. |

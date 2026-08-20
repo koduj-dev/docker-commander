@@ -26,9 +26,16 @@ import (
 //
 // email is optional (attached to the ACME account so the CA can reach the
 // operator about renewal problems). directoryURL overrides the CA (empty =
-// Let's Encrypt production); pass the staging directory or a local Pebble
-// instance to exercise the flow without spending production rate-limit
-// budget.
+// Let's Encrypt production); pass its staging directory to exercise the flow
+// without spending production rate-limit budget. NOT a local Pebble
+// instance — through THIS Manager's real GetCertificate path (as opposed to
+// the lower-level acme.Client calls pebble_integration_test.go makes
+// instead) Pebble doesn't work at all: its directory endpoint's TLS cert is
+// locally-generated and untrusted (so the resulting *acme.Client, with no
+// custom trust root configured, correctly refuses to talk to it — same as
+// it would refuse any other unverifiable server), and separately, its
+// finalize-order response is missing a header autocert's polling relies on.
+// See docs/gotchas.md for both.
 func NewManager(domains []string, email, cacheDir, directoryURL string) *autocert.Manager {
 	mgr := &autocert.Manager{
 		Prompt:     autocert.AcceptTOS,

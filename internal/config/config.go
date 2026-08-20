@@ -58,10 +58,17 @@ type Config struct {
 	// into the CA's rate limits. Defaults to <data-dir>/acme.
 	ACMECacheDir string
 	// ACMEDirectoryURL overrides the ACME server (default: Let's Encrypt
-	// production). Point it at Let's Encrypt's staging directory, or a local
-	// Pebble instance, to exercise the flow without spending production
-	// rate-limit budget or minting a real (but untrusted-in-staging) cert
-	// during development.
+	// production) — e.g. Let's Encrypt's staging directory, to test without
+	// spending production rate-limit budget or minting a real cert, or an
+	// entirely different ACME-compliant CA. NOT a local Pebble instance for
+	// exercising this server's own obtain-and-serve path: Pebble's directory
+	// endpoint uses a locally-generated, untrusted TLS cert (so this process
+	// refuses to talk to it, correctly, the same as it would refuse any
+	// other unverifiable server), and separately, its order-polling response
+	// shape trips a gap in autocert's client library. See docs/gotchas.md.
+	// Pebble is still useful for developing this package itself — see
+	// internal/acme/pebble_integration_test.go, which works around both by
+	// driving the ACME protocol at a lower level than this server does.
 	ACMEDirectoryURL string
 
 	// MCPEnabled turns on the remote MCP server (and its OAuth endpoints). Off by
@@ -160,7 +167,7 @@ func Load() (Config, error) {
 	acmeDomains := flag.String("acme-domains", lookup("DC_ACME_DOMAINS"), "comma-separated public hostname(s): enables automatic HTTPS via ACME/Let's Encrypt (mutually exclusive with -tls-cert/-tls-key)")
 	flag.StringVar(&c.ACMEEmail, "acme-email", lookup("DC_ACME_EMAIL"), "contact email registered with the ACME account (optional)")
 	flag.StringVar(&c.ACMECacheDir, "acme-cache-dir", lookup("DC_ACME_CACHE_DIR"), "directory to cache the ACME certificate/account state (default: <data-dir>/acme)")
-	flag.StringVar(&c.ACMEDirectoryURL, "acme-directory-url", lookup("DC_ACME_DIRECTORY_URL"), "override the ACME directory URL (default: Let's Encrypt production) — e.g. its staging directory, or a local Pebble instance for testing")
+	flag.StringVar(&c.ACMEDirectoryURL, "acme-directory-url", lookup("DC_ACME_DIRECTORY_URL"), "override the ACME directory URL (default: Let's Encrypt production) — e.g. its staging directory; NOT a local Pebble instance, which this server cannot obtain a certificate through (see docs/gotchas.md)")
 	flag.BoolVar(&c.MCPEnabled, "mcp-enabled", lookup("DC_MCP_ENABLED") == "1", "enable the remote MCP server + OAuth endpoints (off by default; requires HTTPS)")
 	flag.StringVar(&c.MCPPublicURL, "mcp-public-url", lookup("DC_MCP_PUBLIC_URL"), "externally reachable base URL (https://host[:port]) for MCP OAuth audience/metadata")
 	flag.StringVar(&c.RedisAddr, "redis-addr", lookup("DC_REDIS_ADDR"), "Redis address (host:port) for metrics history; empty = in-memory")

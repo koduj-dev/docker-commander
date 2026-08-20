@@ -58,6 +58,22 @@ func TestNewManager_EmailAndDirectoryURL(t *testing.T) {
 	}
 }
 
+// SECURITY: NewManager must never disable certificate verification for the
+// directory it talks to, even with a directoryURL override — the override
+// exists for a real alternate ACME-compliant CA (or Let's Encrypt staging),
+// not an excuse to accept an unverifiable server. A nil HTTPClient makes
+// *acme.Client fall back to http.DefaultClient, which uses the normal OS
+// trust store; this is also exactly why a local Pebble instance does not
+// work through this path (its self-signed cert is correctly refused) — see
+// the doc comment on NewManager and docs/gotchas.md.
+func TestNewManager_DoesNotDisableCertificateVerification(t *testing.T) {
+	mgr := NewManager([]string{"example.com"}, "", t.TempDir(), "https://pebble.local/dir")
+	if mgr.Client.HTTPClient != nil {
+		t.Errorf("SECURITY: Client.HTTPClient = %+v, want nil (default verification) — "+
+			"a directoryURL override must not come with relaxed TLS verification", mgr.Client.HTTPClient)
+	}
+}
+
 func TestNewManager_AcceptsTOSWithoutPrompting(t *testing.T) {
 	mgr := NewManager([]string{"example.com"}, "", t.TempDir(), "")
 	if mgr.Prompt == nil {

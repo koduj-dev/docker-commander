@@ -315,9 +315,16 @@ re-request a certificate and spend into the CA's rate limits.
 
 To test the flow without touching Let's Encrypt's production rate limits, point
 `DC_ACME_DIRECTORY_URL` at [Let's Encrypt's staging
-directory](https://letsencrypt.org/docs/staging-environment/) or a local
-[Pebble](https://github.com/letsencrypt/pebble) instance — both issue
-certificates no real browser will trust, which is the point.
+directory](https://letsencrypt.org/docs/staging-environment/) — it issues a
+certificate no real browser will trust, which is the point, but its own API
+endpoint still has a normal, trusted TLS certificate. **Not a local
+[Pebble](https://github.com/letsencrypt/pebble) instance**: unlike staging,
+Pebble's own API endpoint uses a locally-generated, untrusted certificate, so
+this server correctly refuses to talk to it at all — and even past that,
+Pebble's responses don't work with this server's certificate-obtaining code
+path regardless (see [docs/gotchas.md](gotchas.md)). Pebble is only used by
+this project's own test suite, at a lower protocol level than the running
+server uses.
 
 **B — reverse proxy (recommended for anything non-trivial).**
 Bind to loopback and terminate TLS at nginx/Caddy. WebSockets must be allowed
