@@ -135,6 +135,23 @@ every guard and the fixture traps that come with a real Docker daemon.
   `Environment=DOCKER_CONFIG=/var/lib/dockercmd/.docker` in
   `deploy/dockercmd.service`; the `install-*` scripts cover each OS.
 
+- **`golang.org/x/crypto/acme/autocert` vs. Pebble: `Post "": unsupported
+  protocol scheme ""`.** `autocert.Manager.GetCertificate`'s internal
+  `CreateOrderCert` polls the order via the URI from the finalize response's
+  `Location` header — but Pebble (Let's Encrypt's own ACME **test** server,
+  used for local ACME development against `internal/acme`) doesn't repeat
+  `Location` on that response (only the original order-creation response does,
+  and RFC 8555 §7.4 doesn't require it to). The finalize POST and the actual
+  certificate issuance still succeed server-side (visible in Pebble's own
+  logs: "Issued certificate…") — only the client's *subsequent poll* breaks,
+  100% reproducibly, independent of `PEBBLE_VA_ALWAYS_VALID`/
+  `PEBBLE_VA_NOSLEEP`. Real Let's Encrypt (Boulder) doesn't hit this — if it
+  did, it would break `autocert` for effectively everyone. The integration
+  test (`internal/acme/pebble_integration_test.go`) works around it by
+  driving the lower-level `acme.Client` methods directly, polling the order
+  via its own real URI (known from `AuthorizeOrder`, unaffected by the gap)
+  instead of going through the convenience wrapper.
+
 ## Secrets
 
 - **`net/http` transport errors embed the full request URL.** `*url.Error`'s

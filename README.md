@@ -76,7 +76,7 @@ level filters, regex search and structured parsing.
 - Optional **LDAP / Active Directory** login with auto-provisioning and **group mapping** — a directory group grants **named roles** (or raw sections), re-derived on every login, so membership drives permissions. Registry / SMTP / LDAP secrets **and host TLS private keys** are **encrypted at rest** (AES-256-GCM).
 
 **Ops**
-- Single CGO-free binary, embedded UI, systemd unit, config file, **native HTTPS** (built-in `--make-certs` self-signed cert helper, or behind a proxy), `/healthz` probe, and structured alert logging to the journal/syslog. See [Deployment](docs/deployment.md).
+- Single CGO-free binary, embedded UI, systemd unit, config file, **native HTTPS** (built-in `--make-certs` self-signed cert helper, **automatic ACME/Let's Encrypt certificates** for a public host with no reverse proxy, or behind a proxy), `/healthz` probe, and structured alert logging to the journal/syslog. See [Deployment](docs/deployment.md).
 - **Self-update** — a **one-tap in-app update & restart** for admins (and an "update available" banner), plus the `dockercmd --self-upgrade` command (SHA-256-verified, atomic binary replace).
 
 ## 🏗️ Architecture
@@ -271,6 +271,10 @@ list. The Docker connection also honours the standard `DOCKER_HOST` /
 | `-addr`              | `DC_ADDR`              | (unset)            | Legacy full `host:port`; overrides `-host`/`-port`. |
 | `-tls-cert`          | `DC_TLS_CERT`          | (off)              | PEM certificate path; with `-tls-key`, serves **HTTPS** directly. |
 | `-tls-key`           | `DC_TLS_KEY`           | (off)              | PEM private-key path. |
+| `-acme-domains`      | `DC_ACME_DOMAINS`      | (off)              | Comma-separated public hostname(s): automatic **HTTPS** via ACME/Let's Encrypt instead of a static cert. Mutually exclusive with `-tls-cert`/`-tls-key`. |
+| `-acme-email`        | `DC_ACME_EMAIL`        | (unset)            | Contact email registered with the ACME account (optional). |
+| `-acme-cache-dir`    | `DC_ACME_CACHE_DIR`    | `<data-dir>/acme`  | Where issued ACME certificate/account state is cached between restarts. |
+| `-acme-directory-url`| `DC_ACME_DIRECTORY_URL`| Let's Encrypt prod | Override the ACME directory — e.g. the staging directory, or a local Pebble instance for testing. |
 | `-mcp-enabled`       | `DC_MCP_ENABLED=1`     | off                | Enable the remote **MCP** server for AI tools. Off by default; serve behind HTTPS. See [MCP](docs/mcp.md). |
 | `-mcp-public-url`    | `DC_MCP_PUBLIC_URL`    | (unset)            | Externally reachable base URL (`https://host`) — required for the MCP **OAuth** flow (bearer tokens work without it). |
 | `-data-dir`          | `DC_DATA_DIR`          | OS config dir      | SQLite DB + signing/encryption keys. |

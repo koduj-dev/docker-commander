@@ -320,6 +320,110 @@ func TestLoadTLSBothOK(t *testing.T) {
 	}
 }
 
+func TestLoadACMEDomains(t *testing.T) {
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	defer func() { os.Args, flag.CommandLine = oldArgs, oldFS }()
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = []string{"dockercmd"}
+
+	dir := t.TempDir()
+	t.Setenv("DC_DATA_DIR", dir)
+	t.Setenv("DC_ACME_DOMAINS", " example.com , www.example.com ")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if want := []string{"example.com", "www.example.com"}; !equalStrings(c.ACMEDomains, want) {
+		t.Errorf("ACMEDomains = %v, want %v (whitespace should be trimmed)", c.ACMEDomains, want)
+	}
+	if want := filepath.Join(dir, "acme"); c.ACMECacheDir != want {
+		t.Errorf("ACMECacheDir = %q, want default %q", c.ACMECacheDir, want)
+	}
+	if !c.TLSEnabled() {
+		t.Error("TLSEnabled() should be true when ACME domains are set")
+	}
+}
+
+func TestLoadACMECacheDirOverride(t *testing.T) {
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	defer func() { os.Args, flag.CommandLine = oldArgs, oldFS }()
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = []string{"dockercmd"}
+
+	t.Setenv("DC_DATA_DIR", t.TempDir())
+	t.Setenv("DC_ACME_DOMAINS", "example.com")
+	t.Setenv("DC_ACME_CACHE_DIR", "/var/lib/dockercmd/acme-cache")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.ACMECacheDir != "/var/lib/dockercmd/acme-cache" {
+		t.Errorf("ACMECacheDir = %q, want the explicit override preserved", c.ACMECacheDir)
+	}
+}
+
+// PENTEST-adjacent (config-validation): ACME and a static cert/key pair are
+// two different ways to obtain a certificate — combining them silently would
+// leave it ambiguous which one actually serves, so this must be a hard error,
+// not a "last one wins".
+func TestLoadACMEConflictsWithStaticTLS(t *testing.T) {
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	defer func() { os.Args, flag.CommandLine = oldArgs, oldFS }()
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = []string{"dockercmd"}
+
+	t.Setenv("DC_DATA_DIR", t.TempDir())
+	t.Setenv("DC_ACME_DOMAINS", "example.com")
+	t.Setenv("DC_TLS_CERT", "/tmp/cert.pem")
+	t.Setenv("DC_TLS_KEY", "/tmp/key.pem")
+	if _, err := Load(); err == nil {
+		t.Error("ACME domains combined with a static cert/key pair should error")
+	}
+}
+
+func TestLoadACMERejectsIPAddress(t *testing.T) {
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	defer func() { os.Args, flag.CommandLine = oldArgs, oldFS }()
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = []string{"dockercmd"}
+
+	t.Setenv("DC_DATA_DIR", t.TempDir())
+	t.Setenv("DC_ACME_DOMAINS", "203.0.113.5")
+	if _, err := Load(); err == nil {
+		t.Error("an IP address in -acme-domains should error (ACME issues certs for hostnames only)")
+	}
+}
+
+func TestConfigTLSEnabled(t *testing.T) {
+	cases := []struct {
+		name string
+		c    Config
+		want bool
+	}{
+		{"neither set", Config{}, false},
+		{"static pair", Config{TLSCert: "/c", TLSKey: "/k"}, true},
+		{"cert without key", Config{TLSCert: "/c"}, false},
+		{"acme domains", Config{ACMEDomains: []string{"example.com"}}, true},
+	}
+	for _, tc := range cases {
+		if got := tc.c.TLSEnabled(); got != tc.want {
+			t.Errorf("%s: TLSEnabled() = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestDBPath(t *testing.T) {
 	c := Config{DataDir: "/var/lib/dockercmd"}
 	if got, want := c.DBPath(), "/var/lib/dockercmd/docker-commander.db"; got != want {

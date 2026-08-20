@@ -44,6 +44,26 @@ type Config struct {
 	TLSCert string
 	TLSKey  string
 
+	// ACMEDomains, when non-empty, enables automatic HTTPS: a certificate is
+	// obtained and renewed via ACME (Let's Encrypt by default) for these public
+	// hostnames instead of a static TLSCert/TLSKey pair — mutually exclusive
+	// with them. For a host sitting directly on the public internet with no
+	// reverse proxy in front (the proxy case already terminates TLS itself).
+	ACMEDomains []string
+	// ACMEEmail is optionally registered with the ACME account, so the CA can
+	// reach the operator about renewal problems or policy changes. Not required.
+	ACMEEmail string
+	// ACMECacheDir persists the obtained certificate/key and ACME account state
+	// between restarts, so a restart doesn't re-issue a certificate and burn
+	// into the CA's rate limits. Defaults to <data-dir>/acme.
+	ACMECacheDir string
+	// ACMEDirectoryURL overrides the ACME server (default: Let's Encrypt
+	// production). Point it at Let's Encrypt's staging directory, or a local
+	// Pebble instance, to exercise the flow without spending production
+	// rate-limit budget or minting a real (but untrusted-in-staging) cert
+	// during development.
+	ACMEDirectoryURL string
+
 	// MCPEnabled turns on the remote MCP server (and its OAuth endpoints). Off by
 	// default: when false the /mcp, /oauth and MCP /.well-known routes are not
 	// mounted, so a request is an unknown path (it falls through to the SPA, or a
@@ -91,6 +111,13 @@ type Config struct {
 // DBPath is the path to the SQLite database file.
 func (c Config) DBPath() string { return filepath.Join(c.DataDir, "docker-commander.db") }
 
+// TLSEnabled reports whether the server should speak HTTPS — either from a
+// static cert/key pair or from ACME-obtained domains. The two are mutually
+// exclusive (enforced in Load), so this is never true from both at once.
+func (c Config) TLSEnabled() bool {
+	return (c.TLSCert != "" && c.TLSKey != "") || len(c.ACMEDomains) > 0
+}
+
 // Load parses flags/env/config-file and returns the resolved configuration.
 //
 // Precedence (highest first): command-line flag → environment variable →
@@ -130,6 +157,10 @@ func Load() (Config, error) {
 	flag.StringVar(&c.MetricsToken, "metrics-token", lookup("DC_METRICS_TOKEN"), "require this bearer token to scrape /metrics (empty = open)")
 	flag.StringVar(&c.TLSCert, "tls-cert", lookup("DC_TLS_CERT"), "PEM TLS certificate path (enables HTTPS together with -tls-key)")
 	flag.StringVar(&c.TLSKey, "tls-key", lookup("DC_TLS_KEY"), "PEM TLS private-key path")
+	acmeDomains := flag.String("acme-domains", lookup("DC_ACME_DOMAINS"), "comma-separated public hostname(s): enables automatic HTTPS via ACME/Let's Encrypt (mutually exclusive with -tls-cert/-tls-key)")
+	flag.StringVar(&c.ACMEEmail, "acme-email", lookup("DC_ACME_EMAIL"), "contact email registered with the ACME account (optional)")
+	flag.StringVar(&c.ACMECacheDir, "acme-cache-dir", lookup("DC_ACME_CACHE_DIR"), "directory to cache the ACME certificate/account state (default: <data-dir>/acme)")
+	flag.StringVar(&c.ACMEDirectoryURL, "acme-directory-url", lookup("DC_ACME_DIRECTORY_URL"), "override the ACME directory URL (default: Let's Encrypt production) — e.g. its staging directory, or a local Pebble instance for testing")
 	flag.BoolVar(&c.MCPEnabled, "mcp-enabled", lookup("DC_MCP_ENABLED") == "1", "enable the remote MCP server + OAuth endpoints (off by default; requires HTTPS)")
 	flag.StringVar(&c.MCPPublicURL, "mcp-public-url", lookup("DC_MCP_PUBLIC_URL"), "externally reachable base URL (https://host[:port]) for MCP OAuth audience/metadata")
 	flag.StringVar(&c.RedisAddr, "redis-addr", lookup("DC_REDIS_ADDR"), "Redis address (host:port) for metrics history; empty = in-memory")
@@ -169,6 +200,24 @@ func Load() (Config, error) {
 	// HTTPS needs both halves of the keypair.
 	if (c.TLSCert == "") != (c.TLSKey == "") {
 		return c, errors.New("both -tls-cert and -tls-key (DC_TLS_CERT/DC_TLS_KEY) must be set to enable HTTPS")
+	}
+
+	c.ACMEDomains = splitCommaList(*acmeDomains)
+	if len(c.ACMEDomains) > 0 {
+		if c.TLSCert != "" || c.TLSKey != "" {
+			return c, errors.New("-acme-domains cannot be combined with -tls-cert/-tls-key — pick one way to obtain a certificate")
+		}
+		for _, d := range c.ACMEDomains {
+			// ACME/Let's Encrypt issues certificates for hostnames, not bare IPs —
+			// catch the mistake here rather than as an opaque failure from the CA
+			// the first time a certificate is actually requested.
+			if net.ParseIP(d) != nil {
+				return c, fmt.Errorf("-acme-domains: %q is an IP address; ACME issues certificates for hostnames only", d)
+			}
+		}
+		if c.ACMECacheDir == "" {
+			c.ACMECacheDir = filepath.Join(c.DataDir, "acme")
+		}
 	}
 
 	if err := os.MkdirAll(c.DataDir, 0o700); err != nil {
@@ -217,6 +266,18 @@ func parseCIDRs(raw string) ([]*net.IPNet, error) {
 		out = append(out, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
 	}
 	return out, nil
+}
+
+// splitCommaList splits a comma-separated flag value into trimmed, non-empty
+// entries.
+func splitCommaList(raw string) []string {
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 // ResolveDataDir returns the data directory for standalone CLI actions, which

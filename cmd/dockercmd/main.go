@@ -25,6 +25,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/koduj-dev/docker-commander/internal/acme"
 	"github.com/koduj-dev/docker-commander/internal/api"
 	"github.com/koduj-dev/docker-commander/internal/auth"
 	"github.com/koduj-dev/docker-commander/internal/backup"
@@ -500,8 +501,13 @@ func runServer(shutdownCtx context.Context) error {
 	}
 
 	httpServer := newHTTPServer(cfg.Addr, srv.Handler())
-	tlsEnabled := cfg.TLSCert != "" && cfg.TLSKey != ""
-	if tlsEnabled {
+	tlsEnabled := cfg.TLSEnabled()
+	acmeMode := len(cfg.ACMEDomains) > 0
+	if acmeMode {
+		mgr := acme.NewManager(cfg.ACMEDomains, cfg.ACMEEmail, cfg.ACMECacheDir, cfg.ACMEDirectoryURL)
+		httpServer.TLSConfig = mgr.TLSConfig()
+		httpServer.TLSConfig.MinVersion = tls.VersionTLS12
+	} else if tlsEnabled {
 		httpServer.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	}
 
@@ -524,7 +530,12 @@ func runServer(shutdownCtx context.Context) error {
 
 	logStartup(cfg)
 	serve := httpServer.ListenAndServe
-	if tlsEnabled {
+	if acmeMode {
+		// Empty paths: httpServer.TLSConfig.GetCertificate (set above, via
+		// mgr.TLSConfig()) supplies certificates dynamically instead of a
+		// static file pair.
+		serve = func() error { return httpServer.ListenAndServeTLS("", "") }
+	} else if tlsEnabled {
 		// Cert/key paths are passed to ServeTLS; the http.Server reads them.
 		serve = func() error { return httpServer.ListenAndServeTLS(cfg.TLSCert, cfg.TLSKey) }
 	}
@@ -651,10 +662,13 @@ func serveWebFS(cfg config.Config) fs.FS {
 
 func logStartup(cfg config.Config) {
 	scheme := "http"
-	if cfg.TLSCert != "" && cfg.TLSKey != "" {
+	if cfg.TLSEnabled() {
 		scheme = "https"
 	}
 	log.Printf("Docker Commander %s listening on %s://%s", version, scheme, cfg.Addr)
+	if len(cfg.ACMEDomains) > 0 {
+		log.Printf("TLS: automatic via ACME for %s (cache: %s)", strings.Join(cfg.ACMEDomains, ", "), cfg.ACMECacheDir)
+	}
 	if cfg.ConfigFile != "" {
 		log.Printf("config file: %s", cfg.ConfigFile)
 	} else {

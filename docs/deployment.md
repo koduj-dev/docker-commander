@@ -20,6 +20,7 @@ list. Key ones:
 | `DC_PORT` | `8470` | listen port (also `-p 9000` shorthand) |
 | `DC_ADDR` | (unset) | legacy full `host:port`; overrides `DC_HOST`/`DC_PORT` if set |
 | `DC_TLS_CERT` / `DC_TLS_KEY` | (off) | PEM cert + key paths; set both to serve **HTTPS** directly |
+| `DC_ACME_DOMAINS` | (off) | comma-separated public hostname(s): serve **HTTPS** via automatic ACME/Let's Encrypt certificates instead of a static pair — see [HTTPS](#https) |
 | `DC_MCP_ENABLED` | (off) | enable the remote **MCP** server for AI tools (off by default; serve behind HTTPS) — see [MCP](mcp.md) |
 | `DC_MCP_PUBLIC_URL` | (unset) | externally reachable base URL (`https://host`) — required for the MCP **OAuth** flow (bearer tokens work without it) |
 | `DC_DATA_DIR` | OS config dir | SQLite DB + signing/encryption keys |
@@ -268,10 +269,11 @@ To forward the journal to a **syslog** daemon (rsyslog/syslog-ng → SIEM), set
 using systemd? Redirect the process's stderr to a file or your collector.
 
 ## HTTPS
-Two options:
+Three options:
 
-**A — native TLS (no proxy).** Point Docker Commander at a PEM cert + key and it
-serves HTTPS directly — handy for a small public deployment:
+**A — native TLS with a static cert (no proxy).** Point Docker Commander at a
+PEM cert + key and it serves HTTPS directly — handy for a small public
+deployment:
 
 ```ini
 DC_HOST=0.0.0.0
@@ -280,14 +282,42 @@ DC_TLS_CERT=/etc/docker-commander/tls/cert.pem
 DC_TLS_KEY=/etc/docker-commander/tls/key.pem
 ```
 
-Use a real certificate (e.g. Let's Encrypt) for public hosts; both keys must be
-set together (TLS ≥ 1.2). The key file should be readable only by the service
-user.
+Use a real certificate for public hosts; both keys must be set together
+(TLS ≥ 1.2). The key file should be readable only by the service user.
 
 For a quick **self-signed** cert (LAN / internal use) without `openssl`, run
 `dockercmd --make-certs [hostnames…]`: it writes `cert.pem` + `key.pem` (key mode
 0600) into `<data-dir>/tls/`, covering localhost plus any hosts you list, and
 prints the `DC_TLS_CERT` / `DC_TLS_KEY` to set. Clients warn until they trust it.
+
+**A2 — automatic HTTPS via ACME (Let's Encrypt).** For a public host with no
+reverse proxy in front of it, Docker Commander can obtain and renew a
+browser-trusted certificate itself instead of a static file pair — mutually
+exclusive with `DC_TLS_CERT`/`DC_TLS_KEY`:
+
+```ini
+DC_HOST=0.0.0.0
+DC_PORT=443
+DC_ACME_DOMAINS=docker.example.com
+DC_ACME_EMAIL=ops@example.com
+```
+
+Requirements: `DC_ACME_DOMAINS` must be public **hostnames** the CA can verify
+(not IP addresses), DNS for each must already point at this host, and the
+listening port must be **directly** reachable from the internet on 443 — the
+challenge (`tls-alpn-01`) is answered during the TLS handshake itself, so
+unlike some ACME setups this needs no separate port-80 listener, but it does
+need to see the real inbound connection, which a reverse proxy terminating TLS
+itself would intercept. `DC_ACME_EMAIL` is optional (the CA uses it for
+renewal/problem notices). Issued material is cached under
+`DC_ACME_CACHE_DIR` (default `<data-dir>/acme`) so a restart doesn't
+re-request a certificate and spend into the CA's rate limits.
+
+To test the flow without touching Let's Encrypt's production rate limits, point
+`DC_ACME_DIRECTORY_URL` at [Let's Encrypt's staging
+directory](https://letsencrypt.org/docs/staging-environment/) or a local
+[Pebble](https://github.com/letsencrypt/pebble) instance — both issue
+certificates no real browser will trust, which is the point.
 
 **B — reverse proxy (recommended for anything non-trivial).**
 Bind to loopback and terminate TLS at nginx/Caddy. WebSockets must be allowed

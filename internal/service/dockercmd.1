@@ -144,6 +144,22 @@ PEM TLS certificate path (enables HTTPS together with
 .BI \-tls-key " path"
 PEM TLS private-key path.
 .TP
+.BI \-acme-domains " host[,host...]"
+Comma-separated public hostname(s): enables automatic HTTPS via ACME/Let's
+Encrypt instead of a static certificate. Mutually exclusive with
+.BR \-tls-cert / \-tls-key .
+.TP
+.BI \-acme-email " address"
+Contact email registered with the ACME account (optional).
+.TP
+.BI \-acme-cache-dir " path"
+Directory to cache the ACME certificate/account state (default:
+.IR <data-dir>/acme ).
+.TP
+.BI \-acme-directory-url " url"
+Override the ACME directory URL (default: Let's Encrypt production) \(em e.g.
+its staging directory, or a local Pebble instance for testing.
+.TP
 .B \-mcp-enabled
 Enable the remote MCP server + OAuth endpoints (off by default; requires HTTPS).
 .TP

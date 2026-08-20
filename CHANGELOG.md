@@ -14,6 +14,13 @@ All notable changes to Docker Commander are documented here. The format follows
   networks/volumes. Exposed via the REST API (`POST /api/diagnostics/run`)
   and as an MCP tool (`run_diagnostics`), gated by a new `diagnostics`
   permission section.
+- **Automatic HTTPS via ACME (Let's Encrypt).** `DC_ACME_DOMAINS` obtains and
+  renews a browser-trusted certificate for a public host with no reverse
+  proxy in front, instead of a static `DC_TLS_CERT`/`DC_TLS_KEY` pair —
+  `DC_ACME_EMAIL`, `DC_ACME_CACHE_DIR` and `DC_ACME_DIRECTORY_URL` (to test
+  against Let's Encrypt's staging directory or a local Pebble instance)
+  round it out. Uses the `tls-alpn-01` challenge, so no separate port-80
+  listener is needed.
 - **Troubleshooting now also checks the host itself**: a Docker network's
   subnet overlapping one of the host's real network interfaces (the
   corporate-LAN/VPN collision that prompted this feature), a bridge
