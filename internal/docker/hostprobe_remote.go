@@ -65,11 +65,36 @@ func (m *Manager) remoteHostProbe(ctx context.Context, hostID int64, h *store.Ho
 		return hostProbeResult{Attempted: attempted, Err: lastErr}
 	}
 
-	attempted = append(attempted, "ip route show default")
-	if out, err := m.sshExec(ctx, hostID, h, "ip route show default", probeCmdTimeout); err == nil {
-		markDefaultInterface(ifaces, parseDefaultRouteIface(out))
+	// ipconfig already marked IsDefault itself, from each adapter's own
+	// "Default Gateway" field — Windows has no `ip route`/`route get`
+	// equivalent to ask here. Linux and macOS/BSD both show up via `ip` or
+	// `ifconfig`, so for those try both route-table probes in turn: a host
+	// missing `ip` (macOS, or Linux without iproute2) simply errors on the
+	// first and falls through to the second, rather than the MTU check
+	// silently never having a default interface to compare against — the gap
+	// this fallback exists to close.
+	if method != "ipconfig" {
+		attempted = append(attempted, "ip route show default")
+		if out, err := m.sshExec(ctx, hostID, h, "ip route show default", probeCmdTimeout); err == nil {
+			markDefaultInterface(ifaces, parseDefaultRouteIface(out))
+		}
+		if !anyDefault(ifaces) {
+			attempted = append(attempted, "route -n get default")
+			if out, err := m.sshExec(ctx, hostID, h, "route -n get default", probeCmdTimeout); err == nil {
+				markDefaultInterface(ifaces, parseRouteGetDefaultIface(out))
+			}
+		}
 	}
 	return hostProbeResult{Method: method, Ifaces: ifaces, Attempted: attempted}
+}
+
+func anyDefault(ifaces []hostIface) bool {
+	for _, hi := range ifaces {
+		if hi.IsDefault {
+			return true
+		}
+	}
+	return false
 }
 
 // remoteDiskFree reports total/free bytes at path on a remote host, trying
@@ -160,8 +185,23 @@ func markDefaultInterface(ifaces []hostIface, name string) {
 
 var defaultRouteRe = regexp.MustCompile(`\bdev\s+(\S+)`)
 
+// parseDefaultRouteIface reads Linux's `ip route show default`, e.g.
+// "default via 172.17.0.1 dev eth0".
 func parseDefaultRouteIface(out string) string {
 	m := defaultRouteRe.FindStringSubmatch(out)
+	if m == nil {
+		return ""
+	}
+	return m[1]
+}
+
+var routeGetDefaultRe = regexp.MustCompile(`(?m)^\s*interface:\s*(\S+)`)
+
+// parseRouteGetDefaultIface reads macOS/BSD's `route -n get default`, whose
+// output includes a line like "interface: en0" — `ip route` doesn't exist on
+// those platforms, so this is the fallback remoteHostProbe tries next.
+func parseRouteGetDefaultIface(out string) string {
+	m := routeGetDefaultRe.FindStringSubmatch(out)
 	if m == nil {
 		return ""
 	}
@@ -342,8 +382,13 @@ var (
 	ipconfigAdapterRe = regexp.MustCompile(`(?i)^\S.*adapter\s+(.+):\s*$`)
 	ipconfigIPv4Re    = regexp.MustCompile(`(?i)IPv?4?\s*Address[.\s]*:\s*([0-9.]+)`)
 	ipconfigMaskRe    = regexp.MustCompile(`(?i)Subnet\s+Mask[.\s]*:\s*([0-9.]+)`)
+	ipconfigGatewayRe = regexp.MustCompile(`(?i)Default\s+Gateway[.\s]*:\s*([0-9.]+)`)
 )
 
+// parseIpconfigText also marks IsDefault directly, from each adapter's own
+// "Default Gateway" field: `ipconfig` has no separate route-table command to
+// ask afterward the way `ip route`/`route get` do on Linux/macOS, so the
+// signal has to come from here or not at all.
 func parseIpconfigText(out string) ([]hostIface, error) {
 	out = strings.TrimSpace(out)
 	if out == "" {
@@ -352,10 +397,12 @@ func parseIpconfigText(out string) ([]hostIface, error) {
 	var ifaces []hostIface
 	adapter := "adapter"
 	var pendingIP string
+	lastIfaceIdx := -1
 	for _, line := range strings.Split(out, "\n") {
 		if m := ipconfigAdapterRe.FindStringSubmatch(line); m != nil {
 			adapter = strings.TrimSpace(m[1])
 			pendingIP = ""
+			lastIfaceIdx = -1
 			continue
 		}
 		if m := ipconfigIPv4Re.FindStringSubmatch(line); m != nil {
@@ -370,8 +417,13 @@ func parseIpconfigText(out string) ([]hostIface, error) {
 					Subnets: []string{fmt.Sprintf("%s/%d", pendingIP, prefix)},
 					// ipconfig does not report MTU.
 				})
+				lastIfaceIdx = len(ifaces) - 1
 			}
 			pendingIP = ""
+			continue
+		}
+		if m := ipconfigGatewayRe.FindStringSubmatch(line); m != nil && lastIfaceIdx >= 0 {
+			ifaces[lastIfaceIdx].IsDefault = true
 		}
 	}
 	if len(ifaces) == 0 {

@@ -99,6 +99,45 @@ Ethernet adapter Ethernet:
 	if ifaces[0].Subnets[0] != "192.168.1.100/24" {
 		t.Errorf("subnet = %v", ifaces[0].Subnets)
 	}
+	// A non-empty Default Gateway is ipconfig's only signal for "this is the
+	// interface the host actually routes through" — there's no separate route
+	// command to fall back on for Windows the way there is for Linux/macOS.
+	if !ifaces[0].IsDefault {
+		t.Error("interface with a Default Gateway should be marked IsDefault")
+	}
+}
+
+func TestParseIpconfigText_MultipleAdaptersOnlyOneHasAGateway(t *testing.T) {
+	out := `Windows IP Configuration
+
+
+Ethernet adapter vEthernet (Docker):
+
+   IPv4 Address. . . . . . . . . . . : 172.20.0.1
+   Subnet Mask . . . . . . . . . . . : 255.255.240.0
+   Default Gateway . . . . . . . . . :
+
+Wireless LAN adapter Wi-Fi:
+
+   IPv4 Address. . . . . . . . . . . : 192.168.1.100
+   Subnet Mask . . . . . . . . . . . : 255.255.255.0
+   Default Gateway . . . . . . . . . : 192.168.1.1
+`
+	ifaces, err := parseIpconfigText(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ifaces) != 2 {
+		t.Fatalf("got %d interfaces, want 2: %+v", len(ifaces), ifaces)
+	}
+	docker0 := findIface(t, ifaces, "vEthernet (Docker)")
+	if docker0.IsDefault {
+		t.Error("the adapter with an EMPTY Default Gateway must not be marked default")
+	}
+	wifi := findIface(t, ifaces, "Wi-Fi")
+	if !wifi.IsDefault {
+		t.Error("the adapter with a real Default Gateway should be marked default")
+	}
 }
 
 func TestParseDefaultRouteIface(t *testing.T) {
@@ -106,6 +145,22 @@ func TestParseDefaultRouteIface(t *testing.T) {
 		t.Errorf("got %q, want eth0", got)
 	}
 	if got := parseDefaultRouteIface("garbage, no route here"); got != "" {
+		t.Errorf("got %q, want empty", got)
+	}
+}
+
+func TestParseRouteGetDefaultIface(t *testing.T) {
+	out := `   route to: default
+destination: default
+       mask: default
+    gateway: 192.168.1.1
+  interface: en0
+      flags: <UP,GATEWAY,DONE,STATIC,PRCLONING>
+`
+	if got := parseRouteGetDefaultIface(out); got != "en0" {
+		t.Errorf("got %q, want en0", got)
+	}
+	if got := parseRouteGetDefaultIface("garbage, no route here"); got != "" {
 		t.Errorf("got %q, want empty", got)
 	}
 }

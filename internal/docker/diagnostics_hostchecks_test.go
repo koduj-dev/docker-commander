@@ -33,6 +33,18 @@ func TestLocalHostProbe_RealInterfaces(t *testing.T) {
 	}
 }
 
+func TestAnyDefault(t *testing.T) {
+	if anyDefault(nil) {
+		t.Error("anyDefault(nil) = true, want false")
+	}
+	if anyDefault([]hostIface{{Name: "eth0"}, {Name: "eth1"}}) {
+		t.Error("anyDefault with no IsDefault set = true, want false")
+	}
+	if !anyDefault([]hostIface{{Name: "eth0"}, {Name: "eth1", IsDefault: true}}) {
+		t.Error("anyDefault with one IsDefault set = false, want true")
+	}
+}
+
 func TestDockerOwnedIface(t *testing.T) {
 	owned := []string{"lo", "docker0", "docker1", "br-abc123", "veth1234abc"}
 	for _, n := range owned {
