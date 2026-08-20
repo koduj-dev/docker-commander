@@ -107,6 +107,10 @@ var recordRouteDecision = map[string]string{
 	"/api/service-blocks/{id}/duplicate":    "builder content; names no host",
 	"/api/compose-fragments/{id}":           "builder content; names no host",
 	"/api/compose-fragments/{id}/duplicate": "builder content; names no host",
+	// A CVE id is a global identifier (the same vulnerability everywhere it
+	// turns up), and ignoring one is deliberately instance-wide, not scoped to
+	// whichever host's image happened to surface it.
+	"/api/images/ignored-cves/{id}": "an ignored CVE is instance-wide; it names no host",
 }
 
 // TestEveryRecordAddressedRouteDecidesItsHost walks the real router, collects the

@@ -14,6 +14,11 @@ All notable changes to Docker Commander are documented here. The format follows
   networks/volumes. Exposed via the REST API (`POST /api/diagnostics/run`)
   and as an MCP tool (`run_diagnostics`), gated by a new `diagnostics`
   permission section.
+- **Image vulnerability scans can now be triaged.** Select one or more CVEs in
+  a Trivy scan's results and **ignore** them in bulk — the decision is global
+  (keyed by CVE id, not per-image), so reviewing one finding once hides it
+  wherever else it turns up. Ignored rows hide by default; a "Show ignored"
+  toggle brings them back with an un-ignore action.
 - **Logs: download the currently-filtered view as a `.log` file** — the
   aggregated Logs page respects whatever source/level/search filter is
   active and exports exactly what's on screen, one line per entry with a

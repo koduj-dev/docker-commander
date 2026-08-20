@@ -21,6 +21,7 @@ import type {
   DiskUsage,
   HistoryEntry,
   ScanResponse,
+  IgnoredCVE,
   Host,
   ImageSummary,
   ImageSearchResult,
@@ -635,6 +636,13 @@ export const api = {
     if (h != null) params.set("host", String(h));
     return req<ScanResponse>("GET", `/api/images/scan?${params.toString()}`);
   },
+  // Ignored CVEs are global (a CVE id means the same thing on every host), so
+  // — unlike scanImage — these deliberately carry no ?host=.
+  ignoredCVEs: () => req<IgnoredCVE[]>("GET", "/api/images/ignored-cves"),
+  ignoreCVEs: (ids: string[], reason: string) =>
+    req<{ ok: boolean }>("POST", "/api/images/ignored-cves", { ids, reason }),
+  unignoreCVE: (id: string) =>
+    req<{ ok: boolean }>("DELETE", `/api/images/ignored-cves/${encodeURIComponent(id)}`),
 
   // Image/container transfer. Save/export are downloads (same-origin GET, cookie
   // auth) so we expose URLs the UI hands to an <a download>.
