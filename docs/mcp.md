@@ -122,11 +122,16 @@ refresh tokens). No external identity provider is required.
 - **search_logs** — find a string or regex **across** the containers on a host,
   for when you don't yet know which one to look at
 - **run_diagnostics** — a battery of sanity checks against a host: overlapping
-  Docker network subnets, duplicate port bindings, log drivers with no
-  rotation limit, and dangling networks/volumes. Each check reports
-  ok/warn/fail/skipped. Unlike the other three, this one is **write-gated**
-  (blocked for read-only tokens/users) — it actively inspects the target
-  host rather than just reading Docker's own records
+  Docker network subnets (against each other, and against the host's own real
+  network interfaces), a bridge network's MTU not matching the host's default
+  interface, duplicate port bindings, log drivers with no rotation limit, low
+  free disk space where Docker stores its data, and dangling networks/volumes.
+  Each check reports ok/warn/fail/skipped — the host-network and disk-space
+  checks report **skipped**, not a guess, when the host can't be probed (no
+  SSH access, or a plain-TCP connection with no shell at all). Unlike the
+  other three, this one is **write-gated** (blocked for read-only
+  tokens/users) — it actively inspects the target host rather than just
+  reading Docker's own records
 
 The first three are read-only and bounded. They exist so an assistant can
 answer "what's it doing?" and "what changed?" without `exec` — a shell would
@@ -211,7 +216,7 @@ then decides *where* each one may act.
 | `search_logs` | logs | R | A substring or regex **across** the containers on a host |
 | `container_processes` | containers | R | What is running inside a container (`docker top`) |
 | `container_changes` | containers | R | Files added/modified/deleted since it started (`docker diff`) — paths only |
-| `run_diagnostics` | diagnostics | W | Sanity-check battery for a host: network overlaps, duplicate ports, log rotation, dangling resources |
+| `run_diagnostics` | diagnostics | W | Sanity-check battery for a host: network overlaps (incl. vs. host interfaces), MTU mismatch, duplicate ports, log rotation, disk space, dangling resources |
 | `list_images` | images | R | Images on a host: tags, size, age, whether in use |
 | `list_volumes` | volumes | R | Volumes and who mounts them — never their contents |
 | `list_networks` | networks | R | Networks: driver, scope, subnets, attached containers |
