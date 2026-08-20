@@ -171,6 +171,22 @@ func TestEvaluateLogDrivers(t *testing.T) {
 		}
 	})
 
+	// This is the daemon-default case: a container created with NO explicit
+	// --log-opt, under a daemon whose daemon.json sets a global max-size.
+	// Docker resolves that default at creation time and persists it into the
+	// container's own HostConfig.LogConfig.Config — verified against a real
+	// daemon (see the comment on evaluateLogDrivers) — so from this function's
+	// point of view it's indistinguishable from an explicit per-container
+	// override, and must not be flagged.
+	t.Run("json-file relying on a daemon-level max-size default is fine", func(t *testing.T) {
+		got := evaluateLogDrivers(map[string]container.LogConfig{
+			"app": {Type: "json-file", Config: map[string]string{"max-size": "10m", "max-file": "3"}},
+		}, "json-file")
+		if got.Status != CheckOK {
+			t.Errorf("status = %s, want ok — a daemon-level default resolved into the container's own Config must count", got.Status)
+		}
+	})
+
 	t.Run("json-file with no max-size is flagged", func(t *testing.T) {
 		got := evaluateLogDrivers(map[string]container.LogConfig{
 			"app": {Type: "json-file"},

@@ -127,6 +127,17 @@ func (m *Manager) checkLogDriverRotation(ctx context.Context, hostID int64, cont
 // evaluateLogDrivers is the pure half of checkLogDriverRotation: given each
 // container's effective LogConfig (already resolved against the daemon
 // default), which ones are json-file/local without a max-size cap.
+//
+// A container's HostConfig.LogConfig.Config is the RESOLVED configuration,
+// not "only what this container explicitly overrode": Docker bakes any
+// daemon.json `log-opts` default into it at creation time, so a container
+// created under a daemon with a global `max-size` already carries that value
+// in its own Config map — confirmed empirically against a daemon with
+// `log-opts.max-size` set in daemon.json (docker:29-dind), where
+// `docker inspect` on a container created with no per-container --log-opt at
+// all showed `Config: {"max-size": "10m", ...}`. An absent max-size here is
+// therefore genuinely unbounded, not just "no per-container override to
+// report" — see TestEvaluateLogDrivers's daemon-default case.
 func evaluateLogDrivers(logConfigs map[string]container.LogConfig, daemonDefault string) CheckResult {
 	var details []string
 	for name, cfg := range logConfigs {
