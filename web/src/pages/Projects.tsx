@@ -4,11 +4,11 @@ import clsx from "clsx";
 import {
   FolderGit2, Plus, Rocket, Square, Trash2, X, FilePlus, FolderPlus, Upload, Loader2,
   ExternalLink, Save, FileText, FileBox, Folder, Terminal, Pencil, ChevronRight, Download, Search, CheckCircle2, AlertCircle, AlertTriangle, Eye, Boxes,
-  LayoutTemplate, Puzzle, KeyRound, Anchor, Server, GitCompare,
+  LayoutTemplate, Puzzle, KeyRound, Anchor, Server, GitCompare, History, RotateCcw,
 } from "lucide-react";
 import { bytes as fmtBytes } from "../lib/format";
 import { api, ApiError } from "../lib/api";
-import type { Project, ProjectFile, Stack, ComposeModel, ComposeService, ProjectTemplateMeta, ServiceBlockMeta, ComposeFragmentMeta, TemplateRef, TemplateVariable, Host, DeployPreview, ServiceChange } from "../lib/types";
+import type { Project, ProjectFile, Stack, ComposeModel, ComposeService, ProjectTemplateMeta, ServiceBlockMeta, ComposeFragmentMeta, TemplateRef, TemplateVariable, Host, DeployPreview, ServiceChange, ProjectRevision } from "../lib/types";
 import type { ServerCheck } from "../components/CodeEditor";
 import { buildTree, TreeItem } from "../components/FileTree";
 import { PageHeader } from "../layout/Shell";
@@ -195,9 +195,16 @@ function truncateMono(s: string, max = 64): string {
 // `active` without disappearing — still visible, still reversible — and
 // "Reconcile" is just Deploy from this context (recreating whatever drifted
 // to match the file). Exported for tests.
-export function DeployPreviewModal({ preview, projectId, projectName, onClose, onChanged, onReconcile, reconcileBusy }: {
+export function DeployPreviewModal({
+  preview, projectId, projectName, onClose, onChanged, onReconcile, reconcileBusy,
+  title = "Deploy preview", allowIgnore = true,
+}: {
   preview: DeployPreview; projectId: number; projectName: string; onClose: () => void;
   onChanged: () => void; onReconcile?: () => void; reconcileBusy?: boolean;
+  // A revision-to-revision diff is a historical comparison, not the live
+  // drift view — "Ignore" (which persists against the project's CURRENT
+  // drift state) and a custom heading don't apply there.
+  title?: string; allowIgnore?: boolean;
 }) {
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const changes = preview.changes ?? [];
@@ -221,7 +228,7 @@ export function DeployPreviewModal({ preview, projectId, projectName, onClose, o
       <div className="card w-[70vw] max-w-3xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 p-4 border-b border-border">
           <GitCompare className="h-4 w-4 text-accent" />
-          <span className="font-medium">Deploy preview</span>
+          <span className="font-medium">{title}</span>
           <span className="text-xs text-muted font-mono">{projectName}</span>
           <button className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
         </div>
@@ -238,7 +245,7 @@ export function DeployPreviewModal({ preview, projectId, projectName, onClose, o
             <>
               <div className="text-xs text-muted">
                 {active} active change{active === 1 ? "" : "s"}
-                {ignoredCount > 0 && <> — {ignoredCount} ignored</>}
+                {allowIgnore && ignoredCount > 0 && <> — {ignoredCount} ignored</>}
                 {typeof preview.unchanged === "number" && preview.unchanged > 0 && <> — {preview.unchanged} unchanged</>}
               </div>
               {changes.map((c, i) => {
@@ -254,17 +261,19 @@ export function DeployPreviewModal({ preview, projectId, projectName, onClose, o
                           <AlertTriangle className="h-3 w-3" /> recreates
                         </span>
                       )}
-                      {c.ignored && (
+                      {allowIgnore && c.ignored && (
                         <span className="text-[10px] text-muted border border-border rounded px-1.5 py-0.5" title="Reviewed and accepted — no longer counted as active drift">ignored</span>
                       )}
-                      <button
-                        className="btn-ghost px-2 py-0.5 text-[11px] ml-auto disabled:opacity-40"
-                        disabled={busyKey === key}
-                        onClick={() => toggleIgnore(c)}
-                        title={c.ignored ? "Count this drift again" : "Mark this drift reviewed and accepted"}
-                      >
-                        {busyKey === key ? <Loader2 className="h-3 w-3 animate-spin" /> : c.ignored ? "Unignore" : "Ignore"}
-                      </button>
+                      {allowIgnore && (
+                        <button
+                          className="btn-ghost px-2 py-0.5 text-[11px] ml-auto disabled:opacity-40"
+                          disabled={busyKey === key}
+                          onClick={() => toggleIgnore(c)}
+                          title={c.ignored ? "Count this drift again" : "Mark this drift reviewed and accepted"}
+                        >
+                          {busyKey === key ? <Loader2 className="h-3 w-3 animate-spin" /> : c.ignored ? "Unignore" : "Ignore"}
+                        </button>
+                      )}
                     </div>
                     {(c.from || c.to) && (
                       <div className="mt-1 text-xs font-mono text-muted break-all">
@@ -288,6 +297,122 @@ export function DeployPreviewModal({ preview, projectId, projectName, onClose, o
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// RevisionHistoryModal lists a project's deploy history (see NEXT.md's
+// "Deployment revisions and rollback") — each entry immutable, with a diff
+// against what's currently running (reusing DeployPreviewModal, read-only:
+// a revision comparison isn't the live drift-ignore state) and a Restore
+// action that overwrites the project's files with that revision and
+// redeploys it, pinning any image with a recorded digest so a mutable tag
+// can't quietly change what comes back.
+export function RevisionHistoryModal({ project, onClose, onOutput }: {
+  project: Project; onClose: () => void; onOutput: (o: Output) => void;
+}) {
+  const [revisions, setRevisions] = useState<ProjectRevision[] | null>(null);
+  const [diffFor, setDiffFor] = useState<ProjectRevision | null>(null);
+  const [diffPreview, setDiffPreview] = useState<DeployPreview | null>(null);
+  const [busy, setBusy] = useState("");
+  const dialogs = useDialogs();
+
+  const load = useCallback(() => {
+    api.listRevisions(project.id).then(setRevisions).catch(() => setRevisions([]));
+  }, [project.id]);
+  useEffect(() => { load(); }, [load]);
+
+  const openDiff = async (rev: ProjectRevision) => {
+    setBusy(`diff-${rev.revision}`);
+    try {
+      const d = await api.diffRevision(project.id, rev.revision, "current");
+      setDiffFor(rev);
+      setDiffPreview(d);
+    } catch (e) {
+      onOutput({ title: `Revision ${rev.revision} — diff`, text: e instanceof Error ? e.message : "failed", ok: false });
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const restore = async (rev: ProjectRevision) => {
+    if (!(await dialogs.confirm({
+      title: `Restore revision ${rev.revision}?`,
+      message: "This overwrites the project's current files with that revision's and redeploys it. Any unsaved edits in the editor will be lost.",
+      danger: true, confirmLabel: "Restore",
+    }))) return;
+    setBusy(`restore-${rev.revision}`);
+    try {
+      const r = await api.restoreRevision(project.id, rev.revision);
+      onOutput({ title: `${project.name} — restore to revision ${rev.revision}`, text: composeOutputText(r), ok: r.ok });
+      if (r.ok) { load(); onClose(); }
+    } catch (e) {
+      onOutput({ title: `${project.name} — restore`, text: e instanceof Error ? e.message : "failed", ok: false });
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+      <div className="card w-[70vw] max-w-3xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2 p-4 border-b border-border">
+          <History className="h-4 w-4 text-accent" />
+          <span className="font-medium">Deploy history</span>
+          <span className="text-xs text-muted font-mono">{project.name}</span>
+          <button className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-4 overflow-auto space-y-2">
+          {revisions === null ? (
+            <div className="flex items-center gap-2 text-sm text-muted"><Spinner /> Loading…</div>
+          ) : revisions.length === 0 ? (
+            <div className="text-sm text-muted">No deploys recorded yet — the history starts with the next one.</div>
+          ) : revisions.map((rev) => (
+            <div key={rev.id} className="border border-border rounded-md p-3 text-sm">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-medium">Revision {rev.revision}</span>
+                {!rev.valid && (
+                  <span className="text-[10px] uppercase tracking-wide border border-danger/40 text-danger rounded px-1.5 py-0.5">invalid</span>
+                )}
+                <span className="text-xs text-muted ml-auto">{new Date(rev.createdAt).toLocaleString()}</span>
+              </div>
+              <div className="mt-1 text-xs text-muted">
+                {rev.author && <>by <span className="font-mono">{rev.author}</span> — </>}
+                {rev.profiles.length > 0 ? `profiles: ${rev.profiles.join(", ")}` : "no profiles"}
+              </div>
+              {rev.reason && <div className="mt-1 text-xs text-text/90">{rev.reason}</div>}
+              {rev.images.length > 0 && (
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {rev.images.map((img) => (
+                    <span key={img.service} className="text-[10px] font-mono bg-panel2 rounded px-1.5 py-0.5 text-muted" title={img.digest ? `${img.image}@${img.digest}` : img.image}>
+                      {img.service}: {img.image}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div className="mt-2 flex justify-end gap-2">
+                <button className="btn-ghost px-2 py-1 text-xs disabled:opacity-40" disabled={busy === `diff-${rev.revision}`} onClick={() => openDiff(rev)}>
+                  {busy === `diff-${rev.revision}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <GitCompare className="h-3.5 w-3.5" />} Diff vs current
+                </button>
+                <button className="btn-ghost px-2 py-1 text-xs text-warn disabled:opacity-40" disabled={busy === `restore-${rev.revision}`} onClick={() => restore(rev)}>
+                  {busy === `restore-${rev.revision}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />} Restore
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      {diffPreview && diffFor && (
+        <DeployPreviewModal
+          preview={diffPreview}
+          projectId={project.id}
+          projectName={project.name}
+          title={`Revision ${diffFor.revision} vs current`}
+          allowIgnore={false}
+          onClose={() => { setDiffPreview(null); setDiffFor(null); }}
+          onChanged={() => {}}
+        />
+      )}
     </div>
   );
 }
@@ -1174,6 +1299,7 @@ function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, on
   const [serverCheck, setServerCheck] = useState<ServerCheck>(null);
   const [summary, setSummary] = useState<ComposeModel | null>(null);
   const [deployPreview, setDeployPreview] = useState<DeployPreview | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
   const [saveTpl, setSaveTpl] = useState(false);
   const valSeq = useRef(0);
   const dialogs = useDialogs();
@@ -1406,6 +1532,9 @@ function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, on
             <button className="btn-ghost px-3 h-8 text-sm disabled:opacity-40" disabled={!composeAvailable || busy === "preview"} onClick={showPreview} title="See what a deploy would change before running it">
               {busy === "preview" ? <Loader2 className="h-4 w-4 animate-spin" /> : <GitCompare className="h-4 w-4" />} Preview
             </button>
+            <button className="btn-ghost px-3 h-8 text-sm disabled:opacity-40" onClick={() => setShowHistory(true)} title="Deploy history — diff or restore an earlier revision">
+              <History className="h-4 w-4" /> History
+            </button>
             <button className="btn-primary px-3 h-8 text-sm disabled:opacity-40" disabled={!composeAvailable || busy === "deploy"} onClick={() => runCompose("deploy")} title={composeAvailable ? "docker compose up -d" : "docker compose CLI not available"}>
               {busy === "deploy" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />} {deployed ? "Redeploy" : "Deploy"}
             </button>
@@ -1543,6 +1672,7 @@ function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, on
           reconcileBusy={busy === "deploy"}
         />
       )}
+      {showHistory && <RevisionHistoryModal project={project} onClose={() => setShowHistory(false)} onOutput={onOutput} />}
       {saveTpl && <SaveAsTemplateModal projectId={project.id} onClose={() => setSaveTpl(false)} onSaved={() => setSaveTpl(false)} />}
     </div>
   );

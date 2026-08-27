@@ -544,6 +544,29 @@ export interface DeployPreview {
   unchanged?: number;
 }
 
+// RevisionImage/ProjectRevision mirror internal/store/project_revisions.go —
+// one successful deploy of a project, immutable once recorded.
+export interface RevisionImage {
+  service: string;
+  image: string;
+  digest?: string;
+}
+
+export interface ProjectRevision {
+  id: number;
+  projectId: number;
+  revision: number;
+  hostId: number;
+  profiles: string[];
+  images: RevisionImage[];
+  valid: boolean;
+  validationError?: string;
+  output?: string;
+  author: string;
+  reason?: string;
+  createdAt: string;
+}
+
 export interface ProjectFile {
   name: string;
   size: number;

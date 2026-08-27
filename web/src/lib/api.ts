@@ -50,6 +50,7 @@ import type {
   FileApi,
   ProjectFile,
   DeployPreview,
+  ProjectRevision,
   ResourceOverview,
   SmtpConfig,
   Stack,
@@ -528,6 +529,17 @@ export const api = {
     req<{ ok: boolean }>("POST", `/api/projects/${id}/drift/ignore`, { service, kind }),
   unignoreDrift: (id: number, service: string, kind: string) =>
     req<{ ok: boolean }>("POST", `/api/projects/${id}/drift/unignore`, { service, kind }),
+  // Deployment revisions: an immutable history of a project's deploys, with
+  // diff (against another revision, or "current" for what's actually
+  // running) and restore (rolls the project back and redeploys it).
+  listRevisions: (id: number) => req<ProjectRevision[]>("GET", `/api/projects/${id}/revisions`),
+  getRevision: (id: number, rev: number) => req<ProjectRevision>("GET", `/api/projects/${id}/revisions/${rev}`),
+  diffRevision: (id: number, rev: number, against: string) =>
+    req<DeployPreview>("GET", `/api/projects/${id}/revisions/${rev}/diff?against=${encodeURIComponent(against)}`),
+  restoreRevision: (id: number, rev: number, reason?: string) =>
+    req<{ ok: boolean; output?: string; error?: string; note?: string }>(
+      "POST", `/api/projects/${id}/revisions/${rev}/restore`, { reason: reason || "" },
+    ),
   // Lint a Dockerfile via `docker build --check` (no build steps run).
   checkDockerfile: (id: number, content: string) =>
     req<{ level: "ok" | "warning" | "error"; output?: string; unavailable?: boolean }>("POST", `/api/projects/${id}/dockerfile-check`, { content }),

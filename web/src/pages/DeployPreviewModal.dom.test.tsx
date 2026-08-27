@@ -166,3 +166,42 @@ describe("DeployPreviewModal — ignore / unignore / reconcile", () => {
     expect(container.textContent).not.toContain("Reconcile now");
   });
 });
+
+// A revision-to-revision (or revision-vs-current) diff is a historical
+// comparison, not the live drift state — "Ignore" persists against the
+// project's CURRENT drift, so it must not be offered there, and the modal
+// should carry whatever heading the caller gives it (e.g. "Revision 2 vs
+// current") instead of the default.
+describe("DeployPreviewModal — read-only mode (allowIgnore=false)", () => {
+  it("shows a custom title and hides Ignore/Unignore controls and the ignored count", () => {
+    const preview: DeployPreview = {
+      valid: true, unchanged: 0,
+      changes: [
+        { service: "web", kind: "env", existing: true, recreates: true, ignored: false },
+        { service: "db", kind: "restart", existing: true, recreates: true, ignored: true },
+      ],
+    };
+    render(
+      <DeployPreviewModal
+        preview={preview} projectId={1} projectName="app" onClose={() => {}} onChanged={() => {}}
+        title="Revision 2 vs current" allowIgnore={false}
+      />,
+    );
+    expect(container.textContent).toContain("Revision 2 vs current");
+    expect(container.textContent).not.toContain("Deploy preview");
+    for (const btn of container.querySelectorAll("button")) {
+      expect(btn.textContent).not.toMatch(/^(Ignore|Unignore)$/);
+    }
+    expect(container.textContent).not.toContain("ignored");
+  });
+
+  it("defaults to the live-preview title and ignore controls when the props are omitted", () => {
+    const preview: DeployPreview = {
+      valid: true, unchanged: 0,
+      changes: [{ service: "web", kind: "env", existing: true, recreates: true, ignored: false }],
+    };
+    render(<DeployPreviewModal preview={preview} projectId={1} projectName="app" onClose={() => {}} onChanged={() => {}} />);
+    expect(container.textContent).toContain("Deploy preview");
+    expect([...container.querySelectorAll("button")].some((b) => b.textContent?.includes("Ignore"))).toBe(true);
+  });
+});
