@@ -190,11 +190,32 @@ function truncateMono(s: string, max = 64): string {
 // DeployPreviewModal shows what deploying this project would actually change
 // — the same comparison the `preview_deploy` MCP tool exposes, as a
 // first-class screen rather than an MCP-only capability (see NEXT.md's
-// "Deployment plan / diff"). Exported for tests.
-export function DeployPreviewModal({ preview, projectName, onClose }: {
-  preview: DeployPreview; projectName: string; onClose: () => void;
+// "Deployment plan / diff"). Doubles as the drift-detection view: a change
+// can be marked reviewed/accepted ("Ignore") so it stops counting toward
+// `active` without disappearing — still visible, still reversible — and
+// "Reconcile" is just Deploy from this context (recreating whatever drifted
+// to match the file). Exported for tests.
+export function DeployPreviewModal({ preview, projectId, projectName, onClose, onChanged, onReconcile, reconcileBusy }: {
+  preview: DeployPreview; projectId: number; projectName: string; onClose: () => void;
+  onChanged: () => void; onReconcile?: () => void; reconcileBusy?: boolean;
 }) {
+  const [busyKey, setBusyKey] = useState<string | null>(null);
   const changes = preview.changes ?? [];
+  const active = typeof preview.active === "number" ? preview.active : changes.filter((c) => !c.ignored).length;
+  const ignoredCount = changes.length - active;
+
+  const toggleIgnore = async (c: ServiceChange) => {
+    const key = `${c.service}:${c.kind}`;
+    setBusyKey(key);
+    try {
+      if (c.ignored) await api.unignoreDrift(projectId, c.service, c.kind);
+      else await api.ignoreDrift(projectId, c.service, c.kind);
+      onChanged();
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={onClose}>
       <div className="card w-[70vw] max-w-3xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
@@ -216,13 +237,15 @@ export function DeployPreviewModal({ preview, projectName, onClose }: {
           ) : (
             <>
               <div className="text-xs text-muted">
-                {changes.length} change{changes.length === 1 ? "" : "s"}
+                {active} active change{active === 1 ? "" : "s"}
+                {ignoredCount > 0 && <> — {ignoredCount} ignored</>}
                 {typeof preview.unchanged === "number" && preview.unchanged > 0 && <> — {preview.unchanged} unchanged</>}
               </div>
               {changes.map((c, i) => {
                 const meta = changeKindMeta(c.kind);
+                const key = `${c.service}:${c.kind}`;
                 return (
-                  <div key={i} className="border border-border rounded-md p-2.5 text-sm">
+                  <div key={i} className={clsx("border border-border rounded-md p-2.5 text-sm", c.ignored && "opacity-60")}>
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium">{c.service}</span>
                       <span className={clsx("text-[10px] uppercase tracking-wide border rounded px-1.5 py-0.5", meta.cls)}>{meta.label}</span>
@@ -231,6 +254,17 @@ export function DeployPreviewModal({ preview, projectName, onClose }: {
                           <AlertTriangle className="h-3 w-3" /> recreates
                         </span>
                       )}
+                      {c.ignored && (
+                        <span className="text-[10px] text-muted border border-border rounded px-1.5 py-0.5" title="Reviewed and accepted — no longer counted as active drift">ignored</span>
+                      )}
+                      <button
+                        className="btn-ghost px-2 py-0.5 text-[11px] ml-auto disabled:opacity-40"
+                        disabled={busyKey === key}
+                        onClick={() => toggleIgnore(c)}
+                        title={c.ignored ? "Count this drift again" : "Mark this drift reviewed and accepted"}
+                      >
+                        {busyKey === key ? <Loader2 className="h-3 w-3 animate-spin" /> : c.ignored ? "Unignore" : "Ignore"}
+                      </button>
                     </div>
                     {(c.from || c.to) && (
                       <div className="mt-1 text-xs font-mono text-muted break-all">
@@ -246,6 +280,13 @@ export function DeployPreviewModal({ preview, projectName, onClose }: {
             </>
           )}
         </div>
+        {preview.valid && active > 0 && onReconcile && (
+          <div className="flex justify-end gap-2 p-3 border-t border-border">
+            <button className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40" disabled={reconcileBusy} onClick={onReconcile} title="Deploy now to apply these changes">
+              {reconcileBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />} Reconcile now
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1491,7 +1532,17 @@ function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, on
           onClose={() => setSummary(null)}
         />
       )}
-      {deployPreview && <DeployPreviewModal preview={deployPreview} projectName={project.name} onClose={() => setDeployPreview(null)} />}
+      {deployPreview && (
+        <DeployPreviewModal
+          preview={deployPreview}
+          projectId={project.id}
+          projectName={project.name}
+          onClose={() => setDeployPreview(null)}
+          onChanged={showPreview}
+          onReconcile={async () => { await runCompose("deploy"); setDeployPreview(null); }}
+          reconcileBusy={busy === "deploy"}
+        />
+      )}
       {saveTpl && <SaveAsTemplateModal projectId={project.id} onClose={() => setSaveTpl(false)} onSaved={() => setSaveTpl(false)} />}
     </div>
   );

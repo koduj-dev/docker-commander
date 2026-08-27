@@ -528,6 +528,8 @@ export interface ServiceChange {
   detail?: string;
   existing: boolean;
   recreates: boolean;
+  // Reviewed, deliberately-accepted drift — still shown, excluded from `active`.
+  ignored: boolean;
 }
 
 export interface DeployPreview {
@@ -536,6 +538,8 @@ export interface DeployPreview {
   error?: string;
   services?: ServiceSpec[];
   running?: ServiceSpec[];
+  // changes.length minus any marked `ignored` — what still needs attention.
+  active?: number;
   changes?: ServiceChange[];
   unchanged?: number;
 }

@@ -521,6 +521,13 @@ export const api = {
   // alone, and (for anything already running) image/digest/env/ports/volumes/
   // networks/restart/resources/healthcheck differences. Read-only: a GET.
   previewProject: (id: number) => req<DeployPreview>("GET", `/api/projects/${id}/preview`),
+  // Marks one (service, kind) drift as reviewed/accepted so it stops counting
+  // toward `active` on future previews (still shown, marked `ignored`), or
+  // reverses that.
+  ignoreDrift: (id: number, service: string, kind: string) =>
+    req<{ ok: boolean }>("POST", `/api/projects/${id}/drift/ignore`, { service, kind }),
+  unignoreDrift: (id: number, service: string, kind: string) =>
+    req<{ ok: boolean }>("POST", `/api/projects/${id}/drift/unignore`, { service, kind }),
   // Lint a Dockerfile via `docker build --check` (no build steps run).
   checkDockerfile: (id: number, content: string) =>
     req<{ level: "ok" | "warning" | "error"; output?: string; unavailable?: boolean }>("POST", `/api/projects/${id}/dockerfile-check`, { content }),
