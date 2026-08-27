@@ -91,16 +91,26 @@ networks/restart/resources/healthcheck differences, with a per-change
   purpose: it means generating a YAML edit against a file that may carry
   anchors/comments/formatting a human wrote, which is a materially different
   (and riskier) problem than reading and reporting a diff.
-- **Deployment revisions and rollback.** An immutable history of every project and
-  edited-stack deploy — compose file, sidecar files, resolved config, profiles,
-  target host, image references *and resolved digests*, validation result, output,
-  author, reason — with diff, preview and restore. Should include an **env/secret
-  diff** between two revisions (values stay redacted; only "changed/added/removed"
-  is shown). Notes that matter: roll back a
-  mutable tag using the stored **digest**; a revision must identify its remote bind
-  snapshots; rollback must not delete persistent named volumes; it should re-run
-  validation before applying; and a CLI-discovered stack must keep its original
-  working directory. **The highest-value item on this list.**
+- ~~**Deployment revisions and rollback.**~~ **Shipped for managed Projects**
+  (see CHANGELOG) — was the highest-value item on this list. Every successful
+  deploy records an immutable revision: compose file + every sidecar file (a
+  zip snapshot; resolved config is derived from it on demand rather than
+  stored twice), profiles, target host, image references *and* the digest
+  actually running, validation state, output, author and reason. Diff reuses
+  the plan/diff engine directly — a revision vs. what's running now, or
+  against another revision — including the env/secret diff NEXT.md asked
+  for (key names only, values redacted, via the same envDiff plan/diff
+  already uses). Restore re-validates the snapshot in a scratch dir *before*
+  touching anything live, pins any service with a recorded digest so a
+  mutable tag can't quietly change what comes back, redeploys with the
+  revision's own profiles, and becomes a new revision itself rather than
+  rewriting history. Never touches named volumes (the only Docker operation
+  is `up`). Two things this deliberately does NOT cover: a **CLI-discovered
+  Stack** (edited-stack deploys) has no revision history yet — only
+  Projects do; and a remote deploy's revision records which host it targeted
+  but not a snapshot of what was copied into seeded bind volumes at the
+  time, so "restore" on a remote project rebuilds them from the restored
+  compose file rather than reverting them to their exact prior contents.
 - **Policy checks before deploy.** Refuse or warn on privileged containers, host
   network/PID, docker-socket mounts, `:latest` in production, missing resource
   limits, missing healthchecks. Some pieces exist already — compose validation,
@@ -466,7 +476,7 @@ if priorities change, don't just silently reshuffle it.
 **Now — one bundle (shares a single state-diff engine):**
 - [x] Deployment plan / diff
 - [x] Drift detection (view/reconcile/ignore shipped; "adopt" deliberately deferred, see below)
-- [ ] Deployment revisions and rollback
+- [x] Deployment revisions and rollback (Projects only; CLI-discovered Stacks and remote seeded-volume snapshots still open, see below)
 
 **Next, each standalone:**
 - [ ] Portable recovery bundle

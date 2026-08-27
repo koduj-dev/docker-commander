@@ -16,8 +16,8 @@ All notable changes to Docker Commander are documented here. The format follows
   healthcheck differences, each flagged with whether applying it recreates
   the container. Every comparison is one-directional: it only flags a field
   the compose file actually declares and disagrees with reality, never a
-  field compose is silent on (there's no stored record yet of what compose
-  has ever managed — the planned revision store closes that gap). A
+  field compose is silent on — knowing what compose has ever actually
+  managed needs stored history, which the revision store below now is. A
   first-class screen (`GET /api/projects/{id}/preview`), not just the
   existing `preview_deploy` MCP tool.
 - **Drift detection.** The deploy preview above doubles as this: any drift
@@ -27,6 +27,18 @@ All notable changes to Docker Commander are documented here. The format follows
   keeps it visible but excludes it from the active count, and is fully
   reversible (**unignore**). A **Reconcile now** button in the same view
   deploys immediately to fix whatever's left active.
+- **Deployment revisions and rollback.** Every successful project deploy is
+  now recorded as an immutable revision — its compose file and every sidecar
+  file, profiles, target host, the image reference *and the digest actually
+  running* per service, validation state, output, author and reason — with
+  a new **History** view. **Diff** compares any revision against another, or
+  against what's running right now, reusing the exact same plan/diff engine
+  (down to the env/secret diff: key names only, values always redacted).
+  **Restore** re-validates the old snapshot in a scratch directory before
+  touching anything live, pins any service with a recorded digest so a
+  mutable tag can't quietly swap in a different image, redeploys with that
+  revision's own profiles, and becomes a new revision itself — history only
+  grows forward, it's never rewritten. Never touches named volumes.
 - **A new Troubleshooting tab** runs a battery of read-only sanity checks
   against the selected Docker host and reports each as OK/warning/failed/
   skipped: overlapping Docker network subnets, duplicate host port bindings,
