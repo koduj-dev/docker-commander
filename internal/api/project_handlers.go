@@ -950,6 +950,29 @@ func (s *Server) handleResolveProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "config": out})
 }
 
+// handlePreviewProject reports what deploying this project would change,
+// without deploying it: which services would be created/recreated/left
+// alone, and — for anything already running — image/digest, env, ports,
+// volumes, networks, restart policy, resource limits and healthcheck
+// differences (see internal/docker/preview.go and deployfields.go). This is
+// the same comparison the `preview_deploy` MCP tool already exposed; the web
+// UI gets it as a first-class screen here rather than staying MCP-only.
+//
+// A GET, not a POST: it changes nothing, so it only needs read access to the
+// project, not the write permission loadProject would otherwise require.
+func (s *Server) handlePreviewProject(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	prev, err := s.mcpPreviewProject(r.Context(), p.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, prev)
+}
+
 // overlayProject copies the project folder to a fresh temp dir and overlays the
 // named file with content, returning the temp dir (caller removes it). Used to
 // validate unsaved editor buffers against the real (multi-file) project.
