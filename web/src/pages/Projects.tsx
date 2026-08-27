@@ -4,11 +4,11 @@ import clsx from "clsx";
 import {
   FolderGit2, Plus, Rocket, Square, Trash2, X, FilePlus, FolderPlus, Upload, Loader2,
   ExternalLink, Save, FileText, FileBox, Folder, Terminal, Pencil, ChevronRight, Download, Search, CheckCircle2, AlertCircle, AlertTriangle, Eye, Boxes,
-  LayoutTemplate, Puzzle, KeyRound, Anchor, Server,
+  LayoutTemplate, Puzzle, KeyRound, Anchor, Server, GitCompare,
 } from "lucide-react";
 import { bytes as fmtBytes } from "../lib/format";
 import { api, ApiError } from "../lib/api";
-import type { Project, ProjectFile, Stack, ComposeModel, ComposeService, ProjectTemplateMeta, ServiceBlockMeta, ComposeFragmentMeta, TemplateRef, TemplateVariable, Host } from "../lib/types";
+import type { Project, ProjectFile, Stack, ComposeModel, ComposeService, ProjectTemplateMeta, ServiceBlockMeta, ComposeFragmentMeta, TemplateRef, TemplateVariable, Host, DeployPreview, ServiceChange } from "../lib/types";
 import type { ServerCheck } from "../components/CodeEditor";
 import { buildTree, TreeItem } from "../components/FileTree";
 import { PageHeader } from "../layout/Shell";
@@ -161,6 +161,90 @@ export function ComposeSummaryModal({ model, stack, lastDeployedProfiles, onClos
               <div key={label}><span className="text-muted">{label}:</span> <span className="font-mono">{names.join(", ")}</span></div>
             ))}
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// changeKindMeta labels and colors one ServiceChange's kind. "added"/"removed"
+// never recreate a running container (a brand-new one, or an orphan left
+// alone); every other kind does, which is why they share the warn treatment —
+// the color itself is half of the downtime-risk callout.
+function changeKindMeta(kind: ServiceChange["kind"]): { label: string; cls: string } {
+  switch (kind) {
+    case "added": return { label: "added", cls: "text-ok border-ok/40 bg-ok/10" };
+    case "removed": return { label: "orphaned", cls: "text-muted border-border" };
+    case "image": return { label: "image", cls: "text-accent border-accent/40 bg-accent/10" };
+    case "digest": return { label: "digest drift", cls: "text-accent border-accent/40 bg-accent/10" };
+    default: return { label: kind, cls: "text-warn border-warn/40 bg-warn/10" };
+  }
+}
+
+// truncateMono shortens a long value (an image digest, a long path list) for
+// a compact single-line display; the full value is still in the title attr.
+function truncateMono(s: string, max = 64): string {
+  return s.length > max ? s.slice(0, max) + "…" : s;
+}
+
+// DeployPreviewModal shows what deploying this project would actually change
+// — the same comparison the `preview_deploy` MCP tool exposes, as a
+// first-class screen rather than an MCP-only capability (see NEXT.md's
+// "Deployment plan / diff"). Exported for tests.
+export function DeployPreviewModal({ preview, projectName, onClose }: {
+  preview: DeployPreview; projectName: string; onClose: () => void;
+}) {
+  const changes = preview.changes ?? [];
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+      <div className="card w-[70vw] max-w-3xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2 p-4 border-b border-border">
+          <GitCompare className="h-4 w-4 text-accent" />
+          <span className="font-medium">Deploy preview</span>
+          <span className="text-xs text-muted font-mono">{projectName}</span>
+          <button className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-4 overflow-auto space-y-3">
+          {!preview.valid ? (
+            <div className="text-sm text-danger flex items-start gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" /> {preview.error || "could not compute a preview"}
+            </div>
+          ) : changes.length === 0 ? (
+            <div className="text-sm text-muted flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-ok" /> Nothing would change — {preview.unchanged ?? 0} service(s) already match.
+            </div>
+          ) : (
+            <>
+              <div className="text-xs text-muted">
+                {changes.length} change{changes.length === 1 ? "" : "s"}
+                {typeof preview.unchanged === "number" && preview.unchanged > 0 && <> — {preview.unchanged} unchanged</>}
+              </div>
+              {changes.map((c, i) => {
+                const meta = changeKindMeta(c.kind);
+                return (
+                  <div key={i} className="border border-border rounded-md p-2.5 text-sm">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium">{c.service}</span>
+                      <span className={clsx("text-[10px] uppercase tracking-wide border rounded px-1.5 py-0.5", meta.cls)}>{meta.label}</span>
+                      {c.recreates && (
+                        <span className="text-[10px] text-warn border border-warn/40 rounded px-1.5 py-0.5 flex items-center gap-1" title="Applying this recreates the running container">
+                          <AlertTriangle className="h-3 w-3" /> recreates
+                        </span>
+                      )}
+                    </div>
+                    {(c.from || c.to) && (
+                      <div className="mt-1 text-xs font-mono text-muted break-all">
+                        {c.from && <span className="line-through opacity-70" title={c.from}>{truncateMono(c.from)}</span>}
+                        {c.from && c.to && <span className="mx-1">→</span>}
+                        {c.to && <span className="text-text" title={c.to}>{truncateMono(c.to)}</span>}
+                      </div>
+                    )}
+                    {c.detail && <div className="mt-1 text-xs text-muted">{c.detail}</div>}
+                  </div>
+                );
+              })}
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -1048,6 +1132,7 @@ function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, on
   const [liveVal, setLiveVal] = useState<"idle" | "checking" | "ok" | "warning" | "error">("idle");
   const [serverCheck, setServerCheck] = useState<ServerCheck>(null);
   const [summary, setSummary] = useState<ComposeModel | null>(null);
+  const [deployPreview, setDeployPreview] = useState<DeployPreview | null>(null);
   const [saveTpl, setSaveTpl] = useState(false);
   const valSeq = useRef(0);
   const dialogs = useDialogs();
@@ -1244,6 +1329,20 @@ function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, on
     } finally { setBusy(""); }
   };
 
+  // showPreview fetches what a deploy would actually change — services
+  // added/recreated/left alone, plus (for anything already running)
+  // image/digest/env/ports/volumes/networks/restart/resources/healthcheck
+  // differences — and shows it before the operator commits to Deploy.
+  const showPreview = async () => {
+    setBusy("preview");
+    try {
+      const r = await api.previewProject(project.id);
+      setDeployPreview(r);
+    } catch (e) {
+      onOutput({ title: `${project.name} — deploy preview`, text: e instanceof Error ? e.message : "failed", ok: false });
+    } finally { setBusy(""); }
+  };
+
   const activeFile = files?.find((f) => f.name === active);
 
   return (
@@ -1263,6 +1362,9 @@ function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, on
           <div className="flex items-center gap-1 ml-auto">
             <button className="btn-ghost px-2 h-8" title="Save as preset" onClick={() => setSaveTpl(true)}><LayoutTemplate className="h-4 w-4" /></button>
             <a className="btn-ghost px-2 h-8" title="Download project as .zip" href={api.projectDownloadUrl(project.id)}><Download className="h-4 w-4" /></a>
+            <button className="btn-ghost px-3 h-8 text-sm disabled:opacity-40" disabled={!composeAvailable || busy === "preview"} onClick={showPreview} title="See what a deploy would change before running it">
+              {busy === "preview" ? <Loader2 className="h-4 w-4 animate-spin" /> : <GitCompare className="h-4 w-4" />} Preview
+            </button>
             <button className="btn-primary px-3 h-8 text-sm disabled:opacity-40" disabled={!composeAvailable || busy === "deploy"} onClick={() => runCompose("deploy")} title={composeAvailable ? "docker compose up -d" : "docker compose CLI not available"}>
               {busy === "deploy" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />} {deployed ? "Redeploy" : "Deploy"}
             </button>
@@ -1389,6 +1491,7 @@ function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, on
           onClose={() => setSummary(null)}
         />
       )}
+      {deployPreview && <DeployPreviewModal preview={deployPreview} projectName={project.name} onClose={() => setDeployPreview(null)} />}
       {saveTpl && <SaveAsTemplateModal projectId={project.id} onClose={() => setSaveTpl(false)} onSaved={() => setSaveTpl(false)} />}
     </div>
   );

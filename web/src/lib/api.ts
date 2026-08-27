@@ -49,6 +49,7 @@ import type {
   TemplateRef,
   FileApi,
   ProjectFile,
+  DeployPreview,
   ResourceOverview,
   SmtpConfig,
   Stack,
@@ -516,6 +517,10 @@ export const api = {
   // Resolved compose model (JSON) for the overview / port-conflict check.
   projectSummary: (id: number, overlay?: { name: string; content: string }) =>
     req<{ ok: boolean; model?: ComposeModel; error?: string }>("POST", `/api/projects/${id}/summary`, overlay),
+  // What deploying this project would change — services added/recreated/left
+  // alone, and (for anything already running) image/digest/env/ports/volumes/
+  // networks/restart/resources/healthcheck differences. Read-only: a GET.
+  previewProject: (id: number) => req<DeployPreview>("GET", `/api/projects/${id}/preview`),
   // Lint a Dockerfile via `docker build --check` (no build steps run).
   checkDockerfile: (id: number, content: string) =>
     req<{ level: "ok" | "warning" | "error"; output?: string; unavailable?: boolean }>("POST", `/api/projects/${id}/dockerfile-check`, { content }),
