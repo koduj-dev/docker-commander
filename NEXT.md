@@ -80,16 +80,17 @@ networks/restart/resources/healthcheck differences, with a per-change
 `recreates` (downtime-risk) flag, behind both a REST endpoint
 (`GET /api/projects/{id}/preview`) and the `preview_deploy` MCP tool.
 
-- **Drift detection (desired vs. running state).** Compare a project's compose
-  definition against what's actually running — image digest, env, mounts,
-  restart policy, resource limits — and surface the delta (e.g. "restart:
-  unless-stopped ⟶ running as always ⚠"). Actions: reconcile the running
-  container to match the file, adopt the running config back into the file,
-  view the full diff, or explicitly ignore a drift. Nobody in this space does
-  this well — Terraform-style drift tooling exists because Terraform keeps a
-  state file; Compose has none, so nothing today compares "what's running" to
-  "what the file says" the way this would. Reuses the container-diff and
-  inspect infrastructure that already exists.
+- ~~**Drift detection (desired vs. running state).**~~ **Shipped** (see
+  CHANGELOG): the deploy preview *is* this comparison, with three of its four
+  named actions — **view the full diff** (the preview itself), **reconcile**
+  (a "Reconcile now" button in that view, which is just Deploy from that
+  context), and **explicitly ignore a drift** (per service+kind, persisted,
+  reversible, excluded from the active count but never hidden). Still open:
+  **adopt** — write the running container's actual config back into the
+  compose file, the one action with no shipped equivalent. Scoped out on
+  purpose: it means generating a YAML edit against a file that may carry
+  anchors/comments/formatting a human wrote, which is a materially different
+  (and riskier) problem than reading and reporting a diff.
 - **Deployment revisions and rollback.** An immutable history of every project and
   edited-stack deploy — compose file, sidecar files, resolved config, profiles,
   target host, image references *and resolved digests*, validation result, output,
@@ -464,7 +465,7 @@ if priorities change, don't just silently reshuffle it.
 
 **Now — one bundle (shares a single state-diff engine):**
 - [x] Deployment plan / diff
-- [ ] Drift detection
+- [x] Drift detection (view/reconcile/ignore shipped; "adopt" deliberately deferred, see below)
 - [ ] Deployment revisions and rollback
 
 **Next, each standalone:**

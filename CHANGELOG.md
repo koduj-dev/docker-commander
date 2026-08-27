@@ -20,6 +20,13 @@ All notable changes to Docker Commander are documented here. The format follows
   has ever managed — the planned revision store closes that gap). A
   first-class screen (`GET /api/projects/{id}/preview`), not just the
   existing `preview_deploy` MCP tool.
+- **Drift detection.** The deploy preview above doubles as this: any drift
+  found — a container's actual config no longer matching the compose file —
+  can be reviewed and **ignored** (per service and per kind, e.g. accept a
+  resource-limit change on `web` without silencing anything else), which
+  keeps it visible but excludes it from the active count, and is fully
+  reversible (**unignore**). A **Reconcile now** button in the same view
+  deploys immediately to fix whatever's left active.
 - **A new Troubleshooting tab** runs a battery of read-only sanity checks
   against the selected Docker host and reports each as OK/warning/failed/
   skipped: overlapping Docker network subnets, duplicate host port bindings,
