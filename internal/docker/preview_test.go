@@ -1,8 +1,11 @@
 package docker
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"github.com/koduj-dev/docker-commander/internal/store"
 )
 
 // The preview's job is to answer "what would change", so the tests are about
@@ -127,3 +130,42 @@ func TestRunningServicesDeduplicates(t *testing.T) {
 }
 
 func containsSubstr(s, sub string) bool { return strings.Contains(s, sub) }
+
+// AugmentDigestDrift must never re-flag a service BuildDeployPreview already
+// classified (an image string change already implies recreation — a digest
+// check on top would just be noise), and must skip a service with no
+// currently-running container to inspect. Both checks are pure decision
+// logic that doesn't need a live registry or daemon, unlike digest resolution
+// itself (see TestResolveImageDigest_* in digest_test.go and
+// TestRunningImageDigest_RealContainer in stacks_test.go).
+func TestAugmentDigestDrift_SkipsAlreadyChangedAndUnmatched(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	m := &Manager{store: st}
+
+	prev := DeployPreview{
+		Services: []ServiceSpec{
+			svc("web", "nginx:1.25"), // already flagged below — must be skipped
+			svc("cache", "redis:7"),  // unchanged, but no running container — must be skipped
+		},
+		Changes: []ServiceChange{
+			{Service: "web", Kind: "image", From: "nginx:1.24", To: "nginx:1.25"},
+		},
+		Unchanged: 1,
+	}
+	before := len(prev.Changes)
+
+	m.AugmentDigestDrift(context.Background(), 0, &prev, []StackContainer{
+		{Service: "web", ID: "c1"}, // "cache" deliberately has no matching container
+	})
+
+	if len(prev.Changes) != before {
+		t.Errorf("should not add a digest change for an already-changed or unmatched service: %+v", prev.Changes)
+	}
+	if prev.Unchanged != 1 {
+		t.Errorf("Unchanged should be untouched when nothing new is found, got %d", prev.Unchanged)
+	}
+}

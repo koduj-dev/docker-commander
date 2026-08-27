@@ -131,16 +131,21 @@ func (s *Server) mcpPreviewProject(ctx context.Context, id int64) (mcp.ProjectPr
 	}
 
 	var running []docker.ServiceSpec
+	var containers []docker.StackContainer
 	if stacks, serr := s.docker.ListStacks(ctx, p.HostID); serr == nil {
 		for i := range stacks {
 			if stacks[i].Project == p.Slug {
 				running = docker.RunningServices(&stacks[i])
+				containers = stacks[i].Containers
 				break
 			}
 		}
 	}
 
 	prev := docker.BuildDeployPreview(resolved, running)
+	// Best-effort: a mutable tag can point at a new image without the tag
+	// string changing, which the plain comparison above can't see.
+	s.docker.AugmentDigestDrift(ctx, p.HostID, &prev, containers)
 	out.Valid = true
 	out.Project = p.Name
 	out.Services = prev.Services

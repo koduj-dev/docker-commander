@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -176,6 +177,26 @@ func TestStackActionOnIDsUnaffectedByLateArrivals(t *testing.T) {
 	if !running(idLate) {
 		t.Errorf("SECURITY/correctness: idLate joined the project AFTER the snapshot was resolved and must " +
 			"not have been touched by an action sized/charged against that earlier snapshot, but it was stopped anyway")
+	}
+}
+
+// TestRunningImageDigest_RealContainer exercises the real container→image→
+// RepoDigests chain against a genuinely pulled image, since digest_test.go's
+// coverage of ResolveImageDigest is all fake-registry unit tests — this is the
+// half of AugmentDigestDrift's plumbing that actually talks to the daemon.
+func TestRunningImageDigest_RealContainer(t *testing.T) {
+	m, ctx := newManager(t)
+	id := startTestContainer(ctx, t, m, "dctest_digest")
+
+	digest, err := m.RunningImageDigest(ctx, 0, id, testImage)
+	if err != nil {
+		t.Fatalf("RunningImageDigest: %v", err)
+	}
+	if digest == "" {
+		t.Skip("local alpine:latest has no RepoDigests (not pulled from a registry in this environment) — nothing to assert")
+	}
+	if !strings.HasPrefix(digest, "sha256:") {
+		t.Errorf("digest = %q, want a sha256: prefix", digest)
 	}
 }
 

@@ -7,6 +7,15 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Deploy preview now catches mutable-tag drift.** `preview_deploy` (MCP)
+  resolves the current registry digest for each unchanged-image service and
+  compares it against what the running container actually has, so a `:latest`
+  (or any other mutable tag) that was overwritten upstream since the last
+  deploy shows up as a change even though the tag string itself didn't move.
+  Best-effort: skipped for unconfigured registries or images never pulled
+  from one. First slice of the planned deployment plan/diff feature (see
+  NEXT.md); the rest — env/port/volume/network/resource-limit/healthcheck
+  diffs and a first-class UI screen — is still open.
 - **A new Troubleshooting tab** runs a battery of read-only sanity checks
   against the selected Docker host and reports each as OK/warning/failed/
   skipped: overlapping Docker network subnets, duplicate host port bindings,

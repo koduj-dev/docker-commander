@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"context"
 	"encoding/json"
 	"sort"
 )
@@ -125,6 +126,60 @@ func BuildDeployPreview(resolved, running []ServiceSpec) DeployPreview {
 		return p.Changes[i].Service < p.Changes[j].Service
 	})
 	return p
+}
+
+// AugmentDigestDrift checks, for each service BuildDeployPreview judged
+// unchanged, whether its image tag now resolves to a different manifest
+// digest on its registry than what is actually running — the "mutable tag"
+// case a name/image string comparison can't see (the tag reads the same, but
+// `docker compose up` would still recreate the container). Mutates prev in
+// place, appending a "digest" change per service found to have drifted and
+// correcting Unchanged to match.
+//
+// Best-effort by design: any lookup failure (registry unreachable, host not
+// configured, image never pulled from a registry) just skips that service —
+// this only ever informs a preview, never blocks one.
+func (m *Manager) AugmentDigestDrift(ctx context.Context, hostID int64, prev *DeployPreview, containers []StackContainer) {
+	containerByService := map[string]string{}
+	for _, c := range containers {
+		if c.Service != "" {
+			containerByService[c.Service] = c.ID
+		}
+	}
+	changed := map[string]bool{}
+	for _, ch := range prev.Changes {
+		changed[ch.Service] = true
+	}
+
+	for _, svc := range prev.Services {
+		if svc.Image == "" || changed[svc.Name] {
+			continue
+		}
+		cid, ok := containerByService[svc.Name]
+		if !ok {
+			continue
+		}
+		remote, err := m.ResolveImageDigest(ctx, svc.Image)
+		if err != nil || remote == "" {
+			continue
+		}
+		local, err := m.RunningImageDigest(ctx, hostID, cid, svc.Image)
+		if err != nil || local == "" || local == remote {
+			continue
+		}
+		prev.Changes = append(prev.Changes, ServiceChange{
+			Service: svc.Name, Kind: "digest", From: local, To: remote, Existing: true,
+			Detail: "same tag now resolves to a different image digest; a deploy would recreate it",
+		})
+		prev.Unchanged--
+	}
+
+	sort.Slice(prev.Changes, func(i, j int) bool {
+		if prev.Changes[i].Kind != prev.Changes[j].Kind {
+			return prev.Changes[i].Kind < prev.Changes[j].Kind
+		}
+		return prev.Changes[i].Service < prev.Changes[j].Service
+	})
 }
 
 // RunningServices reduces a stack's containers to one entry per compose service.

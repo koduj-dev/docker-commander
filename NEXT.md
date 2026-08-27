@@ -375,6 +375,17 @@ the security property alone, independent of the NAT-traversal convenience.
   events are still recorded, notifications are suppressed or tagged, and write
   operations can optionally be blocked. Overlaps with silences above — design them
   together.
+- **Standalone compose visualizer.** Paste or upload a bare `docker-compose.yml`
+  — no host, no Docker connection needed — and render it as an architecture
+  diagram: services classified by image name into a small icon set (database,
+  cache, queue, reverse-proxy/web, generic fallback), with networks and
+  `depends_on` drawn as edges. Reuses the Topology view's existing machinery
+  (`TopoGraph.tsx`'s React Flow + d3-force layout, same node/edge look) rather
+  than a new charting library or a hand-rolled SVG renderer — just a new node
+  "kind" with a swapped icon. Needs the compose parser extended past today's
+  `ServiceSpec` (name+image only) to also read networks/volumes/depends_on/ports.
+  Scope v1 to a single static file, best-effort — full multi-file/`extends`/
+  `profiles` resolution is more compose surface than a visualizer needs.
 ---
 
 ## 📦 Backlog
@@ -448,3 +459,49 @@ Recorded so they don't get re-proposed.
 - **More plain Docker API CRUD wrappers.** The everyday management surface is
   covered. New work should aggregate, explain, protect a change, or make recovery
   possible.
+
+---
+
+## 🗺️ Working priority order
+
+Agreed 2026-08-27. Check items off as they ship; revisit the order deliberately
+if priorities change, don't just silently reshuffle it.
+
+**Now — one bundle (shares a single state-diff engine):**
+- [ ] Deployment plan / diff
+- [ ] Drift detection
+- [ ] Deployment revisions and rollback
+
+**Next, each standalone:**
+- [ ] Portable recovery bundle
+- [ ] Policy checks before deploy
+- [ ] Volume data: trigger-and-status wrapper
+
+**Not yet ordered**, full ranked candidate list (original numbering kept as-is —
+#4, #7, #8 are pulled up into "Next" above, this is everything else, in
+descending priority, no agreed commitment yet, revisit before reshuffling):
+
+5. Incident timeline / correlation
+6. Maintenance windows / silences
+9. External / synthetic checks
+10. Project secrets
+11. Controlled image updates
+12. Alert delivery retry
+13. Per-container domain + TLS (embedded reverse proxy)
+14. GitOps stack deploy
+15. Lightweight webhook redeploy
+16. OIDC / SSO
+17. Aggregated cross-host dashboard
+18. Host groups / tags
+19. Self-update auto-apply policy
+20. Per-session MCP token revocation
+21. Network alerting / top talkers
+22. Monorepo-aware mapping (depends on #14)
+23. Multi-instance federation
+24. Smaller well-scoped items (bulk-action per-host RBAC, log bookmarks/forwarding,
+    sub-path deployment, archive/hide stacks, Slack/Teams/Discord notifications,
+    host maintenance mode, standalone compose visualizer)
+25. Parameterized user templates / per-instance mount isolation / remote template catalog
+26. Backlog: Docker Swarm support
+27. Open questions to triage: automation API + CLI, "existing containers →
+    Compose project", Compose Watch / dev mode
