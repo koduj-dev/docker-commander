@@ -200,6 +200,70 @@ func TestRunningImageDigest_RealContainer(t *testing.T) {
 	}
 }
 
+// TestLiveServiceSpec_RealContainer exercises the actual container-inspect →
+// ServiceSpec extraction (env, restart policy, cpu/memory limits,
+// healthcheck) against a real container, since deployfields_test.go's
+// coverage of the compose side is all fixture-based — this is the half that
+// actually decodes the Docker API's own shapes (nanosecond healthcheck
+// durations, promoted Resources fields, RestartPolicyMode).
+func TestLiveServiceSpec_RealContainer(t *testing.T) {
+	m, ctx := newManager(t)
+	ensureImage(ctx, t, m)
+	cli, err := m.Client(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const name = "dctest_livespec"
+	freeName(ctx, m, name)
+	created, err := cli.ContainerCreate(ctx,
+		&container.Config{
+			Image: testImage,
+			Cmd:   []string{"sleep", "300"},
+			Env:   []string{"FOO=bar"},
+			Healthcheck: &container.HealthConfig{
+				Test:     []string{"CMD", "true"},
+				Interval: 30 * time.Second,
+				Timeout:  5 * time.Second,
+				Retries:  3,
+			},
+		},
+		&container.HostConfig{
+			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
+			Resources:     container.Resources{NanoCPUs: 500_000_000, Memory: 256 << 20},
+		}, nil, nil, name)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := cli.ContainerStart(ctx, created.ID, container.StartOptions{}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	t.Cleanup(func() { rmContainer(ctx, t, m, created.ID) })
+
+	spec, err := m.LiveServiceSpec(ctx, 0, created.ID)
+	if err != nil {
+		t.Fatalf("LiveServiceSpec: %v", err)
+	}
+	if spec.Env["FOO"] != "bar" {
+		t.Errorf("Env = %+v, want FOO=bar present", spec.Env)
+	}
+	if spec.Restart != "unless-stopped" {
+		t.Errorf("Restart = %q, want unless-stopped", spec.Restart)
+	}
+	if spec.CPULimit != 0.5 {
+		t.Errorf("CPULimit = %v, want 0.5", spec.CPULimit)
+	}
+	if spec.MemoryLimit != 256<<20 {
+		t.Errorf("MemoryLimit = %v, want %v", spec.MemoryLimit, int64(256<<20))
+	}
+	if spec.Healthcheck == nil {
+		t.Fatal("Healthcheck should be populated")
+	}
+	if spec.Healthcheck.Interval != 30*time.Second || spec.Healthcheck.Timeout != 5*time.Second || spec.Healthcheck.Retries != 3 {
+		t.Errorf("Healthcheck = %+v", spec.Healthcheck)
+	}
+}
+
 // findStopped waits for the container list to agree that nothing is running,
 // bounded so a genuine failure to stop still fails the test promptly.
 func findStopped(t *testing.T, find func() *Stack) *Stack {
