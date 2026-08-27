@@ -425,6 +425,20 @@ CREATE TABLE IF NOT EXISTS ignored_cves (
 	added_by   TEXT NOT NULL DEFAULT '',
 	created_at TEXT NOT NULL
 );
+
+-- A specific (service, kind) drift on a project a human has reviewed and
+-- deliberately accepted, so the deploy preview stops counting it as active
+-- drift. Scoped per project, unlike ignored_cves: accepting a resource-limit
+-- drift on one project's "web" service says nothing about the same shape
+-- elsewhere. No declared FK (this schema doesn't use them anywhere) —
+-- DeleteProject removes matching rows itself.
+CREATE TABLE IF NOT EXISTS project_drift_ignores (
+	project_id INTEGER NOT NULL,
+	service    TEXT NOT NULL,
+	kind       TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	PRIMARY KEY (project_id, service, kind)
+);
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err

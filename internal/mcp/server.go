@@ -61,6 +61,9 @@ type ProjectPreview struct {
 	Running   []docker.ServiceSpec   `json:"running,omitempty"`
 	Changes   []docker.ServiceChange `json:"changes,omitempty"`
 	Unchanged int                    `json:"unchanged,omitempty"`
+	// Active is len(Changes) minus any marked Ignored (reviewed, accepted
+	// drift) — what still actually needs attention.
+	Active int `json:"active,omitempty"`
 }
 
 type ManagedProject struct {

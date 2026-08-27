@@ -106,8 +106,13 @@ func (s *Store) SetLastDeployedProfiles(ctx context.Context, id int64, profiles 
 	return err
 }
 
-// DeleteProject removes the project row (the caller removes the folder).
+// DeleteProject removes the project row (the caller removes the folder) and
+// any drift ignores recorded against it — those describe a specific
+// project's accepted state, and outlive nothing useful once it's gone.
 func (s *Store) DeleteProject(ctx context.Context, id int64) error {
+	if err := s.deleteDriftIgnores(ctx, id); err != nil {
+		return err
+	}
 	_, err := s.db.ExecContext(ctx, `DELETE FROM projects WHERE id = ?`, id)
 	return err
 }

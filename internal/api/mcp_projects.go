@@ -151,11 +151,19 @@ func (s *Server) mcpPreviewProject(ctx context.Context, id int64) (mcp.ProjectPr
 	// string changing, which the plain comparison above can't see.
 	s.docker.AugmentDigestDrift(ctx, p.HostID, &prev, containers)
 	docker.ExtendServiceComparison(&prev, resolved, running)
+	if ignores, ierr := s.store.ListDriftIgnores(ctx, p.ID); ierr == nil && len(ignores) > 0 {
+		ignored := make(map[[2]string]bool, len(ignores))
+		for _, ig := range ignores {
+			ignored[[2]string{ig.Service, ig.Kind}] = true
+		}
+		docker.MarkIgnoredChanges(prev.Changes, ignored)
+	}
 	out.Valid = true
 	out.Project = p.Name
 	out.Services = prev.Services
 	out.Running = prev.Running
 	out.Changes = prev.Changes
 	out.Unchanged = prev.Unchanged
+	out.Active = docker.ActiveChanges(prev.Changes)
 	return out, nil
 }

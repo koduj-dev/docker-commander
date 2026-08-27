@@ -61,6 +61,34 @@ type ServiceChange struct {
 	// everything except "added" (a brand-new container) and "removed" (an
 	// orphan a deploy leaves running, untouched).
 	Recreates bool `json:"recreates"`
+	// Ignored marks a change a human has reviewed and deliberately accepted as
+	// ongoing drift (see MarkIgnoredChanges) — still reported, so it stays
+	// visible and reversible, but excluded from ActiveChanges.
+	Ignored bool `json:"ignored"`
+}
+
+// MarkIgnoredChanges flags each change matching a (service, kind) a caller
+// has recorded as reviewed drift (store.ProjectDriftIgnore) — it never
+// removes a change from the list, only marks it, so an ignored drift stays
+// visible (and un-ignorable) rather than silently disappearing.
+func MarkIgnoredChanges(changes []ServiceChange, ignored map[[2]string]bool) {
+	for i := range changes {
+		if ignored[[2]string{changes[i].Service, changes[i].Kind}] {
+			changes[i].Ignored = true
+		}
+	}
+}
+
+// ActiveChanges counts changes NOT marked Ignored — what should actually
+// read as "still needs attention" after reviewed drift is excluded.
+func ActiveChanges(changes []ServiceChange) int {
+	n := 0
+	for _, c := range changes {
+		if !c.Ignored {
+			n++
+		}
+	}
+	return n
 }
 
 // DeployPreview is what a deploy would change.

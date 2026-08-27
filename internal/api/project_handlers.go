@@ -973,6 +973,54 @@ func (s *Server) handlePreviewProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, prev)
 }
 
+// driftIgnoreBody identifies one (service, kind) drift from a preview's
+// ServiceChange — the same pair MarkIgnoredChanges matches on.
+type driftIgnoreBody struct {
+	Service string `json:"service"`
+	Kind    string `json:"kind"`
+}
+
+// handleIgnoreDrift records that a specific drift on this project has been
+// reviewed and accepted, so future previews stop counting it as active (it
+// stays visible, marked "ignored" — see docker.ServiceChange.Ignored).
+func (s *Server) handleIgnoreDrift(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	var body driftIgnoreBody
+	if err := decodeJSON(r, &body); err != nil || body.Service == "" || body.Kind == "" {
+		writeErr(w, http.StatusBadRequest, "service and kind are required")
+		return
+	}
+	if err := s.store.IgnoreDrift(r.Context(), p.ID, body.Service, body.Kind); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "project.drift.ignore", p.Slug, body.Service+":"+body.Kind)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleUnignoreDrift reverses handleIgnoreDrift: the next preview counts
+// this drift again.
+func (s *Server) handleUnignoreDrift(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	var body driftIgnoreBody
+	if err := decodeJSON(r, &body); err != nil || body.Service == "" || body.Kind == "" {
+		writeErr(w, http.StatusBadRequest, "service and kind are required")
+		return
+	}
+	if err := s.store.UnignoreDrift(r.Context(), p.ID, body.Service, body.Kind); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "project.drift.unignore", p.Slug, body.Service+":"+body.Kind)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // overlayProject copies the project folder to a fresh temp dir and overlays the
 // named file with content, returning the temp dir (caller removes it). Used to
 // validate unsaved editor buffers against the real (multi-file) project.

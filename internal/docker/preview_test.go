@@ -131,6 +131,39 @@ func TestRunningServicesDeduplicates(t *testing.T) {
 
 func containsSubstr(s, sub string) bool { return strings.Contains(s, sub) }
 
+// MarkIgnoredChanges must flag exactly the (service, kind) pairs given, and
+// leave everything else — including a same-service, different-kind change —
+// untouched: ignoring one drift on a service must not silently swallow a
+// different drift on that same service.
+func TestMarkIgnoredChanges(t *testing.T) {
+	changes := []ServiceChange{
+		{Service: "web", Kind: "env"},
+		{Service: "web", Kind: "restart"},
+		{Service: "db", Kind: "env"},
+	}
+	MarkIgnoredChanges(changes, map[[2]string]bool{{"web", "env"}: true})
+
+	if !changes[0].Ignored {
+		t.Error("web:env should be marked ignored")
+	}
+	if changes[1].Ignored {
+		t.Error("web:restart was not ignored and must not be marked")
+	}
+	if changes[2].Ignored {
+		t.Error("db:env was not ignored and must not be marked")
+	}
+	if got := ActiveChanges(changes); got != 2 {
+		t.Errorf("ActiveChanges = %d, want 2 (3 total minus 1 ignored)", got)
+	}
+}
+
+func TestActiveChanges_AllIgnoredIsZero(t *testing.T) {
+	changes := []ServiceChange{{Service: "web", Kind: "env", Ignored: true}}
+	if got := ActiveChanges(changes); got != 0 {
+		t.Errorf("ActiveChanges = %d, want 0", got)
+	}
+}
+
 // AugmentDigestDrift must never re-flag a service BuildDeployPreview already
 // classified (an image string change already implies recreation — a digest
 // check on top would just be noise), and must skip a service with no
