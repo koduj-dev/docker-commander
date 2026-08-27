@@ -282,6 +282,20 @@ func (s *Server) handleImportProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	count := extractZipToDir(zr, root)
+
+	s.audit(r, "project.import", slug, "")
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "slug": slug, "files": count})
+}
+
+// extractZipToDir writes every file in zr under root, rejecting path
+// traversal/absolute entries (safeJoin), oversized files and anything past
+// maxProjectFiles. Shared by project import and revision restore — both are
+// "make this directory look like this zip", just with the zip coming from a
+// different place. Returns how many files were actually written; a per-file
+// failure (a bad path, a read error) is skipped rather than aborting the
+// whole extraction.
+func extractZipToDir(zr *zip.Reader, root string) int {
 	count := 0
 	for _, f := range zr.File {
 		if f.FileInfo().IsDir() || count >= maxProjectFiles {
@@ -304,9 +318,7 @@ func (s *Server) handleImportProject(w http.ResponseWriter, r *http.Request) {
 			count++
 		}
 	}
-
-	s.audit(r, "project.import", slug, "")
-	writeJSON(w, http.StatusOK, map[string]any{"id": id, "slug": slug, "files": count})
+	return count
 }
 
 // handleGetProject returns a single project's metadata.
@@ -824,6 +836,10 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 		// the Dockerfile or its context changed. Sending false opts out for the
 		// rare case where re-sending a large context matters more than freshness.
 		Build *bool `json:"build"`
+		// Reason is an optional free-text note stored on the resulting revision
+		// (see captureRevision) — why this deploy happened, for whoever reads
+		// the history later. Blank is fine; a plain deploy usually has no story.
+		Reason string `json:"reason"`
 	}
 	_ = decodeJSON(r, &body) // body is optional (empty → no profiles, rebuild)
 	// Normalized ONCE, here, and reused for the compose command, persistence
@@ -857,6 +873,7 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.SetLastDeployedProfiles(r.Context(), p.ID, body.Profiles); err != nil {
 		log.Printf("project deploy: persist last deployed profiles for %q: %v", p.Slug, err)
 	}
+	s.captureRevision(r.Context(), p, body.Profiles, out, body.Reason, currentUsername(r))
 	s.audit(r, "project.deploy", p.Slug, strings.Join(body.Profiles, ","))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out, "note": note})
 }

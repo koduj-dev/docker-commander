@@ -439,6 +439,32 @@ CREATE TABLE IF NOT EXISTS project_drift_ignores (
 	created_at TEXT NOT NULL,
 	PRIMARY KEY (project_id, service, kind)
 );
+
+-- One successful deploy of a project. The row is metadata only — the actual
+-- compose file + every sidecar file, as they were at that moment, live on
+-- disk as a zip under DataDir/project-revisions/<project_id>/<revision>.zip
+-- (see Server.revisionZipPath). Resolved config and structural diffs are
+-- always derived fresh from that zip rather than duplicated here, so there is
+-- exactly one stored copy of "what did this revision actually contain" to go
+-- stale. The revision column numbers 1.. per project (not a global id),
+-- because that is the number an operator says out loud ("roll back to
+-- revision 4").
+CREATE TABLE IF NOT EXISTS project_revisions (
+	id               INTEGER PRIMARY KEY AUTOINCREMENT,
+	project_id       INTEGER NOT NULL,
+	revision         INTEGER NOT NULL,
+	host_id          INTEGER NOT NULL DEFAULT 0,
+	profiles         TEXT NOT NULL DEFAULT '',  -- JSON array
+	images           TEXT NOT NULL DEFAULT '',  -- JSON [{"service","image","digest"}]
+	valid            INTEGER NOT NULL DEFAULT 1,
+	validation_error TEXT NOT NULL DEFAULT '',
+	output           TEXT NOT NULL DEFAULT '',
+	author           TEXT NOT NULL DEFAULT '',
+	reason           TEXT NOT NULL DEFAULT '',
+	created_at       TEXT NOT NULL,
+	UNIQUE (project_id, revision)
+);
+CREATE INDEX IF NOT EXISTS idx_project_revisions_project ON project_revisions(project_id);
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
