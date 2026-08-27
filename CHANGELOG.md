@@ -7,15 +7,19 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
-- **Deploy preview now catches mutable-tag drift.** `preview_deploy` (MCP)
-  resolves the current registry digest for each unchanged-image service and
-  compares it against what the running container actually has, so a `:latest`
-  (or any other mutable tag) that was overwritten upstream since the last
-  deploy shows up as a change even though the tag string itself didn't move.
-  Best-effort: skipped for unconfigured registries or images never pulled
-  from one. First slice of the planned deployment plan/diff feature (see
-  NEXT.md); the rest — env/port/volume/network/resource-limit/healthcheck
-  diffs and a first-class UI screen — is still open.
+- **Deployment plan / diff.** Before deploying a project, **Preview** shows
+  exactly what would change: services added / recreated / left running as
+  orphans, image and registry-digest changes (catches a mutable tag like
+  `:latest` overwritten upstream since the last deploy, even when the tag
+  string itself didn't move), and — for anything already running — env,
+  published ports, volumes, networks, restart policy, resource limits and
+  healthcheck differences, each flagged with whether applying it recreates
+  the container. Every comparison is one-directional: it only flags a field
+  the compose file actually declares and disagrees with reality, never a
+  field compose is silent on (there's no stored record yet of what compose
+  has ever managed — the planned revision store closes that gap). A
+  first-class screen (`GET /api/projects/{id}/preview`), not just the
+  existing `preview_deploy` MCP tool.
 - **A new Troubleshooting tab** runs a battery of read-only sanity checks
   against the selected Docker host and reports each as OK/warning/failed/
   skipped: overlapping Docker network subnets, duplicate host port bindings,

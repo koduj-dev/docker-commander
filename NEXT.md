@@ -68,23 +68,18 @@ the old repeat-every-cooldown engine would have produced a timeline of noise.
 
 ### Safe changes
 
-The next three items — plan/diff, drift detection, and revisions/rollback —
-share one underlying question: *what does the compose definition say, what is
-actually running, and what's the difference?* Worth designing as one internal
-state-diff model (current state + desired state → difference → plan →
-execution → verification → rollback) rather than three one-off features, so
-the same diff engine can back a pre-deploy preview, a drift check, and a
-rollback's "what will restoring this revision actually change" — and, later,
-feed the same model to the CLI/MCP instead of each surface re-deriving it.
+These items — drift detection and revisions/rollback — share one underlying
+question with the deployment plan/diff that already shipped (see CHANGELOG):
+*what does the compose definition say, what is actually running, and what's
+the difference?* They're designed to reuse that same state-diff engine
+(`internal/docker/preview.go` + `deployfields.go`: `ServiceSpec`/
+`ServiceChange`/`BuildDeployPreview`/`ExtendServiceComparison`) rather than
+re-deriving it — that engine already resolves a project's compose against
+what's running and reports added/removed/image/digest/env/ports/volumes/
+networks/restart/resources/healthcheck differences, with a per-change
+`recreates` (downtime-risk) flag, behind both a REST endpoint
+(`GET /api/projects/{id}/preview`) and the `preview_deploy` MCP tool.
 
-- **Deployment plan / diff.** Before a deploy or redeploy, show exactly what
-  is about to happen: which services get created / recreated / removed, image
-  tag **and digest** changes, env/port/volume/network changes, resource-limit
-  and healthcheck changes, and a downtime-risk callout (e.g. "backend will be
-  recreated"). Projects already show a **resolved config preview** (rendered
-  YAML) — this is a step beyond that: a structural diff against the *running*
-  state, not just the file. Should be a first-class UI screen, not only
-  something MCP callers see.
 - **Drift detection (desired vs. running state).** Compare a project's compose
   definition against what's actually running — image digest, env, mounts,
   restart policy, resource limits — and surface the delta (e.g. "restart:
@@ -468,7 +463,7 @@ Agreed 2026-08-27. Check items off as they ship; revisit the order deliberately
 if priorities change, don't just silently reshuffle it.
 
 **Now — one bundle (shares a single state-diff engine):**
-- [ ] Deployment plan / diff
+- [x] Deployment plan / diff
 - [ ] Drift detection
 - [ ] Deployment revisions and rollback
 
