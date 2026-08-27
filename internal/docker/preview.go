@@ -379,18 +379,36 @@ func volumesString(v []VolumeSpec) string {
 	return strings.Join(parts, ", ")
 }
 
-// resourcesDiff compares cpu/memory limits, but only when BOTH sides have one
-// set — compose being silent on a limit doesn't mean "no limit", it means
-// this field isn't managed, so nothing to compare (same stance as envDiff).
+// resourcesDiff compares cpu/memory limits, gated only on the COMPOSE side
+// declaring one (want > 0) — unlike env/healthcheck, "no limit" (0) on the
+// running side is never ambiguous (it's Docker's own well-defined default,
+// not "some value compose doesn't know about"), so a running container with
+// no limit at all is a real, reportable difference from a compose file that
+// now wants one. Compose staying silent (want == 0) is still never compared,
+// same stance as envDiff/healthcheckDiff.
 func resourcesDiff(want, have ServiceSpec) string {
 	var parts []string
-	if want.CPULimit > 0 && have.CPULimit > 0 && want.CPULimit != have.CPULimit {
-		parts = append(parts, fmt.Sprintf("cpu %.2f → %.2f", have.CPULimit, want.CPULimit))
+	if want.CPULimit > 0 && want.CPULimit != have.CPULimit {
+		parts = append(parts, fmt.Sprintf("cpu %s → %.2f", cpuLabel(have.CPULimit), want.CPULimit))
 	}
-	if want.MemoryLimit > 0 && have.MemoryLimit > 0 && want.MemoryLimit != have.MemoryLimit {
-		parts = append(parts, fmt.Sprintf("memory %s → %s", humanBytes(have.MemoryLimit), humanBytes(want.MemoryLimit)))
+	if want.MemoryLimit > 0 && want.MemoryLimit != have.MemoryLimit {
+		parts = append(parts, fmt.Sprintf("memory %s → %s", memLabel(have.MemoryLimit), humanBytes(want.MemoryLimit)))
 	}
 	return strings.Join(parts, ", ")
+}
+
+func cpuLabel(v float64) string {
+	if v <= 0 {
+		return "none"
+	}
+	return fmt.Sprintf("%.2f", v)
+}
+
+func memLabel(v int64) string {
+	if v <= 0 {
+		return "none"
+	}
+	return humanBytes(v)
 }
 
 func humanBytes(n int64) string {

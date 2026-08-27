@@ -169,6 +169,24 @@ func TestExtendServiceComparison_FlagsDeclaredMismatches(t *testing.T) {
 	}
 }
 
+// A container with NO resource limit at all is a real, known state (Docker's
+// own default), unlike a compose file silent on the field — so a compose
+// file that now wants a limit must be flagged even though the running side
+// reads zero. Found via manually driving the UI: an early version of
+// resourcesDiff required BOTH sides nonzero and silently missed exactly this.
+func TestExtendServiceComparison_FlagsNewlyAddedResourceLimit(t *testing.T) {
+	resolved := []ServiceSpec{{Name: "web", Image: "nginx:1", Detailed: true, CPULimit: 0.5, MemoryLimit: 256 << 20}}
+	running := []ServiceSpec{{Name: "web", Image: "nginx:1", Detailed: true}} // no limit ever set
+	prev := DeployPreview{Services: resolved, Running: running, Changes: []ServiceChange{}, Unchanged: 1}
+	ExtendServiceComparison(&prev, resolved, running)
+	if len(prev.Changes) != 1 || prev.Changes[0].Kind != "resources" {
+		t.Fatalf("expected one resources change, got %+v", prev.Changes)
+	}
+	if !containsSubstr(prev.Changes[0].Detail, "none") {
+		t.Errorf("detail should show the running side as having no limit: %q", prev.Changes[0].Detail)
+	}
+}
+
 // A service BuildDeployPreview already flagged (e.g. an image change) must
 // not get a redundant field-level diff piled on top.
 func TestExtendServiceComparison_SkipsAlreadyFlaggedService(t *testing.T) {
