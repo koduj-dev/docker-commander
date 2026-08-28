@@ -82,6 +82,13 @@ All notable changes to Docker Commander are documented here. The format follows
   on Windows) rather than just failing.
 
 ### Fixed
+- **"Reconcile now" (deploy preview) actually fixes mutable-tag digest drift
+  now.** It previously just ran a plain deploy, which reuses whatever image
+  is already local — `docker compose up`'s own default pull policy only
+  fetches an image that's missing entirely, so a tag that moved on the
+  registry never actually got pulled, and the preview kept reporting the
+  same drift (against a newer digest each time it was re-checked) no matter
+  how many times Reconcile was clicked. It now forces `--pull always`.
 - **The login form now works with password managers.** The username, password
   and 2FA code fields had no `name`/`autocomplete` attributes, so a password
   manager had no reliable way to recognise or fill them.

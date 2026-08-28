@@ -1466,11 +1466,11 @@ function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, on
     }
   };
 
-  const runCompose = async (kind: Kind) => {
+  const runCompose = async (kind: Kind, opts?: { pull?: boolean }) => {
     if (dirty && !(await dialogs.confirm({ title: "Unsaved changes", message: "Continue with the last saved files?", confirmLabel: "Continue" }))) return;
     setBusy(kind);
     try {
-      const r = kind === "deploy" ? await api.deployProject(project.id, selectedProfiles) : kind === "down" ? await api.downProject(project.id) : await api.restartProject(project.id);
+      const r = kind === "deploy" ? await api.deployProject(project.id, selectedProfiles, opts) : kind === "down" ? await api.downProject(project.id) : await api.restartProject(project.id);
       if (kind === "deploy" && r.ok) setDeployedProfiles(selectedProfiles);
       onOutput({ title: `${project.name} — ${kind}`, text: composeOutputText(r), ok: r.ok });
     } catch (e) {
@@ -1674,7 +1674,7 @@ function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, on
           projectName={project.name}
           onClose={() => setDeployPreview(null)}
           onChanged={showPreview}
-          onReconcile={async () => { await runCompose("deploy"); setDeployPreview(null); }}
+          onReconcile={async () => { await runCompose("deploy", { pull: true }); setDeployPreview(null); }}
           reconcileBusy={busy === "deploy"}
         />
       )}

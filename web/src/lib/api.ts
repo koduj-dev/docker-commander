@@ -545,8 +545,14 @@ export const api = {
     req<{ level: "ok" | "warning" | "error"; output?: string; unavailable?: boolean }>("POST", `/api/projects/${id}/dockerfile-check`, { content }),
   // `note` is set when deploying to a remote host copied bind-mounted paths into
   // seeded volumes — the UI shows it above the compose output.
-  deployProject: (id: number, profiles: string[] = []) =>
-    req<{ ok: boolean; output?: string; error?: string; note?: string }>("POST", `/api/projects/${id}/deploy`, { profiles }),
+  // `pull`: force a registry check for every service (`--pull always`)
+  // instead of Compose's own default of only pulling an image that's
+  // missing locally. Needed to actually fix a "digest" drift the preview
+  // reported — a plain deploy would just reuse the stale local image.
+  deployProject: (id: number, profiles: string[] = [], opts?: { pull?: boolean }) =>
+    req<{ ok: boolean; output?: string; error?: string; note?: string }>(
+      "POST", `/api/projects/${id}/deploy`, { profiles, pull: opts?.pull ?? false },
+    ),
   downProject: (id: number) =>
     req<{ ok: boolean; output?: string; error?: string }>("POST", `/api/projects/${id}/down`),
   restartProject: (id: number) =>

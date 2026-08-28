@@ -395,3 +395,56 @@ services:
 		t.Errorf("web should be running, got %d container(s)", n)
 	}
 }
+
+// TestHandleDeployProject_PullForcesARegistryCheck is the HTTP-layer half of
+// internal/docker's TestIntegrationComposeUpFilesPull_AlwaysChecksTheRegistry:
+// {"pull": true} in the deploy request body must actually reach
+// ComposeUpFilesPull, not just be accepted and ignored. Same real-output
+// assertion ("Pulling" only appears when Compose was told to check), and the
+// negative case (a plain deploy) is asserted too — a test that only checked
+// "pull:true 'Pulling' appears" would still pass if Compose showed that line
+// on every deploy regardless of the flag.
+func TestHandleDeployProject_PullForcesARegistryCheck(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	const slug = "dctest-deploy-pull"
+	compose := "services:\n  web:\n    image: " + deployTestImage + "\n    command: [\"sleep\", \"300\"]\n"
+	srv, _, pid, admin := deployTestServer(t, slug, compose)
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = docker.ComposeDown(bg, srv.projectRoot(pid), slug, nil)
+		freeDeployStack(slug)
+	})
+
+	deployOutput := func(body string) string {
+		t.Helper()
+		w := deployRequest(srv, pid, admin, body)
+		if w.Code != 200 {
+			t.Fatalf("deploy status = %d: %s", w.Code, w.Body.String())
+		}
+		var resp struct {
+			OK     bool   `json:"ok"`
+			Output string `json:"output"`
+			Error  string `json:"error"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if !resp.OK {
+			t.Fatalf("deploy did not succeed: %s / %s", resp.Error, resp.Output)
+		}
+		return resp.Output
+	}
+
+	if out := deployOutput(`{"build":false}`); strings.Contains(out, "Pulling") {
+		t.Errorf("a plain deploy (pull absent/false) must not check the registry, got:\n%s", out)
+	}
+	if out := deployOutput(`{"build":false,"pull":true}`); !strings.Contains(out, "Pulling") {
+		t.Errorf("pull:true must force a registry check even though the image is already local, got:\n%s", out)
+	}
+}

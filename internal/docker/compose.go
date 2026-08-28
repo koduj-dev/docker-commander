@@ -91,14 +91,36 @@ func ComposeUp(ctx context.Context, dir, slug string, profiles []string, env []s
 // true. It is a no-op for services that declare no `build:`, so it costs nothing
 // on an image-only project.
 func ComposeUpFiles(ctx context.Context, dir, slug string, profiles, env, files []string, build bool) (string, error) {
+	return composeUp(ctx, dir, slug, profiles, env, files, build, false)
+}
+
+// ComposeUpFilesPull is ComposeUpFiles with `--pull always` added, so Compose
+// checks the registry for a newer image on every service before recreating.
+//
+// `up`'s own default pull policy is "missing" — pull only an image that
+// doesn't exist locally at all. That is why reconciling a mutable-tag digest
+// drift (the preview's "digest" change: the tag reads the same, but it now
+// resolves to a different image on the registry) via a plain `up -d` silently
+// does nothing: the stale local image is already present, so it gets reused
+// and the running digest never actually moves, even though the command
+// reports success. Callers that mean to fix exactly that drift need this
+// variant, not ComposeUpFiles.
+func ComposeUpFilesPull(ctx context.Context, dir, slug string, profiles, env, files []string, build bool) (string, error) {
+	return composeUp(ctx, dir, slug, profiles, env, files, build, true)
+}
+
+func composeUp(ctx context.Context, dir, slug string, profiles, env, files []string, build, pull bool) (string, error) {
 	profiles = NormalizeProfiles(profiles)
-	args := make([]string, 0, len(profiles)*2+3)
+	args := make([]string, 0, len(profiles)*2+5)
 	for _, p := range profiles {
 		args = append(args, "--profile", p)
 	}
 	args = append(args, "up", "-d")
 	if build {
 		args = append(args, "--build")
+	}
+	if pull {
+		args = append(args, "--pull", "always")
 	}
 	// Neutralize COMPOSE_PROFILES for the subprocess so the --profile flags
 	// above — built from `profiles`, the caller's authoritative selection (the

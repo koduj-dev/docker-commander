@@ -840,6 +840,15 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 		// (see captureRevision) — why this deploy happened, for whoever reads
 		// the history later. Blank is fine; a plain deploy usually has no story.
 		Reason string `json:"reason"`
+		// Pull forces `--pull always` (ComposeUpFilesPull instead of
+		// ComposeUpFiles) so a mutable tag whose registry digest moved on is
+		// actually re-pulled rather than silently reusing the stale local
+		// image — `up`'s own default policy only pulls an image that's
+		// missing entirely. Off by default: forcing a registry round trip on
+		// every ordinary deploy isn't something to opt production into
+		// silently. The Preview screen's "Reconcile now" sends this — it
+		// exists specifically to fix the "digest" drift it just reported.
+		Pull bool `json:"pull"`
 	}
 	_ = decodeJSON(r, &body) // body is optional (empty → no profiles, rebuild)
 	// Normalized ONCE, here, and reused for the compose command, persistence
@@ -856,7 +865,11 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer cleanup()
-	out, err := docker.ComposeUpFiles(r.Context(), dir, p.Slug, body.Profiles, env, files, build)
+	upFn := docker.ComposeUpFiles
+	if body.Pull {
+		upFn = docker.ComposeUpFilesPull
+	}
+	out, err := upFn(r.Context(), dir, p.Slug, body.Profiles, env, files, build)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "output": out})
 		return
