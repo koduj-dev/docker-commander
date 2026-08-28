@@ -74,7 +74,7 @@ export function BuildModal({ onClose, onDone }: { onClose: () => void; onDone: (
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <form className="card w-full max-w-3xl max-h-[88vh] flex flex-col" onClick={(e) => e.stopPropagation()} onSubmit={start}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <Hammer className="h-4 w-4 text-accent" />

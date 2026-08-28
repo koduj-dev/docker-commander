@@ -44,7 +44,7 @@ export function InspectModal({ kind, id, title, onClose }: { kind: Kind; id: str
   const shown = json && filter ? json.split("\n").filter((l) => l.toLowerCase().includes(filter.toLowerCase())).join("\n") : json;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div className="card w-full max-w-4xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <div className="font-medium min-w-0">

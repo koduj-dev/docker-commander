@@ -50,7 +50,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
     <Ctx.Provider value={api}>
       {children}
       {pending && (
-        <div className="fixed inset-0 z-[80] bg-black/60 grid place-items-center p-6" onClick={() => settle(false)}>
+        <div className="fixed inset-0 z-[80] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); settle(false); }}>
           <form
             className="card w-full max-w-xl flex flex-col"
             onClick={(e) => e.stopPropagation()}

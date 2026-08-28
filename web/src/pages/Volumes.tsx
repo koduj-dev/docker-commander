@@ -153,7 +153,7 @@ export function Volumes() {
       {inspect && <InspectModal kind="volume" id={inspect.name} title={inspect.name} onClose={() => setInspect(null)} />}
 
       {browse && (
-        <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={closeBrowse}>
+        <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); closeBrowse(); }}>
           <div className="w-[80vw] max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-2 mb-2">
               <Database className="h-4 w-4 text-accent shrink-0" />

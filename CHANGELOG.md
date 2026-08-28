@@ -112,10 +112,13 @@ All notable changes to Docker Commander are documented here. The format follows
   itself, the existing Resolved preview) while making the one screen meant
   to answer "what changed" unable to answer it for the single most common
   kind of change there is.
-- **Clicking outside a nested modal (Preview, History, a diff, Summary, the
-  compose output, …) no longer also closes the project editor underneath
-  it.** The backdrop click wasn't stopping propagation, so it bubbled up to
-  every ancestor modal's own backdrop handler and closed all of them at once.
+- **Clicking outside any modal in the app no longer also closes whatever
+  modal it was opened from.** The same missing-`stopPropagation` bug as the
+  Projects modals, found the same way, fixed everywhere it occurs — 26 more
+  spots across 18 files, including every **confirm/prompt/alert dialog**
+  (`useDialogs()`), which is the highest-impact one: it's opened from inside
+  another modal far more often than not, so dismissing "are you sure?" could
+  silently close the modal underneath it too.
 - **The login form now works with password managers.** The username, password
   and 2FA code fields had no `name`/`autocomplete` attributes, so a password
   manager had no reliable way to recognise or fill them.

@@ -322,7 +322,7 @@ function EditAccessModal({ user, allSections, roles, onClose, onDone }: { user: 
   };
 
   return (
-    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <form className="card w-full max-w-2xl flex flex-col max-h-[88vh]" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <IdCard className="h-4 w-4 text-accent" />
@@ -403,7 +403,7 @@ function RoleEditorModal({ role, allSections, onClose, onDone }: { role: Role | 
   };
 
   return (
-    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <form className="card w-full max-w-3xl flex flex-col max-h-[88vh]" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <IdCard className="h-4 w-4 text-accent" />
@@ -514,7 +514,7 @@ function ResetPasswordModal({ user, onClose }: { user: ManagedUser; onClose: () 
   };
 
   return (
-    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <form className="card w-full max-w-lg" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <KeyRound className="h-4 w-4 text-accent" />

@@ -404,7 +404,7 @@ function SettingsModal({ detail, onClose, onDone }: { detail: Detail; onClose: (
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <form className="card w-full max-w-lg" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <Settings className="h-4 w-4 text-accent" /><div className="font-medium">Container settings</div>
@@ -467,7 +467,7 @@ function CommitModal({ id, name, onClose }: { id: string; name: string; onClose:
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <form className="card w-full max-w-lg" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <Camera className="h-4 w-4 text-accent" /><div className="font-medium">Commit container to image</div>
