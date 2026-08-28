@@ -396,13 +396,21 @@ func portsString(p []ServicePort) string {
 	return strings.Join(parts, ", ")
 }
 
+// volumesString renders source:target, not target alone — what actually
+// differs between two otherwise-similar mounts is almost always the source
+// (a different bind path, a different named volume), and a target-only
+// rendering would show the identical string on both sides of a real change.
 func volumesString(v []VolumeSpec) string {
 	if len(v) == 0 {
 		return "none"
 	}
 	parts := make([]string, len(v))
 	for i, x := range v {
-		parts[i] = x.Target
+		src := x.Source
+		if src == "" {
+			src = x.Type
+		}
+		parts[i] = src + ":" + x.Target
 	}
 	return strings.Join(parts, ", ")
 }

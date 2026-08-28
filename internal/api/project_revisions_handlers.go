@@ -172,7 +172,17 @@ func (s *Server) revisionServiceSpecs(ctx context.Context, p *store.Project, rev
 	if err != nil {
 		return nil, fmt.Errorf("revision %d no longer resolves as valid compose: %w", revision, err)
 	}
-	return docker.ParseComposeServices(cfgJSON)
+	specs, err := docker.ParseComposeServices(cfgJSON)
+	if err != nil {
+		return nil, err
+	}
+	// A relative bind mount resolves to an absolute path anchored to tmp — a
+	// fresh, different directory every call — so rebase it to where the
+	// project's real files live before this is compared against anything
+	// (the live container's actual mount source, or another revision's own
+	// throwaway extraction dir). See RebaseBindSources.
+	docker.RebaseBindSources(specs, tmp, s.projectRoot(p.ID))
+	return specs, nil
 }
 
 // handleRevisionDiff compares one revision's services against either another

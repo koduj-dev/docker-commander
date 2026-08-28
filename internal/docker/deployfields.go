@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -163,6 +164,9 @@ type composeConfigDoc struct {
 	Networks map[string]struct {
 		Name string `json:"name"`
 	} `json:"networks"`
+	Volumes map[string]struct {
+		Name string `json:"name"`
+	} `json:"volumes"`
 	Services map[string]struct {
 		Image       string            `json:"image"`
 		Environment map[string]string `json:"environment"`
@@ -205,9 +209,13 @@ func parseComposeConfigDoc(configJSON []byte) (composeConfigDoc, error) {
 }
 
 // serviceSpecFromComposeDoc builds one service's full ServiceSpec, resolving
-// its declared networks to their real (project-prefixed) Docker network
-// names via the doc's top-level networks section — the names a running
-// container's NetworkSettings.Networks will actually use.
+// its declared networks AND named volumes to their real (project-prefixed)
+// Docker names via the doc's top-level networks/volumes sections — the names
+// a running container's NetworkSettings.Networks / Mounts will actually use.
+// Without this, a service's own compose entry names a volume "webdata" while
+// the container it's actually mounted from is "myproject_webdata", and every
+// comparison against the live state would read as "changed" for a volume
+// that never changed at all.
 func serviceSpecFromComposeDoc(cfg composeConfigDoc, name string) ServiceSpec {
 	svc := cfg.Services[name]
 	s := ServiceSpec{Name: name, Image: svc.Image, Detailed: true}
@@ -219,7 +227,13 @@ func serviceSpecFromComposeDoc(cfg composeConfigDoc, name string) ServiceSpec {
 	}
 	sortPorts(s.Ports)
 	for _, v := range svc.Volumes {
-		s.Volumes = append(s.Volumes, VolumeSpec{Type: v.Type, Source: v.Source, Target: v.Target})
+		src := v.Source
+		if v.Type == "volume" {
+			if vol, ok := cfg.Volumes[v.Source]; ok && vol.Name != "" {
+				src = vol.Name
+			}
+		}
+		s.Volumes = append(s.Volumes, VolumeSpec{Type: v.Type, Source: src, Target: v.Target})
 	}
 	sortVolumes(s.Volumes)
 	for local := range svc.Networks {
@@ -334,4 +348,29 @@ func (m *Manager) LiveServices(ctx context.Context, hostID int64, containers []S
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// RebaseBindSources rewrites every bind-mount source under fromDir to the
+// equivalent path under toDir. `docker compose config` resolves a relative
+// bind mount (`./html:...`) to an ABSOLUTE path anchored to whatever
+// directory it was run in — for a revision, that's a throwaway extraction
+// directory, a different one on every call. Without rebasing, comparing a
+// revision's specs against the live project directory (or against another
+// revision's own throwaway directory) would report a "volumes" change for
+// every relative bind mount, on every comparison, whether or not anything
+// about it actually changed.
+func RebaseBindSources(specs []ServiceSpec, fromDir, toDir string) {
+	for i := range specs {
+		for j := range specs[i].Volumes {
+			v := &specs[i].Volumes[j]
+			if v.Type != "bind" {
+				continue
+			}
+			rel, err := filepath.Rel(fromDir, v.Source)
+			if err != nil || strings.HasPrefix(rel, "..") {
+				continue // outside fromDir entirely — not a path this snapshot owns, leave it alone
+			}
+			v.Source = filepath.Join(toDir, rel)
+		}
+	}
 }

@@ -67,7 +67,10 @@ func TestParseComposeServices_FullFieldExtraction(t *testing.T) {
 	if s.Volumes[0] != (VolumeSpec{Type: "bind", Source: "/tmp/dc-compose-sample/conf", Target: "/etc/nginx/conf.d"}) {
 		t.Errorf("Volumes[0] = %+v", s.Volumes[0])
 	}
-	if s.Volumes[1] != (VolumeSpec{Type: "volume", Source: "webdata", Target: "/usr/share/nginx/html"}) {
+	// The service declares volume "webdata", but the container it's actually
+	// mounted from is named "dc-compose-sample_webdata" (project-prefixed) —
+	// the top-level volumes section is what resolves that, same as networks.
+	if s.Volumes[1] != (VolumeSpec{Type: "volume", Source: "dc-compose-sample_webdata", Target: "/usr/share/nginx/html"}) {
 		t.Errorf("Volumes[1] = %+v", s.Volumes[1])
 	}
 	// The service declares network "front", but a running container's real
@@ -200,5 +203,87 @@ func TestExtendServiceComparison_SkipsAlreadyFlaggedService(t *testing.T) {
 	ExtendServiceComparison(&prev, resolved, running)
 	if len(prev.Changes) != 1 {
 		t.Errorf("should not add to an already-flagged service, got %+v", prev.Changes)
+	}
+}
+
+// A named volume the compose file declares as "webdata" and the live
+// container is actually mounted from as "myproj_webdata" (Docker's own
+// project-prefixing) must read as UNCHANGED, not as a spurious volumes
+// drift on every single preview of every project that has one.
+func TestExtendServiceComparison_SameNamedVolumeDespiteProjectPrefixIsUnchanged(t *testing.T) {
+	resolved := []ServiceSpec{{
+		Name: "web", Image: "nginx:1", Detailed: true,
+		Volumes: []VolumeSpec{{Type: "volume", Source: "myproj_webdata", Target: "/data"}},
+	}}
+	running := []ServiceSpec{{
+		Name: "web", Image: "nginx:1", Detailed: true,
+		Volumes: []VolumeSpec{{Type: "volume", Source: "myproj_webdata", Target: "/data"}},
+	}}
+	prev := DeployPreview{Services: resolved, Running: running, Changes: []ServiceChange{}, Unchanged: 1}
+	ExtendServiceComparison(&prev, resolved, running)
+	if len(prev.Changes) != 0 {
+		t.Errorf("the same named volume must not read as changed, got %+v", prev.Changes)
+	}
+}
+
+// A volumes change whose Target is identical on both sides (the common
+// case: only the Source differs — a different bind path or volume) must
+// still show a From/To that's visibly different. volumesString used to
+// render the target alone, so a real change could display as
+// "/usr/share/nginx/html → /usr/share/nginx/html" — technically correct
+// data, but unreadable as a diff.
+func TestExtendServiceComparison_VolumesChangeShowsWhatActuallyDiffers(t *testing.T) {
+	resolved := []ServiceSpec{{
+		Name: "web", Image: "nginx:1", Detailed: true,
+		Volumes: []VolumeSpec{{Type: "bind", Source: "/data/projects/7/html", Target: "/usr/share/nginx/html"}},
+	}}
+	running := []ServiceSpec{{
+		Name: "web", Image: "nginx:1", Detailed: true,
+		Volumes: []VolumeSpec{{Type: "bind", Source: "/some/other/path/html", Target: "/usr/share/nginx/html"}},
+	}}
+	prev := DeployPreview{Services: resolved, Running: running, Changes: []ServiceChange{}, Unchanged: 1}
+	ExtendServiceComparison(&prev, resolved, running)
+
+	if len(prev.Changes) != 1 || prev.Changes[0].Kind != "volumes" {
+		t.Fatalf("expected one volumes change, got %+v", prev.Changes)
+	}
+	c := prev.Changes[0]
+	if c.From == c.To {
+		t.Fatalf("From and To read identically even though the source differs — the diff is unreadable: %q", c.From)
+	}
+	if !containsSubstr(c.From, "/some/other/path/html") || !containsSubstr(c.To, "/data/projects/7/html") {
+		t.Errorf("From/To should show the differing source paths, got From=%q To=%q", c.From, c.To)
+	}
+}
+
+func TestRebaseBindSources(t *testing.T) {
+	specs := []ServiceSpec{{
+		Name: "web",
+		Volumes: []VolumeSpec{
+			{Type: "bind", Source: "/tmp/dc-revision-abc123/html", Target: "/usr/share/nginx/html"},
+			{Type: "volume", Source: "myproj_data", Target: "/data"}, // untouched — not a bind mount
+		},
+	}}
+	RebaseBindSources(specs, "/tmp/dc-revision-abc123", "/data/projects/7")
+
+	if got := specs[0].Volumes[0].Source; got != "/data/projects/7/html" {
+		t.Errorf("bind source = %q, want /data/projects/7/html", got)
+	}
+	if got := specs[0].Volumes[1].Source; got != "myproj_data" {
+		t.Errorf("a non-bind volume must be left alone, got %q", got)
+	}
+}
+
+// A bind source that doesn't actually fall under fromDir (e.g. an
+// externally-mounted host path unrelated to the project) must be left
+// exactly as-is — rebasing it would fabricate a path that was never real.
+func TestRebaseBindSources_OutsideFromDirIsUntouched(t *testing.T) {
+	specs := []ServiceSpec{{
+		Name:    "web",
+		Volumes: []VolumeSpec{{Type: "bind", Source: "/var/run/docker.sock", Target: "/var/run/docker.sock"}},
+	}}
+	RebaseBindSources(specs, "/tmp/dc-revision-abc123", "/data/projects/7")
+	if got := specs[0].Volumes[0].Source; got != "/var/run/docker.sock" {
+		t.Errorf("an out-of-tree bind source must be untouched, got %q", got)
 	}
 }

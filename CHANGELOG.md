@@ -89,6 +89,22 @@ All notable changes to Docker Commander are documented here. The format follows
   registry never actually got pulled, and the preview kept reporting the
   same drift (against a newer digest each time it was re-checked) no matter
   how many times Reconcile was clicked. It now forces `--pull always`.
+- **Preview no longer silently shows the last-saved files while you're
+  looking at unsaved editor changes.** It reads compose from disk, exactly
+  like a real deploy would — Deploy/Down/Restart already warn about this
+  ("Continue with the last saved files?"), Preview just never did.
+- **A named volume or relative bind mount that never actually changed no
+  longer shows up as a spurious "volumes" drift.** Two causes: a compose
+  file's declared volume name ("webdata") was compared directly against the
+  running container's real, project-prefixed one ("myproject_webdata") —
+  always different, never actually a change (volumes now get the same
+  name resolution networks already had). And a revision's relative bind
+  mount resolves to an absolute path anchored to a throwaway extraction
+  directory, a different one on every request — comparing that raw was
+  comparing two paths that were never going to match regardless of content.
+  Also: when a volumes change **is** real, the from/to shown now includes
+  the source, not just the target — the target is usually identical on both
+  sides, so a target-only diff could render as "the same path" either way.
 - **The login form now works with password managers.** The username, password
   and 2FA code fields had no `name`/`autocomplete` attributes, so a password
   manager had no reliable way to recognise or fill them.

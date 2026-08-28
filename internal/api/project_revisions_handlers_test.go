@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -400,5 +401,67 @@ func TestRevisionDiff_AgainstCurrentAndAgainstAnotherRevision(t *testing.T) {
 	}
 	if !foundEnv {
 		t.Errorf("expected an env change between revision 1 and revision 2, got %+v", diff.Changes)
+	}
+}
+
+// TestRevisionDiff_UnchangedVolumesDoNotFalsePositive is the exact bug a
+// real user hit: a project with a relative bind mount and a named volume,
+// deployed once and never touched again, showed a spurious "volumes"
+// change when diffed against itself. Two independent causes, both fixed
+// here — a named volume's compose-declared name ("webdata") never matched
+// the live container's actual project-prefixed one ("<slug>_webdata"), and
+// a relative bind mount resolves to an absolute path anchored to whatever
+// throwaway directory a revision happens to be extracted into, which is
+// different on every call. Nothing about either mount changed, so the diff
+// must report nothing.
+func TestRevisionDiff_UnchangedVolumesDoNotFalsePositive(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	const slug = "dctest-revision-volumes"
+	compose := "services:\n  web:\n    image: " + deployTestImage + "\n    command: [\"sleep\", \"300\"]\n" +
+		"    volumes:\n      - webdata:/data\n      - ./html:/usr/share/nginx/html\n" +
+		"volumes:\n  webdata: {}\n"
+	srv, st, pid, admin := deployTestServer(t, slug, compose)
+	if err := st.EnsureLocalHost(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(srv.projectRoot(pid), "html"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = docker.ComposeDown(bg, srv.projectRoot(pid), slug, nil)
+		freeDeployStack(slug)
+		_ = exec.Command("docker", "volume", "rm", "-f", slug+"_webdata").Run()
+	})
+
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+
+	w := diffRevisionRequest(srv, pid, 1, "current", admin, "admin")
+	if w.Code != 200 {
+		t.Fatalf("diff status = %d: %s", w.Code, w.Body.String())
+	}
+	var diff struct {
+		Valid   bool `json:"valid"`
+		Changes []struct {
+			Service string `json:"service"`
+			Kind    string `json:"kind"`
+			From    string `json:"from"`
+			To      string `json:"to"`
+		} `json:"changes"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &diff); err != nil {
+		t.Fatal(err)
+	}
+	if !diff.Valid {
+		t.Fatal("expected a valid diff")
+	}
+	if len(diff.Changes) != 0 {
+		t.Errorf("nothing actually changed since the deploy; expected no changes, got %+v", diff.Changes)
 	}
 }
