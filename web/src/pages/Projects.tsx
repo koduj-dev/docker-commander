@@ -1507,6 +1507,12 @@ function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, on
   // image/digest/env/ports/volumes/networks/restart/resources/healthcheck
   // differences — and shows it before the operator commits to Deploy.
   const showPreview = async () => {
+    // Preview reads the compose file from disk, exactly like Deploy does —
+    // an unsaved edit in the buffer below is invisible to it until Save.
+    // Deploy/Down/Restart already warn about this (see runCompose); Preview
+    // silently showing the stale on-disk file was the same trap without the
+    // warning.
+    if (dirty && !(await dialogs.confirm({ title: "Unsaved changes", message: "Preview reflects the last SAVED files, not what's in the editor. Continue?", confirmLabel: "Continue" }))) return;
     setBusy("preview");
     try {
       const r = await api.previewProject(project.id);
