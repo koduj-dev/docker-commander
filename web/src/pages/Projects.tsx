@@ -181,9 +181,15 @@ function changeKindMeta(kind: ServiceChange["kind"]): { label: string; cls: stri
   }
 }
 
-// truncateMono shortens a long value (an image digest, a long path list) for
-// a compact single-line display; the full value is still in the title attr.
+// truncateMono shortens a long value for compact display; the full value is
+// still in the title attr. A "sha256:<64 hex>" digest gets git/Docker-style
+// short-hash treatment (sha256: + 12 hex chars) rather than a blind length
+// cut — two 64-char hex blobs sitting side by side (from → to) are close to
+// unreadable as a diff no matter where they were cut, which is exactly why
+// git and Docker both default to a 12-char short hash instead of the full one.
 function truncateMono(s: string, max = 64): string {
+  const digest = /^sha256:([0-9a-f]{64})$/i.exec(s);
+  if (digest) return "sha256:" + digest[1].slice(0, 12);
   return s.length > max ? s.slice(0, max) + "…" : s;
 }
 
@@ -257,7 +263,7 @@ export function DeployPreviewModal({
                       <span className="font-medium">{c.service}</span>
                       <span className={clsx("text-[10px] uppercase tracking-wide border rounded px-1.5 py-0.5", meta.cls)}>{meta.label}</span>
                       {c.recreates && (
-                        <span className="text-[10px] text-warn border border-warn/40 rounded px-1.5 py-0.5 flex items-center gap-1" title="Applying this recreates the running container">
+                        <span className="text-[10px] text-warn border border-warn/40 bg-warn/10 rounded px-1.5 py-0.5 flex items-center gap-1" title="Applying this recreates the running container">
                           <AlertTriangle className="h-3 w-3" /> recreates
                         </span>
                       )}

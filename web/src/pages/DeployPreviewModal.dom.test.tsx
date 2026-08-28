@@ -92,6 +92,28 @@ describe("DeployPreviewModal", () => {
     expect(container.textContent).toContain("sha256:aaaa");
     expect(container.textContent).toContain("sha256:bbbb");
   });
+
+  // Two full 64-char hex digests sitting side by side are close to
+  // unreadable as a diff — this is the concrete complaint that prompted the
+  // git/Docker-style short-hash treatment (sha256: + 12 hex chars).
+  it("shortens a real 64-char digest to a 12-char short hash, not the full value", () => {
+    const from = "sha256:" + "a".repeat(64);
+    const to = "sha256:" + "b".repeat(64);
+    const preview: DeployPreview = {
+      valid: true, unchanged: 0,
+      changes: [{ service: "web", kind: "digest", from, to, existing: true, recreates: true, ignored: false }],
+    };
+    render(<DeployPreviewModal preview={preview} projectId={1} projectName="app" onClose={() => {}} onChanged={() => {}} />);
+    expect(container.textContent).toContain("sha256:" + "a".repeat(12));
+    expect(container.textContent).toContain("sha256:" + "b".repeat(12));
+    expect(container.textContent).not.toContain(from);
+    expect(container.textContent).not.toContain(to);
+    // The full value must still be recoverable (hover title), just not
+    // dumped into the visible text.
+    const spans = [...container.querySelectorAll("span[title]")];
+    expect(spans.some((s) => s.getAttribute("title") === from)).toBe(true);
+    expect(spans.some((s) => s.getAttribute("title") === to)).toBe(true);
+  });
 });
 
 // Drift-detection behaviour: a change can be reviewed/accepted ("Ignore")
