@@ -98,9 +98,13 @@ networks/restart/resources/healthcheck differences, with a per-change
   stored twice), profiles, target host, image references *and* the digest
   actually running, validation state, output, author and reason. Diff reuses
   the plan/diff engine directly — a revision vs. what's running now, or
-  against another revision — including the env/secret diff NEXT.md asked
-  for (key names only, values redacted, via the same envDiff plan/diff
-  already uses). Restore re-validates the snapshot in a scratch dir *before*
+  against another revision — including an env diff (key and value; asked
+  for as "redacted" originally, reversed after real use showed that made
+  the diff unable to answer its own question, for no actual protection —
+  the values are already visible in the compose file and the existing
+  Resolved preview at the same permission level; a real secrets store, when
+  one exists, is where redaction belongs). Restore re-validates the
+  snapshot in a scratch dir *before*
   touching anything live, pins any service with a recorded digest so a
   mutable tag can't quietly change what comes back, redeploys with the
   revision's own profiles, and becomes a new revision itself rather than

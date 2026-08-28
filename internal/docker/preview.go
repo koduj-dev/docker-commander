@@ -321,17 +321,26 @@ func ExtendServiceComparison(prev *DeployPreview, resolved, running []ServiceSpe
 }
 
 // envDiff reports keys the compose file declares that are missing or
-// different on the running side. Never reports a key the file is silent on,
-// even if the container has it — see ExtendServiceComparison's doc comment.
-// Only key names are reported, never values (compose env can carry secrets).
+// different on the running side, with their values. Never reports a key the
+// file is silent on, even if the container has it — see
+// ExtendServiceComparison's doc comment.
+//
+// Values are shown, not redacted: the compose file's raw env values are
+// already visible in the same project — the file editor right next to this
+// preview, and the existing "Resolved" config preview — at the exact same
+// permission level as this screen, so hiding them here protects nothing
+// while making the one place meant to answer "what actually changed"
+// useless for the question it exists to answer. If a dedicated secrets
+// store ships (NEXT.md), redaction belongs there, keyed to what's actually
+// a secret — not applied blanket to every env var everywhere it's shown.
 func envDiff(want, have map[string]string) string {
 	var added, changed []string
 	for k, wv := range want {
 		hv, ok := have[k]
 		if !ok {
-			added = append(added, k)
+			added = append(added, fmt.Sprintf("%s=%s", k, wv))
 		} else if hv != wv {
-			changed = append(changed, k)
+			changed = append(changed, fmt.Sprintf("%s: %q → %q", k, hv, wv))
 		}
 	}
 	if len(added) == 0 && len(changed) == 0 {
@@ -341,12 +350,12 @@ func envDiff(want, have map[string]string) string {
 	sort.Strings(changed)
 	var parts []string
 	if len(added) > 0 {
-		parts = append(parts, fmt.Sprintf("%d missing (%s)", len(added), strings.Join(added, ", ")))
+		parts = append(parts, "missing "+strings.Join(added, ", "))
 	}
 	if len(changed) > 0 {
-		parts = append(parts, fmt.Sprintf("%d changed (%s)", len(changed), strings.Join(changed, ", ")))
+		parts = append(parts, "changed "+strings.Join(changed, ", "))
 	}
-	return strings.Join(parts, ", ")
+	return strings.Join(parts, "; ")
 }
 
 func portsEqual(a, b []ServicePort) bool {

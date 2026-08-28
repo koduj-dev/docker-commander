@@ -166,9 +166,11 @@ func TestExtendServiceComparison_FlagsDeclaredMismatches(t *testing.T) {
 	if prev.Unchanged != 0 {
 		t.Errorf("Unchanged = %d, want 0 (the one service had changes)", prev.Unchanged)
 	}
-	// envDiff must never leak the value, only the key name.
-	if env := byKind["env"]; env.Detail == "" || containsSubstr(env.Detail, "old") || containsSubstr(env.Detail, "bar") {
-		t.Errorf("env change detail must name the key, never the value: %q", env.Detail)
+	// Values are shown, not redacted — see envDiff's doc comment for why
+	// (the same values are already visible in the compose file itself, at
+	// the same permission level as this preview).
+	if env := byKind["env"]; !containsSubstr(env.Detail, "old") || !containsSubstr(env.Detail, "bar") {
+		t.Errorf("env change detail should show both the old and new value, got %q", env.Detail)
 	}
 }
 

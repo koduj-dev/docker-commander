@@ -33,7 +33,8 @@ All notable changes to Docker Commander are documented here. The format follows
   running* per service, validation state, output, author and reason — with
   a new **History** view. **Diff** compares any revision against another, or
   against what's running right now, reusing the exact same plan/diff engine
-  (down to the env/secret diff: key names only, values always redacted).
+  (down to the env diff, key AND value — the same values the compose file
+  and the existing Resolved preview already show at this permission level).
   **Restore** re-validates the old snapshot in a scratch directory before
   touching anything live, pins any service with a recorded digest so a
   mutable tag can't quietly swap in a different image, redeploys with that
@@ -105,6 +106,16 @@ All notable changes to Docker Commander are documented here. The format follows
   Also: when a volumes change **is** real, the from/to shown now includes
   the source, not just the target — the target is usually identical on both
   sides, so a target-only diff could render as "the same path" either way.
+- **An env change in the deploy preview now shows the actual values, not
+  just the key name.** The redaction protected nothing this app doesn't
+  already show elsewhere at the same permission level (the compose file
+  itself, the existing Resolved preview) while making the one screen meant
+  to answer "what changed" unable to answer it for the single most common
+  kind of change there is.
+- **Clicking outside a nested modal (Preview, History, a diff, Summary, the
+  compose output, …) no longer also closes the project editor underneath
+  it.** The backdrop click wasn't stopping propagation, so it bubbled up to
+  every ancestor modal's own backdrop handler and closed all of them at once.
 - **The login form now works with password managers.** The username, password
   and 2FA code fields had no `name`/`autocomplete` attributes, so a password
   manager had no reliable way to recognise or fill them.
