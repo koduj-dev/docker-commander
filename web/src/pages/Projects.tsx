@@ -115,7 +115,7 @@ export function ComposeSummaryModal({ model, stack, lastDeployedProfiles, onClos
     ["Secrets", Object.keys(model.secrets ?? {})],
   ];
   return (
-    <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div className="card w-[70vw] max-w-3xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 p-4 border-b border-border">
           <Boxes className="h-4 w-4 text-accent" />
@@ -230,7 +230,7 @@ export function DeployPreviewModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div className="card w-[70vw] max-w-3xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 p-4 border-b border-border">
           <GitCompare className="h-4 w-4 text-accent" />
@@ -360,7 +360,7 @@ export function RevisionHistoryModal({ project, onClose, onOutput }: {
   };
 
   return (
-    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div className="card w-[70vw] max-w-3xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 p-4 border-b border-border">
           <History className="h-4 w-4 text-accent" />
@@ -642,7 +642,7 @@ export function Projects() {
       )}
 
       {output && (
-        <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={() => setOutput(null)}>
+        <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); setOutput(null); }}>
           <div className="card w-[70vw] max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-3 p-4 border-b border-border">
               <Terminal className={`h-4 w-4 shrink-0 ${output.ok ? "text-ok" : "text-danger"}`} />
@@ -679,7 +679,7 @@ function SaveAsTemplateModal({ projectId, onClose, onSaved }: { projectId: numbe
     }
   };
   return (
-    <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <form className="card w-full max-w-lg flex flex-col" onClick={(e) => e.stopPropagation()} onSubmit={save}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <LayoutTemplate className="h-4 w-4 text-accent" />
@@ -1095,7 +1095,7 @@ function NewProjectModal({ hosts, onClose, onCreated }: { hosts: Host[]; onClose
   );
 
   return (
-    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <form className={clsx("card flex flex-col max-h-[90vh]", showPreview ? "w-[92vw] max-w-[1500px]" : "w-full max-w-2xl")} onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <FolderGit2 className="h-4 w-4 text-accent" />
@@ -1525,7 +1525,7 @@ function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, on
   const activeFile = files?.find((f) => f.name === active);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div className="card relative w-[92vw] h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         {busy === "delproj" && (
           <div className="absolute inset-0 z-10 bg-bg/70 grid place-items-center rounded-xl">

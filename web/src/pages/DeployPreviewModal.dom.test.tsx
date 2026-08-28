@@ -39,6 +39,29 @@ afterEach(() => {
   container?.remove();
 });
 
+// Clicking the modal's own backdrop must close ONLY this modal — a real bug
+// had every nested modal's backdrop click bubble up to whatever ancestor
+// modal (the project editor, another modal it was opened from) also had a
+// backdrop-click handler, closing all of them at once.
+describe("DeployPreviewModal — backdrop click does not escape to an ancestor", () => {
+  it("stops propagation, so a parent's own click handler never fires", () => {
+    const onClose = vi.fn();
+    const parentOnClick = vi.fn();
+    const preview: DeployPreview = { valid: true, changes: [], unchanged: 0 };
+    // A plain wrapper standing in for an ancestor modal's own backdrop —
+    // exactly the shape ProjectEditor's outer div has in the real app.
+    render(
+      <div onClick={parentOnClick}>
+        <DeployPreviewModal preview={preview} projectId={1} projectName="app" onClose={onClose} onChanged={() => {}} />
+      </div>,
+    );
+    const backdrop = container.querySelector(".fixed") as HTMLElement;
+    act(() => backdrop.click());
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(parentOnClick).not.toHaveBeenCalled();
+  });
+});
+
 describe("DeployPreviewModal", () => {
   it("shows the error for an invalid compose file, not a change list", () => {
     const preview: DeployPreview = { valid: false, error: "yaml: line 3: bad indentation" };
