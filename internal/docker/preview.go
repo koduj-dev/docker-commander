@@ -220,7 +220,7 @@ func (m *Manager) AugmentDigestDrift(ctx context.Context, hostID int64, prev *De
 		}
 		prev.Changes = append(prev.Changes, ServiceChange{
 			Service: svc.Name, Kind: "digest", From: local, To: remote, Existing: true, Recreates: true,
-			Detail: "same tag now resolves to a different image digest; a deploy would recreate it",
+			Detail: svc.Image + " now resolves to a different image digest; a deploy would recreate it",
 		})
 		prev.Unchanged--
 	}
