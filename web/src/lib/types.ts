@@ -925,6 +925,39 @@ export interface AuthFactor {
   lastUsedAt: string;
 }
 
+/** Summary of an uploaded recovery bundle, returned by inspect and import — never
+ * the manifest itself, so a bundle carrying secrets can be safely inspected
+ * without echoing them back to the browser. */
+export interface RecoveryManifestSummary {
+  version: number;
+  exportedAt: string;
+  exportedBy: string;
+  includesSecrets: boolean;
+  hosts: number;
+  registries: number;
+  alertRules: number;
+  projects: number;
+}
+
+/** What importing a bundle against the chosen target host would find missing —
+ * computed read-only by inspect, before anything is written. */
+export interface CompatibilityReport {
+  missingImages: string[];
+  missingVolumes: string[];
+  unknownHosts: string[];
+  secretsExcluded: boolean;
+  warnings: string[];
+}
+
+/** What an import actually did. */
+export interface RecoveryImportSummary {
+  hostsCreated: number;
+  registriesCreated: number;
+  webhooksCreated: number;
+  alertRulesCreated: number;
+  projectsCreated: number;
+}
+
 export interface Session {
   id: string;
   ip: string;
