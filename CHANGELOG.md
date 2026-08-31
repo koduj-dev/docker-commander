@@ -4,6 +4,20 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [1.6.3] — 2026-08-31
+
+### Fixed
+- **`web/dist` builds were nondeterministic.** Tailwind's automatic
+  content-detection heuristic (no explicit `@source`) would nondeterministically
+  include or omit a handful of unused utility classes between otherwise
+  identical builds of the same commit, which surfaced as CI intermittently
+  failing its "committed `web/dist` matches `web/src`" gate on unrelated PRs.
+  `src/index.css` now disables the heuristic and declares explicit `@source`
+  paths instead.
+
+### Changed
+- Routine Go and npm dependency updates (minor/patch only).
+
 ## [1.6.2] — 2026-08-18
 
 ### Fixed
@@ -1969,6 +1983,7 @@ Initial release: a single CGO-free Go binary with an embedded React UI.
   per-section permissions / read-only, feature flags, audit log, optional LDAP;
   secrets encrypted at rest.
 
+[1.6.3]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.3
 [1.6.2]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.2
 [1.6.1]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.1
 [1.6.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.0
