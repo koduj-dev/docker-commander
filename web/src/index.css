@@ -1,4 +1,11 @@
-@import 'tailwindcss';
+/* source(none) disables Tailwind's automatic content-detection heuristic,
+   which was observed to nondeterministically miss classes across otherwise
+   identical builds (varying committed web/dist output for the same commit).
+   The explicit @source paths below replace it deterministically. */
+@import 'tailwindcss' source(none);
+
+@source '../index.html';
+@source './**/*.{ts,tsx}';
 
 @custom-variant dark (&:is(.dark *));
 
