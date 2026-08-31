@@ -282,6 +282,20 @@ func (s *Server) handleImportProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	count := extractZipToDir(zr, root)
+
+	s.audit(r, "project.import", slug, "")
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "slug": slug, "files": count})
+}
+
+// extractZipToDir writes every file in zr under root, rejecting path
+// traversal/absolute entries (safeJoin), oversized files and anything past
+// maxProjectFiles. Shared by project import and revision restore — both are
+// "make this directory look like this zip", just with the zip coming from a
+// different place. Returns how many files were actually written; a per-file
+// failure (a bad path, a read error) is skipped rather than aborting the
+// whole extraction.
+func extractZipToDir(zr *zip.Reader, root string) int {
 	count := 0
 	for _, f := range zr.File {
 		if f.FileInfo().IsDir() || count >= maxProjectFiles {
@@ -304,9 +318,7 @@ func (s *Server) handleImportProject(w http.ResponseWriter, r *http.Request) {
 			count++
 		}
 	}
-
-	s.audit(r, "project.import", slug, "")
-	writeJSON(w, http.StatusOK, map[string]any{"id": id, "slug": slug, "files": count})
+	return count
 }
 
 // handleGetProject returns a single project's metadata.
@@ -824,6 +836,19 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 		// the Dockerfile or its context changed. Sending false opts out for the
 		// rare case where re-sending a large context matters more than freshness.
 		Build *bool `json:"build"`
+		// Reason is an optional free-text note stored on the resulting revision
+		// (see captureRevision) — why this deploy happened, for whoever reads
+		// the history later. Blank is fine; a plain deploy usually has no story.
+		Reason string `json:"reason"`
+		// Pull forces `--pull always` (ComposeUpFilesPull instead of
+		// ComposeUpFiles) so a mutable tag whose registry digest moved on is
+		// actually re-pulled rather than silently reusing the stale local
+		// image — `up`'s own default policy only pulls an image that's
+		// missing entirely. Off by default: forcing a registry round trip on
+		// every ordinary deploy isn't something to opt production into
+		// silently. The Preview screen's "Reconcile now" sends this — it
+		// exists specifically to fix the "digest" drift it just reported.
+		Pull bool `json:"pull"`
 	}
 	_ = decodeJSON(r, &body) // body is optional (empty → no profiles, rebuild)
 	// Normalized ONCE, here, and reused for the compose command, persistence
@@ -840,7 +865,11 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer cleanup()
-	out, err := docker.ComposeUpFiles(r.Context(), dir, p.Slug, body.Profiles, env, files, build)
+	upFn := docker.ComposeUpFiles
+	if body.Pull {
+		upFn = docker.ComposeUpFilesPull
+	}
+	out, err := upFn(r.Context(), dir, p.Slug, body.Profiles, env, files, build)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "output": out})
 		return
@@ -857,6 +886,7 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.SetLastDeployedProfiles(r.Context(), p.ID, body.Profiles); err != nil {
 		log.Printf("project deploy: persist last deployed profiles for %q: %v", p.Slug, err)
 	}
+	s.captureRevision(r.Context(), p, body.Profiles, out, body.Reason, currentUsername(r))
 	s.audit(r, "project.deploy", p.Slug, strings.Join(body.Profiles, ","))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out, "note": note})
 }
@@ -948,6 +978,77 @@ func (s *Server) handleResolveProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "config": out})
+}
+
+// handlePreviewProject reports what deploying this project would change,
+// without deploying it: which services would be created/recreated/left
+// alone, and — for anything already running — image/digest, env, ports,
+// volumes, networks, restart policy, resource limits and healthcheck
+// differences (see internal/docker/preview.go and deployfields.go). This is
+// the same comparison the `preview_deploy` MCP tool already exposed; the web
+// UI gets it as a first-class screen here rather than staying MCP-only.
+//
+// A GET, not a POST: it changes nothing, so it only needs read access to the
+// project, not the write permission loadProject would otherwise require.
+func (s *Server) handlePreviewProject(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	prev, err := s.mcpPreviewProject(r.Context(), p.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, prev)
+}
+
+// driftIgnoreBody identifies one (service, kind) drift from a preview's
+// ServiceChange — the same pair MarkIgnoredChanges matches on.
+type driftIgnoreBody struct {
+	Service string `json:"service"`
+	Kind    string `json:"kind"`
+}
+
+// handleIgnoreDrift records that a specific drift on this project has been
+// reviewed and accepted, so future previews stop counting it as active (it
+// stays visible, marked "ignored" — see docker.ServiceChange.Ignored).
+func (s *Server) handleIgnoreDrift(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	var body driftIgnoreBody
+	if err := decodeJSON(r, &body); err != nil || body.Service == "" || body.Kind == "" {
+		writeErr(w, http.StatusBadRequest, "service and kind are required")
+		return
+	}
+	if err := s.store.IgnoreDrift(r.Context(), p.ID, body.Service, body.Kind); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "project.drift.ignore", p.Slug, body.Service+":"+body.Kind)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleUnignoreDrift reverses handleIgnoreDrift: the next preview counts
+// this drift again.
+func (s *Server) handleUnignoreDrift(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	var body driftIgnoreBody
+	if err := decodeJSON(r, &body); err != nil || body.Service == "" || body.Kind == "" {
+		writeErr(w, http.StatusBadRequest, "service and kind are required")
+		return
+	}
+	if err := s.store.UnignoreDrift(r.Context(), p.ID, body.Service, body.Kind); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "project.drift.unignore", p.Slug, body.Service+":"+body.Kind)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // overlayProject copies the project folder to a fresh temp dir and overlays the

@@ -207,7 +207,7 @@ function NetworkModal({ net, topo, onClose, onChanged, onReload }: { net: Networ
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div className="card w-[92vw] max-w-[1400px]" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 h-14 border-b border-border">
           <div className="flex items-center gap-2 font-semibold">
@@ -360,7 +360,7 @@ function NewNetworkModal({ onClose, onCreated }: { onClose: () => void; onCreate
   };
 
   return (
-    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <form className="card w-full max-w-md flex flex-col" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <NetworkIcon className="h-4 w-4 text-accent" />

@@ -214,7 +214,7 @@ function SecretModal({ secret, onClose }: { secret: string; onClose: () => void 
   const cmd = `claude mcp add --transport http docker-commander ${window.location.origin}/mcp --header "Authorization: Bearer ${secret}"`;
 
   return (
-    <div className="fixed inset-0 bg-black/60 grid place-items-center z-50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/60 grid place-items-center z-50 p-4" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div className="card p-6 max-w-2xl w-full space-y-4" onClick={(e) => e.stopPropagation()}>
         <h2 className="text-base font-semibold flex items-center gap-2"><KeyRound className="h-5 w-5 text-accent" /> Token created</h2>
         <p className="text-sm text-muted">Copy it now — it won't be shown again. Only its hash is stored.</p>

@@ -68,43 +68,53 @@ the old repeat-every-cooldown engine would have produced a timeline of noise.
 
 ### Safe changes
 
-The next three items — plan/diff, drift detection, and revisions/rollback —
-share one underlying question: *what does the compose definition say, what is
-actually running, and what's the difference?* Worth designing as one internal
-state-diff model (current state + desired state → difference → plan →
-execution → verification → rollback) rather than three one-off features, so
-the same diff engine can back a pre-deploy preview, a drift check, and a
-rollback's "what will restoring this revision actually change" — and, later,
-feed the same model to the CLI/MCP instead of each surface re-deriving it.
+These items — drift detection and revisions/rollback — share one underlying
+question with the deployment plan/diff that already shipped (see CHANGELOG):
+*what does the compose definition say, what is actually running, and what's
+the difference?* They're designed to reuse that same state-diff engine
+(`internal/docker/preview.go` + `deployfields.go`: `ServiceSpec`/
+`ServiceChange`/`BuildDeployPreview`/`ExtendServiceComparison`) rather than
+re-deriving it — that engine already resolves a project's compose against
+what's running and reports added/removed/image/digest/env/ports/volumes/
+networks/restart/resources/healthcheck differences, with a per-change
+`recreates` (downtime-risk) flag, behind both a REST endpoint
+(`GET /api/projects/{id}/preview`) and the `preview_deploy` MCP tool.
 
-- **Deployment plan / diff.** Before a deploy or redeploy, show exactly what
-  is about to happen: which services get created / recreated / removed, image
-  tag **and digest** changes, env/port/volume/network changes, resource-limit
-  and healthcheck changes, and a downtime-risk callout (e.g. "backend will be
-  recreated"). Projects already show a **resolved config preview** (rendered
-  YAML) — this is a step beyond that: a structural diff against the *running*
-  state, not just the file. Should be a first-class UI screen, not only
-  something MCP callers see.
-- **Drift detection (desired vs. running state).** Compare a project's compose
-  definition against what's actually running — image digest, env, mounts,
-  restart policy, resource limits — and surface the delta (e.g. "restart:
-  unless-stopped ⟶ running as always ⚠"). Actions: reconcile the running
-  container to match the file, adopt the running config back into the file,
-  view the full diff, or explicitly ignore a drift. Nobody in this space does
-  this well — Terraform-style drift tooling exists because Terraform keeps a
-  state file; Compose has none, so nothing today compares "what's running" to
-  "what the file says" the way this would. Reuses the container-diff and
-  inspect infrastructure that already exists.
-- **Deployment revisions and rollback.** An immutable history of every project and
-  edited-stack deploy — compose file, sidecar files, resolved config, profiles,
-  target host, image references *and resolved digests*, validation result, output,
-  author, reason — with diff, preview and restore. Should include an **env/secret
-  diff** between two revisions (values stay redacted; only "changed/added/removed"
-  is shown). Notes that matter: roll back a
-  mutable tag using the stored **digest**; a revision must identify its remote bind
-  snapshots; rollback must not delete persistent named volumes; it should re-run
-  validation before applying; and a CLI-discovered stack must keep its original
-  working directory. **The highest-value item on this list.**
+- ~~**Drift detection (desired vs. running state).**~~ **Shipped** (see
+  CHANGELOG): the deploy preview *is* this comparison, with three of its four
+  named actions — **view the full diff** (the preview itself), **reconcile**
+  (a "Reconcile now" button in that view, which is just Deploy from that
+  context), and **explicitly ignore a drift** (per service+kind, persisted,
+  reversible, excluded from the active count but never hidden). Still open:
+  **adopt** — write the running container's actual config back into the
+  compose file, the one action with no shipped equivalent. Scoped out on
+  purpose: it means generating a YAML edit against a file that may carry
+  anchors/comments/formatting a human wrote, which is a materially different
+  (and riskier) problem than reading and reporting a diff.
+- ~~**Deployment revisions and rollback.**~~ **Shipped for managed Projects**
+  (see CHANGELOG) — was the highest-value item on this list. Every successful
+  deploy records an immutable revision: compose file + every sidecar file (a
+  zip snapshot; resolved config is derived from it on demand rather than
+  stored twice), profiles, target host, image references *and* the digest
+  actually running, validation state, output, author and reason. Diff reuses
+  the plan/diff engine directly — a revision vs. what's running now, or
+  against another revision — including an env diff (key and value; asked
+  for as "redacted" originally, reversed after real use showed that made
+  the diff unable to answer its own question, for no actual protection —
+  the values are already visible in the compose file and the existing
+  Resolved preview at the same permission level; a real secrets store, when
+  one exists, is where redaction belongs). Restore re-validates the
+  snapshot in a scratch dir *before*
+  touching anything live, pins any service with a recorded digest so a
+  mutable tag can't quietly change what comes back, redeploys with the
+  revision's own profiles, and becomes a new revision itself rather than
+  rewriting history. Never touches named volumes (the only Docker operation
+  is `up`). Two things this deliberately does NOT cover: a **CLI-discovered
+  Stack** (edited-stack deploys) has no revision history yet — only
+  Projects do; and a remote deploy's revision records which host it targeted
+  but not a snapshot of what was copied into seeded bind volumes at the
+  time, so "restore" on a remote project rebuilds them from the restored
+  compose file rather than reverting them to their exact prior contents.
 - **Policy checks before deploy.** Refuse or warn on privileged containers, host
   network/PID, docker-socket mounts, `:latest` in production, missing resource
   limits, missing healthchecks. Some pieces exist already — compose validation,
@@ -375,6 +385,17 @@ the security property alone, independent of the NAT-traversal convenience.
   events are still recorded, notifications are suppressed or tagged, and write
   operations can optionally be blocked. Overlaps with silences above — design them
   together.
+- **Standalone compose visualizer.** Paste or upload a bare `docker-compose.yml`
+  — no host, no Docker connection needed — and render it as an architecture
+  diagram: services classified by image name into a small icon set (database,
+  cache, queue, reverse-proxy/web, generic fallback), with networks and
+  `depends_on` drawn as edges. Reuses the Topology view's existing machinery
+  (`TopoGraph.tsx`'s React Flow + d3-force layout, same node/edge look) rather
+  than a new charting library or a hand-rolled SVG renderer — just a new node
+  "kind" with a swapped icon. Needs the compose parser extended past today's
+  `ServiceSpec` (name+image only) to also read networks/volumes/depends_on/ports.
+  Scope v1 to a single static file, best-effort — full multi-file/`extends`/
+  `profiles` resolution is more compose surface than a visualizer needs.
 ---
 
 ## 📦 Backlog
@@ -448,3 +469,49 @@ Recorded so they don't get re-proposed.
 - **More plain Docker API CRUD wrappers.** The everyday management surface is
   covered. New work should aggregate, explain, protect a change, or make recovery
   possible.
+
+---
+
+## 🗺️ Working priority order
+
+Agreed 2026-08-27. Check items off as they ship; revisit the order deliberately
+if priorities change, don't just silently reshuffle it.
+
+**Now — one bundle (shares a single state-diff engine):**
+- [x] Deployment plan / diff
+- [x] Drift detection (view/reconcile/ignore shipped; "adopt" deliberately deferred, see below)
+- [x] Deployment revisions and rollback (Projects only; CLI-discovered Stacks and remote seeded-volume snapshots still open, see below)
+
+**Next, each standalone:**
+- [ ] Portable recovery bundle
+- [ ] Policy checks before deploy
+- [ ] Volume data: trigger-and-status wrapper
+
+**Not yet ordered**, full ranked candidate list (original numbering kept as-is —
+#4, #7, #8 are pulled up into "Next" above, this is everything else, in
+descending priority, no agreed commitment yet, revisit before reshuffling):
+
+5. Incident timeline / correlation
+6. Maintenance windows / silences
+9. External / synthetic checks
+10. Project secrets
+11. Controlled image updates
+12. Alert delivery retry
+13. Per-container domain + TLS (embedded reverse proxy)
+14. GitOps stack deploy
+15. Lightweight webhook redeploy
+16. OIDC / SSO
+17. Aggregated cross-host dashboard
+18. Host groups / tags
+19. Self-update auto-apply policy
+20. Per-session MCP token revocation
+21. Network alerting / top talkers
+22. Monorepo-aware mapping (depends on #14)
+23. Multi-instance federation
+24. Smaller well-scoped items (bulk-action per-host RBAC, log bookmarks/forwarding,
+    sub-path deployment, archive/hide stacks, Slack/Teams/Discord notifications,
+    host maintenance mode, standalone compose visualizer)
+25. Parameterized user templates / per-instance mount isolation / remote template catalog
+26. Backlog: Docker Swarm support
+27. Open questions to triage: automation API + CLI, "existing containers →
+    Compose project", Compose Watch / dev mode

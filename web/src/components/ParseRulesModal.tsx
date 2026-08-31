@@ -45,7 +45,7 @@ export function ParseRulesModal({ sample, onClose, onChanged }: { sample: string
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div className="card w-full max-w-2xl max-h-[88vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <div className="font-medium">Log parsing rules</div>

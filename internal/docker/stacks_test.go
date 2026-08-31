@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -176,6 +177,90 @@ func TestStackActionOnIDsUnaffectedByLateArrivals(t *testing.T) {
 	if !running(idLate) {
 		t.Errorf("SECURITY/correctness: idLate joined the project AFTER the snapshot was resolved and must " +
 			"not have been touched by an action sized/charged against that earlier snapshot, but it was stopped anyway")
+	}
+}
+
+// TestRunningImageDigest_RealContainer exercises the real container→image→
+// RepoDigests chain against a genuinely pulled image, since digest_test.go's
+// coverage of ResolveImageDigest is all fake-registry unit tests — this is the
+// half of AugmentDigestDrift's plumbing that actually talks to the daemon.
+func TestRunningImageDigest_RealContainer(t *testing.T) {
+	m, ctx := newManager(t)
+	id := startTestContainer(ctx, t, m, "dctest_digest")
+
+	digest, err := m.RunningImageDigest(ctx, 0, id, testImage)
+	if err != nil {
+		t.Fatalf("RunningImageDigest: %v", err)
+	}
+	if digest == "" {
+		t.Skip("local alpine:latest has no RepoDigests (not pulled from a registry in this environment) — nothing to assert")
+	}
+	if !strings.HasPrefix(digest, "sha256:") {
+		t.Errorf("digest = %q, want a sha256: prefix", digest)
+	}
+}
+
+// TestLiveServiceSpec_RealContainer exercises the actual container-inspect →
+// ServiceSpec extraction (env, restart policy, cpu/memory limits,
+// healthcheck) against a real container, since deployfields_test.go's
+// coverage of the compose side is all fixture-based — this is the half that
+// actually decodes the Docker API's own shapes (nanosecond healthcheck
+// durations, promoted Resources fields, RestartPolicyMode).
+func TestLiveServiceSpec_RealContainer(t *testing.T) {
+	m, ctx := newManager(t)
+	ensureImage(ctx, t, m)
+	cli, err := m.Client(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const name = "dctest_livespec"
+	freeName(ctx, m, name)
+	created, err := cli.ContainerCreate(ctx,
+		&container.Config{
+			Image: testImage,
+			Cmd:   []string{"sleep", "300"},
+			Env:   []string{"FOO=bar"},
+			Healthcheck: &container.HealthConfig{
+				Test:     []string{"CMD", "true"},
+				Interval: 30 * time.Second,
+				Timeout:  5 * time.Second,
+				Retries:  3,
+			},
+		},
+		&container.HostConfig{
+			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
+			Resources:     container.Resources{NanoCPUs: 500_000_000, Memory: 256 << 20},
+		}, nil, nil, name)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := cli.ContainerStart(ctx, created.ID, container.StartOptions{}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	t.Cleanup(func() { rmContainer(ctx, t, m, created.ID) })
+
+	spec, err := m.LiveServiceSpec(ctx, 0, created.ID)
+	if err != nil {
+		t.Fatalf("LiveServiceSpec: %v", err)
+	}
+	if spec.Env["FOO"] != "bar" {
+		t.Errorf("Env = %+v, want FOO=bar present", spec.Env)
+	}
+	if spec.Restart != "unless-stopped" {
+		t.Errorf("Restart = %q, want unless-stopped", spec.Restart)
+	}
+	if spec.CPULimit != 0.5 {
+		t.Errorf("CPULimit = %v, want 0.5", spec.CPULimit)
+	}
+	if spec.MemoryLimit != 256<<20 {
+		t.Errorf("MemoryLimit = %v, want %v", spec.MemoryLimit, int64(256<<20))
+	}
+	if spec.Healthcheck == nil {
+		t.Fatal("Healthcheck should be populated")
+	}
+	if spec.Healthcheck.Interval != 30*time.Second || spec.Healthcheck.Timeout != 5*time.Second || spec.Healthcheck.Retries != 3 {
+		t.Errorf("Healthcheck = %+v", spec.Healthcheck)
 	}
 }
 

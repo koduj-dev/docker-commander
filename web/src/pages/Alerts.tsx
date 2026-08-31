@@ -420,7 +420,7 @@ function AlertDetailModal({ e, onClose, onAck }: { e: AlertEvent; onClose: () =>
   );
 
   return (
-    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div className="card w-[70vw] max-w-[60rem] max-h-[80vh] flex flex-col" onClick={(ev) => ev.stopPropagation()}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <span className={clsx("text-xs px-2 py-0.5 rounded-md font-medium capitalize", kindBadge(e))}>

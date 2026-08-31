@@ -49,6 +49,8 @@ import type {
   TemplateRef,
   FileApi,
   ProjectFile,
+  DeployPreview,
+  ProjectRevision,
   ResourceOverview,
   SmtpConfig,
   Stack,
@@ -516,13 +518,41 @@ export const api = {
   // Resolved compose model (JSON) for the overview / port-conflict check.
   projectSummary: (id: number, overlay?: { name: string; content: string }) =>
     req<{ ok: boolean; model?: ComposeModel; error?: string }>("POST", `/api/projects/${id}/summary`, overlay),
+  // What deploying this project would change — services added/recreated/left
+  // alone, and (for anything already running) image/digest/env/ports/volumes/
+  // networks/restart/resources/healthcheck differences. Read-only: a GET.
+  previewProject: (id: number) => req<DeployPreview>("GET", `/api/projects/${id}/preview`),
+  // Marks one (service, kind) drift as reviewed/accepted so it stops counting
+  // toward `active` on future previews (still shown, marked `ignored`), or
+  // reverses that.
+  ignoreDrift: (id: number, service: string, kind: string) =>
+    req<{ ok: boolean }>("POST", `/api/projects/${id}/drift/ignore`, { service, kind }),
+  unignoreDrift: (id: number, service: string, kind: string) =>
+    req<{ ok: boolean }>("POST", `/api/projects/${id}/drift/unignore`, { service, kind }),
+  // Deployment revisions: an immutable history of a project's deploys, with
+  // diff (against another revision, or "current" for what's actually
+  // running) and restore (rolls the project back and redeploys it).
+  listRevisions: (id: number) => req<ProjectRevision[]>("GET", `/api/projects/${id}/revisions`),
+  getRevision: (id: number, rev: number) => req<ProjectRevision>("GET", `/api/projects/${id}/revisions/${rev}`),
+  diffRevision: (id: number, rev: number, against: string) =>
+    req<DeployPreview>("GET", `/api/projects/${id}/revisions/${rev}/diff?against=${encodeURIComponent(against)}`),
+  restoreRevision: (id: number, rev: number, reason?: string) =>
+    req<{ ok: boolean; output?: string; error?: string; note?: string }>(
+      "POST", `/api/projects/${id}/revisions/${rev}/restore`, { reason: reason || "" },
+    ),
   // Lint a Dockerfile via `docker build --check` (no build steps run).
   checkDockerfile: (id: number, content: string) =>
     req<{ level: "ok" | "warning" | "error"; output?: string; unavailable?: boolean }>("POST", `/api/projects/${id}/dockerfile-check`, { content }),
   // `note` is set when deploying to a remote host copied bind-mounted paths into
   // seeded volumes — the UI shows it above the compose output.
-  deployProject: (id: number, profiles: string[] = []) =>
-    req<{ ok: boolean; output?: string; error?: string; note?: string }>("POST", `/api/projects/${id}/deploy`, { profiles }),
+  // `pull`: force a registry check for every service (`--pull always`)
+  // instead of Compose's own default of only pulling an image that's
+  // missing locally. Needed to actually fix a "digest" drift the preview
+  // reported — a plain deploy would just reuse the stale local image.
+  deployProject: (id: number, profiles: string[] = [], opts?: { pull?: boolean }) =>
+    req<{ ok: boolean; output?: string; error?: string; note?: string }>(
+      "POST", `/api/projects/${id}/deploy`, { profiles, pull: opts?.pull ?? false },
+    ),
   downProject: (id: number) =>
     req<{ ok: boolean; output?: string; error?: string }>("POST", `/api/projects/${id}/down`),
   restartProject: (id: number) =>

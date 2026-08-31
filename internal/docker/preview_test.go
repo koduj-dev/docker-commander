@@ -1,8 +1,11 @@
 package docker
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"github.com/koduj-dev/docker-commander/internal/store"
 )
 
 // The preview's job is to answer "what would change", so the tests are about
@@ -46,6 +49,51 @@ func TestBuildDeployPreviewClassifiesChanges(t *testing.T) {
 	}
 	if p.Unchanged != 1 {
 		t.Errorf("unchanged = %d, want 1", p.Unchanged)
+	}
+}
+
+// TestBuildDeployPreview_DigestPinnedRestoreReadsAsUnchanged is a real bug a
+// user hit: restoring a revision pins the deployed image to the exact digest
+// that ran then (buildDigestPinOverride), so the container's own recorded
+// Image field becomes "repo@sha256:…" — permanently different, as a string,
+// from the compose file's plain "repo:tag", even though the restore worked
+// exactly as intended. A naive string comparison flagged this as "image
+// changed" (recreates: true) on every single preview from then on, with no
+// way to ever clear it short of a normal (unpinned) redeploy.
+func TestBuildDeployPreview_DigestPinnedRestoreReadsAsUnchanged(t *testing.T) {
+	resolved := []ServiceSpec{svc("web", "alpine:latest")}
+	running := []ServiceSpec{svc("web", "alpine@sha256:"+strings.Repeat("a", 64))}
+	p := BuildDeployPreview(resolved, running)
+	if len(p.Changes) != 0 {
+		t.Errorf("a digest-pinned restore of the same repo must not read as an image change, got %+v", p.Changes)
+	}
+	if p.Unchanged != 1 {
+		t.Errorf("Unchanged = %d, want 1", p.Unchanged)
+	}
+}
+
+// buildDigestPinOverride actually pins as "<original ref, tag included>@<digest>"
+// (e.g. "alpine:latest@sha256:…"), not a bare "repo@sha256:…" — a real
+// restored container's Image field looks like the former. Cover it
+// explicitly since it's the shape that actually occurs, not just the
+// simplified one above.
+func TestBuildDeployPreview_DigestPinnedRestoreWithTagAndDigestBoth(t *testing.T) {
+	resolved := []ServiceSpec{svc("web", "alpine:latest")}
+	running := []ServiceSpec{svc("web", "alpine:latest@sha256:"+strings.Repeat("a", 64))}
+	p := BuildDeployPreview(resolved, running)
+	if len(p.Changes) != 0 {
+		t.Errorf("a tag+digest-pinned restore of the same repo must not read as an image change, got %+v", p.Changes)
+	}
+}
+
+// The same digest-pin tolerance must NOT swallow a genuinely different
+// image — only same-repo pins are forgiven.
+func TestBuildDeployPreview_DigestPinnedDifferentRepoStillFlagged(t *testing.T) {
+	resolved := []ServiceSpec{svc("web", "alpine:latest")}
+	running := []ServiceSpec{svc("web", "busybox@sha256:"+strings.Repeat("b", 64))}
+	p := BuildDeployPreview(resolved, running)
+	if len(p.Changes) != 1 || p.Changes[0].Kind != "image" {
+		t.Errorf("a digest-pinned reference to a DIFFERENT repo must still be flagged, got %+v", p.Changes)
 	}
 }
 
@@ -127,3 +175,75 @@ func TestRunningServicesDeduplicates(t *testing.T) {
 }
 
 func containsSubstr(s, sub string) bool { return strings.Contains(s, sub) }
+
+// MarkIgnoredChanges must flag exactly the (service, kind) pairs given, and
+// leave everything else — including a same-service, different-kind change —
+// untouched: ignoring one drift on a service must not silently swallow a
+// different drift on that same service.
+func TestMarkIgnoredChanges(t *testing.T) {
+	changes := []ServiceChange{
+		{Service: "web", Kind: "env"},
+		{Service: "web", Kind: "restart"},
+		{Service: "db", Kind: "env"},
+	}
+	MarkIgnoredChanges(changes, map[[2]string]bool{{"web", "env"}: true})
+
+	if !changes[0].Ignored {
+		t.Error("web:env should be marked ignored")
+	}
+	if changes[1].Ignored {
+		t.Error("web:restart was not ignored and must not be marked")
+	}
+	if changes[2].Ignored {
+		t.Error("db:env was not ignored and must not be marked")
+	}
+	if got := ActiveChanges(changes); got != 2 {
+		t.Errorf("ActiveChanges = %d, want 2 (3 total minus 1 ignored)", got)
+	}
+}
+
+func TestActiveChanges_AllIgnoredIsZero(t *testing.T) {
+	changes := []ServiceChange{{Service: "web", Kind: "env", Ignored: true}}
+	if got := ActiveChanges(changes); got != 0 {
+		t.Errorf("ActiveChanges = %d, want 0", got)
+	}
+}
+
+// AugmentDigestDrift must never re-flag a service BuildDeployPreview already
+// classified (an image string change already implies recreation — a digest
+// check on top would just be noise), and must skip a service with no
+// currently-running container to inspect. Both checks are pure decision
+// logic that doesn't need a live registry or daemon, unlike digest resolution
+// itself (see TestResolveImageDigest_* in digest_test.go and
+// TestRunningImageDigest_RealContainer in stacks_test.go).
+func TestAugmentDigestDrift_SkipsAlreadyChangedAndUnmatched(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	m := &Manager{store: st}
+
+	prev := DeployPreview{
+		Services: []ServiceSpec{
+			svc("web", "nginx:1.25"), // already flagged below — must be skipped
+			svc("cache", "redis:7"),  // unchanged, but no running container — must be skipped
+		},
+		Changes: []ServiceChange{
+			{Service: "web", Kind: "image", From: "nginx:1.24", To: "nginx:1.25"},
+		},
+		Unchanged: 1,
+	}
+	before := len(prev.Changes)
+
+	m.AugmentDigestDrift(context.Background(), 0, &prev, []StackContainer{
+		{Service: "web", ID: "c1"}, // "cache" deliberately has no matching container
+	})
+
+	if len(prev.Changes) != before {
+		t.Errorf("should not add a digest change for an already-changed or unmatched service: %+v", prev.Changes)
+	}
+	if prev.Unchanged != 1 {
+		t.Errorf("Unchanged should be untouched when nothing new is found, got %d", prev.Unchanged)
+	}
+}

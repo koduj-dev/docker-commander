@@ -389,7 +389,7 @@ export function Stacks() {
       {hover && <HoverCard hover={hover} />}
 
       {compose && (
-        <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={closeCompose}>
+        <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); closeCompose(); }}>
           <div className="card w-[75vw] max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-3 p-4 border-b border-border">
               <FileText className="h-4 w-4 text-accent shrink-0" />

@@ -206,7 +206,7 @@ function ImageHistoryModal({ img, onClose }: { img: ImageSummary; onClose: () =>
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div className="card w-full max-w-4xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <div className="font-medium min-w-0">
@@ -339,7 +339,7 @@ export function ScanModal({ img, onClose }: { img: ImageSummary; onClose: () => 
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div className="card w-full max-w-4xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <ShieldAlert className="h-4 w-4 text-accent" />

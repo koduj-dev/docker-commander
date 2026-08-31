@@ -486,6 +486,87 @@ export interface ComposeModel {
   secrets?: Record<string, unknown>;
 }
 
+// ServiceSpec/ServiceChange/DeployPreview mirror internal/docker/preview.go +
+// deployfields.go — what a deploy would change, before it runs.
+export interface ServicePort {
+  target: number;
+  published?: string;
+  protocol?: string;
+}
+
+export interface ServiceVolume {
+  type: string;
+  source?: string;
+  target: string;
+}
+
+export interface ServiceHealthcheck {
+  test?: string[];
+  interval?: number; // nanoseconds
+  timeout?: number; // nanoseconds
+  retries?: number;
+}
+
+export interface ServiceSpec {
+  name: string;
+  image?: string;
+  env?: Record<string, string>;
+  ports?: ServicePort[];
+  volumes?: ServiceVolume[];
+  networks?: string[];
+  restart?: string;
+  cpuLimit?: number;
+  memoryLimit?: number;
+  healthcheck?: ServiceHealthcheck;
+}
+
+export interface ServiceChange {
+  service: string;
+  kind: "added" | "removed" | "image" | "digest" | "env" | "ports" | "volumes" | "networks" | "restart" | "resources" | "healthcheck";
+  from?: string;
+  to?: string;
+  detail?: string;
+  existing: boolean;
+  recreates: boolean;
+  // Reviewed, deliberately-accepted drift — still shown, excluded from `active`.
+  ignored: boolean;
+}
+
+export interface DeployPreview {
+  project?: string;
+  valid: boolean;
+  error?: string;
+  services?: ServiceSpec[];
+  running?: ServiceSpec[];
+  // changes.length minus any marked `ignored` — what still needs attention.
+  active?: number;
+  changes?: ServiceChange[];
+  unchanged?: number;
+}
+
+// RevisionImage/ProjectRevision mirror internal/store/project_revisions.go —
+// one successful deploy of a project, immutable once recorded.
+export interface RevisionImage {
+  service: string;
+  image: string;
+  digest?: string;
+}
+
+export interface ProjectRevision {
+  id: number;
+  projectId: number;
+  revision: number;
+  hostId: number;
+  profiles: string[];
+  images: RevisionImage[];
+  valid: boolean;
+  validationError?: string;
+  output?: string;
+  author: string;
+  reason?: string;
+  createdAt: string;
+}
+
 export interface ProjectFile {
   name: string;
   size: number;
