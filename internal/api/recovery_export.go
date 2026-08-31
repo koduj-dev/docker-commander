@@ -129,14 +129,16 @@ func (s *Server) buildRecoveryManifest(ctx context.Context, includeSecrets bool,
 	}
 
 	var networks, volumes []string
-	if list, nerr := s.docker.ListNetworks(ctx, 0); nerr == nil {
-		for _, n := range list {
-			networks = append(networks, n.Name)
+	if s.docker != nil {
+		if list, nerr := s.docker.ListNetworks(ctx, 0); nerr == nil {
+			for _, n := range list {
+				networks = append(networks, n.Name)
+			}
 		}
-	}
-	if list, verr := s.docker.ListVolumes(ctx, 0); verr == nil {
-		for _, v := range list {
-			volumes = append(volumes, v.Name)
+		if list, verr := s.docker.ListVolumes(ctx, 0); verr == nil {
+			for _, v := range list {
+				volumes = append(volumes, v.Name)
+			}
 		}
 	}
 
