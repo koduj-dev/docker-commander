@@ -147,7 +147,7 @@ func BuildDeployPreview(resolved, running []ServiceSpec) DeployPreview {
 		// service that builds its image locally has no image in the resolved
 		// config until it is built, and reporting that as a change every time
 		// would make the preview cry wolf.
-		if want.Image != "" && have.Image != "" && want.Image != have.Image {
+		if want.Image != "" && have.Image != "" && imagesDiffer(want.Image, have.Image) {
 			p.Changes = append(p.Changes, ServiceChange{
 				Service: want.Name, Kind: "image", From: have.Image, To: want.Image,
 				Detail: "running a different image; a deploy would recreate it", Existing: true, Recreates: true,
@@ -356,6 +356,40 @@ func envDiff(want, have map[string]string) string {
 		parts = append(parts, "changed "+strings.Join(changed, ", "))
 	}
 	return strings.Join(parts, "; ")
+}
+
+// imagesDiffer reports whether want and have name genuinely different
+// images. Exact string comparison, UNLESS have is pinned to a bare digest
+// (repo@sha256:…) — exactly what restoring a revision does to guarantee the
+// bits that come back are the ones that actually ran then (see
+// buildDigestPinOverride) — in which case they're compared by repository
+// instead. Docker records whatever reference actually created the
+// container, digest included, and there is no way to ask it "what tag did
+// this used to be", so an exact-string check would flag a correctly
+// restored container as a permanent, unfixable "image changed" drift.
+// Whether that pinned digest is still the RIGHT one is AugmentDigestDrift's
+// job — it inspects the image's actual RepoDigests, not this string.
+func imagesDiffer(want, have string) bool {
+	if want == have {
+		return false
+	}
+	if !strings.Contains(have, "@") {
+		return true // have names a tag (or nothing) — an exact mismatch is a real one
+	}
+	return imageRepoKey(want) != imageRepoKey(have)
+}
+
+// imageRepoKey normalises a reference to "host/repo", dropping any tag or
+// digest — the same host/repo parsing ImageTags and ResolveImageDigest
+// already use, reused here so this stays consistent with how the rest of
+// the package decides what "the same image" means.
+func imageRepoKey(ref string) string {
+	host := registryHost(ref)
+	repo, ok := repoPathForRef(ref, host)
+	if !ok {
+		return strings.ToLower(ref)
+	}
+	return host + "/" + repo
 }
 
 func portsEqual(a, b []ServicePort) bool {

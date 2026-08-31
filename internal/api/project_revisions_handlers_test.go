@@ -15,6 +15,7 @@ import (
 
 	"github.com/koduj-dev/docker-commander/internal/auth"
 	"github.com/koduj-dev/docker-commander/internal/docker"
+	"github.com/koduj-dev/docker-commander/internal/mcp"
 	"github.com/koduj-dev/docker-commander/internal/store"
 )
 
@@ -463,5 +464,77 @@ func TestRevisionDiff_UnchangedVolumesDoNotFalsePositive(t *testing.T) {
 	}
 	if len(diff.Changes) != 0 {
 		t.Errorf("nothing actually changed since the deploy; expected no changes, got %+v", diff.Changes)
+	}
+}
+
+// TestRestoreRevision_PreviewIsCleanAfterDigestPinnedRestore is a real bug a
+// user hit: restore pins the deploy to the exact digest recorded on the
+// revision (buildDigestPinOverride), so the resulting container's own
+// recorded image reference becomes "repo@sha256:…" — a plain-tag Preview
+// comparison then flagged it as "image changed" forever, since Docker never
+// forgets it was created from a digest and there's no way to ask it what
+// tag that used to be. This exercises the actual restore + preview HTTP
+// path end to end (digest capture requires a registered local host, which
+// TestRestoreRevision_RoundTrip's fixture doesn't set up — that's exactly
+// why this bug slipped past that test).
+func TestRestoreRevision_PreviewIsCleanAfterDigestPinnedRestore(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	const slug = "dctest-restore-pin-preview"
+	compose := "services:\n  web:\n    image: " + deployTestImage + "\n    command: [\"sleep\", \"300\"]\n"
+	srv, st, pid, admin := deployTestServer(t, slug, compose)
+	if err := st.EnsureLocalHost(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = docker.ComposeDown(bg, srv.projectRoot(pid), slug, nil)
+		freeDeployStack(slug)
+	})
+
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+
+	// Sanity check: the revision actually recorded a digest to pin, or this
+	// test would pass for the wrong reason (nothing to pin, nothing to
+	// mismatch).
+	rev, err := st.RevisionByNumber(context.Background(), pid, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rev.Images) != 1 || rev.Images[0].Digest == "" {
+		t.Fatalf("expected revision 1 to have captured a digest, got %+v", rev.Images)
+	}
+
+	w := restoreRevisionRequest(srv, pid, 1, admin, "admin", `{}`)
+	if w.Code != 200 {
+		t.Fatalf("restore status = %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		OK     bool   `json:"ok"`
+		Error  string `json:"error"`
+		Output string `json:"output"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK {
+		t.Fatalf("restore did not succeed: %s / %s", resp.Error, resp.Output)
+	}
+
+	pw := previewRequest(srv, pid, admin, "admin")
+	if pw.Code != 200 {
+		t.Fatalf("preview status = %d: %s", pw.Code, pw.Body.String())
+	}
+	var prev mcp.ProjectPreview
+	if err := json.Unmarshal(pw.Body.Bytes(), &prev); err != nil {
+		t.Fatal(err)
+	}
+	if len(prev.Changes) != 0 {
+		t.Errorf("preview right after a correct restore must report nothing to reconcile, got %+v", prev.Changes)
 	}
 }

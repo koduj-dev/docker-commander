@@ -52,6 +52,51 @@ func TestBuildDeployPreviewClassifiesChanges(t *testing.T) {
 	}
 }
 
+// TestBuildDeployPreview_DigestPinnedRestoreReadsAsUnchanged is a real bug a
+// user hit: restoring a revision pins the deployed image to the exact digest
+// that ran then (buildDigestPinOverride), so the container's own recorded
+// Image field becomes "repo@sha256:…" — permanently different, as a string,
+// from the compose file's plain "repo:tag", even though the restore worked
+// exactly as intended. A naive string comparison flagged this as "image
+// changed" (recreates: true) on every single preview from then on, with no
+// way to ever clear it short of a normal (unpinned) redeploy.
+func TestBuildDeployPreview_DigestPinnedRestoreReadsAsUnchanged(t *testing.T) {
+	resolved := []ServiceSpec{svc("web", "alpine:latest")}
+	running := []ServiceSpec{svc("web", "alpine@sha256:"+strings.Repeat("a", 64))}
+	p := BuildDeployPreview(resolved, running)
+	if len(p.Changes) != 0 {
+		t.Errorf("a digest-pinned restore of the same repo must not read as an image change, got %+v", p.Changes)
+	}
+	if p.Unchanged != 1 {
+		t.Errorf("Unchanged = %d, want 1", p.Unchanged)
+	}
+}
+
+// buildDigestPinOverride actually pins as "<original ref, tag included>@<digest>"
+// (e.g. "alpine:latest@sha256:…"), not a bare "repo@sha256:…" — a real
+// restored container's Image field looks like the former. Cover it
+// explicitly since it's the shape that actually occurs, not just the
+// simplified one above.
+func TestBuildDeployPreview_DigestPinnedRestoreWithTagAndDigestBoth(t *testing.T) {
+	resolved := []ServiceSpec{svc("web", "alpine:latest")}
+	running := []ServiceSpec{svc("web", "alpine:latest@sha256:"+strings.Repeat("a", 64))}
+	p := BuildDeployPreview(resolved, running)
+	if len(p.Changes) != 0 {
+		t.Errorf("a tag+digest-pinned restore of the same repo must not read as an image change, got %+v", p.Changes)
+	}
+}
+
+// The same digest-pin tolerance must NOT swallow a genuinely different
+// image — only same-repo pins are forgiven.
+func TestBuildDeployPreview_DigestPinnedDifferentRepoStillFlagged(t *testing.T) {
+	resolved := []ServiceSpec{svc("web", "alpine:latest")}
+	running := []ServiceSpec{svc("web", "busybox@sha256:"+strings.Repeat("b", 64))}
+	p := BuildDeployPreview(resolved, running)
+	if len(p.Changes) != 1 || p.Changes[0].Kind != "image" {
+		t.Errorf("a digest-pinned reference to a DIFFERENT repo must still be flagged, got %+v", p.Changes)
+	}
+}
+
 // TestPreviewDoesNotClaimOrphansAreDeleted: compose only removes orphans with
 // --remove-orphans, which the app deliberately does not pass. Telling an operator
 // a container "will be removed" when it will keep running is worse than saying
