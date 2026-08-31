@@ -119,6 +119,22 @@ All notable changes to Docker Commander are documented here. The format follows
   (`useDialogs()`), which is the highest-impact one: it's opened from inside
   another modal far more often than not, so dismissing "are you sure?" could
   silently close the modal underneath it too.
+- **Restoring a revision no longer shows a permanent, unfixable "image
+  changed" drift on the very deploy that just fixed it.** Restore pins the
+  redeploy to the exact digest recorded on the revision (so a mutable tag
+  can't quietly swap in a different image), but that leaves the container's
+  own recorded image reference as `repo@sha256:…` — permanently different,
+  as a *string*, from the compose file's plain `repo:tag`, since Docker
+  never forgets a container was created from a digest and there's no way to
+  ask it what tag that used to be. The preview now compares by repository
+  when the running side is digest-pinned, and leaves the real question —
+  is that pinned digest still the *right* one — to the digest-drift check,
+  which already inspects the image's actual content, not this string.
+- **The project editor no longer shows stale files and profile badges after
+  a Restore.** Restore correctly overwrote the files on disk and redeployed
+  with the restored revision's own profiles, but the editor sitting open
+  behind the History modal never knew to reload — so it looked like restore
+  hadn't done anything until the editor was closed and reopened.
 - **The login form now works with password managers.** The username, password
   and 2FA code fields had no `name`/`autocomplete` attributes, so a password
   manager had no reliable way to recognise or fill them.

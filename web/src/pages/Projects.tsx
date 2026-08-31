@@ -314,8 +314,15 @@ export function DeployPreviewModal({
 // action that overwrites the project's files with that revision and
 // redeploys it, pinning any image with a recorded digest so a mutable tag
 // can't quietly change what comes back.
-export function RevisionHistoryModal({ project, onClose, onOutput }: {
+export function RevisionHistoryModal({ project, onClose, onOutput, onRestored }: {
   project: Project; onClose: () => void; onOutput: (o: Output) => void;
+  // Restore overwrites the project's files on disk (and redeploys with the
+  // restored revision's own profiles) out from under the editor sitting
+  // open behind this modal — without telling it to reload, the editor kept
+  // showing the pre-restore buffer and profile badges until closed and
+  // reopened, which reads as "restore didn't actually do anything" even
+  // though the live files and the running container were already correct.
+  onRestored?: (profiles: string[]) => void;
 }) {
   const [revisions, setRevisions] = useState<ProjectRevision[] | null>(null);
   const [diffFor, setDiffFor] = useState<ProjectRevision | null>(null);
@@ -351,7 +358,7 @@ export function RevisionHistoryModal({ project, onClose, onOutput }: {
     try {
       const r = await api.restoreRevision(project.id, rev.revision);
       onOutput({ title: `${project.name} — restore to revision ${rev.revision}`, text: composeOutputText(r), ok: r.ok });
-      if (r.ok) { load(); onClose(); }
+      if (r.ok) { load(); onRestored?.(rev.profiles); onClose(); }
     } catch (e) {
       onOutput({ title: `${project.name} — restore`, text: e instanceof Error ? e.message : "failed", ok: false });
     } finally {
@@ -1684,7 +1691,18 @@ function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, on
           reconcileBusy={busy === "deploy"}
         />
       )}
-      {showHistory && <RevisionHistoryModal project={project} onClose={() => setShowHistory(false)} onOutput={onOutput} />}
+      {showHistory && (
+        <RevisionHistoryModal
+          project={project}
+          onClose={() => setShowHistory(false)}
+          onOutput={onOutput}
+          onRestored={(restoredProfiles) => {
+            loadFiles();
+            setDeployedProfiles(restoredProfiles);
+            api.projectProfiles(project.id).then((r) => setProfiles(r.profiles)).catch(() => {});
+          }}
+        />
+      )}
       {saveTpl && <SaveAsTemplateModal projectId={project.id} onClose={() => setSaveTpl(false)} onSaved={() => setSaveTpl(false)} />}
     </div>
   );

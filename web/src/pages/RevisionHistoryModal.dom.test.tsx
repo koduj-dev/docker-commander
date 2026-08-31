@@ -38,14 +38,14 @@ const rev2: ProjectRevision = {
 let container: HTMLDivElement;
 let root: Root | undefined;
 
-async function render() {
+async function render(onRestored?: (profiles: string[]) => void) {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
   await act(async () => {
     root!.render(
       <DialogProvider>
-        <RevisionHistoryModal project={project} onClose={() => {}} onOutput={() => {}} />
+        <RevisionHistoryModal project={project} onClose={() => {}} onOutput={() => {}} onRestored={onRestored} />
       </DialogProvider>,
     );
   });
@@ -120,6 +120,35 @@ describe("RevisionHistoryModal", () => {
     await act(async () => confirm!.click());
 
     expect(restoreRevision).toHaveBeenCalledWith(1, 1);
+  });
+
+  // A successful restore overwrites the project's files (and redeploys with
+  // the restored revision's own profiles) out from under the editor sitting
+  // open behind this modal — without this callback, the editor kept
+  // showing pre-restore content and profile badges until closed and
+  // reopened, reading as "restore didn't do anything" even though it had.
+  it("tells the editor to reload with the restored revision's own profiles on success", async () => {
+    restoreRevision.mockResolvedValue({ ok: true, output: "restored" });
+    const onRestored = vi.fn();
+    await render(onRestored);
+    const restoreBtn = [...revisionBlock("Revision 1").querySelectorAll("button")].find((b) => b.textContent?.includes("Restore"))!;
+    await act(async () => restoreBtn.click());
+    const confirm = [...container.querySelectorAll("button")].find((b) => b.textContent === "Restore");
+    await act(async () => confirm!.click());
+
+    expect(onRestored).toHaveBeenCalledWith(rev1.profiles);
+  });
+
+  it("does not call onRestored when the restore itself fails", async () => {
+    restoreRevision.mockResolvedValue({ ok: false, error: "revision 1 no longer validates" });
+    const onRestored = vi.fn();
+    await render(onRestored);
+    const restoreBtn = [...revisionBlock("Revision 1").querySelectorAll("button")].find((b) => b.textContent?.includes("Restore"))!;
+    await act(async () => restoreBtn.click());
+    const confirm = [...container.querySelectorAll("button")].find((b) => b.textContent === "Restore");
+    await act(async () => confirm!.click());
+
+    expect(onRestored).not.toHaveBeenCalled();
   });
 
   it("cancelling the confirm dialog never calls restore", async () => {
