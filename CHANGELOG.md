@@ -12,21 +12,26 @@ All notable changes to Docker Commander are documented here. The format follows
   orphans, image and registry-digest changes (catches a mutable tag like
   `:latest` overwritten upstream since the last deploy, even when the tag
   string itself didn't move), and — for anything already running — env,
-  published ports, volumes, networks, restart policy, resource limits and
-  healthcheck differences, each flagged with whether applying it recreates
-  the container. Every comparison is one-directional: it only flags a field
-  the compose file actually declares and disagrees with reality, never a
-  field compose is silent on — knowing what compose has ever actually
+  published ports, volumes (shown as `source:target`), networks, restart
+  policy, resource limits and healthcheck differences — env diffs show the
+  actual values, not just which keys changed — each flagged with whether
+  applying it recreates the container. Every comparison is one-directional:
+  it only flags a field the compose file actually declares and disagrees
+  with reality, never a field compose is silent on — knowing what compose
+  has ever actually
   managed needs stored history, which the revision store below now is. A
   first-class screen (`GET /api/projects/{id}/preview`), not just the
-  existing `preview_deploy` MCP tool.
+  existing `preview_deploy` MCP tool, and it warns about unsaved editor
+  changes the same way Deploy/Down/Restart already do.
 - **Drift detection.** The deploy preview above doubles as this: any drift
   found — a container's actual config no longer matching the compose file —
   can be reviewed and **ignored** (per service and per kind, e.g. accept a
   resource-limit change on `web` without silencing anything else), which
   keeps it visible but excludes it from the active count, and is fully
   reversible (**unignore**). A **Reconcile now** button in the same view
-  deploys immediately to fix whatever's left active.
+  redeploys immediately (forcing a fresh image pull, so a mutable tag that
+  moved on the registry actually gets fetched) to fix whatever's left
+  active.
 - **Deployment revisions and rollback.** Every successful project deploy is
   now recorded as an immutable revision — its compose file and every sidecar
   file, profiles, target host, the image reference *and the digest actually
@@ -39,7 +44,9 @@ All notable changes to Docker Commander are documented here. The format follows
   touching anything live, pins any service with a recorded digest so a
   mutable tag can't quietly swap in a different image, redeploys with that
   revision's own profiles, and becomes a new revision itself — history only
-  grows forward, it's never rewritten. Never touches named volumes.
+  grows forward, it's never rewritten. Never touches named volumes. The
+  project editor picks up the restored files and profiles immediately,
+  without needing to be closed and reopened.
 - **A new Troubleshooting tab** runs a battery of read-only sanity checks
   against the selected Docker host and reports each as OK/warning/failed/
   skipped: overlapping Docker network subnets, duplicate host port bindings,
@@ -83,35 +90,6 @@ All notable changes to Docker Commander are documented here. The format follows
   on Windows) rather than just failing.
 
 ### Fixed
-- **"Reconcile now" (deploy preview) actually fixes mutable-tag digest drift
-  now.** It previously just ran a plain deploy, which reuses whatever image
-  is already local — `docker compose up`'s own default pull policy only
-  fetches an image that's missing entirely, so a tag that moved on the
-  registry never actually got pulled, and the preview kept reporting the
-  same drift (against a newer digest each time it was re-checked) no matter
-  how many times Reconcile was clicked. It now forces `--pull always`.
-- **Preview no longer silently shows the last-saved files while you're
-  looking at unsaved editor changes.** It reads compose from disk, exactly
-  like a real deploy would — Deploy/Down/Restart already warn about this
-  ("Continue with the last saved files?"), Preview just never did.
-- **A named volume or relative bind mount that never actually changed no
-  longer shows up as a spurious "volumes" drift.** Two causes: a compose
-  file's declared volume name ("webdata") was compared directly against the
-  running container's real, project-prefixed one ("myproject_webdata") —
-  always different, never actually a change (volumes now get the same
-  name resolution networks already had). And a revision's relative bind
-  mount resolves to an absolute path anchored to a throwaway extraction
-  directory, a different one on every request — comparing that raw was
-  comparing two paths that were never going to match regardless of content.
-  Also: when a volumes change **is** real, the from/to shown now includes
-  the source, not just the target — the target is usually identical on both
-  sides, so a target-only diff could render as "the same path" either way.
-- **An env change in the deploy preview now shows the actual values, not
-  just the key name.** The redaction protected nothing this app doesn't
-  already show elsewhere at the same permission level (the compose file
-  itself, the existing Resolved preview) while making the one screen meant
-  to answer "what changed" unable to answer it for the single most common
-  kind of change there is.
 - **Clicking outside any modal in the app no longer also closes whatever
   modal it was opened from.** The same missing-`stopPropagation` bug as the
   Projects modals, found the same way, fixed everywhere it occurs — 26 more
@@ -119,22 +97,6 @@ All notable changes to Docker Commander are documented here. The format follows
   (`useDialogs()`), which is the highest-impact one: it's opened from inside
   another modal far more often than not, so dismissing "are you sure?" could
   silently close the modal underneath it too.
-- **Restoring a revision no longer shows a permanent, unfixable "image
-  changed" drift on the very deploy that just fixed it.** Restore pins the
-  redeploy to the exact digest recorded on the revision (so a mutable tag
-  can't quietly swap in a different image), but that leaves the container's
-  own recorded image reference as `repo@sha256:…` — permanently different,
-  as a *string*, from the compose file's plain `repo:tag`, since Docker
-  never forgets a container was created from a digest and there's no way to
-  ask it what tag that used to be. The preview now compares by repository
-  when the running side is digest-pinned, and leaves the real question —
-  is that pinned digest still the *right* one — to the digest-drift check,
-  which already inspects the image's actual content, not this string.
-- **The project editor no longer shows stale files and profile badges after
-  a Restore.** Restore correctly overwrote the files on disk and redeployed
-  with the restored revision's own profiles, but the editor sitting open
-  behind the History modal never knew to reload — so it looked like restore
-  hadn't done anything until the editor was closed and reopened.
 - **The login form now works with password managers.** The username, password
   and 2FA code fields had no `name`/`autocomplete` attributes, so a password
   manager had no reliable way to recognise or fill them.
