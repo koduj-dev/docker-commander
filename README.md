@@ -78,6 +78,7 @@ level filters, regex search and structured parsing.
 **Ops**
 - Single CGO-free binary, embedded UI, systemd unit, config file, **native HTTPS** (built-in `--make-certs` self-signed cert helper, **automatic ACME/Let's Encrypt certificates** for a public host with no reverse proxy, or behind a proxy), `/healthz` probe, and structured alert logging to the journal/syslog. See [Deployment](docs/deployment.md).
 - **Self-update** — a **one-tap in-app update & restart** for admins (and an "update available" banner), plus the `dockercmd --self-upgrade` command (SHA-256-verified, atomic binary replace).
+- **Portable recovery bundle** — export everything the app knows (every project's files, host and registry definitions, alert rules, image digests, and, opt-in, instance settings) as one file, with secrets and passphrase-encryption both opt-in at export time; import runs a read-only **compatibility check** against a chosen target host before writing anything, and never overwrites an existing host/registry/project by name.
 
 ## 🏗️ Architecture
 

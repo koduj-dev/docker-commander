@@ -7,6 +7,23 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Portable recovery bundle.** Export everything Docker Commander itself
+  knows — every project's compose + sidecar files, host and registry
+  definitions, alert rules and webhooks, image digests, and (opt-in)
+  instance settings — into one `.dcbundle` file, and import it elsewhere. No
+  volume data. The exporting admin chooses, per export, whether to include
+  secrets (host TLS keys, registry passwords, webhook URLs, SMTP/LDAP
+  passwords) and whether to passphrase-encrypt the whole bundle
+  (Argon2id-derived AES-256-GCM, the same scheme `dockercmd backup` already
+  uses, now shared via `internal/passphrase`). Import always **inspects**
+  first — a read-only compatibility check against a chosen target host
+  (missing images/volumes, hosts a project references but the bundle
+  doesn't carry) — before anything is written, and never overwrites an
+  existing host/registry/webhook/alert-rule/project by name: a collision is
+  skipped with a warning, exactly like alert rules' existing export/import.
+  Instance-wide settings only apply when explicitly opted into
+  (`applySettings=true`) — a restore onto a live instance never silently
+  repoints its mail relay or feature flags. Admin-only.
 - **Deployment plan / diff.** Before deploying a project, **Preview** shows
   exactly what would change: services added / recreated / left running as
   orphans, image and registry-digest changes (catches a mutable tag like
