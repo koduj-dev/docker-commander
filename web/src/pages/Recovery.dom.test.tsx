@@ -162,4 +162,32 @@ describe("Recovery import", () => {
 
     expect(importRecoveryBundle).not.toHaveBeenCalled();
   });
+
+  // A compatibility check is only meaningful against the host it actually
+  // ran against — changing the target afterwards must invalidate it rather
+  // than leave a stale "looks fine" report on screen while Import silently
+  // targets something that was never checked.
+  it("changing the target host after inspecting invalidates the compatibility check", async () => {
+    inspectRecoveryBundle.mockResolvedValue({
+      manifest: { version: 1, exportedAt: "2026-01-01T00:00:00Z", exportedBy: "", includesSecrets: false, hosts: 0, registries: 0, alertRules: 0, projects: 1 },
+      compatibility: { missingImages: [], missingVolumes: [], unknownHosts: [], secretsExcluded: true, warnings: [] },
+    });
+    await render();
+    await selectAFile();
+    await act(async () => byText("button", "Check compatibility").click());
+
+    let importBtn = byText("button", "Import");
+    expect(importBtn.hasAttribute("disabled")).toBe(false);
+
+    const select = container.querySelector("select") as HTMLSelectElement;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value")?.set;
+    await act(async () => {
+      setter?.call(select, String(remoteHost.id));
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    importBtn = byText("button", "Import");
+    expect(importBtn.hasAttribute("disabled")).toBe(true);
+    expect(container.textContent).not.toContain("No compatibility issues found.");
+  });
 });

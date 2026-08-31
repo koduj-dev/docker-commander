@@ -30,11 +30,38 @@ const (
 	// of project directories.
 	maxBundleProjects = 500
 
+	// maxBundleCollectionItems caps hosts/registries/alert rules/webhooks —
+	// smaller, in-memory-only records, but still worth bounding against a
+	// manifest crafted with an absurdly large array.
+	maxBundleCollectionItems = 5000
+
 	// maxRecoveryUploadBytes caps the raw uploaded bundle file (compressed,
 	// and passphrase-sealed if encrypted) — the same shape as maxImportBytes
 	// for a single project's zip, sized up for a multi-project bundle.
 	maxRecoveryUploadBytes = 128 << 20
+
+	// maxManifestBytes caps how much of manifest.json's DECOMPRESSED bytes
+	// get decoded — a zip entry's declared uncompressed size is untrusted
+	// (a small compressed entry can claim to expand to gigabytes), so this
+	// is enforced while reading, not by trusting the archive's own size
+	// field.
+	maxManifestBytes = 16 << 20
+
+	// maxBundleTotalBytes caps the SUM of every project file packed into an
+	// export, independent of the existing per-file (maxProjectFileBytes) and
+	// per-project (maxProjectFiles) caps — the whole zip is built in memory
+	// (bytes.Buffer) before it's sealed/sent, so without an aggregate cap a
+	// sufficiently populated instance (up to maxBundleProjects projects ×
+	// maxProjectFiles files × maxProjectFileBytes each) could ask for tens
+	// of gigabytes in one request. An admin who needs more than this in one
+	// bundle should export a narrower `projectIds` selection instead.
+	maxBundleTotalBytes = 1 << 30 // 1 GiB
 )
+
+// errBundleTooLarge is returned by writeDirToZip once maxBundleTotalBytes is
+// exhausted, so the caller can fail the whole export cleanly rather than
+// silently truncating it.
+var errBundleTooLarge = errors.New("recovery bundle: too much project data for a single export (try exporting fewer projects)")
 
 // recoveryMagic identifies a Docker Commander recovery bundle to
 // internal/passphrase, distinct from internal/backup's own magic so the two
@@ -142,6 +169,17 @@ type recoveryProjectMeta struct {
 	Images               []recoveryProjectImage `json:"images,omitempty"`
 }
 
+// recoveryAlertRule is an exported alert rule plus its per-rule email
+// recipients. alert_portability.go's own portableRule deliberately omits
+// these for its narrower export/import; the recovery bundle carries them
+// since it aims to restore a rule's full delivery behavior, not just its
+// definition — without them, an imported rule silently falls back to the
+// instance-wide default recipients instead of its original ones.
+type recoveryAlertRule struct {
+	portableRule
+	Emails []string `json:"emails,omitempty"`
+}
+
 // recoveryManifest is the bundle's manifest.json.
 type recoveryManifest struct {
 	Version          int                   `json:"version"`
@@ -150,7 +188,7 @@ type recoveryManifest struct {
 	IncludesSecrets  bool                  `json:"includesSecrets"`
 	Hosts            []recoveryHost        `json:"hosts"`
 	Registries       []recoveryRegistry    `json:"registries"`
-	AlertRules       []portableRule        `json:"alertRules"`
+	AlertRules       []recoveryAlertRule   `json:"alertRules"`
 	Webhooks         []recoveryWebhook     `json:"webhooks,omitempty"`
 	Settings         recoverySettings      `json:"settings"`
 	Projects         []recoveryProjectMeta `json:"projects"`
@@ -164,7 +202,11 @@ type recoveryManifest struct {
 // write into an already-open zip.Writer shared by an entire bundle rather
 // than producing its own standalone archive. Returns the number of files
 // written.
-func writeDirToZip(zw *zip.Writer, root, prefix string) (int, error) {
+// budget is the number of bytes still allowed across the WHOLE export
+// (maxBundleTotalBytes, shared and decremented across every project's call),
+// not just this one project — writeDirToZip returns errBundleTooLarge, not a
+// truncated zip, once it's exhausted.
+func writeDirToZip(zw *zip.Writer, root, prefix string, budget *int64) (int, error) {
 	if _, err := os.Stat(root); errors.Is(err, os.ErrNotExist) {
 		return 0, nil
 	}
@@ -187,6 +229,9 @@ func writeDirToZip(zw *zip.Writer, root, prefix string) (int, error) {
 		if len(data) > maxProjectFileBytes {
 			return nil // skip, don't abort the whole export over one oversized file
 		}
+		if int64(len(data)) > *budget {
+			return errBundleTooLarge
+		}
 		fw, werr := zw.Create(prefix + filepath.ToSlash(rel))
 		if werr != nil {
 			return werr
@@ -194,6 +239,7 @@ func writeDirToZip(zw *zip.Writer, root, prefix string) (int, error) {
 		if _, werr := fw.Write(data); werr != nil {
 			return werr
 		}
+		*budget -= int64(len(data))
 		count++
 		return nil
 	})

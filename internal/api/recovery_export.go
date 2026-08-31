@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -48,13 +49,18 @@ func (s *Server) handleExportRecoveryBundle(w http.ResponseWriter, r *http.Reque
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	budget := int64(maxBundleTotalBytes)
 	for _, pm := range manifest.Projects {
 		id, ok := s.projectIDBySlug(r.Context(), pm.Slug)
 		if !ok {
 			continue
 		}
-		if _, err := writeDirToZip(zw, s.projectRoot(id), "projects/"+pm.Slug+"/"); err != nil {
-			writeErr(w, http.StatusInternalServerError, "packing project "+pm.Slug+": "+err.Error())
+		if _, err := writeDirToZip(zw, s.projectRoot(id), "projects/"+pm.Slug+"/", &budget); err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, errBundleTooLarge) {
+				status = http.StatusRequestEntityTooLarge
+			}
+			writeErr(w, status, "packing project "+pm.Slug+": "+err.Error())
 			return
 		}
 	}
@@ -206,7 +212,7 @@ func (s *Server) recoveryRegistries(ctx context.Context, includeSecrets bool) ([
 	return out, nil
 }
 
-func (s *Server) recoveryAlertRulesAndWebhooks(ctx context.Context, includeSecrets bool) ([]portableRule, []recoveryWebhook, error) {
+func (s *Server) recoveryAlertRulesAndWebhooks(ctx context.Context, includeSecrets bool) ([]recoveryAlertRule, []recoveryWebhook, error) {
 	rules, err := s.store.ListAlertRules(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -220,15 +226,18 @@ func (s *Server) recoveryAlertRulesAndWebhooks(ctx context.Context, includeSecre
 		nameByID[h.ID] = h.Name
 	}
 
-	out := make([]portableRule, 0, len(rules))
+	out := make([]recoveryAlertRule, 0, len(rules))
 	for _, rule := range rules {
 		cfg := rule.Config
 		if cfg == "" {
 			cfg = "{}"
 		}
-		pr := portableRule{
-			Name: rule.Name, Enabled: rule.Enabled, Type: rule.Type, Target: rule.Target,
-			Config: []byte(cfg), Severity: rule.Severity, Email: rule.Email, CooldownSec: rule.CooldownSec,
+		pr := recoveryAlertRule{
+			portableRule: portableRule{
+				Name: rule.Name, Enabled: rule.Enabled, Type: rule.Type, Target: rule.Target,
+				Config: []byte(cfg), Severity: rule.Severity, Email: rule.Email, CooldownSec: rule.CooldownSec,
+			},
+			Emails: rule.Emails,
 		}
 		if rule.WebhookID != nil {
 			pr.Webhook = nameByID[*rule.WebhookID]

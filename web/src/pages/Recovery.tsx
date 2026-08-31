@@ -81,6 +81,14 @@ function ExportPanel() {
   );
 }
 
+// InspectedKey identifies exactly what a compatibility check was run
+// against — file identity + passphrase + target host. Import is only ever
+// enabled when the CURRENT form state matches this exactly, so changing the
+// target host (or the file, or the passphrase) after inspecting invalidates
+// it rather than leaving a stale "looks fine" report on screen while
+// importing against something that was never checked.
+type InspectedKey = { file: File; passphrase: string; hostId: number | undefined };
+
 function ImportPanel({ hosts, dialogs }: { hosts: Host[]; dialogs: ReturnType<typeof useDialogs> }) {
   const [file, setFile] = useState<File | null>(null);
   const [passphrase, setPassphrase] = useState("");
@@ -89,23 +97,27 @@ function ImportPanel({ hosts, dialogs }: { hosts: Host[]; dialogs: ReturnType<ty
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [inspection, setInspection] = useState<{ manifest: RecoveryManifestSummary; compatibility: CompatibilityReport } | null>(null);
+  const [inspectedKey, setInspectedKey] = useState<InspectedKey | null>(null);
   const [summary, setSummary] = useState<{ result: RecoveryImportSummary; warnings: string[] } | null>(null);
 
-  const reset = () => { setInspection(null); setSummary(null); setError(""); };
+  const reset = () => { setInspection(null); setInspectedKey(null); setSummary(null); setError(""); };
+
+  const matchesInspection = !!inspectedKey && inspectedKey.file === file && inspectedKey.passphrase === passphrase && inspectedKey.hostId === hostId;
 
   const doInspect = async () => {
     if (!file) return;
-    setBusy(true); reset();
+    setBusy(true); setInspection(null); setInspectedKey(null); setSummary(null); setError("");
     try {
       const r = await api.inspectRecoveryBundle(file, passphrase, hostId);
       setInspection(r);
+      setInspectedKey({ file, passphrase, hostId });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not read that bundle");
     } finally { setBusy(false); }
   };
 
   const doImport = async () => {
-    if (!file) return;
+    if (!file || !matchesInspection) return;
     if (!(await dialogs.confirm({
       title: "Import recovery bundle?",
       message: "Hosts, registries, alert rules and projects are created new — an existing name/slug is skipped, never overwritten.",
@@ -116,6 +128,7 @@ function ImportPanel({ hosts, dialogs }: { hosts: Host[]; dialogs: ReturnType<ty
       const r = await api.importRecoveryBundle(file, passphrase, { hostId, applySettings });
       setSummary({ result: r.summary, warnings: r.warnings });
       setInspection(null);
+      setInspectedKey(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Import failed");
     } finally { setBusy(false); }
@@ -134,12 +147,12 @@ function ImportPanel({ hosts, dialogs }: { hosts: Host[]; dialogs: ReturnType<ty
         onChange={(e) => { setFile(e.target.files?.[0] ?? null); reset(); }}
       />
       <label className="block text-sm mb-1">Passphrase (if the bundle is encrypted)</label>
-      <input type="password" className="input w-full mb-3" value={passphrase} onChange={(e) => setPassphrase(e.target.value)} />
+      <input type="password" className="input w-full mb-3" value={passphrase} onChange={(e) => { setPassphrase(e.target.value); reset(); }} />
       <label className="block text-sm mb-1">Target host</label>
       <select
         className="input w-full mb-3"
         value={hostId ?? ""}
-        onChange={(e) => setHostId(e.target.value ? Number(e.target.value) : undefined)}
+        onChange={(e) => { setHostId(e.target.value ? Number(e.target.value) : undefined); reset(); }}
       >
         <option value="">Local</option>
         {hosts.map((h) => (<option key={h.id} value={h.id}>{h.name}</option>))}
@@ -156,7 +169,7 @@ function ImportPanel({ hosts, dialogs }: { hosts: Host[]; dialogs: ReturnType<ty
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
           Check compatibility
         </button>
-        <button className="btn btn-primary" disabled={!file || busy || !inspection} onClick={doImport}>
+        <button className="btn btn-primary" disabled={!file || busy || !matchesInspection} onClick={doImport}>
           <Upload className="h-4 w-4" />
           Import
         </button>

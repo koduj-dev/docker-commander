@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -361,6 +362,207 @@ func TestRecoveryImport_ProjectSlugCollisionSkipped(t *testing.T) {
 // handler — used to construct manifests the export path itself would never
 // produce (a bad version, a deliberately-colliding name), so the import
 // path's own defenses are what's under test, not the exporter.
+// TestRecoveryImport_ReimportingSameBundleDoesNotDuplicateAlertRules: a
+// recovery retry (import the same bundle twice — the normal shape of "the
+// first attempt half-failed, try again") must not create a second copy of
+// every rule, which would double-fire every notification.
+func TestRecoveryImport_ReimportingSameBundleDoesNotDuplicateAlertRules(t *testing.T) {
+	srv, admin := newRecoveryServer(t)
+	data := buildTestBundle(t, recoveryManifest{
+		Version: recoveryBundleVersion,
+		AlertRules: []recoveryAlertRule{{
+			portableRule: portableRule{Name: "die-alert", Enabled: true, Type: "state", Target: "web", Config: []byte(`{}`), Severity: "critical"},
+		}},
+	})
+
+	for i := 0; i < 2; i++ {
+		w := importRecoveryRequest(srv, admin, data, "", "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("import #%d status = %d: %s", i+1, w.Code, w.Body.String())
+		}
+	}
+	rules, err := srv.store.ListAlertRules(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rules) != 1 {
+		t.Errorf("SECURITY/DATA: re-importing the same bundle produced %d copies of the rule, want 1", len(rules))
+	}
+}
+
+// TestRecoveryExportImport_DisabledHostRoundTrip: CreateHost's own INSERT
+// used to omit the disabled column, so any imported host — however it was
+// marked in the bundle — came back enabled. A disabled host restored as
+// enabled means the monitor may immediately start connecting to it.
+func TestRecoveryExportImport_DisabledHostRoundTrip(t *testing.T) {
+	srv, admin := newRecoveryServer(t)
+	if _, err := srv.store.CreateHost(context.Background(), &store.Host{Name: "quarantined", Kind: "tcp", Address: "10.0.0.9:2376", Disabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	w := exportRecoveryRequest(srv, admin, `{}`, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("export status = %d: %s", w.Code, w.Body.String())
+	}
+
+	dst, dstAdmin := newRecoveryServer(t)
+	iw := importRecoveryRequest(dst, dstAdmin, w.Body.Bytes(), "", "")
+	if iw.Code != http.StatusOK {
+		t.Fatalf("import status = %d: %s", iw.Code, iw.Body.String())
+	}
+	hosts, err := dst.store.ListHosts(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, h := range hosts {
+		if h.Name == "quarantined" {
+			found = true
+			if !h.Disabled {
+				t.Error("SECURITY: a disabled host was restored as enabled")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("the host was not imported at all")
+	}
+}
+
+// TestRecoveryExportImport_PerRuleEmailsRoundTrip: portableRule (shared with
+// alert_portability.go's own, narrower export) has no Emails field — the
+// recovery bundle's own recoveryAlertRule wrapper must carry it through, or
+// an imported rule silently falls back to the instance-wide recipients.
+func TestRecoveryExportImport_PerRuleEmailsRoundTrip(t *testing.T) {
+	srv, admin := newRecoveryServer(t)
+	if _, err := srv.store.CreateAlertRule(context.Background(), &store.AlertRule{
+		Name: "die-alert", Enabled: true, Type: "state", Target: "web", Config: "{}",
+		Severity: "critical", Email: true, Emails: []string{"oncall@example.com", "backup@example.com"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	w := exportRecoveryRequest(srv, admin, `{}`, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("export status = %d: %s", w.Code, w.Body.String())
+	}
+
+	dst, dstAdmin := newRecoveryServer(t)
+	iw := importRecoveryRequest(dst, dstAdmin, w.Body.Bytes(), "", "")
+	if iw.Code != http.StatusOK {
+		t.Fatalf("import status = %d: %s", iw.Code, iw.Body.String())
+	}
+	rules, err := dst.store.ListAlertRules(context.Background())
+	if err != nil || len(rules) != 1 {
+		t.Fatalf("expected 1 imported rule, got %v %+v", err, rules)
+	}
+	got := rules[0].Emails
+	if len(got) != 2 || got[0] != "oncall@example.com" || got[1] != "backup@example.com" {
+		t.Errorf("per-rule recipients did not round-trip, got %v", got)
+	}
+}
+
+// TestRecoveryImport_FinalizeFailureDoesNotClaimSuccess: if the atomic
+// rename from the validated staging directory into the live project
+// location fails (here: something already occupies that path), the project
+// must not be reported as created — the old code re-extracted a SECOND,
+// unchecked time directly into the live directory and always incremented
+// the summary regardless of what happened.
+func TestRecoveryImport_FinalizeFailureDoesNotClaimSuccess(t *testing.T) {
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	srv, admin := newRecoveryServer(t)
+	// The next project created in a fresh store gets id 1 (AUTOINCREMENT
+	// starting from empty) — occupy where its directory would land with a
+	// plain FILE, so the finalizing os.Rename(stagingDir, ".../projects/1")
+	// fails outright (renaming a directory over an existing non-directory).
+	projectsDir := filepath.Join(srv.cfg.DataDir, "projects")
+	if err := os.MkdirAll(projectsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectsDir, "1"), []byte("occupied"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var zipBuf bytes.Buffer
+	zw := zip.NewWriter(&zipBuf)
+	mustZipEntry(t, zw, "manifest.json", mustJSONBytes(t, recoveryManifest{
+		Version:  recoveryBundleVersion,
+		Projects: []recoveryProjectMeta{{Slug: "dctest-recovery-finalize", Name: "shop", ComposeFile: "compose.yml"}},
+	}))
+	mustZipEntry(t, zw, "projects/dctest-recovery-finalize/compose.yml", []byte("services:\n  web:\n    image: nginx:1.27\n"))
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data := wrapPlainBundle(t, zipBuf.Bytes())
+
+	w := importRecoveryRequest(srv, admin, data, "", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("import status = %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Summary  importSummary `json:"summary"`
+		Warnings []string      `json:"warnings"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Summary.ProjectsCreated != 0 {
+		t.Errorf("SECURITY/DATA: a project whose files failed to finalize was still reported as created: %+v", resp.Summary)
+	}
+	if projects, _ := srv.store.ListProjects(context.Background()); len(projects) != 0 {
+		t.Errorf("a project row must not survive a failed finalize, got %d", len(projects))
+	}
+}
+
+// TestImageIsPresent_MatchesDockersTaglessRepoDigestFormat: Docker's own
+// RepoDigests are always tagless ("alpine@sha256:…"), even for an image
+// captured as "alpine:latest". Comparing a tag-preserving reference against
+// them directly would never match an image that IS present.
+func TestImageIsPresent_MatchesDockersTaglessRepoDigestFormat(t *testing.T) {
+	localTags := map[string]bool{"docker.io/nginx": true}
+	localDigests := map[string]bool{"docker.io/alpine@sha256:aaaa": true}
+
+	cases := []struct {
+		name string
+		img  recoveryProjectImage
+		want bool
+	}{
+		{"tagged image present locally", recoveryProjectImage{Image: "nginx:1.27"}, true},
+		{"tagged image not present locally", recoveryProjectImage{Image: "redis:7"}, false},
+		{"digest-pinned image present, source ref carried a tag", recoveryProjectImage{Image: "alpine:latest", Digest: "sha256:aaaa"}, true},
+		{"digest-pinned image with a different digest is missing", recoveryProjectImage{Image: "alpine:latest", Digest: "sha256:bbbb"}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := imageIsPresent(c.img, localTags, localDigests); got != c.want {
+				t.Errorf("imageIsPresent(%+v) = %v, want %v", c.img, got, c.want)
+			}
+		})
+	}
+}
+
+// TestWriteDirToZip_RespectsAggregateBudget: the whole export is built in
+// memory before it's sent, so an aggregate byte budget — shared across every
+// project packed into the SAME export, not just a per-file/per-project cap —
+// must actually stop packing once exhausted, rather than only bounding one
+// file or one project at a time.
+func TestWriteDirToZip_RespectsAggregateBudget(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), bytes.Repeat([]byte("x"), 100), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "b.txt"), bytes.Repeat([]byte("y"), 100), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	budget := int64(150) // enough for one 100-byte file, not both
+	_, err := writeDirToZip(zw, root, "projects/p/", &budget)
+	if !errors.Is(err, errBundleTooLarge) {
+		t.Fatalf("writeDirToZip with an exhausted budget = %v, want errBundleTooLarge", err)
+	}
+}
+
 func buildTestBundle(t *testing.T, m recoveryManifest) []byte {
 	t.Helper()
 	var zipBuf bytes.Buffer

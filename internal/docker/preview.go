@@ -376,14 +376,15 @@ func imagesDiffer(want, have string) bool {
 	if !strings.Contains(have, "@") {
 		return true // have names a tag (or nothing) — an exact mismatch is a real one
 	}
-	return imageRepoKey(want) != imageRepoKey(have)
+	return ImageRepoKey(want) != ImageRepoKey(have)
 }
 
-// imageRepoKey normalises a reference to "host/repo", dropping any tag or
+// ImageRepoKey normalises a reference to "host/repo", dropping any tag or
 // digest — the same host/repo parsing ImageTags and ResolveImageDigest
-// already use, reused here so this stays consistent with how the rest of
-// the package decides what "the same image" means.
-func imageRepoKey(ref string) string {
+// already use, reused here (and by the recovery bundle's compatibility
+// check) so this stays consistent with how the rest of the package decides
+// what "the same image" means.
+func ImageRepoKey(ref string) string {
 	host := registryHost(ref)
 	repo, ok := repoPathForRef(ref, host)
 	if !ok {

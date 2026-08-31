@@ -55,7 +55,11 @@ func parseRecoveryBundle(data []byte, pass string) (*recoveryManifest, *zip.Read
 	defer mf.Close()
 
 	var manifest recoveryManifest
-	dec := json.NewDecoder(mf)
+	// A zip entry's declared uncompressed size is untrusted (the classic zip
+	// bomb: a tiny compressed entry claiming to expand to gigabytes) — cap
+	// what's actually read while decoding, rather than trusting the archive's
+	// own size claims.
+	dec := json.NewDecoder(io.LimitReader(mf, maxManifestBytes))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&manifest); err != nil {
 		return nil, nil, errors.New("invalid or unrecognised manifest")
@@ -65,6 +69,10 @@ func parseRecoveryBundle(data []byte, pass string) (*recoveryManifest, *zip.Read
 	}
 	if len(manifest.Projects) > maxBundleProjects {
 		return nil, nil, fmt.Errorf("bundle carries too many projects (max %d)", maxBundleProjects)
+	}
+	if len(manifest.Hosts) > maxBundleCollectionItems || len(manifest.Registries) > maxBundleCollectionItems ||
+		len(manifest.AlertRules) > maxBundleCollectionItems || len(manifest.Webhooks) > maxBundleCollectionItems {
+		return nil, nil, fmt.Errorf("bundle carries too many hosts/registries/alert rules/webhooks (max %d each)", maxBundleCollectionItems)
 	}
 	return &manifest, zr, nil
 }
@@ -102,32 +110,38 @@ func buildCompatibilityReport(ctx context.Context, s *Server, m *recoveryManifes
 		}
 	}
 
-	localImages := map[string]bool{}
+	// Keyed by normalized "host/repo" (docker.ImageRepoKey — the same
+	// repository parsing RunningImageDigest/imagesDiffer use), not raw
+	// strings: Docker's own RepoDigests are always tagless ("alpine@sha256:…",
+	// confirmed against a live daemon), so comparing a tag-preserving
+	// "alpine:latest@sha256:…" against them would never match even for an
+	// image that IS present.
+	localTags := map[string]bool{}
+	localDigests := map[string]bool{}
 	if images, err := s.docker.ListImages(ctx, hostID); err == nil {
 		for _, img := range images {
 			for _, t := range img.RepoTags {
-				localImages[t] = true
+				localTags[docker.ImageRepoKey(t)] = true
 			}
 			for _, d := range img.RepoDigests {
-				localImages[d] = true
+				if i := strings.IndexByte(d, '@'); i >= 0 {
+					localDigests[docker.ImageRepoKey(d[:i])+"@"+d[i+1:]] = true
+				}
 			}
 		}
 	}
 	seenMissingImage := map[string]bool{}
 	for _, p := range m.Projects {
 		for _, img := range p.Images {
-			ref := img.Image
-			if img.Digest != "" {
-				if i := strings.IndexByte(ref, '@'); i >= 0 {
-					ref = ref[:i]
-				}
-				ref = ref + "@" + img.Digest
-			}
-			if ref == "" || localImages[ref] || seenMissingImage[ref] {
+			if img.Image == "" || imageIsPresent(img, localTags, localDigests) {
 				continue
 			}
-			seenMissingImage[ref] = true
-			rep.MissingImages = append(rep.MissingImages, ref)
+			display := imageDisplayRef(img)
+			if seenMissingImage[display] {
+				continue
+			}
+			seenMissingImage[display] = true
+			rep.MissingImages = append(rep.MissingImages, display)
 		}
 	}
 
@@ -149,6 +163,30 @@ func buildCompatibilityReport(ctx context.Context, s *Server, m *recoveryManifes
 	return rep
 }
 
+// imageIsPresent reports whether img is already present locally, comparing
+// by normalized repository identity (docker.ImageRepoKey) plus digest —
+// never by raw reference string, since Docker's own RepoDigests never carry
+// a tag ("alpine@sha256:…") even when the captured reference did
+// ("alpine:latest"). localTags/localDigests are pre-normalized the same way
+// by buildCompatibilityReport.
+func imageIsPresent(img recoveryProjectImage, localTags, localDigests map[string]bool) bool {
+	repoKey := docker.ImageRepoKey(img.Image)
+	if img.Digest != "" {
+		return localDigests[repoKey+"@"+img.Digest]
+	}
+	return localTags[repoKey]
+}
+
+// imageDisplayRef is what a missing image is reported as: the normalized
+// repo@digest when a digest was captured (matching what an operator would
+// actually look for with `docker images`), otherwise the raw reference.
+func imageDisplayRef(img recoveryProjectImage) string {
+	if img.Digest == "" {
+		return img.Image
+	}
+	return docker.ImageRepoKey(img.Image) + "@" + img.Digest
+}
+
 // handleInspectRecoveryBundle uploads a bundle and reports its compatibility
 // with the target host, without writing anything. Body: the raw bundle
 // bytes; passphrase via the same header as export.
@@ -156,6 +194,10 @@ func (s *Server) handleInspectRecoveryBundle(w http.ResponseWriter, r *http.Requ
 	hostID, err := hostParam(r)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid host")
+		return
+	}
+	if err := s.validateHostID(r.Context(), hostID); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	data, err := readAllLimit(streamingBody(w, r), maxRecoveryUploadBytes)
@@ -204,6 +246,10 @@ func (s *Server) handleImportRecoveryBundle(w http.ResponseWriter, r *http.Reque
 	hostID, err := hostParam(r)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid host")
+		return
+	}
+	if err := s.validateHostID(r.Context(), hostID); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	applySettings := strings.EqualFold(r.URL.Query().Get("applySettings"), "true")
@@ -304,8 +350,20 @@ func (s *Server) applyRecoveryBundle(ctx context.Context, m *recoveryManifest, z
 		summary.WebhooksCreated++
 	}
 
+	existingRules, err := s.store.ListAlertRules(ctx)
+	if err != nil {
+		return summary, warnings, err
+	}
+	ruleNames := make(map[string]bool, len(existingRules))
+	for _, r := range existingRules {
+		ruleNames[r.Name] = true
+	}
 	for i, pr := range m.AlertRules {
-		rule, warn, err := normalizeImportedRule(pr, webhookIDByName)
+		if ruleNames[strings.TrimSpace(pr.Name)] {
+			warnings = append(warnings, fmt.Sprintf("alert rule %q already exists, skipped", pr.Name))
+			continue
+		}
+		rule, warn, err := normalizeImportedRule(pr.portableRule, webhookIDByName)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("alert rule %d (%q) skipped: %s", i+1, pr.Name, err))
 			continue
@@ -313,10 +371,12 @@ func (s *Server) applyRecoveryBundle(ctx context.Context, m *recoveryManifest, z
 		if warn != "" {
 			warnings = append(warnings, warn)
 		}
+		rule.Emails = cleanEmails(pr.Emails)
 		if _, err := s.store.CreateAlertRule(ctx, rule); err != nil {
 			warnings = append(warnings, fmt.Sprintf("alert rule %d (%q) skipped: could not save", i+1, rule.Name))
 			continue
 		}
+		ruleNames[rule.Name] = true
 		summary.AlertRulesCreated++
 	}
 
@@ -371,18 +431,29 @@ func (s *Server) applyRecoveryBundle(ctx context.Context, m *recoveryManifest, z
 			}
 		}
 
-		tmp, terr := os.MkdirTemp("", "dc-recovery-import-*")
+		// Stage the extraction under DataDir/projects itself (not the system
+		// temp dir) so the final os.Rename below is guaranteed to be on the
+		// same filesystem — a cross-device rename fails outright rather than
+		// silently falling back to a second, separately-checked copy. This
+		// also means there is only ONE extraction into a directory that ever
+		// becomes live: either the whole validated staging directory becomes
+		// the project (the rename succeeds), or nothing does.
+		projectsDir := filepath.Join(s.cfg.DataDir, "projects")
+		if err := os.MkdirAll(projectsDir, projectDirMode); err != nil {
+			warnings = append(warnings, fmt.Sprintf("project %q skipped: %s", pm.Slug, err))
+			continue
+		}
+		staging, terr := os.MkdirTemp(projectsDir, "recovery-staging-*")
 		if terr != nil {
 			warnings = append(warnings, fmt.Sprintf("project %q skipped: %s", pm.Slug, terr))
 			continue
 		}
-		extractZipPrefixToDir(zr, "projects/"+pm.Slug+"/", tmp)
-		if _, verr := docker.ComposeConfig(ctx, tmp, pm.Slug); verr != nil {
+		extractZipPrefixToDir(zr, "projects/"+pm.Slug+"/", staging)
+		if _, verr := docker.ComposeConfig(ctx, staging, pm.Slug); verr != nil {
 			warnings = append(warnings, fmt.Sprintf("project %q skipped: its files no longer validate: %s", pm.Slug, verr))
-			os.RemoveAll(tmp)
+			os.RemoveAll(staging)
 			continue
 		}
-		os.RemoveAll(tmp)
 
 		id, cerr := s.store.CreateProject(ctx, &store.Project{
 			Name: pm.Name, Slug: pm.Slug, ComposeFile: pm.ComposeFile, HostID: targetHostID,
@@ -390,19 +461,21 @@ func (s *Server) applyRecoveryBundle(ctx context.Context, m *recoveryManifest, z
 		})
 		if errors.Is(cerr, store.ErrDuplicate) {
 			warnings = append(warnings, fmt.Sprintf("project %q already exists, skipped", pm.Slug))
+			os.RemoveAll(staging)
 			continue
 		}
 		if cerr != nil {
 			warnings = append(warnings, fmt.Sprintf("project %q could not be created: %s", pm.Slug, cerr))
+			os.RemoveAll(staging)
 			continue
 		}
 		root := s.projectRoot(id)
-		if err := os.MkdirAll(root, projectDirMode); err != nil {
-			warnings = append(warnings, fmt.Sprintf("project %q: could not create its directory: %s", pm.Slug, err))
+		if err := os.Rename(staging, root); err != nil {
+			warnings = append(warnings, fmt.Sprintf("project %q: could not finalize its files, nothing was restored: %s", pm.Slug, err))
+			os.RemoveAll(staging)
 			_ = s.store.DeleteProject(ctx, id)
 			continue
 		}
-		extractZipPrefixToDir(zr, "projects/"+pm.Slug+"/", root)
 		summary.ProjectsCreated++
 	}
 

@@ -2,6 +2,8 @@ package passphrase
 
 import (
 	"bytes"
+	"encoding/binary"
+	"math"
 	"testing"
 )
 
@@ -89,6 +91,28 @@ func TestReadFlag_TruncatedInputRejected(t *testing.T) {
 	buf.Write(testMagic[:len(testMagic)-1]) // short, no flag byte at all
 	if _, err := ReadFlag(&buf, testMagic); err != ErrBadMagic {
 		t.Errorf("ReadFlag with truncated input = %v, want ErrBadMagic", err)
+	}
+}
+
+// PENTEST: a malformed archive whose length prefix claims far more data than
+// actually follows must be rejected cheaply (io.ReadAll bounded by the
+// declared length, not a make([]byte, declaredLen) that trusts it blindly),
+// never attempt a multi-gigabyte-or-larger allocation.
+func TestOpenFrom_OversizedDeclaredLengthRejectedWithoutHugeAllocation(t *testing.T) {
+	var buf bytes.Buffer
+	if err := SealTo(&buf, testMagic, []byte("payload"), "pw"); err != nil {
+		t.Fatalf("SealTo: %v", err)
+	}
+	data := buf.Bytes()
+	// The length field is the 8 bytes immediately after salt+nonce, which
+	// immediately follow the magic+flag prefix.
+	lenOffset := len(testMagic) + 1 + saltLen + nonceLen
+	corrupted := append([]byte{}, data[:lenOffset+8]...) // header only, truncate the real sealed bytes
+	binary.BigEndian.PutUint64(corrupted[lenOffset:lenOffset+8], math.MaxUint64-1)
+
+	r := bytes.NewReader(corrupted[len(testMagic)+1:]) // OpenFrom starts right after ReadFlag's prefix
+	if _, err := OpenFrom(r, testMagic, "pw"); err == nil {
+		t.Error("expected an oversized/truncated declared length to be rejected")
 	}
 }
 

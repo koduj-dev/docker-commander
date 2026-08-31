@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -132,9 +133,25 @@ func OpenFrom(r io.Reader, magic []byte, passphrase string) ([]byte, error) {
 	if _, err := io.ReadFull(r, n[:]); err != nil {
 		return nil, ErrBadMagic
 	}
-	sealed := make([]byte, binary.BigEndian.Uint64(n[:]))
-	if _, err := io.ReadFull(r, sealed); err != nil {
+	// Read up to the declared length rather than allocating it up front — the
+	// length is attacker-controlled (it's read straight off the wire/file
+	// before any authentication has happened), so a tiny malformed archive
+	// claiming an exabyte payload must not be able to trigger a
+	// multi-gigabyte allocation before io.ReadAll ever notices there's no
+	// data behind it. io.ReadAll grows its buffer incrementally as bytes
+	// actually arrive, capped by the io.LimitReader below, so a genuine
+	// large (legitimate) archive costs exactly what it already did.
+	declared := binary.BigEndian.Uint64(n[:])
+	limit := int64(declared)
+	if declared > math.MaxInt64 {
+		limit = math.MaxInt64 // an int64 conversion of a huge uint64 wraps negative; clamp instead
+	}
+	sealed, err := io.ReadAll(io.LimitReader(r, limit))
+	if err != nil {
 		return nil, ErrBadMagic
+	}
+	if uint64(len(sealed)) != declared {
+		return nil, ErrBadMagic // fewer bytes followed than the header declared
 	}
 	gcm, err := newGCM(passphrase, salt)
 	if err != nil {
