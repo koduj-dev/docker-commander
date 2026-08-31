@@ -221,6 +221,13 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/projects/{id}/revisions/{rev}/diff", s.handleRevisionDiff)
 			r.Post("/projects/{id}/revisions/{rev}/restore", s.handleRestoreRevision)
 			r.Post("/projects/{id}/summary", s.handleProjectSummary)
+
+			// Portable recovery bundle: export/inspect/import an instance-wide
+			// snapshot (projects, hosts, registries, alert rules, settings).
+			// Admin-only — see access_middleware.go's sectionForPath.
+			r.Post("/recovery/export", s.handleExportRecoveryBundle)
+			r.Post("/recovery/inspect", s.handleInspectRecoveryBundle)
+			r.Post("/recovery/import", s.handleImportRecoveryBundle)
 			r.Post("/projects/{id}/dockerfile-check", s.handleCheckDockerfile)
 			r.Post("/projects/{id}/deploy", s.handleDeployProject)
 			r.Post("/projects/{id}/down", s.handleDownProject)
