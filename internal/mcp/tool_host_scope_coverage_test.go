@@ -85,7 +85,7 @@ func newHostScopedServer(t *testing.T, inScope int64) (*httptest.Server, *store.
 			}
 			return out, nil
 		},
-		DeployProject: func(context.Context, int64, []string) (string, error) {
+		DeployProject: func(context.Context, int64, []string, bool) (string, error) {
 			*reached = append(*reached, "deploy")
 			return "deployed", nil
 		},

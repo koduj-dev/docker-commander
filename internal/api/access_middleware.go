@@ -55,7 +55,7 @@ func sectionForPath(path string) string {
 		return "audit"
 	case "diagnostics":
 		return "diagnostics"
-	case "users", "roles", "settings", "ldap", "update", "mcp-admin":
+	case "users", "roles", "settings", "ldap", "update", "mcp-admin", "policy-rules":
 		return "__admin"
 	case "stats":
 		// The dashboard's own data: /stats/overview enumerates every running

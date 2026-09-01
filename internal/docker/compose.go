@@ -191,10 +191,34 @@ func ComposeResolvedConfig(ctx context.Context, dir, slug string) (string, error
 // (`docker compose config --format json`) — used to build a project overview
 // (services, ports, volumes) and detect issues like duplicate host ports.
 func ComposeConfigJSON(ctx context.Context, dir, slug string) ([]byte, error) {
+	return ComposeConfigJSONFiles(ctx, dir, slug, nil, nil, nil)
+}
+
+// ComposeConfigJSONFiles is ComposeConfigJSON with the same profile/env/file
+// selection ComposeUpFiles deploys with — including the COMPOSE_PROFILES
+// neutralization (see composeUp) — so the resolved model includes exactly the
+// services `up` will create. Compose silently omits a service gated behind an
+// inactive profile from a plain `config --format json`, so evaluating policy
+// against ComposeConfigJSON's zero-profile result would miss a violation
+// inside a profile the caller actually selected.
+func ComposeConfigJSONFiles(ctx context.Context, dir, slug string, profiles, env, files []string) ([]byte, error) {
 	cctx, cancel := context.WithTimeout(ctx, composeTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, "docker", "compose", "-p", slug, "config", "--format", "json")
+	profiles = NormalizeProfiles(profiles)
+	args := []string{"compose", "-p", slug}
+	for _, f := range files {
+		if f = strings.TrimSpace(f); f != "" {
+			args = append(args, "-f", f)
+		}
+	}
+	for _, p := range profiles {
+		args = append(args, "--profile", p)
+	}
+	args = append(args, "config", "--format", "json")
+	cmd := exec.CommandContext(cctx, "docker", args...)
 	cmd.Dir = dir
+	env = append(append([]string{}, env...), "COMPOSE_PROFILES=")
+	cmd.Env = append(os.Environ(), env...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
