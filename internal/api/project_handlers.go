@@ -849,6 +849,12 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 		// silently. The Preview screen's "Reconcile now" sends this — it
 		// exists specifically to fix the "digest" drift it just reported.
 		Pull bool `json:"pull"`
+		// ConfirmPolicyWarnings acknowledges any warn-mode policy violation
+		// found on THIS deploy (see policyCheckOrRefuse below) — sent by the
+		// UI after the operator has seen the violation list and clicked
+		// through it. It never affects a block-mode violation, which has no
+		// per-deploy override.
+		ConfirmPolicyWarnings bool `json:"confirmPolicyWarnings"`
 	}
 	_ = decodeJSON(r, &body) // body is optional (empty → no profiles, rebuild)
 	// Normalized ONCE, here, and reused for the compose command, persistence
@@ -865,6 +871,10 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer cleanup()
+	if resp, refused := s.policyCheckOrRefuse(r, p, dir, body.ConfirmPolicyWarnings); refused {
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
 	upFn := docker.ComposeUpFiles
 	if body.Pull {
 		upFn = docker.ComposeUpFilesPull

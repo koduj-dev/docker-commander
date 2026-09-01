@@ -62,6 +62,8 @@ import type {
   Webhook,
   NetworkStats,
   AuthFactor,
+  PolicyRules,
+  PolicyViolation,
 } from "./types";
 import { getHostId, hostParam } from "./host";
 import type { CreationOptions, RequestOptions } from "./webauthn";
@@ -227,6 +229,10 @@ export const api = {
   settings: () => req<AppSettings>("GET", "/api/settings"),
   setSettings: (b: { disabledSections: string[]; localhostNo2fa: boolean }) =>
     req<{ ok: boolean }>("PUT", "/api/settings", b),
+
+  // Deploy-time policy rules (admin): off/warn/block per rule.
+  policyRules: () => req<PolicyRules>("GET", "/api/policy-rules"),
+  setPolicyRules: (modes: Record<string, string>) => req<{ ok: boolean }>("PUT", "/api/policy-rules", modes),
 
   // LDAP / external auth (admin). Send only server-known fields.
   ldap: () => req<LdapConfig>("GET", "/api/ldap"),
@@ -549,9 +555,14 @@ export const api = {
   // instead of Compose's own default of only pulling an image that's
   // missing locally. Needed to actually fix a "digest" drift the preview
   // reported — a plain deploy would just reuse the stale local image.
-  deployProject: (id: number, profiles: string[] = [], opts?: { pull?: boolean }) =>
-    req<{ ok: boolean; output?: string; error?: string; note?: string }>(
-      "POST", `/api/projects/${id}/deploy`, { profiles, pull: opts?.pull ?? false },
+  deployProject: (id: number, profiles: string[] = [], opts?: { pull?: boolean; confirmPolicyWarnings?: boolean }) =>
+    req<{
+      ok: boolean; output?: string; error?: string; note?: string;
+      needsConfirmation?: boolean;
+      policy?: { blocked?: PolicyViolation[]; warnings?: PolicyViolation[] };
+    }>(
+      "POST", `/api/projects/${id}/deploy`,
+      { profiles, pull: opts?.pull ?? false, confirmPolicyWarnings: opts?.confirmPolicyWarnings ?? false },
     ),
   downProject: (id: number) =>
     req<{ ok: boolean; output?: string; error?: string }>("POST", `/api/projects/${id}/down`),

@@ -180,9 +180,12 @@ type composeConfigDoc struct {
 			Source string `json:"source"`
 			Target string `json:"target"`
 		} `json:"volumes"`
-		Networks map[string]json.RawMessage `json:"networks"`
-		Restart  string                     `json:"restart"`
-		Deploy   struct {
+		Networks    map[string]json.RawMessage `json:"networks"`
+		Restart     string                     `json:"restart"`
+		Privileged  bool                       `json:"privileged"`
+		NetworkMode string                     `json:"network_mode"`
+		Pid         string                     `json:"pid"`
+		Deploy      struct {
 			Resources struct {
 				Limits struct {
 					CPUs   flexNumber `json:"cpus"`

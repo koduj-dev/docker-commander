@@ -115,11 +115,6 @@ networks/restart/resources/healthcheck differences, with a per-change
   but not a snapshot of what was copied into seeded bind volumes at the
   time, so "restore" on a remote project rebuilds them from the restored
   compose file rather than reverting them to their exact prior contents.
-- **Policy checks before deploy.** Refuse or warn on privileged containers, host
-  network/PID, docker-socket mounts, `:latest` in production, missing resource
-  limits, missing healthchecks. Some pieces exist already — compose validation,
-  the duplicate-host-port check, Dockerfile linting, Trivy scanning — but there is
-  no policy engine tying them to a decision.
 - **Controlled image updates.** Detect that a newer image exists for a running
   workload, show what would change, and update deliberately. (Distinct from
   self-update, which is about the Docker Commander binary and already ships.)
@@ -484,7 +479,7 @@ if priorities change, don't just silently reshuffle it.
 
 **Next, each standalone:**
 - [ ] Portable recovery bundle
-- [ ] Policy checks before deploy
+- [x] Policy checks before deploy
 - [ ] Volume data: trigger-and-status wrapper
 
 **Not yet ordered**, full ranked candidate list (original numbering kept as-is —
