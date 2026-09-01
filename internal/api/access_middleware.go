@@ -57,6 +57,12 @@ func sectionForPath(path string) string {
 		return "diagnostics"
 	case "users", "roles", "settings", "ldap", "update", "mcp-admin", "policy-rules":
 		return "__admin"
+	case "recovery":
+		// A recovery bundle can aggregate host TLS keys, registry passwords,
+		// SMTP/LDAP credentials and every project's files across the whole
+		// instance — the same class of instance-wide, credential-bearing
+		// surface as smtp/ldap/users above, not a per-section grant.
+		return "__admin"
 	case "stats":
 		// The dashboard's own data: /stats/overview enumerates every running
 		// container with its resource usage, and /stats/ports enumerates every

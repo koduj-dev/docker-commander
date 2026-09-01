@@ -25,6 +25,7 @@ import { Profile } from "./pages/Profile";
 import { MCPAdmin } from "./pages/MCPAdmin";
 import { Users } from "./pages/Users";
 import { Settings } from "./pages/Settings";
+import { Recovery } from "./pages/Recovery";
 import { PolicyRules } from "./pages/PolicyRules";
 import { Audit } from "./pages/Audit";
 import { Troubleshooting } from "./pages/Troubleshooting";
@@ -72,6 +73,7 @@ export default function App() {
         <Route path="/mcp-admin" element={<MCPAdmin />} />
         <Route path="/users" element={<Users />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/recovery" element={<Recovery />} />
         <Route path="/policy-rules" element={<PolicyRules />} />
         <Route path="/audit" element={<Audit />} />
         <Route path="/troubleshooting" element={<Troubleshooting />} />

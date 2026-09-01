@@ -17,10 +17,6 @@ package backup
 import (
 	"archive/tar"
 	"compress/gzip"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -28,32 +24,18 @@ import (
 	"path/filepath"
 	"strings"
 
-	"golang.org/x/crypto/argon2"
+	"github.com/koduj-dev/docker-commander/internal/passphrase"
 )
 
 // magic identifies a Docker Commander backup and its format version, so a restore
 // fails loudly on an unrelated or future file rather than misreading it.
 var magic = []byte("DCBAK1\n")
 
-const (
-	// flagPlain / flagEncrypted follow the magic and say how the payload is stored.
-	flagPlain     byte = 0
-	flagEncrypted byte = 1
-
-	saltLen  = 16
-	nonceLen = 12
-
-	// Argon2id parameters for the passphrase. Deliberately heavier than the login
-	// hash: a backup is attacked offline, at leisure, and derivation happens once.
-	argonTime    = 4
-	argonMemory  = 128 * 1024 // 128 MiB
-	argonThreads = 4
-	argonKeyLen  = 32
-)
-
 // ErrPassphraseRequired is returned when restoring an encrypted archive without
-// one (or with the wrong one — the two are indistinguishable by design).
-var ErrPassphraseRequired = errors.New("backup: this archive is encrypted; a passphrase is required")
+// one (or with the wrong one — the two are indistinguishable by design). It is
+// an alias for internal/passphrase's sentinel so existing callers checking
+// backup.ErrPassphraseRequired keep working unchanged.
+var ErrPassphraseRequired = passphrase.ErrPassphraseRequired
 
 // ErrNotABackup is returned when the file isn't a Docker Commander backup.
 var ErrNotABackup = errors.New("backup: not a Docker Commander backup archive")
@@ -90,7 +72,7 @@ type Report struct {
 // Create writes a backup of dataDir to out. When passphrase is non-empty the
 // payload is encrypted. db may be nil, in which case the database file is copied
 // as-is — only safe when the app is not running.
-func Create(dataDir, out string, db SQLiteBackuper, passphrase string) (*Report, error) {
+func Create(dataDir, out string, db SQLiteBackuper, pass string) (*Report, error) {
 	tmpDir, err := os.MkdirTemp("", "dc-backup-*")
 	if err != nil {
 		return nil, err
@@ -123,22 +105,22 @@ func Create(dataDir, out string, db SQLiteBackuper, passphrase string) (*Report,
 		return nil, err
 	}
 	defer f.Close()
-	if _, err := f.Write(magic); err != nil {
-		return nil, err
-	}
-	if passphrase == "" {
-		if _, err := f.Write([]byte{flagPlain}); err != nil {
+	if pass == "" {
+		pf, err := os.Open(payload)
+		if err != nil {
 			return nil, err
 		}
-		if err := streamFile(payload, f); err != nil {
+		defer pf.Close()
+		if err := passphrase.WritePlainTo(f, magic, pf); err != nil {
 			return nil, err
 		}
 		return rep, nil
 	}
-	if _, err := f.Write([]byte{flagEncrypted}); err != nil {
+	plain, err := os.ReadFile(payload)
+	if err != nil {
 		return nil, err
 	}
-	if err := encryptTo(payload, f, passphrase); err != nil {
+	if err := passphrase.SealTo(f, magic, plain, pass); err != nil {
 		return nil, err
 	}
 	return rep, nil
@@ -250,22 +232,18 @@ func addOne(tw *tar.Writer, path, name string, fi os.FileInfo) error {
 // Restore unpacks an archive into dataDir. It refuses to write over an existing
 // installation unless force is set, so a mistyped path can't destroy a running
 // instance. The server must not be running: the database is replaced wholesale.
-func Restore(archive, dataDir, passphrase string, force bool) error {
+func Restore(archive, dataDir, pass string, force bool) error {
 	f, err := os.Open(archive)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
-	hdr := make([]byte, len(magic)+1)
-	if _, err := io.ReadFull(f, hdr); err != nil {
+	encrypted, ferr := passphrase.ReadFlag(f, magic)
+	if ferr != nil {
 		return ErrNotABackup
 	}
-	if string(hdr[:len(magic)]) != string(magic) {
-		return ErrNotABackup
-	}
-	encrypted := hdr[len(magic)] == flagEncrypted
-	if encrypted && passphrase == "" {
+	if encrypted && pass == "" {
 		return ErrPassphraseRequired
 	}
 
@@ -275,11 +253,11 @@ func Restore(archive, dataDir, passphrase string, force bool) error {
 
 	var payload io.Reader = f
 	if encrypted {
-		plain, derr := decryptAll(f, passphrase)
+		plain, derr := passphrase.OpenFrom(f, magic, pass)
 		if derr != nil {
 			return derr
 		}
-		payload = plain
+		payload = strings.NewReader(string(plain))
 	}
 	return extract(payload, dataDir)
 }
@@ -364,87 +342,6 @@ func safeJoin(root, name string) (string, error) {
 	return clean, nil
 }
 
-// --- passphrase encryption -------------------------------------------------
-
-// deriveKey stretches the passphrase with Argon2id.
-func deriveKey(passphrase string, salt []byte) []byte {
-	return argon2.IDKey([]byte(passphrase), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
-}
-
-// encryptTo writes salt || nonce || ciphertext. The payload is sealed in one
-// piece: a backup is read and written whole, and chunking would invite a
-// truncation attack for no benefit here.
-func encryptTo(payloadPath string, w io.Writer, passphrase string) error {
-	plain, err := os.ReadFile(payloadPath)
-	if err != nil {
-		return err
-	}
-	salt := make([]byte, saltLen)
-	if _, err := rand.Read(salt); err != nil {
-		return err
-	}
-	nonce := make([]byte, nonceLen)
-	if _, err := rand.Read(nonce); err != nil {
-		return err
-	}
-	block, err := aes.NewCipher(deriveKey(passphrase, salt))
-	if err != nil {
-		return err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return err
-	}
-	sealed := gcm.Seal(nil, nonce, plain, magic) // magic as AAD binds the format
-	if _, err := w.Write(salt); err != nil {
-		return err
-	}
-	if _, err := w.Write(nonce); err != nil {
-		return err
-	}
-	var n [8]byte
-	binary.BigEndian.PutUint64(n[:], uint64(len(sealed)))
-	if _, err := w.Write(n[:]); err != nil {
-		return err
-	}
-	_, err = w.Write(sealed)
-	return err
-}
-
-// decryptAll reads the remainder of r and returns the plaintext payload.
-func decryptAll(r io.Reader, passphrase string) (io.Reader, error) {
-	salt := make([]byte, saltLen)
-	if _, err := io.ReadFull(r, salt); err != nil {
-		return nil, ErrNotABackup
-	}
-	nonce := make([]byte, nonceLen)
-	if _, err := io.ReadFull(r, nonce); err != nil {
-		return nil, ErrNotABackup
-	}
-	var n [8]byte
-	if _, err := io.ReadFull(r, n[:]); err != nil {
-		return nil, ErrNotABackup
-	}
-	sealed := make([]byte, binary.BigEndian.Uint64(n[:]))
-	if _, err := io.ReadFull(r, sealed); err != nil {
-		return nil, ErrNotABackup
-	}
-	block, err := aes.NewCipher(deriveKey(passphrase, salt))
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	plain, err := gcm.Open(nil, nonce, sealed, magic)
-	if err != nil {
-		// GCM can't tell "wrong passphrase" from "tampered": both are auth failures.
-		return nil, errors.New("backup: could not decrypt — wrong passphrase, or the archive was modified")
-	}
-	return strings.NewReader(string(plain)), nil
-}
-
 // --- small helpers ---------------------------------------------------------
 
 func copyFile(src, dst string) error {
@@ -459,15 +356,5 @@ func copyFile(src, dst string) error {
 	}
 	defer out.Close()
 	_, err = io.Copy(out, in)
-	return err
-}
-
-func streamFile(path string, w io.Writer) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = io.Copy(w, f)
 	return err
 }

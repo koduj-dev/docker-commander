@@ -101,6 +101,8 @@ in the log.
 
 **Self-update** — `update.apply`, `update.restart`
 
+**Recovery bundle** — `recovery.export`, `recovery.import`, `recovery.inspect`
+
 ## Tips
 - Use it to answer “who stopped that container?” or “when was this user created?”
 - The most recent ~200 entries are shown.

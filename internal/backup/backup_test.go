@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/koduj-dev/docker-commander/internal/passphrase"
 )
 
 // fakeDB stands in for the store's VACUUM INTO snapshot.
@@ -227,9 +229,9 @@ func writeEvilArchive(t *testing.T, path string, entries map[string]string, syml
 	}
 
 	var out bytes.Buffer
-	out.Write(magic)
-	out.WriteByte(flagPlain)
-	out.Write(payload.Bytes())
+	if err := passphrase.WritePlainTo(&out, magic, &payload); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(path, out.Bytes(), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -384,9 +386,9 @@ func writeOrderedArchive(t *testing.T, path string, entries []archiveEntry) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	out.Write(magic)
-	out.WriteByte(flagPlain)
-	out.Write(payload.Bytes())
+	if err := passphrase.WritePlainTo(&out, magic, &payload); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(path, out.Bytes(), 0o600); err != nil {
 		t.Fatal(err)
 	}

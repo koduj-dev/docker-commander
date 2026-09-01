@@ -86,9 +86,9 @@ func (s *Store) CreateHost(ctx context.Context, h *Host) (int64, error) {
 		key = enc
 	}
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO hosts (name, kind, address, tls_ca, tls_cert, tls_key, alert_email, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		h.Name, h.Kind, h.Address, h.TLSCA, h.TLSCert, key, h.AlertEmail,
+		INSERT INTO hosts (name, kind, address, tls_ca, tls_cert, tls_key, alert_email, disabled, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		h.Name, h.Kind, h.Address, h.TLSCA, h.TLSCert, key, h.AlertEmail, boolToInt(h.Disabled),
 		time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		return 0, err

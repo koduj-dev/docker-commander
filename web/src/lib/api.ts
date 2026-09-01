@@ -62,6 +62,9 @@ import type {
   Webhook,
   NetworkStats,
   AuthFactor,
+  RecoveryManifestSummary,
+  CompatibilityReport,
+  RecoveryImportSummary,
   PolicyRules,
   PolicyViolation,
 } from "./types";
@@ -149,6 +152,29 @@ async function uploadTar(path: string, file: File): Promise<{ ok: boolean; error
   const data = parseJSON(text);
   if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText);
   return data;
+}
+
+// recoveryPassphraseHeader carries a recovery bundle's passphrase in a header,
+// never a query string (which would end up in access logs/proxies) — an
+// empty passphrase omits the header entirely, matching the API's own "no
+// header = not encrypted" reading.
+function recoveryPassphraseHeader(passphrase: string): Record<string, string> {
+  return passphrase ? { "X-Recovery-Passphrase": passphrase } : {};
+}
+
+// uploadRecoveryBundle POSTs a bundle file as a raw body, the same shape as
+// uploadTar/importProject, plus the passphrase header.
+async function uploadRecoveryBundle<T>(path: string, file: File, passphrase: string): Promise<T> {
+  const res = await fetch(path, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/octet-stream", ...recoveryPassphraseHeader(passphrase) },
+    body: file,
+  });
+  const text = await res.text();
+  const data = parseJSON(text);
+  if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText);
+  return data as T;
 }
 
 export interface Enrollment {
@@ -851,6 +877,36 @@ export const api = {
       "GET",
       `/api/metrics/history?container=${encodeURIComponent(container)}&metric=${metric}&range=${range}${hostParam("&")}`
     ),
+
+  // Portable recovery bundle. The passphrase never goes in the URL — it goes
+  // in a header, kept out of query strings/access logs — and is only ever
+  // held in memory on this page, never persisted.
+  exportRecoveryBundle: async (opts: { includeSecrets: boolean; projectIds?: number[] }, passphrase: string): Promise<Blob> => {
+    const res = await fetch("/api/recovery/export", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", ...recoveryPassphraseHeader(passphrase) },
+      body: JSON.stringify(opts),
+    });
+    if (!res.ok) {
+      const data = parseJSON(await res.text());
+      throw new ApiError(res.status, data?.error ?? res.statusText);
+    }
+    return res.blob();
+  },
+  inspectRecoveryBundle: (file: File, passphrase: string, hostId?: number) =>
+    uploadRecoveryBundle<{ manifest: RecoveryManifestSummary; compatibility: CompatibilityReport }>(
+      `/api/recovery/inspect${hostId ? `?host=${hostId}` : ""}`, file, passphrase,
+    ),
+  importRecoveryBundle: (file: File, passphrase: string, opts: { hostId?: number; applySettings?: boolean }) => {
+    const p = new URLSearchParams();
+    if (opts.hostId) p.set("host", String(opts.hostId));
+    if (opts.applySettings) p.set("applySettings", "true");
+    const qs = p.toString();
+    return uploadRecoveryBundle<{ summary: RecoveryImportSummary; warnings: string[] }>(
+      `/api/recovery/import${qs ? `?${qs}` : ""}`, file, passphrase,
+    );
+  },
 };
 
 // File-browser adapters: the FileBrowser component works over a FileApi, so the

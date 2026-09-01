@@ -225,17 +225,6 @@ publishing a per-network number that looks authoritative and is wrong.
 
 ### Backup and disaster recovery
 
-- **Portable recovery bundle.** Export everything Docker Commander itself
-  knows as one file: project/stack compose + sidecar files, resolved project
-  config, host definitions, alert rules, registry definitions, image
-  digests, network/volume inventory, and DC's own config — no volume data.
-  Restore flow: import the bundle → pick a target host → a compatibility
-  check surfaces missing images/volumes/secrets → restore. This needs no new
-  storage engine, since it's exactly the state DC already keeps; it's the
-  single most-requested thing on this whole list — Portainer gates it behind
-  its paid Business Edition ([#1759](https://github.com/portainer/portainer/issues/1759),
-  78 👍; [#2901](https://github.com/portainer/portainer/issues/2901), 54 👍) —
-  and DC having no external DB of its own to restore is a real edge.
 - **Volume data: integrate, don't reinvent.** Deliberately *not* a backup
   engine — no repositories, retention policies or storage backends of our
   own. Instead, a **trigger-and-status wrapper**: run a user-supplied command
@@ -478,7 +467,7 @@ if priorities change, don't just silently reshuffle it.
 - [x] Deployment revisions and rollback (Projects only; CLI-discovered Stacks and remote seeded-volume snapshots still open, see below)
 
 **Next, each standalone:**
-- [ ] Portable recovery bundle
+- [x] Portable recovery bundle
 - [x] Policy checks before deploy
 - [ ] Volume data: trigger-and-status wrapper
 
