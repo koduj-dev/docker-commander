@@ -112,6 +112,50 @@ func TestEvaluatePolicy_PartialResourceLimitDoesNotTrigger(t *testing.T) {
 	}
 }
 
+// TestEvaluatePolicy_ServiceLevelResourceLimitsSatisfyTheRule is the P2 fix:
+// Compose's short syntax (`cpus:`/`mem_limit:` directly on the service) is a
+// distinct field from the long `deploy.resources.limits` syntax the rule used
+// to check exclusively. A service using only the short syntax has a real
+// limit and must not be reported as missing one.
+func TestEvaluatePolicy_ServiceLevelResourceLimitsSatisfyTheRule(t *testing.T) {
+	cfg := `{"services":{"web":{"image":"nginx:1.27","cpus":"0.5","mem_limit":"64m"}}}`
+	v, err := EvaluatePolicy([]byte(cfg), allModes(ModeBlock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasViolation(v, RuleMissingLimits, "web") {
+		t.Errorf("service-level cpus/mem_limit must satisfy missing_resource_limits, got %+v", v)
+	}
+}
+
+func TestEvaluatePolicy_ServiceLevelCPUsAloneSatisfiesTheRule(t *testing.T) {
+	cfg := `{"services":{"web":{"image":"nginx:1.27","cpus":"0.5"}}}`
+	v, _ := EvaluatePolicy([]byte(cfg), allModes(ModeBlock))
+	if hasViolation(v, RuleMissingLimits, "web") {
+		t.Errorf("a service-level cpus limit alone must satisfy missing_resource_limits, got %+v", v)
+	}
+}
+
+func TestEvaluatePolicy_NoLimitsAtAllStillTriggers(t *testing.T) {
+	cfg := `{"services":{"web":{"image":"nginx:1.27","cpus":"0","mem_limit":"0"}}}`
+	v, _ := EvaluatePolicy([]byte(cfg), allModes(ModeBlock))
+	if !hasViolation(v, RuleMissingLimits, "web") {
+		t.Errorf("a zero-valued service-level limit must still count as missing, got %+v", v)
+	}
+}
+
+// TestEvaluatePolicy_DisabledHealthcheckStillTriggers is the P2 fix: Compose
+// resolves `healthcheck: { disable: true }` to a non-nil healthcheck object,
+// so a nil check alone would let a deliberately-disabled healthcheck satisfy
+// missing_healthcheck.
+func TestEvaluatePolicy_DisabledHealthcheckStillTriggers(t *testing.T) {
+	cfg := `{"services":{"web":{"image":"nginx:1.27","healthcheck":{"disable":true}}}}`
+	v, _ := EvaluatePolicy([]byte(cfg), allModes(ModeBlock))
+	if !hasViolation(v, RuleMissingHealthcheck, "web") {
+		t.Errorf("a disabled healthcheck must still trigger missing_healthcheck, got %+v", v)
+	}
+}
+
 func TestEvaluatePolicy_MissingHealthcheck(t *testing.T) {
 	cfg := `{"services":{"web":{"image":"nginx:1.27"}}}`
 	v, _ := EvaluatePolicy([]byte(cfg), allModes(ModeBlock))

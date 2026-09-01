@@ -871,7 +871,7 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer cleanup()
-	if resp, refused := s.policyCheckOrRefuse(r, p, dir, body.ConfirmPolicyWarnings); refused {
+	if resp, refused := s.policyCheckOrRefuse(r, p, dir, body.Profiles, env, files, body.ConfirmPolicyWarnings, policyKindDeploy); refused {
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}

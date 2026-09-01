@@ -302,6 +302,11 @@ func (s *Server) handleRestoreRevision(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Reason string `json:"reason"`
+		// ConfirmPolicyWarnings acknowledges any warn-mode policy violation
+		// found on the compose model this revision restores — see
+		// policyCheckOrRefuse. It never affects a block-mode violation, which
+		// has no per-restore override.
+		ConfirmPolicyWarnings bool `json:"confirmPolicyWarnings"`
 	}
 	_ = decodeJSON(r, &body)
 
@@ -366,6 +371,10 @@ func (s *Server) handleRestoreRevision(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if resp, refused := s.policyCheckOrRefuse(r, p, root, rev.Profiles, env, files, body.ConfirmPolicyWarnings, policyKindRestore); refused {
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
 	// Restoring means going back to what ran then — rebuilding a `build:`
 	// service against today's source would silently defeat that, so this
 	// deploys whatever image is already available rather than rebuilding.

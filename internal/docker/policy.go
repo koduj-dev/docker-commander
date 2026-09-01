@@ -101,10 +101,12 @@ func EvaluatePolicy(configJSON []byte, modes map[PolicyRuleID]PolicyMode) ([]Pol
 		if isLatestTag(svc.Image) {
 			add(RuleLatestTag, name, "image \""+svc.Image+"\" has no pinned tag or digest")
 		}
-		if svc.Deploy.Resources.Limits.CPUs == 0 && svc.Deploy.Resources.Limits.Memory == 0 {
+		hasLimits := svc.Deploy.Resources.Limits.CPUs != 0 || svc.Deploy.Resources.Limits.Memory != 0 ||
+			svc.CPUs != 0 || svc.MemLimit != 0
+		if !hasLimits {
 			add(RuleMissingLimits, name, "has no CPU or memory limit")
 		}
-		if svc.Healthcheck == nil {
+		if svc.Healthcheck == nil || svc.Healthcheck.Disable {
 			add(RuleMissingHealthcheck, name, "has no healthcheck")
 		}
 	}

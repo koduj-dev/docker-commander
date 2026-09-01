@@ -81,4 +81,41 @@ describe("PolicyRules", () => {
     expect(msg).toBeTruthy();
     expect(msg!.className).toContain("text-danger");
   });
+
+  // Reproduces the P2 finding: a failed GET used to leave `loaded=true` with
+  // empty rules/modes but the Save button still enabled, so clicking it sent
+  // `{}` and SetPolicyRuleModes replaced the stored map — every rule silently
+  // defaulted back to off. A distinct load-error state must render instead of
+  // the rule editor, so there is no Save button to click at all.
+  it("a failed load renders no editor and no Save button, only a retry", async () => {
+    act(() => root.unmount());
+    container.remove();
+    policyRules.mockReset();
+    policyRules.mockRejectedValueOnce(new Error("network down"));
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MemoryRouter>
+          <PolicyRules />
+        </MemoryRouter>,
+      );
+    });
+
+    expect(container.textContent).toContain("Could not load");
+    const save = [...container.querySelectorAll("button")].find((b) => b.textContent?.includes("Save policy rules"));
+    expect(save).toBeUndefined();
+
+    const retry = [...container.querySelectorAll("button")].find((b) => b.textContent?.includes("Try again"));
+    expect(retry).toBeTruthy();
+
+    policyRules.mockResolvedValueOnce({
+      rules: ["privileged"],
+      modes: { privileged: "off" },
+    });
+    await act(async () => retry!.click());
+    expect(saveButton()).toBeTruthy();
+  });
 });

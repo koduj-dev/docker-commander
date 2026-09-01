@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"strings"
@@ -40,27 +41,28 @@ func (s *Server) handleSetPolicyRules(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// policyCheckOrRefuse evaluates the project's compose config against the
-// configured policy rules before a deploy is allowed to proceed. It returns
-// (response, true) when the deploy must be refused — a block-mode violation
-// (absolute, no per-deploy override) or an un-confirmed warn-mode one — in
-// which case the caller must write that response and return without
-// deploying. (nil, false) means proceed.
+// evaluateDeployPolicy resolves the EXACT compose model ComposeUpFiles would
+// deploy — same profiles, env, and file list, including the COMPOSE_PROFILES
+// neutralization ComposeUpFiles applies (see ComposeConfigJSONFiles) — and
+// evaluates it against the configured policy rules. It is the single policy
+// gate shared by every deploy path (REST deploy, MCP deploy, revision
+// restore) so none of them can drift from what another one enforces.
 //
 // When every rule is off (the default — see store.PolicyRuleModes), this
-// skips straight to (nil, false) without ever calling ComposeConfigJSON, so
-// an operator who never touches policy settings pays zero extra latency or
-// subprocess cost on every deploy.
+// returns immediately without ever calling compose, so an operator who never
+// touches policy settings pays zero extra latency or subprocess cost on
+// every deploy.
 //
-// A ComposeConfigJSON or EvaluatePolicy failure here is logged and treated as
-// "proceed" — policy evaluation is advisory tooling on top of a deploy that
-// `up` will independently validate anyway; a broken policy check must never
-// itself become the reason a legitimate deploy is blocked.
-func (s *Server) policyCheckOrRefuse(r *http.Request, p *store.Project, dir string, confirmed bool) (map[string]any, bool) {
-	modes, err := s.store.PolicyRuleModes(r.Context())
+// A PolicyRuleModes, ComposeConfigJSONFiles or EvaluatePolicy failure here is
+// logged and treated as "proceed" (both return slices nil) — policy
+// evaluation is advisory tooling on top of a deploy that `up` will
+// independently validate anyway; a broken policy check must never itself
+// become the reason a legitimate deploy is blocked.
+func (s *Server) evaluateDeployPolicy(ctx context.Context, slug, dir string, profiles, env, files []string) (blocked, warned []docker.PolicyViolation) {
+	modes, err := s.store.PolicyRuleModes(ctx)
 	if err != nil {
-		log.Printf("project deploy: load policy rules for %q: %v", p.Slug, err)
-		return nil, false
+		log.Printf("policy check: load policy rules for %q: %v", slug, err)
+		return nil, nil
 	}
 	anyEnabled := false
 	ruleModes := make(map[docker.PolicyRuleID]docker.PolicyMode, len(modes))
@@ -71,21 +73,20 @@ func (s *Server) policyCheckOrRefuse(r *http.Request, p *store.Project, dir stri
 		}
 	}
 	if !anyEnabled {
-		return nil, false
+		return nil, nil
 	}
 
-	configJSON, err := docker.ComposeConfigJSON(r.Context(), dir, p.Slug)
+	configJSON, err := docker.ComposeConfigJSONFiles(ctx, dir, slug, profiles, env, files)
 	if err != nil {
-		log.Printf("project deploy: resolve compose config for policy check on %q: %v", p.Slug, err)
-		return nil, false
+		log.Printf("policy check: resolve compose config for %q: %v", slug, err)
+		return nil, nil
 	}
 	violations, err := docker.EvaluatePolicy(configJSON, ruleModes)
 	if err != nil {
-		log.Printf("project deploy: evaluate policy for %q: %v", p.Slug, err)
-		return nil, false
+		log.Printf("policy check: evaluate policy for %q: %v", slug, err)
+		return nil, nil
 	}
 
-	var blocked, warned []docker.PolicyViolation
 	for _, v := range violations {
 		switch v.Mode {
 		case docker.ModeBlock:
@@ -94,16 +95,45 @@ func (s *Server) policyCheckOrRefuse(r *http.Request, p *store.Project, dir stri
 			warned = append(warned, v)
 		}
 	}
+	return blocked, warned
+}
+
+// policyCheckOrRefuse is evaluateDeployPolicy for an HTTP deploy-shaped
+// caller (REST project deploy, revision restore): it audits under the
+// caller's action family (kindDeploy or kindRestore — the audit action
+// strings are written as literals below, not assembled at runtime, so the
+// audit-doc consistency tests in auditdocs_test.go can find them) and
+// returns (response, true) when the deploy must be refused — a block-mode
+// violation (absolute, no per-deploy override) or an un-confirmed warn-mode
+// one — in which case the caller must write that response and return
+// without deploying. (nil, false) means proceed.
+const (
+	policyKindDeploy  = "deploy"
+	policyKindRestore = "restore"
+)
+
+func (s *Server) policyCheckOrRefuse(r *http.Request, p *store.Project, dir string, profiles, env, files []string, confirmed bool, kind string) (map[string]any, bool) {
+	blocked, warned := s.evaluateDeployPolicy(r.Context(), p.Slug, dir, profiles, env, files)
 
 	if len(blocked) > 0 {
-		s.audit(r, "project.deploy.policy_block", p.Slug, policyViolationSummary(blocked))
+		switch kind {
+		case policyKindRestore:
+			s.audit(r, "project.revision.restore.policy_block", p.Slug, policyViolationSummary(blocked))
+		default:
+			s.audit(r, "project.deploy.policy_block", p.Slug, policyViolationSummary(blocked))
+		}
 		return map[string]any{"ok": false, "policy": map[string]any{"blocked": blocked}}, true
 	}
 	if len(warned) > 0 && !confirmed {
 		return map[string]any{"ok": false, "policy": map[string]any{"warnings": warned}, "needsConfirmation": true}, true
 	}
 	if len(warned) > 0 {
-		s.audit(r, "project.deploy.policy_warn_ack", p.Slug, policyViolationSummary(warned))
+		switch kind {
+		case policyKindRestore:
+			s.audit(r, "project.revision.restore.policy_warn_ack", p.Slug, policyViolationSummary(warned))
+		default:
+			s.audit(r, "project.deploy.policy_warn_ack", p.Slug, policyViolationSummary(warned))
+		}
 	}
 	return nil, false
 }

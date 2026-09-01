@@ -193,11 +193,23 @@ type composeConfigDoc struct {
 				} `json:"limits"`
 			} `json:"resources"`
 		} `json:"deploy"`
+		// CPUs and MemLimit are the service-level (short) syntax Compose also
+		// accepts alongside deploy.resources.limits (the "long" syntax) —
+		// `cpus:`/`mem_limit:` resolve and are emitted here even when the
+		// service declares no `deploy:` section at all.
+		CPUs        flexNumber `json:"cpus"`
+		MemLimit    flexBytes  `json:"mem_limit"`
 		Healthcheck *struct {
 			Test     []string `json:"test"`
 			Interval string   `json:"interval"`
 			Timeout  string   `json:"timeout"`
 			Retries  int      `json:"retries"`
+			// Disable is Compose's representation of an explicitly disabled
+			// healthcheck (`healthcheck: { disable: true }`). Such a service
+			// still decodes to a non-nil Healthcheck, so a caller that only
+			// checks for nil (like ParseComposeServices below) must also
+			// check this.
+			Disable bool `json:"disable"`
 		} `json:"healthcheck"`
 	} `json:"services"`
 }

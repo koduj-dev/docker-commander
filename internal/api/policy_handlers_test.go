@@ -285,7 +285,7 @@ func TestPolicyCheckOrRefuse_AllOffSkipsEvaluationEntirely(t *testing.T) {
 	p := &store.Project{Slug: "does-not-exist"}
 
 	start := time.Now()
-	resp, refused := srv.policyCheckOrRefuse(httptest.NewRequest("POST", "/x", nil), p, "/nonexistent/path/for/sure", false)
+	resp, refused := srv.policyCheckOrRefuse(httptest.NewRequest("POST", "/x", nil), p, "/nonexistent/path/for/sure", nil, nil, nil, false, policyKindDeploy)
 	elapsed := time.Since(start)
 
 	if refused {

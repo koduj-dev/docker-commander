@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, ShieldCheck } from "lucide-react";
+import { Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import type { PolicyMode, PolicyRuleId } from "../lib/types";
@@ -30,15 +30,17 @@ export function PolicyRules() {
   const [rules, setRules] = useState<PolicyRuleId[]>([]);
   const [modes, setModes] = useState<Record<string, PolicyMode>>({});
   const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   const load = useCallback(() => {
+    setLoadError(false);
     api.policyRules().then((r) => {
       setRules(r.rules);
       setModes(r.modes);
       setLoaded(true);
-    }).catch(() => setLoaded(true));
+    }).catch(() => { setLoaded(true); setLoadError(true); });
   }, []);
   useEffect(() => load(), [load]);
 
@@ -53,6 +55,23 @@ export function PolicyRules() {
   };
 
   if (!loaded) return (<><PageHeader title="Policy rules" /><div className="p-6 flex items-center gap-2 text-muted"><Spinner /> Loading…</div></>);
+
+  if (loadError) return (
+    <>
+      <PageHeader title="Policy rules" />
+      <div className="p-6 max-w-3xl">
+        <div className="card p-5 space-y-3">
+          <p className="text-sm text-danger">
+            Could not load the current policy rules. Saving is disabled until they load
+            successfully — retrying here can&apos;t accidentally submit an empty rule set.
+          </p>
+          <button className="btn-ghost px-3 py-1.5 text-sm self-start" onClick={load}>
+            <RefreshCw className="h-4 w-4" /> Try again
+          </button>
+        </div>
+      </div>
+    </>
+  );
 
   return (
     <>

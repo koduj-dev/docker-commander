@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/koduj-dev/docker-commander/internal/docker"
@@ -44,7 +45,13 @@ func (s *Server) mcpListProjects(ctx context.Context) ([]mcp.ManagedProject, err
 }
 
 // mcpDeployProject runs `docker compose up -d` for a managed project.
-func (s *Server) mcpDeployProject(ctx context.Context, id int64, profiles []string) (string, error) {
+//
+// It runs the exact same evaluateDeployPolicy gate the REST deploy handler
+// does (see policy_handlers.go): a block-mode violation always refuses, and
+// an un-confirmed warn-mode one refuses with a message telling the caller to
+// retry with confirmPolicyWarnings — MCP has no UI to click through, so the
+// caller (the model, on the user's behalf) is the thing that must confirm.
+func (s *Server) mcpDeployProject(ctx context.Context, id int64, profiles []string, confirmPolicyWarnings bool) (string, error) {
 	if !docker.ComposeAvailable(ctx) {
 		return "", errors.New("the `docker compose` CLI is not available on the host running Docker Commander")
 	}
@@ -65,6 +72,21 @@ func (s *Server) mcpDeployProject(ctx context.Context, id int64, profiles []stri
 		return "", err
 	}
 	defer cleanup()
+
+	// The MCP tool dispatcher (internal/mcp) audits the outcome of every
+	// deploy attempt under "mcp.project.deploy", including this one when it
+	// returns an error below — so a refused deploy is not silent, even though
+	// it isn't broken out into its own policy_block/policy_warn_ack action
+	// the way the REST audit trail is.
+	profiles = docker.NormalizeProfiles(profiles)
+	blocked, warned := s.evaluateDeployPolicy(ctx, p.Slug, dir, profiles, env, files)
+	if len(blocked) > 0 {
+		return "", fmt.Errorf("refused by policy (block): %s", policyViolationSummary(blocked))
+	}
+	if len(warned) > 0 && !confirmPolicyWarnings {
+		return "", fmt.Errorf("policy warnings require confirmation (retry with confirm_policy_warnings=true): %s", policyViolationSummary(warned))
+	}
+
 	// Rebuild, matching the web UI. Not a widening of the MCP surface: `up`
 	// already builds a service whose image is missing, so deploying a project
 	// with a `build:` section could always run its Dockerfile. What this fixes is
