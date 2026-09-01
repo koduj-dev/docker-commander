@@ -92,7 +92,7 @@ type Deps struct {
 	// app's own project directories. Any may be nil, in which case the matching
 	// tool reports the feature as unavailable.
 	ListProjects  func(ctx context.Context) ([]ManagedProject, error)
-	DeployProject func(ctx context.Context, id int64, profiles []string) (string, error)
+	DeployProject func(ctx context.Context, id int64, profiles []string, confirmPolicyWarnings bool) (string, error)
 	DownProject   func(ctx context.Context, id int64) (string, error)
 	// PreviewProject reports what a deploy would change, without deploying.
 	PreviewProject func(ctx context.Context, id int64) (ProjectPreview, error)

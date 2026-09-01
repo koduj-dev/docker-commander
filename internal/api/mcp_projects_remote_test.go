@@ -74,7 +74,7 @@ services:
       - /etc:/host-etc:ro
 `)
 
-	_, err := srv.mcpDeployProject(ctx, pid, nil)
+	_, err := srv.mcpDeployProject(ctx, pid, nil, false)
 	if err == nil {
 		t.Fatal("MCP deployed a remote project mounting /etc from the target host: the host-path opt-in was bypassed")
 	}
@@ -104,7 +104,7 @@ services:
       - ./site:/usr/share/nginx/html:ro
 `)
 
-	_, err := srv.mcpDeployProject(ctx, pid, nil)
+	_, err := srv.mcpDeployProject(ctx, pid, nil, false)
 	if err == nil {
 		return // reached the daemon; the classification step is what mattered
 	}

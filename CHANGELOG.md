@@ -95,6 +95,18 @@ All notable changes to Docker Commander are documented here. The format follows
   the target offers — Linux, macOS or Windows) or directly for the local
   daemon; a host reached only over plain TCP, with no shell access, reports
   these checks as **skipped** rather than guessing.
+- **Policy checks before deploy.** Seven deploy-time rules — privileged
+  containers, host network/PID namespace, a Docker socket mount, an unpinned
+  (`:latest`) image, missing resource limits, missing healthcheck — each
+  independently configurable as **off / warn / block** under the new
+  **Policy rules** admin page. A **warn** violation asks the operator to
+  confirm before the deploy runs; a **block** violation refuses it outright,
+  with no per-deploy override — only changing that rule's mode gets past it.
+  Every rule defaults to **off**: most existing compose files have no
+  healthcheck or resource limits, so enabling anything by default would have
+  demanded a confirmation dialog on nearly every ordinary deploy across every
+  existing install. Adds zero overhead when every rule is off — the compose
+  config is only resolved for evaluation once at least one rule is enabled.
 
 ### Changed
 - **The Docker version compatibility matrix now also covers Engine 29** (nightly

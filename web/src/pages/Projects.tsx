@@ -19,6 +19,7 @@ const CodeEditor = lazy(() => import("../components/CodeEditor").then((m) => ({ 
 import { getPref, setPref } from "../lib/prefs";
 import { useDockerEventTick } from "../lib/dockerEvents";
 import { composeOutputText } from "../lib/composeOutput";
+import { deployProjectWithPolicyGate } from "../lib/deployPolicy";
 import { resolveServiceState } from "../lib/composeState";
 
 type Output = { title: string; text: string; ok: boolean };
@@ -496,7 +497,7 @@ export function Projects() {
   const runCompose = async (p: Project, kind: Kind) => {
     setBusy(p.slug);
     try {
-      const r = kind === "deploy" ? await api.deployProject(p.id, getPref<string[]>(`projects.profiles.${p.slug}`, []))
+      const r = kind === "deploy" ? await deployProjectWithPolicyGate(p.id, getPref<string[]>(`projects.profiles.${p.slug}`, []), dialogs)
         : kind === "down" ? await api.downProject(p.id) : await api.restartProject(p.id);
       setOutput({ title: `${p.name} — ${kind}`, text: composeOutputText(r), ok: r.ok });
       load();
@@ -1477,7 +1478,7 @@ function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, on
     if (dirty && !(await dialogs.confirm({ title: "Unsaved changes", message: "Continue with the last saved files?", confirmLabel: "Continue" }))) return;
     setBusy(kind);
     try {
-      const r = kind === "deploy" ? await api.deployProject(project.id, selectedProfiles, opts) : kind === "down" ? await api.downProject(project.id) : await api.restartProject(project.id);
+      const r = kind === "deploy" ? await deployProjectWithPolicyGate(project.id, selectedProfiles, dialogs, opts) : kind === "down" ? await api.downProject(project.id) : await api.restartProject(project.id);
       if (kind === "deploy" && r.ok) setDeployedProfiles(selectedProfiles);
       onOutput({ title: `${project.name} — ${kind}`, text: composeOutputText(r), ok: r.ok });
     } catch (e) {

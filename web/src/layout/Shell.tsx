@@ -1,6 +1,6 @@
 import { Link, NavLink, useNavigate, useLocation, useNavigationType } from "react-router-dom";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Activity, Bell, Blocks, Boxes, ChevronDown, Container, Database, FolderGit2, KeyRound, Layers, LayoutDashboard, LayoutTemplate, Network, Plug, ScrollText, Server, Settings, Share2, Stethoscope, Terminal, Users, LogOut, CircleUser, ArrowUpCircle, ExternalLink, X, Loader2, HardDriveDownload } from "lucide-react";
+import { Activity, Bell, Blocks, Boxes, ChevronDown, Container, Database, FolderGit2, KeyRound, Layers, LayoutDashboard, LayoutTemplate, Network, Plug, ScrollText, Server, Settings, ShieldCheck, Share2, Stethoscope, Terminal, Users, LogOut, CircleUser, ArrowUpCircle, ExternalLink, X, Loader2, HardDriveDownload } from "lucide-react";
 import clsx from "clsx";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../lib/api";
@@ -62,6 +62,7 @@ const navGroups: { title: string; items: NavItem[] }[] = [
       { to: "/mcp-tokens", label: "MCP Access", icon: KeyRound },
       { to: "/mcp-admin", label: "MCP Admin", icon: Plug, adminOnly: true },
       { to: "/users", label: "Users", icon: Users, adminOnly: true },
+      { to: "/policy-rules", label: "Policy rules", icon: ShieldCheck, adminOnly: true },
       { to: "/settings", label: "Settings", icon: Settings, adminOnly: true },
       { to: "/recovery", label: "Recovery bundle", icon: HardDriveDownload, adminOnly: true },
     ],

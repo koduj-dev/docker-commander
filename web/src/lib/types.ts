@@ -71,6 +71,30 @@ export interface AppSettings {
   localhostNo2fa: boolean;
 }
 
+/** Deploy-time policy check ids — see internal/docker/policy.go. */
+export type PolicyRuleId =
+  | "privileged"
+  | "host_network"
+  | "host_pid"
+  | "docker_socket_mount"
+  | "latest_tag"
+  | "missing_resource_limits"
+  | "missing_healthcheck";
+
+export type PolicyMode = "off" | "warn" | "block";
+
+export interface PolicyRules {
+  rules: PolicyRuleId[];
+  modes: Record<string, PolicyMode>;
+}
+
+export interface PolicyViolation {
+  rule: PolicyRuleId;
+  service: string;
+  mode: PolicyMode;
+  detail: string;
+}
+
 export interface UpdateStatus {
   current: string;
   latest?: string;

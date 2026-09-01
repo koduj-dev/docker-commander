@@ -57,6 +57,7 @@ level filters, regex search and structured parsing.
   service's real state, and clearly separates what's *currently deployed* from what's
   *selected for the next deploy*, so a profile-excluded service reads as such — not as
   stopped) and `.zip` import/export — to the **local or a remote host** (a remote deploy copies the project's bind-mounted configs/scripts into volumes on that host, and `build:` contexts are uploaded with the build; a redeploy **rebuilds** an edited image).
+- **Policy checks before deploy** — seven rules (privileged containers, host network/PID, Docker socket mounts, unpinned `:latest` images, missing resource limits, missing healthchecks), each independently **off / warn / block**. A warn needs the operator's confirmation before the deploy runs; a block has no per-deploy override. Off by default for every rule.
 
 **Multi-host**
 - Manage **local**, **TCP(+TLS)** and **SSH** daemons; SSH **host keys are verified** (known_hosts / trust-on-first-use). Every view rebinds to the selected host, and the alert engine watches **all** hosts. A per-host **detail** panel shows the hardware / OS / engine, and a host can be **disabled** to take it out of monitoring (e.g. an offline laptop).

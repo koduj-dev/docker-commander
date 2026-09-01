@@ -33,7 +33,7 @@ func (h *handler) registerControlTools(s *mcpsdk.Server) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "deploy_project",
-		Description: "Deploy a managed Compose project (docker compose up -d). Reversible via down_project.",
+		Description: "Deploy a managed Compose project (docker compose up -d). Reversible via down_project. Checked against the instance's policy rules: a block-mode violation refuses the deploy outright; a warn-mode one refuses once and asks for confirm_policy_warnings=true to proceed.",
 	}, h.deployProject)
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
@@ -87,6 +87,12 @@ func (h *handler) listManagedProjects(ctx context.Context, req *mcpsdk.CallToolR
 type projectInput struct {
 	ProjectID int64    `json:"project_id" jsonschema:"managed project id from list_managed_projects"`
 	Profiles  []string `json:"profiles,omitempty" jsonschema:"optional compose profiles to activate (deploy only)"`
+	// ConfirmPolicyWarnings acknowledges a warn-mode policy violation on this
+	// deploy (deploy only). A first call that trips a warn-mode rule is
+	// refused with the violation list instead of deploying; retry with this
+	// set to true, after the caller has surfaced the warning, to proceed.
+	// Never overrides a block-mode violation, which has no override.
+	ConfirmPolicyWarnings bool `json:"confirm_policy_warnings,omitempty" jsonschema:"deploy only: set true to proceed past a warn-mode policy violation already reported by a prior call"`
 }
 
 func (h *handler) deployProject(ctx context.Context, req *mcpsdk.CallToolRequest, in projectInput) (*mcpsdk.CallToolResult, actionResult, error) {
@@ -103,7 +109,7 @@ func (h *handler) deployProject(ctx context.Context, req *mcpsdk.CallToolRequest
 	if err := h.authorizeProjectHost(ctx, req, in.ProjectID, true); err != nil {
 		return nil, actionResult{}, err
 	}
-	out, derr := h.deps.DeployProject(ctx, in.ProjectID, in.Profiles)
+	out, derr := h.deps.DeployProject(ctx, in.ProjectID, in.Profiles, in.ConfirmPolicyWarnings)
 	res := actionResult{OK: derr == nil, Action: "deploy", Target: projectTarget(in.ProjectID), Output: out}
 	h.audit(p, "mcp.project.deploy", res.Target, outcome(derr))
 	if derr != nil {

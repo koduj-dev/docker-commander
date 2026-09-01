@@ -156,6 +156,8 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/update", s.handleUpdateStatus)     // admin-only (section "__admin")
 			r.Post("/update", s.handleApplyUpdate)     // admin-only: download + verify + swap
 			r.Post("/update/restart", s.handleRestart) // admin-only: re-exec the new binary
+			r.Get("/policy-rules", s.handleGetPolicyRules)
+			r.Put("/policy-rules", s.handleSetPolicyRules)
 
 			r.Get("/hosts", s.handleListHosts)
 			r.Post("/hosts", s.handleCreateHost)
