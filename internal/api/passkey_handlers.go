@@ -39,16 +39,24 @@ func (s *Server) relyingParty(r *http.Request) (auth.RelyingParty, bool) {
 	// otherwise mint a credential the browser will not match against the ordinary
 	// spelling. That fails closed — nothing is forgeable — but it fails as "your
 	// passkey stopped working", which is the outcome worth avoiding.
-	//
-	// A trailing dot is deliberately KEPT. It denotes the same name, so stripping it
-	// looks like the same tidying — but the origin has to be spelled the way the
-	// browser will send it, and a browser on "http://host.:8470/" sends exactly that.
-	// Stripping the dot from the id alone splits the two, and the library compares
-	// origins by string: every registration from such a host then fails. Keeping it
-	// leaves id and origin consistent. isSecureLocalHost still ignores the dot,
-	// because "is this a secure context" is a different question about the same name.
 	hostname = strings.ToLower(hostname)
 	if hostname == "" {
+		return auth.RelyingParty{}, false
+	}
+	// A trailing dot denotes the same name (the fully-qualified form), and this used
+	// to be deliberately kept rather than stripped: the browser sends the origin the
+	// way it was addressed, and desyncing the id from that origin by normalizing only
+	// one of them broke every registration from such a host (see
+	// TestPasskeyCanBePairedFromATrailingDotHost's history). go-webauthn >=0.18.0
+	// closed that door from the other side: an RP id must now pass its own
+	// domain-string validation, which rejects a trailing dot outright as an empty
+	// DNS label, with no opt-out. Stripping the dot only for that validation would
+	// reintroduce the exact id/origin split this comment used to warn about — the
+	// library also hands the id back to the browser verbatim, so id and the string
+	// it validates internally must match. There is no longer a way to support this
+	// host form, so it is refused here, the same as an IP literal below: nobody
+	// reasonably reaches this app as "host." rather than "host" or an IP.
+	if strings.HasSuffix(hostname, ".") {
 		return auth.RelyingParty{}, false
 	}
 	host = hostname
@@ -68,12 +76,9 @@ func (s *Server) relyingParty(r *http.Request) (auth.RelyingParty, bool) {
 	// SecurityError on it — so reaching this app at https://192.0.2.10/ or at
 	// http://127.0.0.1:8470/ cannot do passkeys, however secure the context is.
 	// Saying so here is the difference between an explanation and a button that
-	// fails when pressed.
-	//
-	// The trailing dot has to come off for THIS question even though it is kept for
-	// the id: net.ParseIP("127.0.0.1.") is nil, so a dotted literal would otherwise
-	// walk straight past a check that exists to catch it.
-	if net.ParseIP(strings.TrimSuffix(strings.Trim(hostname, "[]"), ".")) != nil {
+	// fails when pressed. hostname can no longer carry a trailing dot at this point
+	// (rejected above), so there is nothing left to strip before this check.
+	if net.ParseIP(strings.Trim(hostname, "[]")) != nil {
 		return auth.RelyingParty{}, false
 	}
 	return auth.RelyingParty{
@@ -87,9 +92,9 @@ func (s *Server) relyingParty(r *http.Request) (auth.RelyingParty, bool) {
 // context without TLS. localhost (and anything under it) is special-cased by the
 // spec, as are the loopback addresses.
 //
-// A trailing dot is the same name — "localhost." is how you write the fully
-// qualified form — and the browser treats it as a secure context, so it must not
-// fall through to "remote host, plain HTTP".
+// The trailing-dot trim below is now moot in practice — relyingParty refuses a
+// trailing-dot host before this is ever called — but is kept so this function
+// stays correct on its own terms if it's ever called directly.
 func isSecureLocalHost(host string) bool {
 	host = strings.ToLower(strings.TrimSuffix(strings.Trim(host, "[]"), "."))
 	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
