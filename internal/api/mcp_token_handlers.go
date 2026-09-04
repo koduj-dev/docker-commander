@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -239,6 +241,85 @@ func (s *Server) handleRevokeMCPToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, "mcp.token.revoke", chi.URLParam(r, "id"), "")
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// mcpSessionJSON is one connector session — an OAuth authorization grant plus
+// the refresh-token chain it started. The session id itself is never
+// returned as anything sensitive (it isn't a bearer credential, just a
+// revoke-by-id lookup key), but it also serves no purpose in the UI, so it is
+// omitted like the API-token secret is.
+type mcpSessionJSON struct {
+	ID         string `json:"id"`
+	ClientID   string `json:"clientId"`
+	ClientName string `json:"clientName"`
+	IP         string `json:"ip"`
+	UserAgent  string `json:"userAgent"`
+	CreatedAt  string `json:"createdAt"`
+	LastUsedAt string `json:"lastUsedAt"`
+	ExpiresAt  string `json:"expiresAt"`
+}
+
+// clientNameLookup resolves client ids to display names in one pass, falling
+// back to the raw id for a client that was since deleted (its sessions are
+// purged with it, so in practice this is defensive, not a real path).
+func (s *Server) clientNameLookup(ctx context.Context) map[string]string {
+	clients, err := s.store.ListOAuthClients(ctx)
+	names := make(map[string]string, len(clients))
+	if err == nil {
+		for _, c := range clients {
+			names[c.ID] = c.Name
+		}
+	}
+	return names
+}
+
+func toMCPSessionJSON(sess store.MCPOAuthSession, clientNames map[string]string) mcpSessionJSON {
+	name := clientNames[sess.ClientID]
+	if name == "" {
+		name = sess.ClientID
+	}
+	return mcpSessionJSON{
+		ID: sess.ID, ClientID: sess.ClientID, ClientName: name,
+		IP: sess.IP, UserAgent: sess.UserAgent,
+		CreatedAt: sess.CreatedAt.Format(time.RFC3339), LastUsedAt: sess.LastUsedAt.Format(time.RFC3339),
+		ExpiresAt: sess.ExpiresAt.Format(time.RFC3339),
+	}
+}
+
+// handleListMCPSessions returns the caller's own connector sessions.
+func (s *Server) handleListMCPSessions(w http.ResponseWriter, r *http.Request) {
+	c, _ := auth.ClaimsFrom(r.Context())
+	sessions, err := s.store.ListMCPOAuthSessions(r.Context(), c.UserID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not list sessions")
+		return
+	}
+	names := s.clientNameLookup(r.Context())
+	out := make([]mcpSessionJSON, 0, len(sessions))
+	for _, sess := range sessions {
+		out = append(out, toMCPSessionJSON(sess, names))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleRevokeMCPSession revokes one of the caller's own sessions — both the
+// session and its current refresh token — without touching the client's other
+// sessions or de-registering the client itself.
+func (s *Server) handleRevokeMCPSession(w http.ResponseWriter, r *http.Request) {
+	c, _ := auth.ClaimsFrom(r.Context())
+	id := chi.URLParam(r, "id")
+	// Scoped by user id in the store, so another account's session id — even if
+	// somehow known — revokes nothing and reads as missing.
+	if err := s.store.RevokeMCPOAuthSession(r.Context(), id, c.UserID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "session not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "could not revoke session")
+		return
+	}
+	s.audit(r, "mcp.session.revoke", id, "")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

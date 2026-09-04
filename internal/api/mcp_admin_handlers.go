@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -121,5 +122,72 @@ func (s *Server) handleAdminDeleteOAuthClient(w http.ResponseWriter, r *http.Req
 		return
 	}
 	s.audit(r, "mcp.admin.oauth_client.delete", id, "")
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+type adminMCPSessionJSON struct {
+	ID         string `json:"id"`
+	UserID     int64  `json:"userId"`
+	Username   string `json:"username"`
+	ClientID   string `json:"clientId"`
+	ClientName string `json:"clientName"`
+	IP         string `json:"ip"`
+	UserAgent  string `json:"userAgent"`
+	CreatedAt  string `json:"createdAt"`
+	LastUsedAt string `json:"lastUsedAt"`
+	ExpiresAt  string `json:"expiresAt"`
+}
+
+// handleAdminListMCPSessions returns every user's active connector sessions,
+// annotated with the owner's username. Unlike human web-login sessions —
+// deliberately self-service only, since an admin view over everyone's login
+// times/locations would be surveillance rather than administration — MCP
+// sessions are a credential-management surface: the client and token they
+// belong to are already fleet-wide visible/revocable to admins above, so a
+// session (the same credential's current live grant) belongs at the same
+// level, not behind a narrower rule invented just for this one row.
+func (s *Server) handleAdminListMCPSessions(w http.ResponseWriter, r *http.Request) {
+	sessions, err := s.store.ListAllMCPOAuthSessions(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not list sessions")
+		return
+	}
+	names := s.clientNameLookup(r.Context())
+	out := make([]adminMCPSessionJSON, 0, len(sessions))
+	for _, sess := range sessions {
+		u, uerr := s.store.UserByID(r.Context(), sess.UserID)
+		username := ""
+		if uerr == nil {
+			username = u.Username
+		}
+		name := names[sess.ClientID]
+		if name == "" {
+			name = sess.ClientID
+		}
+		out = append(out, adminMCPSessionJSON{
+			ID: sess.ID, UserID: sess.UserID, Username: username,
+			ClientID: sess.ClientID, ClientName: name,
+			IP: sess.IP, UserAgent: sess.UserAgent,
+			CreatedAt: sess.CreatedAt.Format(time.RFC3339), LastUsedAt: sess.LastUsedAt.Format(time.RFC3339),
+			ExpiresAt: sess.ExpiresAt.Format(time.RFC3339),
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleAdminRevokeMCPSession revokes any user's session by id — the session
+// and its current refresh token — without touching the client's other
+// sessions or de-registering the client itself. 404 if the id is unknown.
+func (s *Server) handleAdminRevokeMCPSession(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := s.store.AdminRevokeMCPOAuthSession(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "session not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "could not revoke session")
+		return
+	}
+	s.audit(r, "mcp.admin.session.revoke", id, "")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

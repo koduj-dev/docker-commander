@@ -206,7 +206,7 @@ func (h *handler) verifyToken(ctx context.Context, token string, req *http.Reque
 	// has exactly two dots; only accept it if it fully verifies (signature, alg,
 	// expiry, audience), otherwise fall through to the opaque-token path.
 	if len(h.deps.SigningKey) > 0 && h.deps.ResourceURL != "" && strings.Count(token, ".") == 2 {
-		if uid, cid, ro, exp, err := parseAccessToken(h.deps.SigningKey, h.deps.ResourceURL, token); err == nil {
+		if uid, cid, sid, ro, exp, err := parseAccessToken(h.deps.SigningKey, h.deps.ResourceURL, token); err == nil {
 			u, uerr := h.deps.Store.UserByID(ctx, uid)
 			if uerr != nil {
 				return nil, auth.ErrInvalidToken
@@ -218,6 +218,20 @@ func (h *handler) verifyToken(ctx context.Context, token string, req *http.Reque
 			// "revoked" that quietly means "revoked in fifteen minutes".
 			if cid != "" {
 				if _, cerr := h.deps.Store.OAuthClientByID(ctx, cid); cerr != nil {
+					return nil, auth.ErrInvalidToken
+				}
+			}
+			// The specific SESSION must still exist too — narrower than the
+			// client check above, this is what lets one connector session be
+			// revoked (e.g. a stolen token, or just "sign this one out")
+			// without touching the client's other sessions or removing the
+			// client itself. Revoking a session also deletes its refresh
+			// token in the same transaction, so this check and the refresh
+			// grant failing closed together are what make "revoked" mean now,
+			// not "in up to fifteen minutes".
+			if sid != "" {
+				ok, serr := h.deps.Store.MCPOAuthSessionExists(ctx, sid, uid)
+				if serr != nil || !ok {
 					return nil, auth.ErrInvalidToken
 				}
 			}

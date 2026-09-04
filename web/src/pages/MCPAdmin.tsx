@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { Trash2, KeyRound, Clock, ShieldCheck, Plug, User } from "lucide-react";
+import { Trash2, KeyRound, Clock, ShieldCheck, Plug, User, Fingerprint } from "lucide-react";
 import { api } from "../lib/api";
-import type { AdminMCPToken, AdminOAuthClient } from "../lib/types";
+import type { AdminMCPToken, AdminOAuthClient, AdminMCPSession } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import clsx from "clsx";
 import { Tabs } from "../components/Tabs";
@@ -9,19 +9,22 @@ import { EmptyState, Spinner } from "../components/ui";
 import { useDialogs } from "../components/Dialog";
 
 // MCP Admin — a fleet-wide view of every user's MCP credentials. Unlike the
-// self-service "MCP Access" page (each user sees only their own tokens), this
-// lists ALL active API tokens with their owners and every registered OAuth
-// client, and lets an admin revoke/delete any of them. Admin-only: the route is
-// gated by the "__admin" section on the backend.
+// self-service "MCP Access" page (each user sees only their own tokens/
+// sessions), this lists ALL active API tokens with their owners, every
+// registered OAuth client, and every live connector session, and lets an
+// admin revoke/delete any of them. Admin-only: the route is gated by the
+// "__admin" section on the backend.
 export function MCPAdmin() {
   const dialogs = useDialogs();
   const [tokens, setTokens] = useState<AdminMCPToken[] | null>(null);
   const [clients, setClients] = useState<AdminOAuthClient[] | null>(null);
-  const [tab, setTab] = useState<"tokens" | "clients">("tokens");
+  const [sessions, setSessions] = useState<AdminMCPSession[] | null>(null);
+  const [tab, setTab] = useState<"tokens" | "clients" | "sessions">("tokens");
 
   const load = useCallback(() => {
     api.mcpAdminTokens().then(setTokens).catch(() => setTokens([]));
     api.mcpAdminOAuthClients().then(setClients).catch(() => setClients([]));
+    api.mcpAdminSessions().then(setSessions).catch(() => setSessions([]));
   }, []);
   useEffect(() => load(), [load]);
 
@@ -47,7 +50,18 @@ export function MCPAdmin() {
     load();
   };
 
-  if (!tokens || !clients) return (<><PageHeader title="MCP Admin" /><div className="p-6 flex items-center gap-2 text-muted"><Spinner /> Loading…</div></>);
+  const revokeSession = async (sess: AdminMCPSession) => {
+    if (!(await dialogs.confirm({
+      title: "Revoke session",
+      message: <>Revoke this <code className="font-mono text-text">{sess.clientName}</code> session owned by <strong>{sess.username}</strong>? Its access token and refresh token both stop working immediately; the client's other sessions are unaffected.</>,
+      danger: true,
+      confirmLabel: "Revoke",
+    }))) return;
+    await api.mcpAdminRevokeSession(sess.id);
+    load();
+  };
+
+  if (!tokens || !clients || !sessions) return (<><PageHeader title="MCP Admin" /><div className="p-6 flex items-center gap-2 text-muted"><Spinner /> Loading…</div></>);
 
   return (
     <>
@@ -59,6 +73,7 @@ export function MCPAdmin() {
           tabs={[
             { key: "tokens", label: "API tokens", icon: <KeyRound className="h-4 w-4" />, count: tokens.length },
             { key: "clients", label: "OAuth clients", icon: <Plug className="h-4 w-4" />, count: clients.length },
+            { key: "sessions", label: "Sessions", icon: <Fingerprint className="h-4 w-4" />, count: sessions.length },
           ]}
         />
         <section className={clsx("space-y-3", tab !== "tokens" && "hidden")}>
@@ -120,12 +135,45 @@ export function MCPAdmin() {
           )}
         </section>
 
+        <section className={clsx("space-y-3", tab !== "sessions" && "hidden")}>
+          <p className="text-xs text-muted">Every live OAuth connector session across all users — one row per authorized pairing, not per short-lived access token.</p>
+          {sessions.length === 0 ? (
+            <EmptyState title="No active sessions" hint="A session appears once a connector completes the OAuth authorization flow against this server." />
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {sessions.map((sess) => (
+                <div key={sess.id} className="card p-4">
+                  <div className="flex items-start justify-between">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 font-medium">
+                        <Fingerprint className="h-4 w-4 text-accent" /> {sess.clientName}
+                      </div>
+                      <div className="text-xs text-muted mt-1 flex items-center gap-1">
+                        <User className="h-3 w-3" /> {sess.username}
+                      </div>
+                      {(sess.ip || sess.userAgent) && (
+                        <div className="text-xs text-muted mt-0.5 break-all">{sess.ip}{sess.ip && sess.userAgent ? " · " : ""}{sess.userAgent}</div>
+                      )}
+                      <div className="text-xs text-muted mt-0.5 flex flex-wrap gap-x-3">
+                        <span>created {fmtDate(sess.createdAt)}</span>
+                        <span>· last used {fmtDate(sess.lastUsedAt)}</span>
+                        <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> expires {fmtDate(sess.expiresAt)}</span>
+                      </div>
+                    </div>
+                    <button className="btn-ghost px-2 py-1 text-danger" title="Revoke" onClick={() => revokeSession(sess)}><Trash2 className="h-4 w-4" /></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
         <p className="text-xs text-muted flex items-start gap-1.5">
           <ShieldCheck className="h-4 w-4 text-accent shrink-0 mt-0.5" />
-          Tokens authenticate AI tools as their owner and never exceed that user's live permissions. Revoking a token or
-          removing a client takes effect immediately. Secrets are never shown here — only metadata. How long new tokens
-          may live is set in <strong>Settings → Security</strong>; changing it does not affect the tokens listed above,
-          so revoke here anything that should not outlive the new rule.
+          Tokens authenticate AI tools as their owner and never exceed that user's live permissions. Revoking a token,
+          removing a client, or revoking one session takes effect immediately. Secrets are never shown here — only
+          metadata. How long new tokens may live is set in <strong>Settings → Security</strong>; changing it does not
+          affect the tokens listed above, so revoke here anything that should not outlive the new rule.
         </p>
       </div>
     </>
