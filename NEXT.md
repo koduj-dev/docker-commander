@@ -447,38 +447,40 @@ Recorded so they don't get re-proposed.
 
 ## 🗺️ Working priority order
 
-Agreed 2026-08-27. Check items off as they ship; revisit the order deliberately
-if priorities change, don't just silently reshuffle it.
-
-**Now — one bundle (shares a single state-diff engine):**
+**Agreed 2026-08-27** — done, all shipped in 1.7.0:
 - [x] Deployment plan / diff
 - [x] Drift detection (view/reconcile/ignore shipped; "adopt" deliberately deferred, see below)
 - [x] Deployment revisions and rollback (Projects only; CLI-discovered Stacks and remote seeded-volume snapshots still open, see below)
-
-**Next, each standalone:**
 - [x] Portable recovery bundle
 - [x] Policy checks before deploy
 - [x] Volume data: trigger-and-status wrapper
 
+**Agreed 2026-09-04** — final feature set for 1.7.0, security/RBAC first. Check
+items off as they ship; revisit the order deliberately if priorities change,
+don't just silently reshuffle it. (Original numbering from the candidate list
+kept in parentheses for traceability.)
+
+1. [ ] Per-session MCP token revocation (#20)
+2. [ ] Project secrets (#10)
+3. [ ] Alert delivery retry (#12)
+4. [ ] Maintenance windows / silences (#6)
+5. [ ] Controlled image updates (#11) — together with self-update auto-apply
+   policy (#19), same poll/policy/audit/notify shape, one applied to
+   workloads and the other to DC's own binary
+6. [ ] Per-container domain + TLS / embedded reverse proxy (#13)
+7. [ ] Network alerting / top talkers (#21)
+
 **Not yet ordered**, full ranked candidate list (original numbering kept as-is —
-#4, #7, #8 are pulled up into "Next" above, this is everything else, in
-descending priority, no agreed commitment yet, revisit before reshuffling):
+this is everything not pulled into a bundle above, in descending priority, no
+agreed commitment yet, revisit before reshuffling):
 
 5. Incident timeline / correlation
-6. Maintenance windows / silences
 9. External / synthetic checks
-10. Project secrets
-11. Controlled image updates
-12. Alert delivery retry
-13. Per-container domain + TLS (embedded reverse proxy)
 14. GitOps stack deploy
 15. Lightweight webhook redeploy
 16. OIDC / SSO
 17. Aggregated cross-host dashboard
 18. Host groups / tags
-19. Self-update auto-apply policy
-20. Per-session MCP token revocation
-21. Network alerting / top talkers
 22. Monorepo-aware mapping (depends on #14)
 23. Multi-instance federation
 24. Smaller well-scoped items (bulk-action per-host RBAC, log bookmarks/forwarding,
