@@ -29,10 +29,13 @@ All notable changes to Docker Commander are documented here. The format follows
   definitions, alert rules and webhooks, image digests, and (opt-in)
   instance settings — into one `.dcbundle` file, and import it elsewhere. No
   volume data. The exporting admin chooses, per export, whether to include
-  secrets (host TLS keys, registry passwords, webhook URLs, SMTP/LDAP
-  passwords) and whether to passphrase-encrypt the whole bundle
-  (Argon2id-derived AES-256-GCM, the same scheme `dockercmd backup` already
-  uses, now shared via `internal/passphrase`). Import always **inspects**
+  store-managed secrets (host TLS keys, registry passwords, webhook URLs,
+  SMTP/LDAP passwords). A passphrase (Argon2id-derived AES-256-GCM, the same
+  scheme `dockercmd backup` already uses, now shared via `internal/passphrase`)
+  is optional for a bundle carrying no projects, but **required** the moment
+  any project is included — a project's own files (`.env`, keys, ...) may
+  carry secrets no matter what the store-managed-secrets choice was, so
+  exporting one unencrypted is never allowed. Import always **inspects**
   first — a read-only compatibility check against a chosen target host
   (missing images/volumes, hosts a project references but the bundle
   doesn't carry) — before anything is written, and never overwrites an

@@ -64,11 +64,15 @@ function ExportPanel() {
         <input type="checkbox" checked={includeSecrets} onChange={(e) => setIncludeSecrets(e.target.checked)} />
         Include secrets (host TLS keys, registry passwords, webhook URLs, SMTP/LDAP passwords)
       </label>
-      <label className="block text-sm mb-1">Passphrase (optional — encrypts the whole bundle)</label>
+      <p className="text-sm text-muted mb-3">
+        Project files (e.g. <code>.env</code>) may carry their own secrets regardless of this
+        checkbox — a passphrase is required whenever the export includes any project.
+      </p>
+      <label className="block text-sm mb-1">Passphrase (required unless the bundle carries no projects)</label>
       <input
         type="password"
         className="input w-full mb-4"
-        placeholder={includeSecrets ? "Strongly recommended when including secrets" : "Leave blank for an unencrypted bundle"}
+        placeholder="Required when the export includes project files or secrets"
         value={passphrase}
         onChange={(e) => setPassphrase(e.target.value)}
       />
@@ -193,7 +197,8 @@ function CompatibilityView({ manifest, report }: { manifest: RecoveryManifestSum
       <div className="text-muted mb-2">
         Exported {new Date(manifest.exportedAt).toLocaleString()}
         {manifest.exportedBy && ` by ${manifest.exportedBy}`} — {manifest.projects} project(s), {manifest.hosts} host(s), {manifest.registries} registr{manifest.registries === 1 ? "y" : "ies"}, {manifest.alertRules} alert rule(s).
-        {report.secretsExcluded && " No secrets included."}
+        {report.secretsExcluded ? " Store-managed secrets (host keys, registry/SMTP/LDAP passwords, webhook URLs) excluded." : " Store-managed secrets included."}
+        {manifest.projects > 0 && " Project files may still carry their own secrets (e.g. .env), independent of the above."}
       </div>
       {issues.length === 0 ? (
         <div className="flex items-center gap-2 text-ok"><CheckCircle2 className="h-4 w-4" /> No compatibility issues found.</div>

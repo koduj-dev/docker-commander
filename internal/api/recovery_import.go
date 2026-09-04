@@ -274,9 +274,47 @@ func (s *Server) handleImportRecoveryBundle(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]any{"summary": summary, "warnings": warnings})
 }
 
+// validateBundleProjectFilesBudget sums the declared size and count of every
+// "projects/" entry in the archive and rejects the whole import up front if
+// either exceeds what any real export of this app could ever have produced
+// (maxBundleTotalBytes / maxBundleTotalFiles) — before a single host,
+// registry, or project file is written. A zip entry's declared size is
+// itself untrusted, so this is a fast first gate, not the only one:
+// extraction below re-enforces the same budgets against actual bytes read.
+func validateBundleProjectFilesBudget(zr *zip.Reader) error {
+	return validateProjectFilesBudget(zr, maxBundleTotalBytes, maxBundleTotalFiles)
+}
+
+// validateProjectFilesBudget is validateBundleProjectFilesBudget with
+// injectable limits, so tests can exercise the rejection path with a
+// small, cheaply-constructed archive instead of one actually sized past the
+// real (gigabyte-scale) production constants.
+func validateProjectFilesBudget(zr *zip.Reader, maxBytes int64, maxFiles int) error {
+	var totalBytes int64
+	var totalFiles int
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() || !strings.HasPrefix(f.Name, "projects/") {
+			continue
+		}
+		totalFiles++
+		totalBytes += int64(f.UncompressedSize64)
+	}
+	if totalFiles > maxFiles {
+		return fmt.Errorf("bundle carries too many project files (%d, max %d)", totalFiles, maxFiles)
+	}
+	if totalBytes > maxBytes {
+		return fmt.Errorf("bundle's project files exceed the total size limit (%d bytes, max %d)", totalBytes, maxBytes)
+	}
+	return nil
+}
+
 func (s *Server) applyRecoveryBundle(ctx context.Context, m *recoveryManifest, zr *zip.Reader, defaultHostID int64, applySettings bool, createdBy string) (importSummary, []string, error) {
 	var summary importSummary
 	var warnings []string
+
+	if err := validateBundleProjectFilesBudget(zr); err != nil {
+		return summary, nil, err
+	}
 
 	existingHosts, err := s.store.ListHosts(ctx)
 	if err != nil {
@@ -416,6 +454,16 @@ func (s *Server) applyRecoveryBundle(ctx context.Context, m *recoveryManifest, z
 		projectSlugs[p.Slug] = true
 	}
 
+	// Shared across every project's extraction below (decremented cumulatively,
+	// not reset per project) — a per-project cap alone still lets a
+	// many-project bundle unpack far more than any real export could ever
+	// have packed. validateBundleProjectFilesBudget already rejected a
+	// bundle whose declared metadata exceeds this; these are the same
+	// budgets re-enforced against ACTUAL bytes read, in case declared sizes
+	// don't match reality.
+	projectByteBudget := int64(maxBundleTotalBytes)
+	projectFileBudget := maxBundleTotalFiles
+
 	for _, pm := range m.Projects {
 		if projectSlugs[pm.Slug] {
 			warnings = append(warnings, fmt.Sprintf("project %q already exists, skipped", pm.Slug))
@@ -448,7 +496,18 @@ func (s *Server) applyRecoveryBundle(ctx context.Context, m *recoveryManifest, z
 			warnings = append(warnings, fmt.Sprintf("project %q skipped: %s", pm.Slug, terr))
 			continue
 		}
-		extractZipPrefixToDir(zr, "projects/"+pm.Slug+"/", staging)
+		if _, eerr := extractZipPrefixToDir(zr, "projects/"+pm.Slug+"/", staging, &projectByteBudget, &projectFileBudget); eerr != nil {
+			warnings = append(warnings, fmt.Sprintf("project %q skipped: could not extract its files: %s", pm.Slug, eerr))
+			os.RemoveAll(staging)
+			if errors.Is(eerr, errBundleTooLarge) {
+				// The bundle already unpacked more than any real export
+				// could ever have packed — declared metadata lied. Stop
+				// processing further projects rather than keep extracting
+				// against an archive that's no longer trustworthy.
+				break
+			}
+			continue
+		}
 		if _, verr := docker.ComposeConfig(ctx, staging, pm.Slug); verr != nil {
 			warnings = append(warnings, fmt.Sprintf("project %q skipped: its files no longer validate: %s", pm.Slug, verr))
 			os.RemoveAll(staging)
@@ -485,7 +544,18 @@ func (s *Server) applyRecoveryBundle(ctx context.Context, m *recoveryManifest, z
 // extractZipPrefixToDir is extractZipToDir, scoped to entries under prefix
 // within a shared multi-project zip — the same per-file safety
 // (safeJoin, size cap, file-count cap) as its single-project counterpart.
-func extractZipPrefixToDir(zr *zip.Reader, prefix, root string) int {
+//
+// byteBudget and fileBudget are shared across every project extracted from
+// the same bundle (the caller decrements them across calls, not just within
+// one) — a per-project cap alone still lets a bundle with many projects
+// unpack far more than any single export could ever have packed. Once
+// either is exhausted, extraction stops and errBundleTooLarge is returned;
+// the caller decides whether to abort the whole import (it should — the
+// bundle already unpacked more than maxBundleTotalBytes/maxBundleTotalFiles
+// alone. Any read/write error is also returned rather than swallowed, so a
+// truncated or corrupted entry fails this project's extraction instead of
+// silently landing a partial file.
+func extractZipPrefixToDir(zr *zip.Reader, prefix, root string, byteBudget *int64, fileBudget *int) (int, error) {
 	count := 0
 	for _, f := range zr.File {
 		if f.FileInfo().IsDir() || count >= maxProjectFiles {
@@ -499,18 +569,33 @@ func extractZipPrefixToDir(zr *zip.Reader, prefix, root string) int {
 		if err != nil || f.UncompressedSize64 > maxProjectFileBytes {
 			continue
 		}
+		if *fileBudget <= 0 || *byteBudget <= 0 {
+			return count, errBundleTooLarge
+		}
 		rc, err := f.Open()
 		if err != nil {
-			continue
+			return count, fmt.Errorf("reading %q: %w", f.Name, err)
 		}
-		content, _ := io.ReadAll(io.LimitReader(rc, maxProjectFileBytes))
+		content, rerr := io.ReadAll(io.LimitReader(rc, maxProjectFileBytes+1))
 		rc.Close()
+		if rerr != nil {
+			return count, fmt.Errorf("reading %q: %w", f.Name, rerr)
+		}
+		if int64(len(content)) > maxProjectFileBytes {
+			return count, fmt.Errorf("entry %q exceeds the per-file size limit", f.Name)
+		}
+		if int64(len(content)) > *byteBudget {
+			return count, errBundleTooLarge
+		}
 		if err := os.MkdirAll(filepath.Dir(full), projectDirMode); err != nil {
-			continue
+			return count, err
 		}
-		if os.WriteFile(full, content, projectFileMode) == nil {
-			count++
+		if err := os.WriteFile(full, content, projectFileMode); err != nil {
+			return count, err
 		}
+		*byteBudget -= int64(len(content))
+		*fileBudget--
+		count++
 	}
-	return count
+	return count, nil
 }

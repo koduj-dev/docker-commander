@@ -290,13 +290,16 @@ func TestRecoveryImportExport_ProjectRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	w := exportRecoveryRequest(srv, admin, `{}`, "")
+	// A bundle that carries project files must be encrypted (see
+	// TestPentestRecoveryExport_RefusesUnencryptedProjectExport) — this test
+	// is about the project round-trip, not that policy, so it supplies one.
+	w := exportRecoveryRequest(srv, admin, `{}`, "correct horse battery staple")
 	if w.Code != http.StatusOK {
 		t.Fatalf("export status = %d: %s", w.Code, w.Body.String())
 	}
 
 	dst, dstAdmin := newRecoveryServer(t)
-	iw := importRecoveryRequest(dst, dstAdmin, w.Body.Bytes(), "", "")
+	iw := importRecoveryRequest(dst, dstAdmin, w.Body.Bytes(), "correct horse battery staple", "")
 	if iw.Code != http.StatusOK {
 		t.Fatalf("import status = %d: %s", iw.Code, iw.Body.String())
 	}
@@ -560,6 +563,178 @@ func TestWriteDirToZip_RespectsAggregateBudget(t *testing.T) {
 	_, err := writeDirToZip(zw, root, "projects/p/", &budget)
 	if !errors.Is(err, errBundleTooLarge) {
 		t.Fatalf("writeDirToZip with an exhausted budget = %v, want errBundleTooLarge", err)
+	}
+}
+
+// PENTEST: a project's own files (.env, private keys, ...) may carry secrets
+// no matter what includeSecrets says — that flag only governs store-managed
+// secrets. An export that would carry project files must be refused without
+// a passphrase, so an operator can never end up with an unencrypted bundle
+// while believing (per the old "No secrets included" UI copy) that it holds
+// none.
+func TestPentestRecoveryExport_RefusesUnencryptedProjectExport(t *testing.T) {
+	srv, admin := newRecoveryServer(t)
+	ctx := context.Background()
+	pid, err := srv.store.CreateProject(ctx, &store.Project{Name: "shop", Slug: "dctest-recovery-secretcheck", ComposeFile: "compose.yml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := srv.projectRoot(pid)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("DB_PASSWORD=hunter2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	w := exportRecoveryRequest(srv, admin, `{}`, "")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("SECURITY: export with project files and no passphrase = %d, want 400: %s", w.Code, w.Body.String())
+	}
+
+	// Supplying a passphrase must succeed and actually protect the file.
+	w2 := exportRecoveryRequest(srv, admin, `{}`, "correct horse battery staple")
+	if w2.Code != http.StatusOK {
+		t.Fatalf("export with a passphrase = %d: %s", w2.Code, w2.Body.String())
+	}
+	if bytes.Contains(w2.Body.Bytes(), []byte("hunter2")) {
+		t.Error("SECURITY: an encrypted export leaked project file contents in plaintext")
+	}
+}
+
+// TestRecoveryExport_UploadLimitCoversWorstCaseExportSize: the importer's
+// upload cap must always be able to hold what the exporter is willing to
+// pack, plus manifest/zip/encryption-envelope overhead — otherwise a
+// legitimate maximal export the app itself produced could never be imported
+// back (the exact mismatch the review flagged).
+func TestRecoveryExport_UploadLimitCoversWorstCaseExportSize(t *testing.T) {
+	if maxRecoveryUploadBytes <= maxBundleTotalBytes {
+		t.Fatalf("maxRecoveryUploadBytes (%d) must exceed maxBundleTotalBytes (%d), or a maximal export can never be re-imported", maxRecoveryUploadBytes, maxBundleTotalBytes)
+	}
+}
+
+// TestRecoveryExport_DoesNotLeakTemporaryFiles: the export handler now
+// builds its zip on disk instead of in a bytes.Buffer (to avoid holding the
+// whole archive in memory) — the temp file it creates must always be
+// cleaned up.
+func TestRecoveryExport_DoesNotLeakTemporaryFiles(t *testing.T) {
+	before, _ := filepath.Glob(filepath.Join(os.TempDir(), "dc-recovery-export-*"))
+	srv, admin := newRecoveryServer(t)
+	if w := exportRecoveryRequest(srv, admin, `{"includeSecrets":true}`, "pass"); w.Code != http.StatusOK {
+		t.Fatalf("export status = %d: %s", w.Code, w.Body.String())
+	}
+	after, _ := filepath.Glob(filepath.Join(os.TempDir(), "dc-recovery-export-*"))
+	if len(after) > len(before) {
+		t.Errorf("export left a temp file behind: before=%v after=%v", before, after)
+	}
+}
+
+// TestValidateProjectFilesBudget_RejectsOverBudget: a bundle whose declared
+// project-file bytes or count exceed the given budget must be rejected
+// before any extraction begins (validateBundleProjectFilesBudget wraps this
+// with the real, gigabyte-scale production constants).
+func TestValidateProjectFilesBudget_RejectsOverBudget(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	mustZipEntry(t, zw, "projects/p/a.txt", bytes.Repeat([]byte("x"), 200))
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateProjectFilesBudget(zr, 100, 10); err == nil {
+		t.Error("a bundle whose declared project bytes exceed the byte budget must be rejected")
+	}
+	if err := validateProjectFilesBudget(zr, 1<<20, 0); err == nil {
+		t.Error("a bundle whose declared project file count exceeds the file budget must be rejected")
+	}
+	if err := validateProjectFilesBudget(zr, 1<<20, 10); err != nil {
+		t.Errorf("a bundle within budget must be accepted, got %v", err)
+	}
+}
+
+// TestExtractZipPrefixToDir_RespectsSharedByteBudget: two files that each
+// individually fit are still bounded by a budget SHARED across the whole
+// bundle's extraction (the caller decrements it across every project, not
+// just within one) — a many-project bundle must not unpack more than any
+// single export could ever have packed just by spreading files across
+// projects.
+func TestExtractZipPrefixToDir_RespectsSharedByteBudget(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	mustZipEntry(t, zw, "projects/p/a.txt", bytes.Repeat([]byte("x"), 100))
+	mustZipEntry(t, zw, "projects/p/b.txt", bytes.Repeat([]byte("y"), 100))
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	root := t.TempDir()
+	byteBudget := int64(150) // enough for one 100-byte file, not both
+	fileBudget := 100
+	if _, err := extractZipPrefixToDir(zr, "projects/p/", root, &byteBudget, &fileBudget); !errors.Is(err, errBundleTooLarge) {
+		t.Fatalf("extractZipPrefixToDir with an exhausted byte budget = %v, want errBundleTooLarge", err)
+	}
+}
+
+// TestExtractZipPrefixToDir_RespectsSharedFileBudget mirrors the byte-budget
+// test above for the file-count budget.
+func TestExtractZipPrefixToDir_RespectsSharedFileBudget(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	mustZipEntry(t, zw, "projects/p/a.txt", []byte("a"))
+	mustZipEntry(t, zw, "projects/p/b.txt", []byte("b"))
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	root := t.TempDir()
+	byteBudget := int64(maxProjectFileBytes) * 10
+	fileBudget := 1 // enough for one file, not both
+	if _, err := extractZipPrefixToDir(zr, "projects/p/", root, &byteBudget, &fileBudget); !errors.Is(err, errBundleTooLarge) {
+		t.Fatalf("extractZipPrefixToDir with an exhausted file budget = %v, want errBundleTooLarge", err)
+	}
+}
+
+// TestExtractZipPrefixToDir_PropagatesWriteErrors: a write failure (here: the
+// entry's target path is already occupied by a directory, so the final
+// os.WriteFile can never succeed) must abort extraction with an error
+// instead of silently skipping the entry and letting the caller believe
+// extraction succeeded.
+func TestExtractZipPrefixToDir_PropagatesWriteErrors(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	mustZipEntry(t, zw, "projects/p/data", []byte("data"))
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	root := t.TempDir()
+	// Every parent along the path genuinely exists as a directory — only the
+	// entry's own target path conflicts (it's a directory, not a file) — so
+	// this exercises the final os.WriteFile failing, not safeJoin rejecting
+	// the path outright.
+	if err := os.Mkdir(filepath.Join(root, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	byteBudget := int64(maxBundleTotalBytes)
+	fileBudget := maxBundleTotalFiles
+	if _, err := extractZipPrefixToDir(zr, "projects/p/", root, &byteBudget, &fileBudget); err == nil {
+		t.Fatal("a write failure during extraction must be reported, not swallowed")
 	}
 }
 
