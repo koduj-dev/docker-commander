@@ -991,3 +991,60 @@ export interface Session {
   /** The session making the request — never offer to sign this one out silently. */
   current: boolean;
 }
+
+/** A trigger-and-status wrapper around a user-supplied backup command (their
+ * own restic/borg/etc, already pointed at its own repository), run against a
+ * volume's or project's data on a schedule or on demand. Not a backup engine:
+ * no repository, retention or storage logic of Docker Commander's own. */
+export interface BackupJob {
+  id: number;
+  name: string;
+  enabled: boolean;
+  scope: "volume" | "project";
+  volumeName: string;
+  projectId: number;
+  hostId: number;
+  image: string;
+  command: string;
+  /** 0 = manual only (no schedule). */
+  intervalMinutes: number;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  lastRunAt: string | null;
+  lastRunOk: boolean;
+  lastRunDetail: string;
+}
+
+/** Create/update payload. env is write-only: sent here, never returned by
+ * BackupJob's list/get responses. */
+export interface BackupJobInput {
+  name: string;
+  enabled?: boolean;
+  scope: "volume" | "project";
+  volumeName?: string;
+  projectId?: number;
+  hostId?: number;
+  image: string;
+  command: string;
+  intervalMinutes: number;
+  env?: Record<string, string>;
+  /** Explicitly remove the stored env on update — an absent/empty env alone
+   * means "leave it untouched" (env is write-only, so a blank textarea can't
+   * by itself distinguish "unchanged" from "clear it"). */
+  clearEnv?: boolean;
+}
+
+/** One recorded execution of a backup job. */
+export interface BackupRun {
+  id: number;
+  jobId: number;
+  startedAt: string;
+  finishedAt: string;
+  ok: boolean;
+  exitCode: number;
+  output: string;
+  error: string;
+  /** "schedule" or the username that triggered a manual run. */
+  triggeredBy: string;
+}

@@ -7,6 +7,23 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Volume backup jobs.** A trigger-and-status wrapper around your own backup
+  command (restic, borg, or anything else already pointed at its own
+  repository) — not a backup engine of our own: no repositories, retention
+  policies or storage backend. A job runs its command inside a short-lived
+  Docker helper container against a single named **volume** or every named
+  volume a **project** actually created (found via Docker Compose's own
+  `com.docker.compose.project` label, not guessed from the compose file),
+  on a plain "every N minutes" interval or on demand via **Run now**, and
+  records ok/failed, exit code and captured output as run history (capped at
+  the 200 most recent runs per job, so a short interval can't grow the
+  database unbounded). A small status badge on the volume or project shows
+  the last outcome. Credentials the command needs (e.g. `RESTIC_PASSWORD`)
+  go in as an environment map, encrypted at rest and never returned by the
+  API once saved — and can be explicitly cleared from a job's edit form, not
+  just replaced. Admin-only — configuring one is arbitrary-command execution
+  plus a stored secret, the same class of surface as policy rules and the
+  recovery bundle above.
 - **Portable recovery bundle.** Export everything Docker Commander itself
   knows — every project's compose + sidecar files, host and registry
   definitions, alert rules and webhooks, image digests, and (opt-in)
@@ -59,10 +76,13 @@ All notable changes to Docker Commander are documented here. The format follows
   against what's running right now, reusing the exact same plan/diff engine
   (down to the env diff, key AND value — the same values the compose file
   and the existing Resolved preview already show at this permission level).
-  **Restore** re-validates the old snapshot in a scratch directory before
-  touching anything live, pins any service with a recorded digest so a
-  mutable tag can't quietly swap in a different image, redeploys with that
-  revision's own profiles, and becomes a new revision itself — history only
+  **Restore** validates the old snapshot — compose resolution, deploy
+  policy, and the digest-pin override that stops a mutable tag from
+  quietly swapping in a different image — entirely against a staging copy;
+  the live project directory is only ever touched by a single atomic swap
+  once every check has passed, and any later failure (including the deploy
+  itself) restores exactly what was there before. Redeploys with the
+  revision's own profiles and becomes a new revision itself — history only
   grows forward, it's never rewritten. Never touches named volumes. The
   project editor picks up the restored files and profiles immediately,
   without needing to be closed and reopened.

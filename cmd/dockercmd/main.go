@@ -29,6 +29,7 @@ import (
 	"github.com/koduj-dev/docker-commander/internal/api"
 	"github.com/koduj-dev/docker-commander/internal/auth"
 	"github.com/koduj-dev/docker-commander/internal/backup"
+	"github.com/koduj-dev/docker-commander/internal/backupjobs"
 	"github.com/koduj-dev/docker-commander/internal/config"
 	"github.com/koduj-dev/docker-commander/internal/crypto"
 	"github.com/koduj-dev/docker-commander/internal/docker"
@@ -516,6 +517,9 @@ func runServer(shutdownCtx context.Context) error {
 
 	// Clear any volume-browser helper containers left over from a previous run.
 	go dm.ReapAllVolumeHelpers(shutdownCtx)
+
+	// Start the volume backup job scheduler in the background.
+	go backupjobs.Run(shutdownCtx, st, dm)
 
 	// Serve the embedded SPA unless running in dev mode (Vite serves the UI).
 	webFS := serveWebFS(cfg)

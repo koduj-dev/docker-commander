@@ -67,6 +67,9 @@ import type {
   RecoveryImportSummary,
   PolicyRules,
   PolicyViolation,
+  BackupJob,
+  BackupJobInput,
+  BackupRun,
 } from "./types";
 import { getHostId, hostParam } from "./host";
 import type { CreationOptions, RequestOptions } from "./webauthn";
@@ -774,6 +777,10 @@ export const api = {
     req<{ ok: boolean; error?: string }>("POST", `/api/networks/${id}/disconnect${hostParam()}`, { container, force }),
 
   volumes: () => req<VolumeSummary[]>("GET", `/api/volumes${hostParam()}`),
+  // volumesForHost lists a SPECIFIC host's volumes, independent of the
+  // globally active host — used by the backup-job form, where the target
+  // host is a field on the job, not the shell's current selection.
+  volumesForHost: (hostId: number) => req<VolumeSummary[]>("GET", `/api/volumes?host=${hostId}`),
   createVolume: (b: { name: string; driver?: string }) =>
     req<{ ok: boolean; error?: string }>("POST", `/api/volumes${hostParam()}`, b),
   deleteVolume: (name: string, force = false) => {
@@ -909,6 +916,16 @@ export const api = {
       `/api/recovery/import${qs ? `?${qs}` : ""}`, file, passphrase,
     );
   },
+
+  // Volume backup jobs: a trigger-and-status wrapper around a user-supplied
+  // backup command. env is write-only — never returned by list/get.
+  backupJobs: () => req<BackupJob[]>("GET", "/api/backup-jobs"),
+  createBackupJob: (body: BackupJobInput) => req<{ id: number }>("POST", "/api/backup-jobs", body),
+  updateBackupJob: (id: number, body: BackupJobInput) => req<{ ok: boolean }>("PUT", `/api/backup-jobs/${id}`, body),
+  toggleBackupJob: (id: number, enabled: boolean) => req<{ ok: boolean }>("PATCH", `/api/backup-jobs/${id}`, { enabled }),
+  deleteBackupJob: (id: number) => req<{ ok: boolean }>("DELETE", `/api/backup-jobs/${id}`),
+  runBackupJob: (id: number) => req<{ ok: boolean }>("POST", `/api/backup-jobs/${id}/run`),
+  backupJobRuns: (id: number) => req<BackupRun[]>("GET", `/api/backup-jobs/${id}/runs`),
 };
 
 // File-browser adapters: the FileBrowser component works over a FileApi, so the

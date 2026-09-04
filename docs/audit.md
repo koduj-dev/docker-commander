@@ -43,7 +43,7 @@ against a username they guessed.
 
 ## Every action, by area
 
-All **146** of them, generated from the source and kept in step with it by a
+All **150** of them, generated from the source and kept in step with it by a
 test: an audited action with no entry here fails the build, and an entry the code
 never writes fails it too. The `auth.*` table above explains the ones worth reading
 when something feels wrong; this is the complete set, for looking up what you found
@@ -59,7 +59,7 @@ in the log.
 
 **Stacks** — `stack.compose.write`, `stack.redeploy`, `stack.redeploy.failed`, `stack.remove`, `stack.restart`, `stack.start`, `stack.stop`
 
-**Projects** — `project.create`, `project.delete`, `project.deploy`, `project.deploy.policy_block`, `project.deploy.policy_warn_ack`, `project.dir.create`, `project.down`, `project.drift.ignore`, `project.drift.unignore`, `project.file.delete`, `project.file.download`, `project.file.upload`, `project.file.write`, `project.import`, `project.remote_host_paths`, `project.rename`, `project.restart`, `project.retarget`, `project.revision.restore`, `project.revision.restore.policy_block`, `project.revision.restore.policy_warn_ack`, `project.seed_volumes.remove`
+**Projects** — `project.create`, `project.delete`, `project.deploy`, `project.deploy.policy_block`, `project.deploy.policy_check_failed`, `project.deploy.policy_warn_ack`, `project.dir.create`, `project.down`, `project.drift.ignore`, `project.drift.unignore`, `project.file.delete`, `project.file.download`, `project.file.upload`, `project.file.write`, `project.import`, `project.remote_host_paths`, `project.rename`, `project.restart`, `project.retarget`, `project.revision.restore`, `project.revision.restore.policy_block`, `project.revision.restore.policy_check_failed`, `project.revision.restore.policy_warn_ack`, `project.seed_volumes.remove`
 
 **Project templates** — `project_template.create`, `project_template.delete`, `project_template.dir.create`, `project_template.duplicate`, `project_template.file.delete`, `project_template.file.download`, `project_template.file.upload`, `project_template.file.write`, `project_template.update`
 
@@ -102,6 +102,8 @@ in the log.
 **Self-update** — `update.apply`, `update.restart`
 
 **Recovery bundle** — `recovery.export`, `recovery.import`, `recovery.inspect`
+
+**Backup jobs** — `backup_job.create`, `backup_job.delete`, `backup_job.run`, `backup_job.update`
 
 ## Tips
 - Use it to answer “who stopped that container?” or “when was this user created?”

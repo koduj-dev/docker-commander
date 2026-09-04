@@ -40,7 +40,12 @@ func refTagOrDigest(ref string) string {
 // isn't reachable, isn't configured, or doesn't answer with a digest — this
 // only ever informs a preview, so an unknown answer must never block one.
 func (m *Manager) ResolveImageDigest(ctx context.Context, ref string) (string, error) {
-	ref = strings.TrimSpace(strings.ToLower(ref))
+	// Only the host/repository path is case-normalized below (registryHost and
+	// repoPathForRef each lowercase what they need) — the tag itself is
+	// case-sensitive per the distribution spec ("repo:RC1" != "repo:rc1") and
+	// must reach refTagOrDigest unmodified, or digest lookups silently target
+	// the wrong tag.
+	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return "", nil
 	}
@@ -48,7 +53,7 @@ func (m *Manager) ResolveImageDigest(ctx context.Context, ref string) (string, e
 		return ref[i+1:], nil // already pinned to a digest — nothing to resolve
 	}
 
-	host := registryHost(ref)
+	host := registryHost(strings.ToLower(ref))
 	var auth *store.RegistryAuth
 	if host != "docker.io" {
 		a, err := m.store.AuthForHost(ctx, host)

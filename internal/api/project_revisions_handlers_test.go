@@ -549,6 +549,15 @@ func TestRestoreRevision_PreviewIsCleanAfterDigestPinnedRestore(t *testing.T) {
 		t.Fatalf("expected revision 1 to have captured a digest, got %+v", rev.Images)
 	}
 
+	// Snapshot before restore, not just glob-after: the glob pattern is
+	// process-wide, so a stray leftover from an unrelated/earlier run would
+	// otherwise be misattributed to this restore's own cleanup.
+	before, _ := filepath.Glob(filepath.Join(os.TempDir(), "dc-rollback-pin-*.yml"))
+	beforeSet := map[string]bool{}
+	for _, f := range before {
+		beforeSet[f] = true
+	}
+
 	w := restoreRevisionRequest(srv, pid, 1, admin, "admin", `{}`)
 	if w.Code != 200 {
 		t.Fatalf("restore status = %d: %s", w.Code, w.Body.String())
@@ -565,6 +574,24 @@ func TestRestoreRevision_PreviewIsCleanAfterDigestPinnedRestore(t *testing.T) {
 		t.Fatalf("restore did not succeed: %s / %s", resp.Error, resp.Output)
 	}
 
+	// The digest-pin override is a temp file outside the project folder
+	// (buildDigestPinOverride's caller) — a successful restore must remove
+	// it, not just on a later failure path. Regression for the defer bug
+	// where `defer cleanup()` captured cleanup's value before the pin block
+	// reassigned it, so the wrapper that deletes the pin file never ran.
+	// Only new files (absent from the `before` snapshot) count — anything
+	// else pre-dates this restore and isn't its leak to answer for.
+	after, _ := filepath.Glob(filepath.Join(os.TempDir(), "dc-rollback-pin-*.yml"))
+	var newlyLeaked []string
+	for _, f := range after {
+		if !beforeSet[f] {
+			newlyLeaked = append(newlyLeaked, f)
+		}
+	}
+	if len(newlyLeaked) != 0 {
+		t.Errorf("digest pin override temp file(s) leaked after a successful restore: %v", newlyLeaked)
+	}
+
 	pw := previewRequest(srv, pid, admin, "admin")
 	if pw.Code != 200 {
 		t.Fatalf("preview status = %d: %s", pw.Code, pw.Body.String())
@@ -575,5 +602,224 @@ func TestRestoreRevision_PreviewIsCleanAfterDigestPinnedRestore(t *testing.T) {
 	}
 	if len(prev.Changes) != 0 {
 		t.Errorf("preview right after a correct restore must report nothing to reconcile, got %+v", prev.Changes)
+	}
+}
+
+// TestRestoreRevision_PolicyBlockLeavesLiveProjectUntouched is the
+// regression test for P1-1: restore must validate everything — including
+// policy — against a staged copy of the revision, and only ever touch the
+// live project directory after every check has passed. Restoring a revision
+// that a block-mode policy now rejects must leave the live project's files
+// and running container exactly as they were.
+func TestRestoreRevision_PolicyBlockLeavesLiveProjectUntouched(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	const slug = "dctest-restore-policy-block"
+	composeV1 := "services:\n  web:\n    image: " + deployTestImage + "\n    command: [\"sleep\", \"300\"]\n    privileged: true\n"
+	srv, st, pid, admin := deployTestServer(t, slug, composeV1)
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = docker.ComposeDown(bg, srv.projectRoot(pid), slug, nil)
+		freeDeployStack(slug)
+	})
+
+	// Revision 1: privileged, deployed before any policy exists to block it.
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+
+	// Revision 2: not privileged — this becomes "what's actually running".
+	composeV2 := "services:\n  web:\n    image: " + deployTestImage + "\n    command: [\"sleep\", \"300\"]\n"
+	root := srv.projectRoot(pid)
+	if err := os.WriteFile(filepath.Join(root, "compose.yml"), []byte(composeV2), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+
+	if err := st.SetPolicyRuleModes(context.Background(), map[string]string{"privileged": "block"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Restoring revision 1 now hits a block-mode violation.
+	w := restoreRevisionRequest(srv, pid, 1, admin, "admin", `{}`)
+	if w.Code != 200 {
+		t.Fatalf("restore status = %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		OK     bool `json:"ok"`
+		Policy struct {
+			Blocked []docker.PolicyViolation `json:"blocked"`
+		} `json:"policy"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.OK {
+		t.Fatal("a block-mode violation on the restored revision must refuse the restore")
+	}
+	if len(resp.Policy.Blocked) != 1 || resp.Policy.Blocked[0].Rule != docker.RulePrivileged {
+		t.Errorf("expected exactly one privileged violation reported, got %+v", resp.Policy.Blocked)
+	}
+
+	// The live project's files must still be v2 — SECURITY/correctness:
+	// under the old code this had already been overwritten with v1's
+	// content before the policy check ever ran.
+	got, err := os.ReadFile(filepath.Join(root, "compose.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != composeV2 {
+		t.Errorf("live compose.yml changed despite the restore being policy-blocked:\ngot:  %q\nwant: %q", got, composeV2)
+	}
+	if n := runningServiceCount(t, slug, "web"); n != 1 {
+		t.Errorf("the running container must be unaffected by a blocked restore, got %d running", n)
+	}
+	if _, err := os.Stat(root + ".restore-staging"); !os.IsNotExist(err) {
+		t.Error("a staging directory leaked after a policy-blocked restore")
+	}
+	if _, err := os.Stat(root + ".restore-backup"); !os.IsNotExist(err) {
+		t.Error("a backup directory leaked after a policy-blocked restore")
+	}
+}
+
+// TestCaptureRevision_SnapshotDirFailureLeavesRevisionMarkedInvalid is the
+// regression test for P2-1: if the on-disk snapshot can never be written,
+// the revision row must not be left claiming Valid=true — restore must
+// never be offered a revision whose file doesn't actually exist.
+func TestCaptureRevision_SnapshotDirFailureLeavesRevisionMarkedInvalid(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	const slug = "dctest-revision-capture-fail"
+	compose := "services:\n  web:\n    image: " + deployTestImage + "\n"
+	srv, st, pid, admin := deployTestServer(t, slug, compose)
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = docker.ComposeDown(bg, srv.projectRoot(pid), slug, nil)
+		freeDeployStack(slug)
+	})
+
+	// Force os.MkdirAll(revisionsDir, ...) to fail deterministically (works
+	// even running as root, unlike a permission-bit trick): pre-create a
+	// plain file at the exact path the snapshot directory needs to occupy.
+	revDir := srv.projectRevisionsDir(pid)
+	if err := os.MkdirAll(filepath.Dir(revDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(revDir, []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(revDir) })
+
+	// The deploy itself must still succeed — a revision-capture hiccup is
+	// never surfaced as a deploy failure (existing, deliberate design).
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+
+	rev, err := st.RevisionByNumber(context.Background(), pid, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rev.Valid {
+		t.Errorf("revision recorded Valid=true despite the snapshot directory never being created: %+v", rev)
+	}
+	if rev.ValidationError == "" {
+		t.Error("expected a ValidationError explaining the failed capture")
+	}
+	if _, err := os.Stat(srv.revisionZipPath(pid, 1)); err == nil {
+		t.Error("no snapshot should exist on disk for a revision that failed to capture")
+	}
+
+	// And restore must refuse it cleanly rather than trying to read a
+	// nonexistent zip.
+	w := restoreRevisionRequest(srv, pid, 1, admin, "admin", `{}`)
+	if w.Code != 200 {
+		t.Fatalf("restore status = %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.OK {
+		t.Fatal("restoring a revision with no valid snapshot must not report success")
+	}
+}
+
+// TestRestoreRevision_DigestPinOverrideFailureIsFatal is the regression test
+// for P2-2's first half: if the digest-pin override file can't be built,
+// restore must refuse outright rather than silently deploying unpinned (a
+// mutable tag could then pull a different image than the one this revision
+// actually recorded), and must leave the live project untouched.
+func TestRestoreRevision_DigestPinOverrideFailureIsFatal(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	const slug = "dctest-restore-pin-fail"
+	compose := "services:\n  web:\n    image: " + deployTestImage + "\n    command: [\"sleep\", \"300\"]\n"
+	srv, st, pid, admin := deployTestServer(t, slug, compose)
+	if err := st.EnsureLocalHost(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = docker.ComposeDown(bg, srv.projectRoot(pid), slug, nil)
+		freeDeployStack(slug)
+	})
+
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+	rev, err := st.RevisionByNumber(context.Background(), pid, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rev.Images) != 1 || rev.Images[0].Digest == "" {
+		t.Fatalf("expected revision 1 to have captured a digest to pin, got %+v", rev.Images)
+	}
+
+	root := srv.projectRoot(pid)
+	before, err := os.ReadFile(filepath.Join(root, "compose.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Force os.CreateTemp("", "dc-rollback-pin-*.yml") to fail: point TMPDIR
+	// at a path that exists but isn't a directory.
+	notADir := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(notADir, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", notADir)
+
+	w := restoreRevisionRequest(srv, pid, 1, admin, "admin", `{}`)
+	if w.Code == 200 {
+		var resp struct {
+			OK bool `json:"ok"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if resp.OK {
+			t.Fatal("restore must not report success when the digest pin override can't be written")
+		}
+	}
+
+	after, err := os.ReadFile(filepath.Join(root, "compose.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Error("a restore that fails while preparing the digest pin override must leave the live project untouched")
 	}
 }
