@@ -63,6 +63,12 @@ func sectionForPath(path string) string {
 		// instance — the same class of instance-wide, credential-bearing
 		// surface as smtp/ldap/users above, not a per-section grant.
 		return "__admin"
+	case "backup-jobs":
+		// A job stores arbitrary-command execution (run via a Docker helper
+		// container against any volume/project's data) plus a stored secret
+		// blob (e.g. a restic/borg repository password) — at least as
+		// credential/security-bearing as policy-rules/recovery above.
+		return "__admin"
 	case "stats":
 		// The dashboard's own data: /stats/overview enumerates every running
 		// container with its resource usage, and /stats/ports enumerates every

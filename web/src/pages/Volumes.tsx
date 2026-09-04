@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { Database, Trash2, Loader2, Eraser, FileSearch, Plus, Boxes, FolderOpen, X } from "lucide-react";
 import { api, fileApiForVolume } from "../lib/api";
-import type { VolumeSummary } from "../lib/types";
+import type { BackupJob, VolumeSummary } from "../lib/types";
 import { relTime } from "../lib/format";
+import { getHostId } from "../lib/host";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
 import { InspectModal } from "../components/InspectModal";
@@ -40,6 +41,11 @@ export function Volumes() {
   const [inspect, setInspect] = useState<VolumeSummary | null>(null);
   const [browse, setBrowse] = useState<VolumeSummary | null>(null);
   const [showForm, setShowForm] = useState(false);
+  // Indexed by volume name, for the small backup-status badge below. Fetching
+  // fails silently (403) for a non-admin, since backup jobs are admin-only —
+  // the badge just doesn't render, rather than surfacing an error for a
+  // feature this user can't see anyway.
+  const [backupJobs, setBackupJobs] = useState<Map<string, BackupJob>>(new Map());
   const dialogs = useDialogs();
 
   // Closing the browser also tears down the helper container DC spun up.
@@ -50,6 +56,16 @@ export function Volumes() {
 
   const load = useCallback(() => {
     api.volumes().then(setVols).catch(() => setVols([]));
+    api.backupJobs()
+      .then((jobs) => {
+        const activeHost = getHostId() ?? 0;
+        const byVolume = new Map<string, BackupJob>();
+        for (const j of jobs) {
+          if (j.scope === "volume" && (j.hostId || 0) === activeHost) byVolume.set(j.volumeName, j);
+        }
+        setBackupJobs(byVolume);
+      })
+      .catch(() => {});
   }, []);
   useEffect(() => load(), [load]);
 
@@ -123,6 +139,14 @@ export function Volumes() {
                         {inUse && (
                           <span className="text-[10px] bg-ok/15 text-ok rounded-sm px-1.5 py-0.5 inline-flex items-center gap-1">
                             <Boxes className="h-3 w-3" /> in use by {(v.inUseBy ?? []).join(", ")}
+                          </span>
+                        )}
+                        {backupJobs.has(v.name) && (
+                          <span
+                            className={`text-[10px] rounded-sm px-1.5 py-0.5 ${backupJobs.get(v.name)!.lastRunOk ? "bg-ok/15 text-ok" : backupJobs.get(v.name)!.lastRunAt ? "bg-danger/15 text-danger" : "bg-panel2 text-muted"}`}
+                            title={backupJobs.get(v.name)!.lastRunDetail || undefined}
+                          >
+                            backup: {backupJobs.get(v.name)!.lastRunAt ? (backupJobs.get(v.name)!.lastRunOk ? "ok" : "failed") : "never run"}
                           </span>
                         )}
                       </div>

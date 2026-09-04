@@ -80,6 +80,7 @@ level filters, regex search and structured parsing.
 - Single CGO-free binary, embedded UI, systemd unit, config file, **native HTTPS** (built-in `--make-certs` self-signed cert helper, **automatic ACME/Let's Encrypt certificates** for a public host with no reverse proxy, or behind a proxy), `/healthz` probe, and structured alert logging to the journal/syslog. See [Deployment](docs/deployment.md).
 - **Self-update** — a **one-tap in-app update & restart** for admins (and an "update available" banner), plus the `dockercmd --self-upgrade` command (SHA-256-verified, atomic binary replace).
 - **Portable recovery bundle** — export everything the app knows (every project's files, host and registry definitions, alert rules, image digests, and, opt-in, instance settings) as one file, with secrets and passphrase-encryption both opt-in at export time; import runs a read-only **compatibility check** against a chosen target host before writing anything, and never overwrites an existing host/registry/project by name.
+- **Volume backup jobs** — a trigger-and-status wrapper around your own backup command (restic, borg, anything already pointed at its own repository): run it against a volume or every named volume a project created, on an interval or on demand, and see ok/failed status and run history. Not a backup engine of ours — no repositories, retention or storage of its own. Admin-only.
 
 ## 🏗️ Architecture
 
@@ -387,8 +388,8 @@ notify webhooks (Go-template bodies) and/or email. **Prometheus:** scrape
 ## 🧪 How it's tested
 
 You're pointing this at real Docker daemons, so the fast tests are the floor, not
-the ceiling. Alongside **~840 Go unit tests** and **~215 frontend tests**, the repo
-carries **115 adversarial "pentest" cases** that assert attacks are *rejected* (token
+the ceiling. Alongside **~840 Go unit tests** and **~240 frontend tests**, the repo
+carries **132 adversarial "pentest" cases** that assert attacks are *rejected* (token
 forgery, OAuth replay, CSRF, IDOR, per-host scope bypass, privilege escalation,
 path traversal), an integration tier against a **real Docker daemon** (plus
 throwaway Redis / OpenLDAP / SMTP), and an end-to-end tier that deploys to
