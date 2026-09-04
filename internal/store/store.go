@@ -433,10 +433,11 @@ CREATE TABLE IF NOT EXISTS ignored_cves (
 -- elsewhere. No declared FK (this schema doesn't use them anywhere) —
 -- DeleteProject removes matching rows itself.
 CREATE TABLE IF NOT EXISTS project_drift_ignores (
-	project_id INTEGER NOT NULL,
-	service    TEXT NOT NULL,
-	kind       TEXT NOT NULL,
-	created_at TEXT NOT NULL,
+	project_id  INTEGER NOT NULL,
+	service     TEXT NOT NULL,
+	kind        TEXT NOT NULL,
+	fingerprint TEXT NOT NULL DEFAULT '',
+	created_at  TEXT NOT NULL,
 	PRIMARY KEY (project_id, service, kind)
 );
 
@@ -545,6 +546,12 @@ CREATE INDEX IF NOT EXISTS idx_project_revisions_project ON project_revisions(pr
 		// profile set", not "stopped". Empty means never successfully deployed, or
 		// deployed with no profiles.
 		`ALTER TABLE projects ADD COLUMN last_deployed_profiles TEXT NOT NULL DEFAULT ''`,
+		// Scopes a drift ignore to the specific from/to/detail values reviewed,
+		// not just the (service, kind) pair — see ProjectDriftIgnore's doc
+		// comment. A pre-existing row from before this column defaults to '',
+		// which never matches a real fingerprint, so it simply stops applying
+		// rather than mismatching something it was never meant to cover.
+		`ALTER TABLE project_drift_ignores ADD COLUMN fingerprint TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := s.db.ExecContext(ctx, alter); err != nil && !isDuplicateColumn(err) {
 			return err

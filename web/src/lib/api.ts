@@ -556,9 +556,11 @@ export const api = {
   previewProject: (id: number) => req<DeployPreview>("GET", `/api/projects/${id}/preview`),
   // Marks one (service, kind) drift as reviewed/accepted so it stops counting
   // toward `active` on future previews (still shown, marked `ignored`), or
-  // reverses that.
-  ignoreDrift: (id: number, service: string, kind: string) =>
-    req<{ ok: boolean }>("POST", `/api/projects/${id}/drift/ignore`, { service, kind }),
+  // reverses that. from/to/detail are the change's own content — the server
+  // fingerprints them so the ignore is scoped to this specific drift, not
+  // every future change of the same (service, kind).
+  ignoreDrift: (id: number, service: string, kind: string, from?: string, to?: string, detail?: string) =>
+    req<{ ok: boolean }>("POST", `/api/projects/${id}/drift/ignore`, { service, kind, from, to, detail }),
   unignoreDrift: (id: number, service: string, kind: string) =>
     req<{ ok: boolean }>("POST", `/api/projects/${id}/drift/unignore`, { service, kind }),
   // Deployment revisions: an immutable history of a project's deploys, with

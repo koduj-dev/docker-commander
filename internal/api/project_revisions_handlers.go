@@ -53,6 +53,13 @@ func (s *Server) captureRevision(ctx context.Context, p *store.Project, profiles
 		log.Printf("project revision: record deploy for %q: %v", p.Slug, err)
 		return
 	}
+	// A redeploy supersedes whatever drift was previously reviewed and
+	// accepted: don't let an old ignore silently re-apply if the exact same
+	// drift value coincidentally reappears later without a human looking at
+	// it again (see docker.ChangeFingerprint / store.ClearDriftIgnores).
+	if err := s.store.ClearDriftIgnores(ctx, p.ID); err != nil {
+		log.Printf("project revision: clear drift ignores for %q: %v", p.Slug, err)
+	}
 	dir := s.projectRevisionsDir(p.ID)
 	if err := os.MkdirAll(dir, projectDirMode); err != nil {
 		log.Printf("project revision: create snapshot dir for %q: %v", p.Slug, err)

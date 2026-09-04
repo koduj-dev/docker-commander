@@ -223,7 +223,7 @@ export function DeployPreviewModal({
     setBusyKey(key);
     try {
       if (c.ignored) await api.unignoreDrift(projectId, c.service, c.kind);
-      else await api.ignoreDrift(projectId, c.service, c.kind);
+      else await api.ignoreDrift(projectId, c.service, c.kind, c.from, c.to, c.detail);
       onChanged();
     } finally {
       setBusyKey(null);

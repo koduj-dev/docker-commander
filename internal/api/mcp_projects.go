@@ -174,9 +174,9 @@ func (s *Server) mcpPreviewProject(ctx context.Context, id int64) (mcp.ProjectPr
 	s.docker.AugmentDigestDrift(ctx, p.HostID, &prev, containers)
 	docker.ExtendServiceComparison(&prev, resolved, running)
 	if ignores, ierr := s.store.ListDriftIgnores(ctx, p.ID); ierr == nil && len(ignores) > 0 {
-		ignored := make(map[[2]string]bool, len(ignores))
+		ignored := make(map[[3]string]bool, len(ignores))
 		for _, ig := range ignores {
-			ignored[[2]string{ig.Service, ig.Kind}] = true
+			ignored[[3]string{ig.Service, ig.Kind, ig.Fingerprint}] = true
 		}
 		docker.MarkIgnoredChanges(prev.Changes, ignored)
 	}

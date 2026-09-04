@@ -19,8 +19,12 @@ import (
 )
 
 func driftRequest(srv *Server, pid, uid int64, role, action, service, kind string) *httptest.ResponseRecorder {
+	return driftRequestWithValue(srv, pid, uid, role, action, service, kind, "", "", "")
+}
+
+func driftRequestWithValue(srv *Server, pid, uid int64, role, action, service, kind, from, to, detail string) *httptest.ResponseRecorder {
 	sid := strconv.FormatInt(pid, 10)
-	body, _ := json.Marshal(map[string]string{"service": service, "kind": kind})
+	body, _ := json.Marshal(map[string]string{"service": service, "kind": kind, "from": from, "to": to, "detail": detail})
 	r := httptest.NewRequest("POST", "/api/projects/"+sid+"/drift/"+action, bytes.NewReader(body)).WithContext(ctxAs(uid, role))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", sid)
@@ -92,6 +96,33 @@ func TestHandleIgnoreDrift_PersistsAndUnignore(t *testing.T) {
 	}
 }
 
+// The stored ignore must be scoped to the specific from/to values submitted,
+// not just (service, kind) — otherwise ignoring one env change would also
+// silently accept every future, unrelated env change on that service.
+func TestHandleIgnoreDrift_ScopesToFingerprintOfSpecificChange(t *testing.T) {
+	srv, pid, admin := newDriftTestServer(t)
+
+	w := driftRequestWithValue(srv, pid, admin, "admin", "ignore", "web", "env", "FOO=1", "FOO=2", "")
+	if w.Code != 200 {
+		t.Fatalf("ignore status = %d: %s", w.Code, w.Body.String())
+	}
+	list, err := srv.store.ListDriftIgnores(context.Background(), pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("list = %+v, want one entry", list)
+	}
+	want := docker.ChangeFingerprint(docker.ServiceChange{Kind: "env", From: "FOO=1", To: "FOO=2"})
+	if list[0].Fingerprint != want {
+		t.Errorf("Fingerprint = %q, want %q (derived from the submitted from/to)", list[0].Fingerprint, want)
+	}
+	other := docker.ChangeFingerprint(docker.ServiceChange{Kind: "env", From: "BAR=1", To: "BAR=2"})
+	if list[0].Fingerprint == other {
+		t.Errorf("a different env change must not fingerprint the same as FOO=1->FOO=2")
+	}
+}
+
 func TestHandleIgnoreDrift_RequiresServiceAndKind(t *testing.T) {
 	srv, pid, admin := newDriftTestServer(t)
 	w := driftRequest(srv, pid, admin, "admin", "ignore", "", "env")
@@ -130,7 +161,25 @@ func TestHandlePreviewProject_IgnoredDriftExcludedFromActive(t *testing.T) {
 	// "added" is a real, deterministic change for this never-deployed project
 	// (no live daemon involved), so the mechanism can be tested without a
 	// running container.
-	if w := driftRequest(srv, pid, admin, "admin", "ignore", "web", "added"); w.Code != 200 {
+	//
+	// The ignore request carries the change's actual from/to/detail, exactly
+	// like the real frontend does (it ignores from the preview it already has
+	// on screen) — the server fingerprints those, so an ignore call that
+	// omitted them would (correctly) fail to match this specific change.
+	first := previewRequest(srv, pid, admin, "admin")
+	if first.Code != 200 {
+		t.Fatalf("preview status = %d: %s", first.Code, first.Body.String())
+	}
+	var pre mcp.ProjectPreview
+	if err := json.Unmarshal(first.Body.Bytes(), &pre); err != nil {
+		t.Fatalf("decode: %v (%s)", err, first.Body.String())
+	}
+	if len(pre.Changes) != 1 {
+		t.Fatalf("expected exactly one change before ignoring, got %+v", pre.Changes)
+	}
+	change := pre.Changes[0]
+
+	if w := driftRequestWithValue(srv, pid, admin, "admin", "ignore", change.Service, change.Kind, change.From, change.To, change.Detail); w.Code != 200 {
 		t.Fatalf("ignore status = %d: %s", w.Code, w.Body.String())
 	}
 
