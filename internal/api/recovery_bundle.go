@@ -36,9 +36,23 @@ const (
 	maxBundleCollectionItems = 5000
 
 	// maxRecoveryUploadBytes caps the raw uploaded bundle file (compressed,
-	// and passphrase-sealed if encrypted) — the same shape as maxImportBytes
-	// for a single project's zip, sized up for a multi-project bundle.
-	maxRecoveryUploadBytes = 128 << 20
+	// and passphrase-sealed if encrypted). Sized as maxBundleTotalBytes (the
+	// most project-file content an export can ever pack) plus generous
+	// headroom for manifest.json, zip local-file-header overhead, and the
+	// passphrase envelope's salt/nonce/length framing plus the GCM tag —
+	// all of which are tiny compared to the budget, but the margin is kept
+	// wide on purpose. Anything this app itself exports must always be
+	// importable again: a poorly-compressible export that legitimately used
+	// the full byte budget must never be rejected on upload.
+	maxRecoveryUploadBytes = maxBundleTotalBytes + (64 << 20)
+
+	// maxBundleTotalFiles caps the total number of project files an import
+	// will unpack across the WHOLE bundle (every project combined) —
+	// independent of, and much smaller than, maxBundleProjects ×
+	// maxProjectFiles (500 × 100 = 50000). Bounds filesystem/inode overhead
+	// from a bundle crafted with many tiny files even while staying under
+	// maxBundleTotalBytes.
+	maxBundleTotalFiles = 20000
 
 	// maxManifestBytes caps how much of manifest.json's DECOMPRESSED bytes
 	// get decoded — a zip entry's declared uncompressed size is untrusted
@@ -49,12 +63,17 @@ const (
 
 	// maxBundleTotalBytes caps the SUM of every project file packed into an
 	// export, independent of the existing per-file (maxProjectFileBytes) and
-	// per-project (maxProjectFiles) caps — the whole zip is built in memory
-	// (bytes.Buffer) before it's sealed/sent, so without an aggregate cap a
+	// per-project (maxProjectFiles) caps — without an aggregate cap a
 	// sufficiently populated instance (up to maxBundleProjects projects ×
 	// maxProjectFiles files × maxProjectFileBytes each) could ask for tens
 	// of gigabytes in one request. An admin who needs more than this in one
 	// bundle should export a narrower `projectIds` selection instead.
+	//
+	// The SAME constant also bounds the total project-file bytes an IMPORT
+	// will unpack across every project in the bundle: a bundle this app
+	// itself produced can never exceed it, so anything larger on import is
+	// either a hand-crafted or corrupted archive and is rejected before any
+	// project file is written.
 	maxBundleTotalBytes = 1 << 30 // 1 GiB
 )
 

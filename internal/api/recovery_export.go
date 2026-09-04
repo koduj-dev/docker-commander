@@ -2,11 +2,12 @@ package api
 
 import (
 	"archive/zip"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -31,6 +32,7 @@ func (s *Server) handleExportRecoveryBundle(w http.ResponseWriter, r *http.Reque
 		ProjectIDs     []int64 `json:"projectIds"`
 	}
 	_ = decodeJSON(r, &body) // an empty/absent body is a valid "export everything, no secrets"
+	pass := r.Header.Get(recoveryPassphraseHeader)
 
 	manifest, err := s.buildRecoveryManifest(r.Context(), body.IncludeSecrets, body.ProjectIDs, currentUsername(r))
 	if err != nil {
@@ -38,8 +40,34 @@ func (s *Server) handleExportRecoveryBundle(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
+	// A project's own files (.env, private keys, registry configs, ...) can
+	// carry secrets no matter what includeSecrets says — that flag only
+	// gates store-managed secrets (host/registry/SMTP/LDAP/webhook
+	// credentials). Rather than guess at filtering arbitrary project files,
+	// treat any bundle that carries project files as sensitive outright and
+	// require it be encrypted, so an operator can never end up with an
+	// unencrypted bundle they believe holds "no secrets" while it actually
+	// contains a project's .env.
+	if len(manifest.Projects) > 0 && pass == "" {
+		writeErr(w, http.StatusBadRequest, "a passphrase is required: this export includes project files, which may contain their own secrets (e.g. .env)")
+		return
+	}
+
+	// Build the zip on disk, not in a bytes.Buffer: the whole archive would
+	// otherwise be held in memory just to assemble it (on top of whatever
+	// SealTo needs below), and a near-maxBundleTotalBytes export can
+	// otherwise transiently need well over a gigabyte of RAM.
+	tmp, err := os.CreateTemp("", "dc-recovery-export-*.zip")
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer func() {
+		tmp.Close()
+		os.Remove(tmp.Name())
+	}()
+
+	zw := zip.NewWriter(tmp)
 	mw, err := zw.Create("manifest.json")
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -68,17 +96,33 @@ func (s *Server) handleExportRecoveryBundle(w http.ResponseWriter, r *http.Reque
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
-	pass := r.Header.Get(recoveryPassphraseHeader)
 	filename := "docker-commander-recovery-" + time.Now().UTC().Format("2006-01-02") + ".dcbundle"
 	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
 	w.Header().Set("Content-Type", "application/octet-stream")
 
 	var werr error
 	if pass == "" {
-		werr = passphrase.WritePlainTo(w, recoveryMagic, bytes.NewReader(buf.Bytes()))
+		// No encryption requested, and (per the check above) that's only
+		// reachable when the bundle carries no project files — stream
+		// straight from disk to the response, no in-memory copy at all.
+		werr = passphrase.WritePlainTo(w, recoveryMagic, tmp)
 	} else {
-		werr = passphrase.SealTo(w, recoveryMagic, buf.Bytes(), pass)
+		// SealTo authenticates the whole plaintext as one AEAD unit (see its
+		// own doc comment — chunking would invite a truncation attack for no
+		// benefit here), so this read is unavoidable, but it's now the ONLY
+		// full-size in-memory copy instead of one held throughout assembly
+		// plus a second one made by Seal itself.
+		plain, rerr := io.ReadAll(tmp)
+		if rerr != nil {
+			writeErr(w, http.StatusInternalServerError, rerr.Error())
+			return
+		}
+		werr = passphrase.SealTo(w, recoveryMagic, plain, pass)
 	}
 	if werr != nil {
 		// Headers (and likely some body bytes) are already sent, so nothing
