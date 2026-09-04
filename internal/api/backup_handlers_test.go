@@ -152,6 +152,58 @@ func TestBackupJobs_CreateListGetUpdateDelete(t *testing.T) {
 	}
 }
 
+// clearEnv is the only way to remove stored env — an update without it (even
+// with an empty/absent env map) must leave the existing secret untouched.
+func TestBackupJobs_UpdateClearEnv(t *testing.T) {
+	srv, admin := newBackupJobsServer(t)
+
+	createBody := `{"name":"nightly","scope":"volume","volumeName":"data","hostId":1,
+		"image":"restic/restic","command":"restic backup /data","intervalMinutes":60,
+		"env":{"RESTIC_PASSWORD":"s3cret"}}`
+	r := httptest.NewRequest("POST", "/api/backup-jobs", strings.NewReader(createBody)).WithContext(ctxAsNamed(admin, "admin", "admin"))
+	w := httptest.NewRecorder()
+	srv.handleCreateBackupJob(w, r)
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	idStr := strconv.FormatInt(created.ID, 10)
+
+	// An update with no env and no clearEnv keeps the stored secret.
+	noopUpdate := `{"name":"nightly","scope":"volume","volumeName":"data","hostId":1,
+		"image":"restic/restic","command":"restic backup /data","intervalMinutes":60}`
+	r = httptest.NewRequest("PUT", "/api/backup-jobs/"+idStr, strings.NewReader(noopUpdate)).WithContext(ctxAsNamed(admin, "admin", "admin"))
+	r = withURLParam(r, "id", idStr)
+	w = httptest.NewRecorder()
+	srv.handleUpdateBackupJob(w, r)
+	if w.Code != 200 {
+		t.Fatalf("update status = %d: %s", w.Code, w.Body.String())
+	}
+	if env, err := srv.store.BackupJobEnv(context.Background(), created.ID); err != nil || env["RESTIC_PASSWORD"] != "s3cret" {
+		t.Fatalf("blank update should keep the stored secret, got %+v err=%v", env, err)
+	}
+
+	// clearEnv:true removes it, even though env is still absent.
+	clearUpdate := `{"name":"nightly","scope":"volume","volumeName":"data","hostId":1,
+		"image":"restic/restic","command":"restic backup /data","intervalMinutes":60,"clearEnv":true}`
+	r = httptest.NewRequest("PUT", "/api/backup-jobs/"+idStr, strings.NewReader(clearUpdate)).WithContext(ctxAsNamed(admin, "admin", "admin"))
+	r = withURLParam(r, "id", idStr)
+	w = httptest.NewRecorder()
+	srv.handleUpdateBackupJob(w, r)
+	if w.Code != 200 {
+		t.Fatalf("clear update status = %d: %s", w.Code, w.Body.String())
+	}
+	env, err := srv.store.BackupJobEnv(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(env) != 0 {
+		t.Errorf("clearEnv should remove the stored secret, got %+v", env)
+	}
+}
+
 func TestBackupJobs_CreateValidation(t *testing.T) {
 	srv, admin := newBackupJobsServer(t)
 	for _, body := range []string{

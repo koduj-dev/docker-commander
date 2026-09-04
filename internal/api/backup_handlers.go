@@ -24,6 +24,10 @@ type backupJobBody struct {
 	Command         string            `json:"command"`
 	IntervalMinutes int               `json:"intervalMinutes"`
 	Env             map[string]string `json:"env"`
+	// ClearEnv explicitly removes the stored env on update — the only way to
+	// do so, since an absent/empty Env alone means "leave it untouched" (see
+	// store.UpdateBackupJob).
+	ClearEnv bool `json:"clearEnv"`
 }
 
 // validateBackupJobBody checks the fields RunJob's scope switch depends on are
@@ -123,7 +127,7 @@ func (s *Server) handleUpdateBackupJob(w http.ResponseWriter, r *http.Request) {
 		Name: b.Name, Scope: b.Scope, VolumeName: b.VolumeName, ProjectID: b.ProjectID,
 		HostID: b.HostID, Image: b.Image, Command: b.Command, IntervalMinutes: b.IntervalMinutes,
 	}
-	if err := s.store.UpdateBackupJob(r.Context(), id, job, b.Env); err != nil {
+	if err := s.store.UpdateBackupJob(r.Context(), id, job, b.Env, b.ClearEnv); err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not update backup job")
 		return
 	}

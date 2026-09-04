@@ -53,6 +53,11 @@ type BackupRun struct {
 // runaway command can't grow the database unbounded.
 const maxBackupRunOutput = 256 << 10
 
+// maxBackupRunsPerJob caps how many run records are kept per job — the
+// per-row output cap alone doesn't bound the table: an interval as short as
+// one minute would otherwise let a single job's history grow forever.
+const maxBackupRunsPerJob = 200
+
 // ListBackupJobs returns every configured backup job, without env.
 func (s *Store) ListBackupJobs(ctx context.Context) ([]BackupJob, error) {
 	rows, err := s.db.QueryContext(ctx, `
@@ -107,14 +112,20 @@ func (s *Store) CreateBackupJob(ctx context.Context, j *BackupJob, env map[strin
 // leaves the stored one untouched — the same "blank keeps the existing
 // secret" convention SetSMTP/SetLDAP use — since env is write-only and a form
 // re-displaying it would otherwise have to blank it out on every edit,
-// silently wiping credentials whenever an unrelated field changes.
-func (s *Store) UpdateBackupJob(ctx context.Context, id int64, j *BackupJob, env map[string]string) error {
+// silently wiping credentials whenever an unrelated field changes. Pass
+// clearEnv to explicitly remove the stored env instead — the only way to
+// actually delete it, since an empty map alone is indistinguishable from "the
+// caller didn't touch this field".
+func (s *Store) UpdateBackupJob(ctx context.Context, id int64, j *BackupJob, env map[string]string, clearEnv bool) error {
 	var enc string
-	if len(env) == 0 {
+	switch {
+	case clearEnv:
+		enc = ""
+	case len(env) == 0:
 		if err := s.db.QueryRowContext(ctx, `SELECT env_enc FROM backup_jobs WHERE id = ?`, id).Scan(&enc); err != nil {
 			return err
 		}
-	} else {
+	default:
 		var err error
 		enc, err = s.encryptEnv(env)
 		if err != nil {
@@ -195,14 +206,23 @@ func (s *Store) DueBackupJobs(ctx context.Context, now time.Time) ([]BackupJob, 
 	return out, rows.Err()
 }
 
-// RecordBackupRun appends a run to a job's history and updates the job's
-// denormalized last_run_* fields for O(1) status badge lookups.
+// RecordBackupRun appends a run to a job's history, updates the job's
+// denormalized last_run_* fields for O(1) status badge lookups, and prunes
+// history beyond maxBackupRunsPerJob — all in one transaction, so a crash or
+// a failed statement can't leave a recorded run with a stale job status (or
+// vice versa).
 func (s *Store) RecordBackupRun(ctx context.Context, run *BackupRun) (int64, error) {
 	output := run.Output
 	if len(output) > maxBackupRunOutput {
 		output = output[:maxBackupRunOutput]
 	}
-	res, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx, `
 		INSERT INTO backup_runs (job_id, started_at, finished_at, ok, exit_code, output, error, triggered_by)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		run.JobID, run.StartedAt.UTC().Format(time.RFC3339), run.FinishedAt.UTC().Format(time.RFC3339),
@@ -210,16 +230,37 @@ func (s *Store) RecordBackupRun(ctx context.Context, run *BackupRun) (int64, err
 	if err != nil {
 		return 0, err
 	}
+
 	detail := run.Error
 	if run.OK {
 		detail = ""
 	}
-	if _, err := s.db.ExecContext(ctx, `
+	upd, err := tx.ExecContext(ctx, `
 		UPDATE backup_jobs SET last_run_at = ?, last_run_ok = ?, last_run_detail = ? WHERE id = ?`,
-		run.FinishedAt.UTC().Format(time.RFC3339), boolToInt(run.OK), detail, run.JobID); err != nil {
+		run.FinishedAt.UTC().Format(time.RFC3339), boolToInt(run.OK), detail, run.JobID)
+	if err != nil {
 		return 0, err
 	}
-	return res.LastInsertId()
+	if n, err := upd.RowsAffected(); err != nil {
+		return 0, err
+	} else if n == 0 {
+		// The job was deleted concurrently — roll back the orphaned run too
+		// rather than leaving history for a job that no longer exists.
+		return 0, ErrNotFound
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM backup_runs WHERE job_id = ? AND id NOT IN (
+			SELECT id FROM backup_runs WHERE job_id = ? ORDER BY id DESC LIMIT ?
+		)`, run.JobID, run.JobID, maxBackupRunsPerJob); err != nil {
+		return 0, err
+	}
+
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	return id, tx.Commit()
 }
 
 // ListBackupRuns returns a job's run history, most recent first.

@@ -34,7 +34,7 @@ func TestBackupJobsCRUD(t *testing.T) {
 	if err := s.UpdateBackupJob(ctx, id, &BackupJob{
 		Name: "nightly2", Scope: BackupScopeVolume, VolumeName: "data2", HostID: 1,
 		Image: "restic/restic", Command: "restic backup /data", IntervalMinutes: 30,
-	}, map[string]string{"RESTIC_PASSWORD": "newpw"}); err != nil {
+	}, map[string]string{"RESTIC_PASSWORD": "newpw"}, false); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = s.BackupJobByID(ctx, id)
@@ -105,7 +105,7 @@ func TestUpdateBackupJob_BlankEnvKeepsExisting(t *testing.T) {
 
 	if err := s.UpdateBackupJob(ctx, id, &BackupJob{
 		Name: "j2", Scope: BackupScopeVolume, VolumeName: "v", Image: "busybox", Command: "true",
-	}, nil); err != nil {
+	}, nil, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -120,12 +120,26 @@ func TestUpdateBackupJob_BlankEnvKeepsExisting(t *testing.T) {
 	// A non-empty env on a later update still replaces it.
 	if err := s.UpdateBackupJob(ctx, id, &BackupJob{
 		Name: "j2", Scope: BackupScopeVolume, VolumeName: "v", Image: "busybox", Command: "true",
-	}, map[string]string{"RESTIC_PASSWORD": "rotated"}); err != nil {
+	}, map[string]string{"RESTIC_PASSWORD": "rotated"}, false); err != nil {
 		t.Fatal(err)
 	}
 	env, _ = s.BackupJobEnv(ctx, id)
 	if env["RESTIC_PASSWORD"] != "rotated" {
 		t.Errorf("non-empty env on update should replace the stored secret, got %+v", env)
+	}
+
+	// clearEnv explicitly removes the stored secret, even with an empty map.
+	if err := s.UpdateBackupJob(ctx, id, &BackupJob{
+		Name: "j2", Scope: BackupScopeVolume, VolumeName: "v", Image: "busybox", Command: "true",
+	}, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	env, err = s.BackupJobEnv(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(env) != 0 {
+		t.Errorf("clearEnv should remove the stored secret, got %+v", env)
 	}
 }
 
@@ -281,5 +295,73 @@ func TestDeleteBackupJob_RemovesRuns(t *testing.T) {
 	}
 	if n != 0 {
 		t.Errorf("expected run history to be removed with the job, found %d", n)
+	}
+}
+
+// A single job's history is pruned to maxBackupRunsPerJob — the per-run
+// output cap alone doesn't bound the table, only the row count does.
+func TestRecordBackupRun_PrunesHistoryBeyondLimit(t *testing.T) {
+	s, ctx := newStore(t)
+	id, err := s.CreateBackupJob(ctx, &BackupJob{
+		Name: "j", Scope: BackupScopeVolume, VolumeName: "v", Image: "busybox", Command: "true",
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	base := time.Now().Truncate(time.Second)
+	total := maxBackupRunsPerJob + 10
+	for i := 0; i < total; i++ {
+		ts := base.Add(time.Duration(i) * time.Second)
+		if _, err := s.RecordBackupRun(ctx, &BackupRun{JobID: id, StartedAt: ts, FinishedAt: ts, OK: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM backup_runs WHERE job_id = ?`, id).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != maxBackupRunsPerJob {
+		t.Errorf("expected history pruned to %d rows, got %d", maxBackupRunsPerJob, n)
+	}
+
+	// The most recent run must survive the prune, not an arbitrary one.
+	runs, err := s.ListBackupRuns(ctx, id, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantLatest := base.Add(time.Duration(total-1) * time.Second)
+	if len(runs) != 1 || !runs[0].StartedAt.Equal(wantLatest) {
+		t.Errorf("expected the newest run to survive pruning, got %+v (want started_at %v)", runs, wantLatest)
+	}
+}
+
+// RecordBackupRun must be atomic: if the job it belongs to no longer exists
+// (deleted concurrently, e.g. by a scheduler racing a delete), the run insert
+// rolls back too rather than leaving an orphaned history row for a job the
+// scheduler will never revisit.
+func TestRecordBackupRun_RollsBackWhenJobIsGone(t *testing.T) {
+	s, ctx := newStore(t)
+	id, err := s.CreateBackupJob(ctx, &BackupJob{
+		Name: "j", Scope: BackupScopeVolume, VolumeName: "v", Image: "busybox", Command: "true",
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteBackupJob(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.RecordBackupRun(ctx, &BackupRun{JobID: id, StartedAt: time.Now(), FinishedAt: time.Now(), OK: true}); err != ErrNotFound {
+		t.Fatalf("RecordBackupRun for a deleted job = %v, want ErrNotFound", err)
+	}
+
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM backup_runs WHERE job_id = ?`, id).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("expected the run insert to be rolled back, found %d orphaned rows", n)
 	}
 }

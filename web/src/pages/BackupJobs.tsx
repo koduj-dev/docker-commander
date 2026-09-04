@@ -179,6 +179,7 @@ function BackupJobForm({
   const [command, setCommand] = useState(existing?.command ?? "");
   const [intervalMinutes, setIntervalMinutes] = useState(existing?.intervalMinutes ?? 0);
   const [envText, setEnvText] = useState("");
+  const [clearEnv, setClearEnv] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -192,7 +193,8 @@ function BackupJobForm({
         volumeName: scope === "volume" ? volumeName : undefined,
         hostId: scope === "volume" ? hostId : undefined,
         projectId: scope === "project" ? projectId : undefined,
-        env: textToEnv(envText),
+        env: clearEnv ? undefined : textToEnv(envText),
+        clearEnv,
       };
       if (existing) await api.updateBackupJob(existing.id, body);
       else await api.createBackupJob({ ...body, enabled: true });
@@ -272,11 +274,19 @@ function BackupJobForm({
           className="input font-mono text-xs h-24"
           value={envText}
           onChange={(e) => setEnvText(e.target.value)}
+          disabled={clearEnv}
           placeholder="RESTIC_PASSWORD=...\nRESTIC_REPOSITORY=..."
         />
         <span className="block text-xs text-muted mt-1">
           Encrypted at rest and never shown again after saving — {existing ? "leave blank to keep the stored values" : "required if the command needs credentials"}.
         </span>
+        {existing && (
+          <label className="flex items-center gap-2 mt-2 text-xs text-muted">
+            <input type="checkbox" checked={clearEnv} onChange={(e) => setClearEnv(e.target.checked)} />
+            Clear stored environment (removes all saved credentials for this job — leaving the field above blank does
+            <span className="font-medium"> not</span> clear it)
+          </label>
+        )}
       </div>
 
       {error && <p className="text-sm text-danger">{error}</p>}

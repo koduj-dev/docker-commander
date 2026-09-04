@@ -74,12 +74,17 @@ func (m *Manager) RunBackupJob(ctx context.Context, hostID int64, image, command
 	if err != nil {
 		return "", 0, err
 	}
-	if err := ensureHelperImage(ctx, cli, image); err != nil {
-		return "", 0, fmt.Errorf("pull image: %w", err)
-	}
 
+	// The declared timeout must bound the whole synchronous flow, including
+	// the image pull and the final log read — not just create/start/wait —
+	// otherwise a stuck pull or a stuck log stream can hold the worker and
+	// backupSem slot far longer than the caller asked for.
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+
+	if err := ensureHelperImage(cctx, cli, image); err != nil {
+		return "", 0, fmt.Errorf("pull image: %w", err)
+	}
 
 	envList := make([]string, 0, len(env))
 	for k, v := range env {
@@ -126,7 +131,7 @@ func (m *Manager) RunBackupJob(ctx context.Context, hostID int64, image, command
 		exitCode = int(status.StatusCode)
 	}
 
-	logs, err := cli.ContainerLogs(context.Background(), resp.ID, container.LogsOptions{ShowStdout: true, ShowStderr: true})
+	logs, err := cli.ContainerLogs(cctx, resp.ID, container.LogsOptions{ShowStdout: true, ShowStderr: true})
 	if err != nil {
 		return "", exitCode, fmt.Errorf("read output: %w", err)
 	}

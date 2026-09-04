@@ -15,12 +15,15 @@ All notable changes to Docker Commander are documented here. The format follows
   volume a **project** actually created (found via Docker Compose's own
   `com.docker.compose.project` label, not guessed from the compose file),
   on a plain "every N minutes" interval or on demand via **Run now**, and
-  records ok/failed, exit code and captured output as run history. A small
-  status badge on the volume or project shows the last outcome. Credentials
-  the command needs (e.g. `RESTIC_PASSWORD`) go in as an environment map,
-  encrypted at rest and never returned by the API once saved. Admin-only —
-  configuring one is arbitrary-command execution plus a stored secret,
-  the same class of surface as policy rules and the recovery bundle above.
+  records ok/failed, exit code and captured output as run history (capped at
+  the 200 most recent runs per job, so a short interval can't grow the
+  database unbounded). A small status badge on the volume or project shows
+  the last outcome. Credentials the command needs (e.g. `RESTIC_PASSWORD`)
+  go in as an environment map, encrypted at rest and never returned by the
+  API once saved — and can be explicitly cleared from a job's edit form, not
+  just replaced. Admin-only — configuring one is arbitrary-command execution
+  plus a stored secret, the same class of surface as policy rules and the
+  recovery bundle above.
 - **Portable recovery bundle.** Export everything Docker Commander itself
   knows — every project's compose + sidecar files, host and registry
   definitions, alert rules and webhooks, image digests, and (opt-in)

@@ -122,6 +122,40 @@ func TestRunBackupJob_RemovesHelperContainer(t *testing.T) {
 	}
 }
 
+// The declared timeout bounds the whole call end to end — create, start,
+// wait AND the final log read — not just the wait step. A command that would
+// otherwise run far longer than the timeout must still return promptly with
+// a "timed out" error, exercising the same cctx from image-ensure through to
+// ContainerLogs (previously the log read used an unbounded
+// context.Background(), and the image pull ran before cctx even existed).
+func TestRunBackupJob_TimeoutBoundsTheWholeCall(t *testing.T) {
+	m, ctx := newManager(t)
+	ensureImage(ctx, t, m)
+
+	cli, err := m.Client(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vol, err := cli.VolumeCreate(ctx, volume.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cli.VolumeRemove(context.Background(), vol.Name, true) })
+
+	const timeout = 2 * time.Second
+	start := time.Now()
+	_, _, err = m.RunBackupJob(ctx, 0, testImage, "sleep 300",
+		nil, map[string]string{vol.Name: "/data"}, timeout)
+	elapsed := time.Since(start)
+
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("RunBackupJob error = %v, want a timed-out error", err)
+	}
+	if elapsed > timeout+10*time.Second {
+		t.Errorf("RunBackupJob took %s to report a timeout declared as %s — the call isn't actually bounded by it", elapsed, timeout)
+	}
+}
+
 // ProjectVolumeNames resolves only the volumes Docker labeled for a given
 // compose project, not others on the same host (including one whose NAME
 // looks related but carries no compose label at all).

@@ -1029,6 +1029,10 @@ export interface BackupJobInput {
   command: string;
   intervalMinutes: number;
   env?: Record<string, string>;
+  /** Explicitly remove the stored env on update — an absent/empty env alone
+   * means "leave it untouched" (env is write-only, so a blank textarea can't
+   * by itself distinguish "unchanged" from "clear it"). */
+  clearEnv?: boolean;
 }
 
 /** One recorded execution of a backup job. */
