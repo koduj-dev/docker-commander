@@ -198,18 +198,25 @@ func (s *Service) FinishPasswordlessLogin(ctx context.Context, rp RelyingParty, 
 		return nil, ErrInvalidCreds
 	}
 
-	// The flag on the VERIFIED credential. The ceremony demands user verification
-	// and the library enforces that, so in production this is the second of two
-	// locks — but it is the one that does not depend on the ceremony having been set
-	// up correctly. Without UV the assertion proves possession only, which is one
-	// factor, and one factor is not a login.
+	// uvClaimed, now trustworthy: the signature over this same authenticator data
+	// just verified, so the UV bit it carries is no longer a guess. This is the
+	// second of two locks — the one that does not depend on the ceremony having
+	// asked for verification at all. Without UV the assertion proves possession
+	// only, which is one factor, and one factor is not a login.
+	//
+	// credential.Flags.UserVerified is NOT this: go-webauthn latches it (advances
+	// false→true and keeps it) so it means "this credential has EVER verified its
+	// user," not "did THIS assertion." A passkey used once with UV would pass this
+	// check forever after, including from a clone or a PIN-less pairing — exactly
+	// what this lock exists to catch.
+	//
 	// From here the signature has already verified, so these are not guesses and
 	// must not spend the password-login budget — the button is offered to everyone,
 	// and the ordinary "try it and find out it is off" costs five taps. Behind a
 	// shared address that would lock a whole office out of the password form. They
 	// are still bounded, in a bucket of their own.
 	refused := rlKey
-	if !credential.Flags.UserVerified {
+	if !uvClaimed {
 		s.passkeyLimiter.Fail(refused)
 		return nil, named(account, ErrUserVerificationRequired)
 	}

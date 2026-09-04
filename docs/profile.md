@@ -39,9 +39,11 @@ it is the same page whatever your permissions are. Four tabs:
   Passkeys need a **secure context**, which is the browser's rule, not ours: HTTPS,
   or `localhost`. They also need a **hostname** — an IP address cannot be a passkey's
   relying party, so `http://127.0.0.1:8470/` will not offer them even though it is a
-  secure context; use `http://localhost:8470/` instead. Where they are unavailable
-  the button says why rather than failing when you press it. See
-  [Deployment](deployment.md) for TLS.
+  secure context; use `http://localhost:8470/` instead. The hostname also cannot end
+  in a trailing dot (`http://localhost.:8470/`) — the fully-qualified form is the same
+  name, but is not a form the WebAuthn library accepts as an identity, so it is
+  refused the same way an IP address is. Where they are unavailable the button says
+  why rather than failing when you press it. See [Deployment](deployment.md) for TLS.
 
   **Reach the app by one hostname.** A passkey is bound to the name you paired it
   under, and the browser will only offer it back under that same name. Capitalisation
