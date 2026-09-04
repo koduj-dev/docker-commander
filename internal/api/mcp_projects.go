@@ -79,7 +79,10 @@ func (s *Server) mcpDeployProject(ctx context.Context, id int64, profiles []stri
 	// it isn't broken out into its own policy_block/policy_warn_ack action
 	// the way the REST audit trail is.
 	profiles = docker.NormalizeProfiles(profiles)
-	blocked, warned := s.evaluateDeployPolicy(ctx, p.Slug, dir, profiles, env, files)
+	blocked, warned, perr := s.evaluateDeployPolicy(ctx, p.Slug, dir, profiles, env, files)
+	if perr != nil {
+		return "", fmt.Errorf("policy check failed, refusing to deploy for safety: %w", perr)
+	}
 	if len(blocked) > 0 {
 		return "", fmt.Errorf("refused by policy (block): %s", policyViolationSummary(blocked))
 	}
