@@ -78,6 +78,10 @@ var ungatedRoutes = map[string]string{
 	"/api/mcp/status":      "own MCP availability",
 	"/api/mcp/tokens":      "own tokens only",
 	"/api/mcp/tokens/{id}": "own tokens only",
+	// Self-service MCP connector sessions: same narrowing as tokens above —
+	// a session can only ever be the caller's own.
+	"/api/mcp/sessions":      "own sessions only",
+	"/api/mcp/sessions/{id}": "own sessions only",
 	// Shared reads that carry no host/container authority of their own.
 	"/api/system":          "version/health for the shell",
 	"/api/version":         "app version for the shell",

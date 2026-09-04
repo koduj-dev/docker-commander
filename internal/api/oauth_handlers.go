@@ -271,7 +271,11 @@ func (s *Server) tokenFromCode(w http.ResponseWriter, r *http.Request) {
 		oauthErr(w, http.StatusBadRequest, "invalid_grant", "PKCE verification failed")
 		return
 	}
-	s.issueTokens(w, r, rec.ClientID, rec.UserID, rec.Scope, rec.Resource)
+	// A fresh session: this is the one point in the whole grant where a new
+	// connector pairing is established, so its stable id (unlike the access
+	// token's jti or the refresh token's hash, neither of which survive
+	// rotation) is minted here, once.
+	s.issueTokens(w, r, rec.ClientID, rec.UserID, rec.Scope, rec.Resource, randToken(16), true)
 }
 
 func (s *Server) tokenFromRefresh(w http.ResponseWriter, r *http.Request) {
@@ -293,26 +297,59 @@ func (s *Server) tokenFromRefresh(w http.ResponseWriter, r *http.Request) {
 		oauthErr(w, http.StatusBadRequest, "invalid_grant", "resource mismatch")
 		return
 	}
-	s.issueTokens(w, r, rec.ClientID, rec.UserID, rec.Scope, rec.Resource)
+	// The same session travels forward: if it was revoked, ConsumeRefreshToken
+	// above already returned ErrNotFound, because RevokeMCPOAuthSession deletes
+	// a session's refresh token in the same transaction as the session row —
+	// there is nothing further to check here.
+	sessionID := rec.SessionID
+	if sessionID == "" {
+		// A refresh token issued before per-session revocation existed. Start
+		// tracking it as a session from here on rather than leaving it
+		// unrevocable forever.
+		sessionID = randToken(16)
+	}
+	s.issueTokens(w, r, rec.ClientID, rec.UserID, rec.Scope, rec.Resource, sessionID, rec.SessionID == "")
 }
 
-// issueTokens mints an access token (audience-bound to resource) and a rotated
-// refresh token. resource is taken from the consumed grant and re-asserted by
-// the callers against the current MCP resource, so the binding is enforced.
-func (s *Server) issueTokens(w http.ResponseWriter, r *http.Request, clientID string, userID int64, scope, resource string) {
+// issueTokens mints an access token (audience-bound to resource, scoped to
+// sessionID) and a rotated refresh token carrying the same sessionID forward.
+// resource is taken from the consumed grant and re-asserted by the callers
+// against the current MCP resource, so the binding is enforced.
+//
+// newSession marks the authorization-code grant (and the on-upgrade backfill
+// for a pre-existing refresh token with no session yet): a mcp_oauth_sessions
+// row is created rather than touched, recording who/what/where the connector
+// pairing came from.
+func (s *Server) issueTokens(w http.ResponseWriter, r *http.Request, clientID string, userID int64, scope, resource, sessionID string, newSession bool) {
 	readOnly := scope == scopeReadOnly
-	access, _, err := mcp.MintAccessToken(s.mcpSigningKey, s.mcpBase(), resource, userID, clientID, readOnly, mcp.AccessTokenTTL)
+	access, _, err := mcp.MintAccessToken(s.mcpSigningKey, s.mcpBase(), resource, userID, clientID, sessionID, readOnly, mcp.AccessTokenTTL)
 	if err != nil {
 		oauthErr(w, http.StatusInternalServerError, "server_error", "")
 		return
 	}
 	refresh := randToken(32)
+	refreshExpiry := time.Now().Add(oauthRefreshTTL)
 	if err := s.store.CreateRefreshToken(r.Context(), hashToken(refresh), &store.OAuthRefreshToken{
 		ClientID: clientID, UserID: userID, Scope: scope, Resource: resource,
-		ExpiresAt: time.Now().Add(oauthRefreshTTL),
+		ExpiresAt: refreshExpiry, SessionID: sessionID,
 	}); err != nil {
 		oauthErr(w, http.StatusInternalServerError, "server_error", "")
 		return
+	}
+	if newSession {
+		info := sessionInfo(r)
+		if err := s.store.CreateMCPOAuthSession(r.Context(), &store.MCPOAuthSession{
+			ID: sessionID, ClientID: clientID, UserID: userID,
+			IP: info.IP, UserAgent: info.UserAgent, ExpiresAt: refreshExpiry,
+		}); err != nil {
+			oauthErr(w, http.StatusInternalServerError, "server_error", "")
+			return
+		}
+	} else {
+		// Best-effort, like the API-token last-used stamp: a failure to record
+		// "when was this last used" must never block the grant it is only
+		// bookkeeping for.
+		_ = s.store.TouchMCPOAuthSession(r.Context(), sessionID, refreshExpiry)
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{

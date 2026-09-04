@@ -69,26 +69,39 @@ immediately.
 
 Administrators get a second page, **MCP Admin** (under *System*), with a
 fleet-wide view: **every user's** active API tokens (each labelled with its
-owner) and all registered **OAuth clients**. From here an admin can **revoke**
-any token or **remove** any OAuth client. Only metadata is shown; secrets are
-never recoverable here. This makes a shared instance team-ready: you can audit
-and cut off MCP access for the whole fleet from one place.
+owner), all registered **OAuth clients**, and every live **connector session**.
+From here an admin can **revoke** any token or session, or **remove** any
+OAuth client. Only metadata is shown; secrets are never recoverable here. This
+makes a shared instance team-ready: you can audit and cut off MCP access for
+the whole fleet from one place.
 
-**Removing a client cuts access immediately**, which is worth spelling out
-because it isn't how bearer tokens usually behave. Purging a client's
-authorization codes and refresh tokens stops it getting a *new* access token,
-but an access token is a **signed** credential — nothing about deleting a
-database row reaches the copy a tool already holds, so it would normally keep
-working until it expired (up to 15 minutes). Access tokens therefore carry the
-client they were issued to, and every call checks that client is still
-registered. "Revoked" means now, not within the token's lifetime.
+**Removing a client, or revoking a session, cuts access immediately**, which is
+worth spelling out because it isn't how bearer tokens usually behave. Purging
+a client's (or session's) authorization codes and refresh tokens stops it
+getting a *new* access token, but an access token is a **signed** credential —
+nothing about deleting a database row reaches the copy a tool already holds,
+so it would normally keep working until it expired (up to 15 minutes). Access
+tokens therefore carry both the client and the **session** they were issued
+to, and every call checks that both are still registered. "Revoked" means now,
+not within the token's lifetime.
 
-Two consequences of that design worth knowing:
+Two levels of revocation, for two different situations:
 
-- Tokens issued before this shipped carry no client and so aren't revocable this
-  way — they simply expire, within 15 minutes of the upgrade.
-- Revocation is per **client**, not per session. Removing a connector cuts off
-  every tool authorized through that client registration.
+- **Session** — one specific authorized pairing (e.g. "the Claude Desktop on
+  my laptop"). Revoking it kills that session's access token and refresh
+  token; every other session under the same client (say, the same connector
+  paired from a second machine) keeps working. Available self-service (your
+  own sessions, from the **Sessions** tab on the MCP Access page) and from MCP
+  Admin (any user's).
+- **Client** — the whole connector registration. Removing it cuts off *every*
+  session ever authorized through it, all at once. Still the right tool when a
+  connector itself is compromised or being retired, not just one of its
+  sessions.
+
+One consequence worth knowing: tokens issued before per-session revocation
+shipped carry no session (and, older still, no client) and so aren't
+revocable that specific way — they simply expire, within 15 minutes of the
+upgrade, or start getting tracked as a session on their next refresh.
 
 ### OAuth (Claude Desktop / Cursor connector)
 
