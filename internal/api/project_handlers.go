@@ -1014,10 +1014,17 @@ func (s *Server) handlePreviewProject(w http.ResponseWriter, r *http.Request) {
 }
 
 // driftIgnoreBody identifies one (service, kind) drift from a preview's
-// ServiceChange — the same pair MarkIgnoredChanges matches on.
+// ServiceChange — the same pair MarkIgnoredChanges matches on. From/To/Detail
+// are the change's own content, echoed back by the client so the server can
+// compute the same docker.ChangeFingerprint the preview did — the ignore is
+// scoped to that specific fingerprint, not just the (service, kind) pair, so
+// a later, different change of the same kind isn't silently also accepted.
 type driftIgnoreBody struct {
 	Service string `json:"service"`
 	Kind    string `json:"kind"`
+	From    string `json:"from"`
+	To      string `json:"to"`
+	Detail  string `json:"detail"`
 }
 
 // handleIgnoreDrift records that a specific drift on this project has been
@@ -1033,7 +1040,8 @@ func (s *Server) handleIgnoreDrift(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "service and kind are required")
 		return
 	}
-	if err := s.store.IgnoreDrift(r.Context(), p.ID, body.Service, body.Kind); err != nil {
+	fp := docker.ChangeFingerprint(docker.ServiceChange{Kind: body.Kind, From: body.From, To: body.To, Detail: body.Detail})
+	if err := s.store.IgnoreDrift(r.Context(), p.ID, body.Service, body.Kind, fp); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}

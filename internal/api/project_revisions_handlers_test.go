@@ -133,6 +133,45 @@ func TestCaptureRevision_OnSuccessfulDeploy(t *testing.T) {
 	}
 }
 
+// A successful deploy must clear any drift ignores recorded against the
+// project — otherwise one that happens to fingerprint-match a later,
+// unrelated drift would be silently re-accepted without a human reviewing it
+// again (see store.ClearDriftIgnores).
+func TestCaptureRevision_ClearsDriftIgnores(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	const slug = "dctest-revision-clears-drift"
+	compose := "services:\n  web:\n    image: " + deployTestImage + "\n    command: [\"sleep\", \"300\"]\n"
+	srv, st, pid, admin := deployTestServer(t, slug, compose)
+	if err := st.EnsureLocalHost(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = docker.ComposeDown(bg, srv.projectRoot(pid), slug, nil)
+		freeDeployStack(slug)
+	})
+
+	if err := st.IgnoreDrift(context.Background(), pid, "web", "env", "fp-stale"); err != nil {
+		t.Fatal(err)
+	}
+
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+
+	list, err := st.ListDriftIgnores(context.Background(), pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Errorf("expected drift ignores cleared after a successful deploy, got %+v", list)
+	}
+}
+
 // A deploy driven by a request whose claims actually carry a username (as a
 // real session's do) must record it as the revision's author.
 func TestCaptureRevision_RecordsTheAuthenticatedAuthor(t *testing.T) {

@@ -163,7 +163,7 @@ describe("DeployPreviewModal — ignore / unignore / reconcile", () => {
     };
     render(<DeployPreviewModal preview={preview} projectId={7} projectName="app" onClose={() => {}} onChanged={onChanged} />);
     await act(async () => findButton("Ignore").click());
-    expect(ignoreDrift).toHaveBeenCalledWith(7, "web", "env");
+    expect(ignoreDrift).toHaveBeenCalledWith(7, "web", "env", undefined, undefined, "1 missing (FOO)");
     expect(onChanged).toHaveBeenCalled();
   });
 

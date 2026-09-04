@@ -2,6 +2,8 @@ package docker
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strings"
@@ -67,13 +69,26 @@ type ServiceChange struct {
 	Ignored bool `json:"ignored"`
 }
 
-// MarkIgnoredChanges flags each change matching a (service, kind) a caller
-// has recorded as reviewed drift (store.ProjectDriftIgnore) — it never
-// removes a change from the list, only marks it, so an ignored drift stays
-// visible (and un-ignorable) rather than silently disappearing.
-func MarkIgnoredChanges(changes []ServiceChange, ignored map[[2]string]bool) {
+// ChangeFingerprint identifies the SPECIFIC content of a change, not just its
+// (service, kind) — two "env" changes on the same service with different
+// From/To/Detail get different fingerprints. Used to scope a drift ignore to
+// the exact drift a human reviewed, so it doesn't silently also accept every
+// future, unrelated change of the same kind (see store.ProjectDriftIgnore).
+func ChangeFingerprint(c ServiceChange) string {
+	sum := sha256.Sum256([]byte(c.Kind + "\x00" + c.From + "\x00" + c.To + "\x00" + c.Detail))
+	return hex.EncodeToString(sum[:])[:16]
+}
+
+// MarkIgnoredChanges flags each change matching a (service, kind, fingerprint)
+// a caller has recorded as reviewed drift (store.ProjectDriftIgnore) — it
+// never removes a change from the list, only marks it, so an ignored drift
+// stays visible (and un-ignorable) rather than silently disappearing. The
+// fingerprint requirement means a NEW change of the same (service, kind) but
+// different From/To/Detail is never matched by an old ignore.
+func MarkIgnoredChanges(changes []ServiceChange, ignored map[[3]string]bool) {
 	for i := range changes {
-		if ignored[[2]string{changes[i].Service, changes[i].Kind}] {
+		key := [3]string{changes[i].Service, changes[i].Kind, ChangeFingerprint(changes[i])}
+		if ignored[key] {
 			changes[i].Ignored = true
 		}
 	}

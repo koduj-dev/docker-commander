@@ -59,13 +59,15 @@ All notable changes to Docker Commander are documented here. The format follows
   changes the same way Deploy/Down/Restart already do.
 - **Drift detection.** The deploy preview above doubles as this: any drift
   found — a container's actual config no longer matching the compose file —
-  can be reviewed and **ignored** (per service and per kind, e.g. accept a
-  resource-limit change on `web` without silencing anything else), which
-  keeps it visible but excludes it from the active count, and is fully
-  reversible (**unignore**). A **Reconcile now** button in the same view
-  redeploys immediately (forcing a fresh image pull, so a mutable tag that
-  moved on the registry actually gets fetched) to fix whatever's left
-  active.
+  can be reviewed and **ignored** (scoped to the specific service, kind AND
+  value, e.g. accepting today's resource-limit change on `web` never silences
+  a different resource-limit change on `web` tomorrow), which keeps it
+  visible but excludes it from the active count, and is fully reversible
+  (**unignore**). A successful deploy clears a project's ignores, so one
+  never silently outlives the state it was reviewed against. A **Reconcile
+  now** button in the same view redeploys immediately (forcing a fresh image
+  pull, so a mutable tag that moved on the registry actually gets fetched) to
+  fix whatever's left active.
 - **Deployment revisions and rollback.** Every successful project deploy is
   now recorded as an immutable revision — its compose file and every sidecar
   file, profiles, target host, the image reference *and the digest actually
