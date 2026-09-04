@@ -176,17 +176,18 @@ func TestRunningServicesDeduplicates(t *testing.T) {
 
 func containsSubstr(s, sub string) bool { return strings.Contains(s, sub) }
 
-// MarkIgnoredChanges must flag exactly the (service, kind) pairs given, and
-// leave everything else — including a same-service, different-kind change —
-// untouched: ignoring one drift on a service must not silently swallow a
-// different drift on that same service.
+// MarkIgnoredChanges must flag exactly the (service, kind, fingerprint)
+// triples given, and leave everything else — including a same-service,
+// different-kind change — untouched: ignoring one drift on a service must not
+// silently swallow a different drift on that same service.
 func TestMarkIgnoredChanges(t *testing.T) {
+	webEnv := ServiceChange{Service: "web", Kind: "env", From: "a", To: "b"}
 	changes := []ServiceChange{
-		{Service: "web", Kind: "env"},
+		webEnv,
 		{Service: "web", Kind: "restart"},
 		{Service: "db", Kind: "env"},
 	}
-	MarkIgnoredChanges(changes, map[[2]string]bool{{"web", "env"}: true})
+	MarkIgnoredChanges(changes, map[[3]string]bool{{"web", "env", ChangeFingerprint(webEnv)}: true})
 
 	if !changes[0].Ignored {
 		t.Error("web:env should be marked ignored")
@@ -199,6 +200,40 @@ func TestMarkIgnoredChanges(t *testing.T) {
 	}
 	if got := ActiveChanges(changes); got != 2 {
 		t.Errorf("ActiveChanges = %d, want 2 (3 total minus 1 ignored)", got)
+	}
+}
+
+// The bug this fingerprint scoping fixes: ignoring one specific env change on
+// a service must NOT also suppress a later, different env change on that same
+// service. Without the fingerprint (matching on (service, kind) alone), this
+// test fails.
+func TestMarkIgnoredChanges_DifferentValueSameKindStaysActive(t *testing.T) {
+	reviewed := ServiceChange{Service: "web", Kind: "env", From: "FOO=1", To: "FOO=2"}
+	changes := []ServiceChange{
+		reviewed,
+		{Service: "web", Kind: "env", From: "BAR=1", To: "BAR=2"},
+	}
+	MarkIgnoredChanges(changes, map[[3]string]bool{{"web", "env", ChangeFingerprint(reviewed)}: true})
+
+	if !changes[0].Ignored {
+		t.Error("the reviewed FOO change should be marked ignored")
+	}
+	if changes[1].Ignored {
+		t.Error("the unrelated BAR change must stay active, not be swept in by the same (service, kind)")
+	}
+	if got := ActiveChanges(changes); got != 1 {
+		t.Errorf("ActiveChanges = %d, want 1 (the still-active BAR change)", got)
+	}
+}
+
+func TestChangeFingerprint_DiffersOnValueNotJustKind(t *testing.T) {
+	a := ChangeFingerprint(ServiceChange{Kind: "env", From: "FOO=1", To: "FOO=2"})
+	b := ChangeFingerprint(ServiceChange{Kind: "env", From: "BAR=1", To: "BAR=2"})
+	if a == b {
+		t.Error("fingerprints of two different env changes must not collide")
+	}
+	if a != ChangeFingerprint(ServiceChange{Kind: "env", From: "FOO=1", To: "FOO=2"}) {
+		t.Error("fingerprint must be stable/deterministic for identical input")
 	}
 }
 

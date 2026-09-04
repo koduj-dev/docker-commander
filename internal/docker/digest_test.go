@@ -148,3 +148,102 @@ func TestResolveImageDigest_ConfiguredRegistry(t *testing.T) {
 		t.Errorf("digest = %q, want %q", digest, wantDigest)
 	}
 }
+
+// PENTEST/regression for P2-3: a tag's case must reach the registry
+// unchanged. Tags are case-sensitive per the distribution spec, unlike the
+// registry host and repository path — lowercasing "RC1" to "rc1" before the
+// request would silently query a different (or nonexistent) tag.
+func TestResolveImageDigest_PreservesTagCase(t *testing.T) {
+	const wantDigest = "sha256:cafef00d0000000000000000000000000000000000000000000000000000"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v2/team/svc/manifests/RC1" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Docker-Content-Digest", wantDigest)
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	key := make([]byte, 32)
+	_, _ = rand.Read(key)
+	c, err := crypto.New(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.SetCipher(c)
+	host := hostOf(srv.URL)
+	if _, err := st.CreateRegistry(context.Background(), "test", host, "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	m := &Manager{store: st}
+	digest, err := m.ResolveImageDigest(context.Background(), host+"/team/svc:RC1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if digest != wantDigest {
+		t.Errorf("digest = %q, want %q (server only answers the exact-case tag RC1)", digest, wantDigest)
+	}
+}
+
+// "RC1" and "rc1" are two different tags, not the same tag queried twice —
+// each must resolve to its own registry-reported digest.
+func TestResolveImageDigest_DifferentCaseTagsAreDistinct(t *testing.T) {
+	digestUpper := "sha256:1111111111111111111111111111111111111111111111111111111111aa"
+	digestLower := "sha256:2222222222222222222222222222222222222222222222222222222222bb"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/team/svc/manifests/RC1":
+			w.Header().Set("Docker-Content-Digest", digestUpper)
+			w.Write([]byte(`{}`))
+		case "/v2/team/svc/manifests/rc1":
+			w.Header().Set("Docker-Content-Digest", digestLower)
+			w.Write([]byte(`{}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	key := make([]byte, 32)
+	_, _ = rand.Read(key)
+	c, err := crypto.New(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.SetCipher(c)
+	host := hostOf(srv.URL)
+	if _, err := st.CreateRegistry(context.Background(), "test", host, "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	m := &Manager{store: st}
+	gotUpper, err := m.ResolveImageDigest(context.Background(), host+"/team/svc:RC1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotLower, err := m.ResolveImageDigest(context.Background(), host+"/team/svc:rc1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotUpper != digestUpper {
+		t.Errorf("RC1 digest = %q, want %q", gotUpper, digestUpper)
+	}
+	if gotLower != digestLower {
+		t.Errorf("rc1 digest = %q, want %q", gotLower, digestLower)
+	}
+	if gotUpper == gotLower {
+		t.Errorf("RC1 and rc1 resolved to the same digest %q — tag case was collapsed", gotUpper)
+	}
+}

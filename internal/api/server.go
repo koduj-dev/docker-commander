@@ -159,6 +159,18 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/policy-rules", s.handleGetPolicyRules)
 			r.Put("/policy-rules", s.handleSetPolicyRules)
 
+			// Volume backup jobs: a trigger-and-status wrapper around a
+			// user-supplied backup command. Admin-only — see
+			// access_middleware.go's sectionForPath.
+			r.Get("/backup-jobs", s.handleListBackupJobs)
+			r.Post("/backup-jobs", s.handleCreateBackupJob)
+			r.Get("/backup-jobs/{id}", s.handleGetBackupJob)
+			r.Put("/backup-jobs/{id}", s.handleUpdateBackupJob)
+			r.Patch("/backup-jobs/{id}", s.handleSetBackupJobEnabled)
+			r.Delete("/backup-jobs/{id}", s.handleDeleteBackupJob)
+			r.Post("/backup-jobs/{id}/run", s.handleRunBackupJob)
+			r.Get("/backup-jobs/{id}/runs", s.handleListBackupRuns)
+
 			r.Get("/hosts", s.handleListHosts)
 			r.Post("/hosts", s.handleCreateHost)
 			r.Patch("/hosts/{id}", s.handleUpdateHost)

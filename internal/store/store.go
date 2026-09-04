@@ -433,10 +433,11 @@ CREATE TABLE IF NOT EXISTS ignored_cves (
 -- elsewhere. No declared FK (this schema doesn't use them anywhere) —
 -- DeleteProject removes matching rows itself.
 CREATE TABLE IF NOT EXISTS project_drift_ignores (
-	project_id INTEGER NOT NULL,
-	service    TEXT NOT NULL,
-	kind       TEXT NOT NULL,
-	created_at TEXT NOT NULL,
+	project_id  INTEGER NOT NULL,
+	service     TEXT NOT NULL,
+	kind        TEXT NOT NULL,
+	fingerprint TEXT NOT NULL DEFAULT '',
+	created_at  TEXT NOT NULL,
 	PRIMARY KEY (project_id, service, kind)
 );
 
@@ -465,6 +466,50 @@ CREATE TABLE IF NOT EXISTS project_revisions (
 	UNIQUE (project_id, revision)
 );
 CREATE INDEX IF NOT EXISTS idx_project_revisions_project ON project_revisions(project_id);
+
+-- A trigger-and-status wrapper around a user-supplied backup command (their
+-- own restic/borg/etc, already pointed at its own repository) run against a
+-- volume's or project's data. Not a backup engine: no repository, retention
+-- or storage logic of our own. last_run_* is denormalized here (mirroring how
+-- alert_rules stays separate from alert_events/alert_deliveries) so a
+-- volume/project badge is an O(1) lookup rather than a join against
+-- backup_runs. env_enc is the job's command environment (e.g.
+-- RESTIC_PASSWORD), JSON-encoded then encrypted with the store's cipher —
+-- write-only, same pattern as registries.secret_enc.
+CREATE TABLE IF NOT EXISTS backup_jobs (
+	id               INTEGER PRIMARY KEY AUTOINCREMENT,
+	name             TEXT NOT NULL,
+	enabled          INTEGER NOT NULL DEFAULT 1,
+	scope            TEXT NOT NULL,             -- 'volume' | 'project'
+	volume_name      TEXT NOT NULL DEFAULT '',
+	project_id       INTEGER NOT NULL DEFAULT 0,
+	host_id          INTEGER NOT NULL DEFAULT 0,
+	image            TEXT NOT NULL,
+	command          TEXT NOT NULL,             -- run as: sh -c <command>
+	env_enc          TEXT NOT NULL DEFAULT '',
+	interval_minutes INTEGER NOT NULL DEFAULT 0, -- 0 = manual only
+	created_by       TEXT NOT NULL DEFAULT '',
+	created_at       TEXT NOT NULL,
+	updated_at       TEXT NOT NULL,
+	last_run_at      TEXT NOT NULL DEFAULT '',
+	last_run_ok      INTEGER NOT NULL DEFAULT 0,
+	last_run_detail  TEXT NOT NULL DEFAULT ''
+);
+
+-- Append-only run history for a backup job (status feed / audit trail of
+-- what actually happened, separate from the job's own config).
+CREATE TABLE IF NOT EXISTS backup_runs (
+	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	job_id       INTEGER NOT NULL,
+	started_at   TEXT NOT NULL,
+	finished_at  TEXT NOT NULL DEFAULT '',
+	ok           INTEGER NOT NULL DEFAULT 0,
+	exit_code    INTEGER NOT NULL DEFAULT 0,
+	output       TEXT NOT NULL DEFAULT '',
+	error        TEXT NOT NULL DEFAULT '',
+	triggered_by TEXT NOT NULL DEFAULT '' -- 'schedule' or a username
+);
+CREATE INDEX IF NOT EXISTS idx_backup_runs_job ON backup_runs(job_id);
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
@@ -545,6 +590,12 @@ CREATE INDEX IF NOT EXISTS idx_project_revisions_project ON project_revisions(pr
 		// profile set", not "stopped". Empty means never successfully deployed, or
 		// deployed with no profiles.
 		`ALTER TABLE projects ADD COLUMN last_deployed_profiles TEXT NOT NULL DEFAULT ''`,
+		// Scopes a drift ignore to the specific from/to/detail values reviewed,
+		// not just the (service, kind) pair — see ProjectDriftIgnore's doc
+		// comment. A pre-existing row from before this column defaults to '',
+		// which never matches a real fingerprint, so it simply stops applying
+		// rather than mismatching something it was never meant to cover.
+		`ALTER TABLE project_drift_ignores ADD COLUMN fingerprint TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := s.db.ExecContext(ctx, alter); err != nil && !isDuplicateColumn(err) {
 			return err
