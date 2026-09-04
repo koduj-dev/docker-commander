@@ -57,10 +57,13 @@ All notable changes to Docker Commander are documented here. The format follows
   against what's running right now, reusing the exact same plan/diff engine
   (down to the env diff, key AND value — the same values the compose file
   and the existing Resolved preview already show at this permission level).
-  **Restore** re-validates the old snapshot in a scratch directory before
-  touching anything live, pins any service with a recorded digest so a
-  mutable tag can't quietly swap in a different image, redeploys with that
-  revision's own profiles, and becomes a new revision itself — history only
+  **Restore** validates the old snapshot — compose resolution, deploy
+  policy, and the digest-pin override that stops a mutable tag from
+  quietly swapping in a different image — entirely against a staging copy;
+  the live project directory is only ever touched by a single atomic swap
+  once every check has passed, and any later failure (including the deploy
+  itself) restores exactly what was there before. Redeploys with the
+  revision's own profiles and becomes a new revision itself — history only
   grows forward, it's never rewritten. Never touches named volumes. The
   project editor picks up the restored files and profiles immediately,
   without needing to be closed and reopened.

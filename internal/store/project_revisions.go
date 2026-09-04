@@ -143,6 +143,21 @@ func scanRevisionRow(row scanner) (*ProjectRevision, error) {
 	return &rev, nil
 }
 
+// SetRevisionValid atomically publishes (valid=true, validationError="") or
+// fails (valid=false, validationError=<reason>) a revision's on-disk
+// snapshot capture. CreateRevision always inserts a row with Valid=false
+// first — this is the only thing that ever flips it to true, once the
+// snapshot file has actually been written and renamed into place. A
+// revision that never reaches SetRevisionValid(..., true, "") stays
+// visible in history (so the failure itself is auditable) but is refused by
+// restore, exactly like one explicitly marked invalid.
+func (s *Store) SetRevisionValid(ctx context.Context, id int64, valid bool, validationError string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE project_revisions SET valid = ?, validation_error = ? WHERE id = ?`,
+		boolToInt(valid), validationError, id)
+	return err
+}
+
 // deleteProjectRevisions removes every revision row for a project — called
 // from DeleteProject. The caller is responsible for removing the on-disk zip
 // snapshots (Server.projectRevisionsDir), which the store layer knows nothing
