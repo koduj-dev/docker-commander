@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -53,38 +54,52 @@ func (s *Server) handleSetPolicyRules(w http.ResponseWriter, r *http.Request) {
 // touches policy settings pays zero extra latency or subprocess cost on
 // every deploy.
 //
-// A PolicyRuleModes, ComposeConfigJSONFiles or EvaluatePolicy failure here is
-// logged and treated as "proceed" (both return slices nil) — policy
-// evaluation is advisory tooling on top of a deploy that `up` will
-// independently validate anyway; a broken policy check must never itself
-// become the reason a legitimate deploy is blocked.
-func (s *Server) evaluateDeployPolicy(ctx context.Context, slug, dir string, profiles, env, files []string) (blocked, warned []docker.PolicyViolation) {
+// A failure here fails CLOSED whenever a block-mode rule could have applied:
+// if PolicyRuleModes itself errors, the mode of every rule is unknown, so it
+// is treated as if a block-mode rule were active; once modes are known, a
+// ComposeConfigJSONFiles or EvaluatePolicy failure only fails closed when at
+// least one rule is actually in block mode. When every active rule is
+// warn-only, the same failure still logs and returns err == nil (proceed) —
+// a broken policy check must never itself block a deploy that carries no
+// possibility of a hard block, but it must never silently wave through one
+// that does.
+func (s *Server) evaluateDeployPolicy(ctx context.Context, slug, dir string, profiles, env, files []string) (blocked, warned []docker.PolicyViolation, err error) {
 	modes, err := s.store.PolicyRuleModes(ctx)
 	if err != nil {
 		log.Printf("policy check: load policy rules for %q: %v", slug, err)
-		return nil, nil
+		return nil, nil, fmt.Errorf("policy check: could not load policy rules: %w", err)
 	}
 	anyEnabled := false
+	anyBlock := false
 	ruleModes := make(map[docker.PolicyRuleID]docker.PolicyMode, len(modes))
 	for id, mode := range modes {
 		ruleModes[docker.PolicyRuleID(id)] = docker.PolicyMode(mode)
 		if mode != string(docker.ModeOff) {
 			anyEnabled = true
 		}
+		if mode == string(docker.ModeBlock) {
+			anyBlock = true
+		}
 	}
 	if !anyEnabled {
-		return nil, nil
+		return nil, nil, nil
 	}
 
-	configJSON, err := docker.ComposeConfigJSONFiles(ctx, dir, slug, profiles, env, files)
-	if err != nil {
-		log.Printf("policy check: resolve compose config for %q: %v", slug, err)
-		return nil, nil
+	configJSON, cerr := docker.ComposeConfigJSONFiles(ctx, dir, slug, profiles, env, files)
+	if cerr != nil {
+		log.Printf("policy check: resolve compose config for %q: %v", slug, cerr)
+		if anyBlock {
+			return nil, nil, fmt.Errorf("policy check: could not resolve compose config: %w", cerr)
+		}
+		return nil, nil, nil
 	}
-	violations, err := docker.EvaluatePolicy(configJSON, ruleModes)
-	if err != nil {
-		log.Printf("policy check: evaluate policy for %q: %v", slug, err)
-		return nil, nil
+	violations, eerr := docker.EvaluatePolicy(configJSON, ruleModes)
+	if eerr != nil {
+		log.Printf("policy check: evaluate policy for %q: %v", slug, eerr)
+		if anyBlock {
+			return nil, nil, fmt.Errorf("policy check: could not evaluate policy: %w", eerr)
+		}
+		return nil, nil, nil
 	}
 
 	for _, v := range violations {
@@ -95,7 +110,7 @@ func (s *Server) evaluateDeployPolicy(ctx context.Context, slug, dir string, pro
 			warned = append(warned, v)
 		}
 	}
-	return blocked, warned
+	return blocked, warned, nil
 }
 
 // policyCheckOrRefuse is evaluateDeployPolicy for an HTTP deploy-shaped
@@ -104,8 +119,9 @@ func (s *Server) evaluateDeployPolicy(ctx context.Context, slug, dir string, pro
 // strings are written as literals below, not assembled at runtime, so the
 // audit-doc consistency tests in auditdocs_test.go can find them) and
 // returns (response, true) when the deploy must be refused — a block-mode
-// violation (absolute, no per-deploy override) or an un-confirmed warn-mode
-// one — in which case the caller must write that response and return
+// violation (absolute, no per-deploy override), an un-confirmed warn-mode
+// one, or an indeterminate policy check that could have hidden a block-mode
+// violation — in which case the caller must write that response and return
 // without deploying. (nil, false) means proceed.
 const (
 	policyKindDeploy  = "deploy"
@@ -113,7 +129,16 @@ const (
 )
 
 func (s *Server) policyCheckOrRefuse(r *http.Request, p *store.Project, dir string, profiles, env, files []string, confirmed bool, kind string) (map[string]any, bool) {
-	blocked, warned := s.evaluateDeployPolicy(r.Context(), p.Slug, dir, profiles, env, files)
+	blocked, warned, err := s.evaluateDeployPolicy(r.Context(), p.Slug, dir, profiles, env, files)
+	if err != nil {
+		switch kind {
+		case policyKindRestore:
+			s.audit(r, "project.revision.restore.policy_check_failed", p.Slug, err.Error())
+		default:
+			s.audit(r, "project.deploy.policy_check_failed", p.Slug, err.Error())
+		}
+		return map[string]any{"ok": false, "policy": map[string]any{"error": "policy check failed; refusing to deploy for safety"}}, true
+	}
 
 	if len(blocked) > 0 {
 		switch kind {
