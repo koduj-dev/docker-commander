@@ -43,7 +43,7 @@ against a username they guessed.
 
 ## Every action, by area
 
-All **146** of them, generated from the source and kept in step with it by a
+All **150** of them, generated from the source and kept in step with it by a
 test: an audited action with no entry here fails the build, and an entry the code
 never writes fails it too. The `auth.*` table above explains the ones worth reading
 when something feels wrong; this is the complete set, for looking up what you found
@@ -102,6 +102,8 @@ in the log.
 **Self-update** — `update.apply`, `update.restart`
 
 **Recovery bundle** — `recovery.export`, `recovery.import`, `recovery.inspect`
+
+**Backup jobs** — `backup_job.create`, `backup_job.delete`, `backup_job.run`, `backup_job.update`
 
 ## Tips
 - Use it to answer “who stopped that container?” or “when was this user created?”

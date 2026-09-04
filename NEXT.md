@@ -223,17 +223,6 @@ Exact mapping needs MAC/namespace inspection via netlink — Linux-only and host
 to remote hosts. So the app sums across interfaces and says so, rather than
 publishing a per-network number that looks authoritative and is wrong.
 
-### Backup and disaster recovery
-
-- **Volume data: integrate, don't reinvent.** Deliberately *not* a backup
-  engine — no repositories, retention policies or storage backends of our
-  own. Instead, a **trigger-and-status wrapper**: run a user-supplied command
-  (their own `restic`/`borg`/whatever, already configured with its own repo
-  and encryption) per volume or project, on a schedule or on demand, and
-  surface "last backup: ok/failed, 3h ago" next to that volume/project in the
-  dashboard. The recovery bundle above says what infrastructure looked like;
-  this says whether its data was actually captured.
-
 ### Identity and access
 
 - **OIDC / SSO** — Google/Azure/Okta login. LDAP (including group→role) is step
@@ -469,7 +458,7 @@ if priorities change, don't just silently reshuffle it.
 **Next, each standalone:**
 - [x] Portable recovery bundle
 - [x] Policy checks before deploy
-- [ ] Volume data: trigger-and-status wrapper
+- [x] Volume data: trigger-and-status wrapper
 
 **Not yet ordered**, full ranked candidate list (original numbering kept as-is —
 #4, #7, #8 are pulled up into "Next" above, this is everything else, in

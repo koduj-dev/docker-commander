@@ -111,6 +111,13 @@ var recordRouteDecision = map[string]string{
 	// turns up), and ignoring one is deliberately instance-wide, not scoped to
 	// whichever host's image happened to surface it.
 	"/api/images/ignored-cves/{id}": "an ignored CVE is instance-wide; it names no host",
+	// Backup jobs are admin-only (sectionForPath → "__admin"), and admins bypass
+	// host scope entirely — the same reasoning as mcp-admin/users/roles above.
+	// A project-scoped job's mounts are still resolved from the PROJECT's own
+	// host at run time (see backupjobs.resolveTarget), never trusted off the row.
+	"/api/backup-jobs/{id}":      "admin-only prefix; admins bypass host scope",
+	"/api/backup-jobs/{id}/run":  "admin-only prefix; admins bypass host scope",
+	"/api/backup-jobs/{id}/runs": "admin-only prefix; admins bypass host scope",
 }
 
 // TestEveryRecordAddressedRouteDecidesItsHost walks the real router, collects the

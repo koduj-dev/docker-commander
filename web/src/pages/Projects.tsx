@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { bytes as fmtBytes } from "../lib/format";
 import { api, ApiError } from "../lib/api";
-import type { Project, ProjectFile, Stack, ComposeModel, ComposeService, ProjectTemplateMeta, ServiceBlockMeta, ComposeFragmentMeta, TemplateRef, TemplateVariable, Host, DeployPreview, ServiceChange, ProjectRevision } from "../lib/types";
+import type { Project, ProjectFile, Stack, ComposeModel, ComposeService, ProjectTemplateMeta, ServiceBlockMeta, ComposeFragmentMeta, TemplateRef, TemplateVariable, Host, DeployPreview, ServiceChange, ProjectRevision, BackupJob } from "../lib/types";
 import type { ServerCheck } from "../components/CodeEditor";
 import { buildTree, TreeItem } from "../components/FileTree";
 import { PageHeader } from "../layout/Shell";
@@ -464,11 +464,22 @@ export function Projects() {
   const [searchParams, setSearchParams] = useSearchParams();
   const dialogs = useDialogs();
   const tick = useDockerEventTick();
+  // Indexed by project id, for the small backup-status badge in each project's
+  // header row. Fetching fails silently (403) for a non-admin — backup jobs
+  // are admin-only — so the badge just doesn't render for them.
+  const [backupJobs, setBackupJobs] = useState<Map<number, BackupJob>>(new Map());
 
   const load = useCallback(() => {
     api.projects().then((r) => { setProjects(r.projects); setComposeAvailable(r.composeAvailable); }).catch(() => setProjects([]));
     api.stacks().then(setStacks).catch(() => {});
     api.hosts().then(setHosts).catch(() => {}); // best-effort: needs the "hosts" section
+    api.backupJobs()
+      .then((jobs) => {
+        const byProject = new Map<number, BackupJob>();
+        for (const j of jobs) if (j.scope === "project") byProject.set(j.projectId, j);
+        setBackupJobs(byProject);
+      })
+      .catch(() => {});
   }, []);
   useEffect(() => load(), [load, tick]);
 
@@ -584,6 +595,15 @@ export function Projects() {
                     <div className="font-medium truncate hover:text-accent flex items-center gap-1.5">
                       {p.name}
                       {p.hostName && <span className="text-[10px] font-normal bg-panel2 text-muted rounded px-1.5 py-0.5 inline-flex items-center gap-1"><Server className="h-3 w-3" />{p.hostName}</span>}
+                      {backupJobs.has(p.id) && (() => {
+                        const bj = backupJobs.get(p.id)!;
+                        const cls = bj.lastRunAt ? (bj.lastRunOk ? "bg-ok/15 text-ok" : "bg-danger/15 text-danger") : "bg-panel2 text-muted";
+                        return (
+                          <span className={`text-[10px] font-normal rounded px-1.5 py-0.5 ${cls}`} title={bj.lastRunDetail || undefined}>
+                            backup: {bj.lastRunAt ? (bj.lastRunOk ? "ok" : "failed") : "never run"}
+                          </span>
+                        );
+                      })()}
                     </div>
                     <div className="text-xs text-muted font-mono truncate">{p.slug}{stack ? ` · ${stack.running}/${stack.containers.length} running` : ""}</div>
                   </button>
