@@ -57,13 +57,26 @@ func (s *Store) MCPOAuthSessionExists(ctx context.Context, id string, userID int
 //
 // Called only from the refresh grant (at most every AccessTokenTTL per active
 // connector), not from the per-request verification path — unlike sessions.go's
-// TouchSession this needs no extra throttling of its own.
+// TouchSession this needs no extra throttling of its own. Returns ErrNotFound
+// if the session row is gone (e.g. swept or manually deleted) so the caller
+// can re-create it rather than silently minting a token bound to a session
+// id that MCPOAuthSessionExists will immediately reject.
 func (s *Store) TouchMCPOAuthSession(ctx context.Context, id string, expiresAt time.Time) error {
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := s.db.ExecContext(ctx,
+	res, err := s.db.ExecContext(ctx,
 		`UPDATE mcp_oauth_sessions SET last_used_at = ?, expires_at = ? WHERE id = ?`,
 		now, expiresAt.UTC().Format(time.RFC3339), id)
-	return err
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // ListMCPOAuthSessions returns a user's own sessions, most recently used

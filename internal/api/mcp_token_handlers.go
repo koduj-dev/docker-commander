@@ -245,10 +245,9 @@ func (s *Server) handleRevokeMCPToken(w http.ResponseWriter, r *http.Request) {
 }
 
 // mcpSessionJSON is one connector session — an OAuth authorization grant plus
-// the refresh-token chain it started. The session id itself is never
-// returned as anything sensitive (it isn't a bearer credential, just a
-// revoke-by-id lookup key), but it also serves no purpose in the UI, so it is
-// omitted like the API-token secret is.
+// the refresh-token chain it started. The session id is included and safe to
+// return: it isn't a bearer credential, just the revoke-by-id lookup key the
+// UI needs to let the caller revoke this specific session.
 type mcpSessionJSON struct {
 	ID         string `json:"id"`
 	ClientID   string `json:"clientId"`
@@ -269,6 +268,19 @@ func (s *Server) clientNameLookup(ctx context.Context) map[string]string {
 	if err == nil {
 		for _, c := range clients {
 			names[c.ID] = c.Name
+		}
+	}
+	return names
+}
+
+// usernameLookup resolves user ids to usernames in one pass, so an admin
+// listing over many sessions doesn't run a UserByID query per row.
+func (s *Server) usernameLookup(ctx context.Context) map[int64]string {
+	users, err := s.store.ListUsers(ctx)
+	names := make(map[int64]string, len(users))
+	if err == nil {
+		for _, u := range users {
+			names[u.ID] = u.Username
 		}
 	}
 	return names

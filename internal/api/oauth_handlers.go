@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"html/template"
 	"net/http"
 	"net/url"
@@ -345,11 +346,18 @@ func (s *Server) issueTokens(w http.ResponseWriter, r *http.Request, clientID st
 			oauthErr(w, http.StatusInternalServerError, "server_error", "")
 			return
 		}
-	} else {
-		// Best-effort, like the API-token last-used stamp: a failure to record
-		// "when was this last used" must never block the grant it is only
-		// bookkeeping for.
-		_ = s.store.TouchMCPOAuthSession(r.Context(), sessionID, refreshExpiry)
+	} else if err := s.store.TouchMCPOAuthSession(r.Context(), sessionID, refreshExpiry); errors.Is(err, store.ErrNotFound) {
+		// The session row is gone (swept or manually deleted) but the refresh
+		// chain is still alive — recreate it so the access token this call is
+		// about to mint stays verifiable instead of being rejected on its very
+		// next use by MCPOAuthSessionExists. Self-healing, same as a fresh grant.
+		// Best-effort like the rest of this branch: a failure here must never
+		// block the grant it is only bookkeeping for.
+		info := sessionInfo(r)
+		_ = s.store.CreateMCPOAuthSession(r.Context(), &store.MCPOAuthSession{
+			ID: sessionID, ClientID: clientID, UserID: userID,
+			IP: info.IP, UserAgent: info.UserAgent, ExpiresAt: refreshExpiry,
+		})
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{

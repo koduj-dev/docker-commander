@@ -153,13 +153,10 @@ func (s *Server) handleAdminListMCPSessions(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	names := s.clientNameLookup(r.Context())
+	usernames := s.usernameLookup(r.Context())
 	out := make([]adminMCPSessionJSON, 0, len(sessions))
 	for _, sess := range sessions {
-		u, uerr := s.store.UserByID(r.Context(), sess.UserID)
-		username := ""
-		if uerr == nil {
-			username = u.Username
-		}
+		username := usernames[sess.UserID]
 		name := names[sess.ClientID]
 		if name == "" {
 			name = sess.ClientID

@@ -57,6 +57,27 @@ func TestMCPOAuthSessionsExpiryIsInvisibleAndPurgeable(t *testing.T) {
 	}
 }
 
+// TestTouchMCPOAuthSessionReportsMissingRow lets a caller notice a
+// touch that updated nothing (session swept or manually deleted) instead of
+// silently believing the session is still alive.
+func TestTouchMCPOAuthSessionReportsMissingRow(t *testing.T) {
+	st, uid := mcpSessionStore(t)
+	ctx := context.Background()
+
+	if err := st.TouchMCPOAuthSession(ctx, "no-such-session", time.Now().Add(time.Hour)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("touching a missing session should report ErrNotFound, got %v", err)
+	}
+
+	if err := st.CreateMCPOAuthSession(ctx, &MCPOAuthSession{
+		ID: "sess-1", ClientID: "cli-1", UserID: uid, ExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.TouchMCPOAuthSession(ctx, "sess-1", time.Now().Add(2*time.Hour)); err != nil {
+		t.Fatalf("touching a live session should succeed, got %v", err)
+	}
+}
+
 func TestListAllMCPOAuthSessionsSeesEveryUser(t *testing.T) {
 	st, uid1 := mcpSessionStore(t)
 	ctx := context.Background()
