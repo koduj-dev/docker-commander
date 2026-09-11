@@ -28,37 +28,50 @@ func (m *Monitor) emailNotify(ev *store.AlertEvent, ruleEmails []string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		cfg, err := m.store.GetSMTP(ctx)
-		if err != nil || cfg.Host == "" || cfg.From == "" {
-			if err != nil {
-				log.Printf("monitor: smtp config: %v", err)
-			}
-			m.recordDelivery(ctx, ev.ID, "", false, "SMTP is not configured, so this alert was not e-mailed")
-			return
+		ok, to, detail, retriable := m.attemptEmail(ctx, ev, ruleEmails)
+		m.recordDelivery(ctx, ev.ID, to, ok, detail)
+		if !ok && retriable {
+			m.enqueueEmailRetry(ctx, ev.ID, ruleEmails, detail)
 		}
-		if len(ruleEmails) > 0 {
-			cfg.To = strings.Join(ruleEmails, ", ")
-		} else if ev.HostID != 0 {
-			// Per-host recipient override: a host may route its alerts elsewhere.
-			if h, err := m.store.HostByID(ctx, ev.HostID); err == nil && h.AlertEmail != "" {
-				cfg.To = h.AlertEmail
-			}
-		}
-		if cfg.To == "" {
-			m.recordDelivery(ctx, ev.ID, "", false, "no recipient: the rule, the host and the SMTP settings all leave it empty")
-			return
-		}
-		subject := fmt.Sprintf("[%s] %s — %s", strings.ToUpper(ev.Severity), ev.RuleName, ev.ContainerName)
-		body := fmt.Sprintf("Rule: %s\nType: %s\nSeverity: %s\nContainer: %s (%s)\nMessage: %s\nTime: %s\n",
-			ev.RuleName, ev.Type, ev.Severity, ev.ContainerName, shortID(ev.ContainerID), ev.Message,
-			time.Now().UTC().Format(time.RFC3339))
-		if err := SendMail(cfg, subject, body); err != nil {
-			log.Printf("monitor: email send failed: %v", err)
-			m.recordDelivery(ctx, ev.ID, cfg.To, false, err.Error())
-			return
-		}
-		m.recordDelivery(ctx, ev.ID, cfg.To, true, "")
 	}()
+}
+
+// attemptEmail sends ONE email, synchronously. Split out from emailNotify so
+// the retry sweep (delivery_retry.go) can drive the exact same attempt — see
+// dispatcher.attempt's doc comment for why.
+//
+// retriable is true only for an actual send failure (a transient SMTP
+// problem) — NOT for "SMTP isn't configured" or "no recipient resolves",
+// both permanent-until-an-admin-fixes-them configuration states that a timed
+// retry cannot do anything about.
+func (m *Monitor) attemptEmail(ctx context.Context, ev *store.AlertEvent, ruleEmails []string) (ok bool, to, detail string, retriable bool) {
+	cfg, err := m.store.GetSMTP(ctx)
+	if err != nil || cfg.Host == "" || cfg.From == "" {
+		if err != nil {
+			log.Printf("monitor: smtp config: %v", err)
+		}
+		return false, "", "SMTP is not configured, so this alert was not e-mailed", false
+	}
+	if len(ruleEmails) > 0 {
+		cfg.To = strings.Join(ruleEmails, ", ")
+	} else if ev.HostID != 0 {
+		// Per-host recipient override: a host may route its alerts elsewhere.
+		if h, err := m.store.HostByID(ctx, ev.HostID); err == nil && h.AlertEmail != "" {
+			cfg.To = h.AlertEmail
+		}
+	}
+	if cfg.To == "" {
+		return false, "", "no recipient: the rule, the host and the SMTP settings all leave it empty", false
+	}
+	subject := fmt.Sprintf("[%s] %s — %s", strings.ToUpper(ev.Severity), ev.RuleName, ev.ContainerName)
+	body := fmt.Sprintf("Rule: %s\nType: %s\nSeverity: %s\nContainer: %s (%s)\nMessage: %s\nTime: %s\n",
+		ev.RuleName, ev.Type, ev.Severity, ev.ContainerName, shortID(ev.ContainerID), ev.Message,
+		time.Now().UTC().Format(time.RFC3339))
+	if err := SendMail(cfg, subject, body); err != nil {
+		log.Printf("monitor: email send failed: %v", err)
+		return false, cfg.To, err.Error(), true
+	}
+	return true, cfg.To, "", false
 }
 
 // recordDelivery notes whether an alert actually left by e-mail.

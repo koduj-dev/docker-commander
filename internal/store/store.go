@@ -201,6 +201,29 @@ CREATE TABLE IF NOT EXISTS alert_deliveries (
 );
 CREATE INDEX IF NOT EXISTS idx_alert_deliveries_event ON alert_deliveries(event_id);
 
+-- A queue of failed deliveries worth retrying, so a webhook endpoint's 500 or
+-- a transient SMTP hiccup isn't the end of the story the way it used to be —
+-- alert_deliveries above only ever recorded that an attempt happened, never
+-- tried again. Only TRANSIENT failures land here (a transport error, 429, or
+-- 5xx for webhooks; any send error for email) — a 4xx or a missing webhook is
+-- a configuration problem retrying won't fix, and reattempting that
+-- indefinitely is its own hazard. rule_emails duplicates the rule's own
+-- recipients at the time of the original attempt (JSON list, same convention
+-- as alert_rules.emails) since a retry re-resolves the SAME recipients the
+-- first attempt used, not whatever the rule says NOW.
+CREATE TABLE IF NOT EXISTS alert_delivery_retries (
+	id              INTEGER PRIMARY KEY AUTOINCREMENT,
+	event_id        INTEGER NOT NULL,
+	channel         TEXT    NOT NULL,           -- 'webhook' | 'email'
+	webhook_id      INTEGER,                    -- NULL for email
+	rule_emails     TEXT    NOT NULL DEFAULT '', -- JSON list; email only
+	attempt         INTEGER NOT NULL DEFAULT 0,  -- retries made so far (0 = none yet)
+	next_attempt_at TEXT    NOT NULL,
+	last_error      TEXT    NOT NULL DEFAULT '',
+	created_at      TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_alert_delivery_retries_due ON alert_delivery_retries(next_attempt_at);
+
 CREATE TABLE IF NOT EXISTS alert_states (
 	host_id      INTEGER NOT NULL DEFAULT 0,
 	container_id TEXT    NOT NULL DEFAULT '',

@@ -165,11 +165,12 @@ func (m *Monitor) SetStatsInterval(d time.Duration) {
 // Run starts all background loops and blocks until ctx is cancelled.
 func (m *Monitor) Run(ctx context.Context) {
 	var wg sync.WaitGroup
-	wg.Add(4)
+	wg.Add(5)
 	go func() { defer wg.Done(); m.statsLoop(ctx) }()
 	go func() { defer wg.Done(); m.watchManagerLoop(ctx) }()
 	go func() { defer wg.Done(); m.logReconcileLoop(ctx) }()
 	go func() { defer wg.Done(); m.healthLoop(ctx) }()
+	go func() { defer wg.Done(); m.retrySweepLoop(ctx) }()
 	wg.Wait()
 }
 

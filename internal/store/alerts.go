@@ -656,6 +656,38 @@ func (s *Store) DeleteAlertState(ctx context.Context, hostID int64, containerID,
 // Exists so a caller holding only an alert id can authorise against that alert's
 // host before reading anything about it. Alert ids are sequential integers, so
 // "you need the id first" is not an access control.
+// AlertEventByID loads one event — used by delivery retry to reconstruct the
+// payload a queued retry needs without keeping its own copy of the event.
+func (s *Store) AlertEventByID(ctx context.Context, id int64) (*AlertEvent, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name,
+		       message, value, acknowledged, kind, duration_sec, acknowledged_by, acknowledged_at,
+		       suppressed, suppressed_by, created_at
+		FROM alert_events WHERE id = ?`, id)
+	var e AlertEvent
+	var created, ackAt string
+	var value sql.NullFloat64
+	var ack, suppressed int
+	if err := row.Scan(&e.ID, &e.RuleID, &e.RuleName, &e.Type, &e.Severity, &e.HostID, &e.HostName, &e.ContainerID,
+		&e.ContainerName, &e.Message, &value, &ack, &e.Kind, &e.DurationSec, &e.AcknowledgedBy, &ackAt,
+		&suppressed, &e.SuppressedBy, &created); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if value.Valid {
+		e.Value = &value.Float64
+	}
+	e.Acknowledged = ack != 0
+	e.Suppressed = suppressed != 0
+	e.CreatedAt, _ = time.Parse(time.RFC3339, created)
+	if t, err := time.Parse(time.RFC3339, ackAt); err == nil {
+		e.AcknowledgedAt = &t
+	}
+	return &e, nil
+}
+
 func (s *Store) AlertEventHost(ctx context.Context, id int64) (int64, error) {
 	var hostID sql.NullInt64
 	err := s.db.QueryRowContext(ctx, `SELECT host_id FROM alert_events WHERE id = ?`, id).Scan(&hostID)
