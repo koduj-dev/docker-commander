@@ -85,6 +85,8 @@ in the log.
 
 **Alerts** — `alert.ack`
 
+**Maintenance windows** — `maintenance_window.create`, `maintenance_window.delete`, `maintenance_window.end`, `maintenance_window.update`
+
 **Log parse rules** — `parse_rule.create`, `parse_rule.delete`
 
 **Webhooks** — `webhook.create`, `webhook.delete`

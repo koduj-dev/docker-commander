@@ -38,7 +38,7 @@ func sectionForPath(path string) string {
 		return "events"
 	case "parse-rules":
 		return "logs"
-	case "alerts", "alert-rules", "webhooks":
+	case "alerts", "alert-rules", "webhooks", "maintenance-windows":
 		return "alerts"
 	case "smtp":
 		// The SMTP config is a single INSTANCE-WIDE outbound mail relay with a

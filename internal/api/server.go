@@ -358,6 +358,13 @@ func (s *Server) Handler() http.Handler {
 			// Static route before {id}, which would otherwise swallow "ack-all".
 			r.Post("/alerts/ack-all", s.handleAckAllAlertEvents)
 			r.Post("/alerts/{id}/ack", s.handleAckAlertEvent)
+			// Maintenance windows: suppress alert delivery for a scope/time,
+			// without stopping the engine from recording what happened.
+			r.Get("/maintenance-windows", s.handleListMaintenanceWindows)
+			r.Post("/maintenance-windows", s.handleCreateMaintenanceWindow)
+			r.Put("/maintenance-windows/{id}", s.handleUpdateMaintenanceWindow)
+			r.Post("/maintenance-windows/{id}/end", s.handleEndMaintenanceWindow)
+			r.Delete("/maintenance-windows/{id}", s.handleDeleteMaintenanceWindow)
 			// Saved log parsing rules (applied client-side in the Logs view).
 			r.Get("/parse-rules", s.handleListParseRules)
 			r.Post("/parse-rules", s.handleCreateParseRule)
