@@ -456,10 +456,16 @@ items off as they ship; revisit the order deliberately if priorities change,
 don't just silently reshuffle it. (Original numbering from the candidate list
 kept in parentheses for traceability.)
 
+**Reordered 2026-09-11**: maintenance windows and alert delivery retry pulled
+ahead of project secrets — both build directly on the alert lifecycle engine
+that already shipped, are smaller/related work, and were judged worth doing
+together (a silence is, among other things, a reason a delivery legitimately
+doesn't retry). Project secrets pushed to #4, unchanged in scope.
+
 1. [x] Per-session MCP token revocation (#20)
-2. [ ] Project secrets (#10)
+2. [ ] Maintenance windows / silences (#6)
 3. [ ] Alert delivery retry (#12)
-4. [ ] Maintenance windows / silences (#6)
+4. [ ] Project secrets (#10)
 5. [ ] Controlled image updates (#11) — together with self-update auto-apply
    policy (#19), same poll/policy/audit/notify shape, one applied to
    workloads and the other to DC's own binary
