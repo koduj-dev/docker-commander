@@ -358,6 +358,13 @@ func (s *Server) Handler() http.Handler {
 			// Static route before {id}, which would otherwise swallow "ack-all".
 			r.Post("/alerts/ack-all", s.handleAckAllAlertEvents)
 			r.Post("/alerts/{id}/ack", s.handleAckAlertEvent)
+			// Maintenance windows: suppress alert delivery for a scope/time,
+			// without stopping the engine from recording what happened.
+			r.Get("/maintenance-windows", s.handleListMaintenanceWindows)
+			r.Post("/maintenance-windows", s.handleCreateMaintenanceWindow)
+			r.Put("/maintenance-windows/{id}", s.handleUpdateMaintenanceWindow)
+			r.Post("/maintenance-windows/{id}/end", s.handleEndMaintenanceWindow)
+			r.Delete("/maintenance-windows/{id}", s.handleDeleteMaintenanceWindow)
 			// Saved log parsing rules (applied client-side in the Logs view).
 			r.Get("/parse-rules", s.handleListParseRules)
 			r.Post("/parse-rules", s.handleCreateParseRule)
@@ -464,8 +471,15 @@ func (s *Server) oauthThrottle(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// maintenanceWindowRetention bounds how long a finished one-off maintenance
+// window stays listed. Every successful deploy creates one (see
+// autoSilenceForDeploy); without a cap the table — and the list every
+// request re-authorizes against — grows forever.
+const maintenanceWindowRetention = 30 * 24 * time.Hour
+
 // startOAuthSweeper periodically purges expired OAuth codes/refresh tokens so
-// the tables don't grow unbounded from issued-but-unredeemed grants.
+// the tables don't grow unbounded from issued-but-unredeemed grants, and
+// prunes old finished maintenance windows for the same reason.
 func (s *Server) startOAuthSweeper() {
 	go func() {
 		t := time.NewTicker(time.Hour)
@@ -473,6 +487,7 @@ func (s *Server) startOAuthSweeper() {
 		for range t.C {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			_ = s.store.DeleteExpiredOAuth(ctx)
+			_ = s.store.PruneOldMaintenanceWindows(ctx, maintenanceWindowRetention)
 			cancel()
 		}
 	}()

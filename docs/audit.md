@@ -85,6 +85,8 @@ in the log.
 
 **Alerts** — `alert.ack`
 
+**Maintenance windows** — `maintenance_window.create`, `maintenance_window.delete`, `maintenance_window.end`, `maintenance_window.update`
+
 **Log parse rules** — `parse_rule.create`, `parse_rule.delete`
 
 **Webhooks** — `webhook.create`, `webhook.delete`
@@ -97,7 +99,7 @@ in the log.
 
 **Email** — `smtp.configure`
 
-**MCP (AI-tool access)** — `mcp.admin.oauth_client.delete`, `mcp.admin.session.revoke`, `mcp.admin.token.revoke`, `mcp.alert.ack`, `mcp.container.restart`, `mcp.container.start`, `mcp.container.stop`, `mcp.oauth.authorize`, `mcp.project.deploy`, `mcp.project.down`, `mcp.ratelimit`, `mcp.session.revoke`, `mcp.stack.restart`, `mcp.stack.start`, `mcp.stack.stop`, `mcp.token.create`, `mcp.token.revoke`, `mcp.token_policy.update`
+**MCP (AI-tool access)** — `mcp.admin.oauth_client.delete`, `mcp.admin.session.revoke`, `mcp.admin.token.revoke`, `mcp.alert.ack`, `mcp.container.restart`, `mcp.container.start`, `mcp.container.stop`, `mcp.maintenance_window.create`, `mcp.maintenance_window.end`, `mcp.oauth.authorize`, `mcp.project.deploy`, `mcp.project.down`, `mcp.ratelimit`, `mcp.session.revoke`, `mcp.stack.restart`, `mcp.stack.start`, `mcp.stack.stop`, `mcp.token.create`, `mcp.token.revoke`, `mcp.token_policy.update`
 
 **Self-update** — `update.apply`, `update.restart`
 

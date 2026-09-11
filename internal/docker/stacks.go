@@ -29,6 +29,11 @@ const (
 	labelComposeWorkingDir  = "com.docker.compose.project.working_dir"
 )
 
+// LabelComposeProject is exported so other packages (e.g. the alert engine,
+// scoping a maintenance window by compose project) can read the same label
+// without duplicating the string.
+const LabelComposeProject = labelComposeProject
+
 // StackContainer is one container belonging to a Compose stack.
 type StackContainer struct {
 	ID      string        `json:"id"`

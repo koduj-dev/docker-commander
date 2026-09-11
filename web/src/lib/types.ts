@@ -798,6 +798,41 @@ export interface AlertEvent {
   acknowledgedAt?: string;
   deliveries?: AlertDelivery[];
   createdAt: string;
+  /** An active maintenance window suppressed delivery for this event — it is
+   * still recorded, just not paged. suppressedBy names the window (may point
+   * to a since-deleted one; the event still explains why nothing was sent). */
+  suppressed?: boolean;
+  suppressedBy?: number;
+}
+
+/** Suppresses alert delivery for a scope and time, without turning off
+ * observation — see docs/alerts.md. Every scope field left empty/unset means
+ * "no restriction on this dimension"; leaving them ALL unset silences
+ * everything. */
+export interface MaintenanceWindow {
+  id: number;
+  name: string;
+  reason: string;
+  authorId: number;
+  author?: string;
+  hostIds: number[];
+  project: string;
+  container: string;
+  ruleId: number | null;
+  severities: Severity[];
+  recurring: boolean;
+  startsAt: string;
+  /** Absent for an open-ended recurring series — never a zero-time sentinel. */
+  endsAt?: string;
+  /** Recurring only: time.Weekday numbering, 0 = Sunday. */
+  weekdays?: number[];
+  /** Recurring only: "HH:MM", 24h, in `timezone`. */
+  timeOfDay?: string;
+  durationMin?: number;
+  /** IANA name; "" = UTC. */
+  timezone?: string;
+  ended: boolean;
+  createdAt: string;
 }
 
 // One attempt to get an alert out of the building. Target is the webhook's name

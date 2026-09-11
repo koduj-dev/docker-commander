@@ -159,6 +159,7 @@ func (d Deps) Handlers() (mcpHandler, metadataHandler http.Handler) {
 	}, nil)
 	h.registerReadTools(srv)
 	h.registerAlertTools(srv)
+	h.registerMaintenanceTools(srv)
 	h.registerDiagnosticTools(srv)
 	h.registerParityTools(srv)
 	h.registerPreviewTool(srv)

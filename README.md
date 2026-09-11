@@ -66,9 +66,10 @@ level filters, regex search and structured parsing.
 - Rules on **state**, **resource thresholds**, **log patterns** and **restart/crash-loops** — editable, with severity & cooldown.
 - Threshold alerts are **conditions with a lifetime** (`firing` → `escalated`/`eased` → `resolved`), one per container + metric, so overlapping rules produce one incident instead of one each — and the feed is server-side **paged, filtered and sorted**, with **who acknowledged** it and every **delivery attempt** recorded against it.
 - Notify via **webhooks**, **email (SMTP, per-host routing)**, an in-app feed, and a **Prometheus `/metrics`** exporter. Rules **import/export** as a portable JSON bundle.
+- **Maintenance windows** suppress alert delivery — not observation — for planned work: scope by host, compose project/container, rule and/or severity, one-off or weekly-**recurring**, with a required reason/author, audited. A successful **deploy auto-opens a short window** for that project (configurable grace period, disableable).
 
 **Remote control from AI tools (MCP)**
-- An optional, **off-by-default** **Model Context Protocol** server lets AI tools (**Claude Code**, **Claude Desktop**, **Cursor**) **monitor and *safely* operate** Docker **as you**: read tools (containers, logs, images, projects, stats, events, audit…), **diagnostics without a shell** (`docker top` / `diff`, cross-container log search), the **alert** surface (history, what is firing *now*, rules, whether an alert was actually delivered, acknowledge), and *safe* control (**start/stop/restart** a container or a whole **stack**, **deploy/down** a project — including one targeting a **remote host** — plus a **preview** of what a deploy would change and a **Trivy image scan**), with MCP **resources** & **prompts**.
+- An optional, **off-by-default** **Model Context Protocol** server lets AI tools (**Claude Code**, **Claude Desktop**, **Cursor**) **monitor and *safely* operate** Docker **as you**: read tools (containers, logs, images, projects, stats, events, audit…), **diagnostics without a shell** (`docker top` / `diff`, cross-container log search), the **alert** surface (history, what is firing *now*, rules, whether an alert was actually delivered, acknowledge, maintenance windows), and *safe* control (**start/stop/restart** a container or a whole **stack**, **deploy/down** a project — including one targeting a **remote host** — plus a **preview** of what a deploy would change and a **Trivy image scan**), with MCP **resources** & **prompts**.
 - Authenticate with a **bearer API token** (self-service page) or **OAuth 2.1** (PKCE, dynamic client registration). Every call reuses the app's **RBAC**, and a token can only **narrow** your rights (a subset of your sections and of the **hosts** you reach, plus **read-only**). New tokens **expire after 30 days** by default (admin-configurable, with never-expiring tokens off unless enabled). Each OAuth connector pairing gets a **per-session** identity, so one specific session — not just the whole client — can be revoked on its own (self-service, or fleet-wide from MCP Admin), killing its access **and** refresh token immediately. **Changes are rate limited** (30/min per user; reads are not) so a model stuck in a loop — or a stolen token — is bounded to a few containers rather than your whole estate, and hitting that ceiling is audited. Deliberately **no exec / image export / file read / prune / remove**. See [MCP](docs/mcp.md).
 
 **Security & administration**
@@ -374,6 +375,11 @@ Rules target containers by name substring, carry a severity + cooldown, and can
 notify webhooks (Go-template bodies) and/or email. **Prometheus:** scrape
 `/metrics` for `dockercmd_container_cpu_percent`, `_mem_bytes`, `_mem_percent`,
 `_container_running` (labelled by `id`, `name`, `host`).
+
+Planned work? Open a **maintenance window** (Alerts → Maintenance) to suppress
+delivery without turning monitoring off — alerts still fire and land in the
+feed, they just don't page. A successful deploy opens one automatically for
+that project.
 
 ## 🔒 Security notes
 

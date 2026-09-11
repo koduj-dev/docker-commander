@@ -16,6 +16,13 @@ type Event struct {
 	ContainerName string
 	Image         string
 	ExitCode      string
+	// Project is the container's compose project (stack) name, read from the
+	// event's own actor attributes — Docker includes the full label set on
+	// every container event, so this needs no extra call. Populated live,
+	// unlike a stats-snapshot lookup, so a container created moments ago (and
+	// not yet in any poll) still resolves correctly — see the alert engine's
+	// use of this for maintenance-window project scoping.
+	Project string
 }
 
 // WatchEvents streams container events from the host, invoking fn for each,
@@ -46,6 +53,7 @@ func (m *Manager) WatchEvents(ctx context.Context, hostID int64, fn func(Event))
 				ContainerName: strings.TrimPrefix(msg.Actor.Attributes["name"], "/"),
 				Image:         msg.Actor.Attributes["image"],
 				ExitCode:      msg.Actor.Attributes["exitCode"],
+				Project:       msg.Actor.Attributes[labelComposeProject],
 			})
 		}
 	}

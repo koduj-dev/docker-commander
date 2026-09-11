@@ -16,6 +16,7 @@ The alert engine runs on the **server**, watching **all configured hosts** 24/7
   to clear the unread badge.
 - **Rules** — define and edit what fires (below).
 - **Webhooks** — HTTP destinations.
+- **Maintenance** — planned-work silences (below).
 - **Email** — the SMTP server.
 
 ## Rules
@@ -139,6 +140,48 @@ Two deliberate limits:
 
 There is no automatic retry yet — a failed delivery is recorded, not re-attempted.
 
+## Maintenance windows
+
+Suppress alert **delivery** (webhook/e-mail) for planned work without turning
+monitoring off. The alert still **fires and is recorded** in the feed — the
+point is to stop the paging, not the observing — and a suppressed row carries a
+small **silenced** badge so you can tell "nothing happened" from "something
+happened and was silenced" at a glance. This is different from a **disabled
+host**, which the engine doesn't watch at all.
+
+A window's **scope** is every dimension you can restrict it by, and every one
+left blank means "no restriction on that dimension" — leave them all blank and
+the window silences everything:
+
+- **Hosts** — one or more Docker hosts.
+- **Project** — a compose project (stack) name, substring match.
+- **Container** — a container name, substring match.
+- **Rule** — one specific alert rule, or any rule.
+- **Severities** — one or more of info/warning/critical.
+
+A window is either:
+
+- **One-off** — starts now (or at a picked time) and runs for a set duration, or
+- **Recurring** — a weekly schedule: pick weekdays, a time of day and a
+  duration, evaluated in **your browser's own timezone**. An optional series
+  end date stops the recurrence on a given date; leaving it blank means it
+  recurs indefinitely.
+
+Every window records a **reason** and an **author** — this suppresses paging, so
+why must always stay answerable later — and both are audited on
+create/update/end/delete.
+
+**End early** stops a window immediately, without deleting it, so its record
+(and why it existed) stays in place. **Delete** removes it outright; neither
+undoes any suppression that already happened.
+
+**Deploying automatically opens a short window** for the project's own host and
+stack — containers restarting or warming up right after a deploy are expected
+noise, not a fresh incident. The grace period defaults to 3 minutes and is
+configurable (`-deploy-silence-grace` / `DC_DEPLOY_SILENCE_GRACE`); set it to
+`0` to disable auto-silencing entirely. These windows show up in the
+Maintenance tab named `auto: <project> deploy` like any other.
+
 ## From an AI tool
 
 If the [MCP server](mcp.md) is enabled, the same material is reachable read-only
@@ -148,6 +191,11 @@ thresholds (`list_alert_rules`), whether an alert actually reached anyone
 (`alert_delivery`), and `acknowledge_alert`, which is attributed like any other
 acknowledgement. Rule delivery is reported by **channel**, never by recipient or
 webhook URL. Everything obeys the caller's own permissions and host scope.
+
+An agent can also declare a maintenance window itself: `list_maintenance_windows`,
+`create_maintenance_window` (starts now, for a given duration — the ad-hoc "I'm
+working on this, silence it" shape) and `end_maintenance_window`. Editing an
+existing window's scope or schedule is UI/REST-only.
 
 ## What the CPU threshold is a percentage *of*
 

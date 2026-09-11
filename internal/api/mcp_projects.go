@@ -102,6 +102,9 @@ func (s *Server) mcpDeployProject(ctx context.Context, id int64, profiles []stri
 		// clean deploy and never mention that paths were remapped.
 		out = strings.TrimRight(out, "\n") + "\nnote: " + note
 	}
+	if err == nil {
+		s.autoSilenceForDeploy(ctx, p)
+	}
 	return out, err
 }
 

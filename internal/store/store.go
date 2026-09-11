@@ -216,6 +216,43 @@ CREATE TABLE IF NOT EXISTS alert_states (
 	PRIMARY KEY (host_id, container_id, metric)
 );
 
+-- Suppresses alert DELIVERY for the scope and time it covers, without
+-- stopping the engine from noticing or recording what happened — the point
+-- is to stop the paging, not the observing, so alert_events keeps getting
+-- written either way (see AlertEvent.Suppressed). Distinct from a disabled
+-- host (hosts.disabled), which the engine does not watch at all.
+--
+-- Scope columns follow the same "empty means unrestricted" convention as
+-- alert_rules.target and api_tokens.host_ids: a window with every scope
+-- column empty silences everything, matching a rule with an empty Target
+-- matching every container.
+CREATE TABLE IF NOT EXISTS maintenance_windows (
+	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	name         TEXT NOT NULL DEFAULT '',
+	reason       TEXT NOT NULL DEFAULT '',
+	author_id    INTEGER NOT NULL DEFAULT 0,
+	host_ids     TEXT NOT NULL DEFAULT '',  -- JSON list; empty = every host
+	project      TEXT NOT NULL DEFAULT '',  -- compose project substring; '' = every project
+	container    TEXT NOT NULL DEFAULT '',  -- container name substring; '' = every container
+	rule_id      INTEGER,                   -- NULL = every rule
+	severities   TEXT NOT NULL DEFAULT '',  -- JSON list; empty = every severity
+	recurring    INTEGER NOT NULL DEFAULT 0,
+	-- One-off: the exact window. Recurring: starts_at's date is when the
+	-- series begins (its time-of-day is ignored, see time_of_day), ends_at
+	-- is when the whole series stops recurring ('' = indefinitely).
+	starts_at    TEXT NOT NULL,
+	ends_at      TEXT NOT NULL DEFAULT '',
+	weekdays     TEXT NOT NULL DEFAULT '',  -- JSON list of time.Weekday ints (0=Sunday); recurring only
+	time_of_day  TEXT NOT NULL DEFAULT '',  -- "HH:MM" in timezone; recurring only
+	duration_min INTEGER NOT NULL DEFAULT 0,
+	timezone     TEXT NOT NULL DEFAULT '',  -- IANA name; '' = UTC
+	-- Lets an operator end a window early (the work finished ahead of
+	-- schedule) without losing the audit trail a delete would.
+	ended        INTEGER NOT NULL DEFAULT 0,
+	created_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_maintenance_windows_active ON maintenance_windows(ended, recurring, ends_at);
+
 CREATE TABLE IF NOT EXISTS parse_rules (
 	id         INTEGER PRIMARY KEY AUTOINCREMENT,
 	name       TEXT NOT NULL,
@@ -629,6 +666,14 @@ CREATE INDEX IF NOT EXISTS idx_backup_runs_job ON backup_runs(job_id);
 		// which matches no session id — it simply isn't individually
 		// revocable until its owner refreshes again after upgrade.
 		`ALTER TABLE oauth_refresh_tokens ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`,
+		// Whether an active maintenance window suppressed this event's delivery,
+		// and which one — the event itself is still recorded either way (see
+		// maintenance_windows' doc comment), so an operator reviewing the feed
+		// can tell "nothing happened" from "something happened and was silenced".
+		// suppressed_by outlives the window it names (no FK): a deleted window
+		// must not make past events look like they were never silenced.
+		`ALTER TABLE alert_events ADD COLUMN suppressed INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE alert_events ADD COLUMN suppressed_by INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := s.db.ExecContext(ctx, alter); err != nil && !isDuplicateColumn(err) {
 			return err

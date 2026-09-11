@@ -88,6 +88,15 @@ var recordRouteDecision = map[string]string{
 	"/api/alert-rules/{id}/toggle": "an alert rule is instance-wide; it names no host",
 	"/api/webhooks/{id}":           "a webhook is instance-wide; it names no host",
 	"/api/parse-rules/{id}":        "a parse rule is instance-wide; it names no host",
+	// Unlike the instance-wide rows above, a maintenance window DOES carry
+	// host scope (HostIDs) — but it's enforced inside the handler itself
+	// (maintenanceWindowHostsAllowed/maintenanceWindowInReach), not by this
+	// generic {id}-vs-?host= sweep, because the scope is a caller-chosen LIST
+	// of hosts (or "every host"), not one owning host column the sweep's
+	// single-host convention can express. See the maintenance window
+	// host-scope pentests for the exercised property.
+	"/api/maintenance-windows/{id}":     "host-scoped inside the handler; see maintenance window host-scope pentests",
+	"/api/maintenance-windows/{id}/end": "host-scoped inside the handler; see maintenance window host-scope pentests",
 	// Installation-level authority, gated by the admin prefix or its own section;
 	// none of these rows carry a host column.
 	"/api/users/{id}":           "admin-only prefix; users carry no host",

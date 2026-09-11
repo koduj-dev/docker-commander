@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Plus, Trash2, Webhook as WebhookIcon, Check, CheckCheck, Pencil, Download, Upload, X , ChevronDown, ChevronUp, ChevronsUpDown} from "lucide-react";
+import { Plus, Trash2, Webhook as WebhookIcon, Check, CheckCheck, Pencil, Download, Upload, X , ChevronDown, ChevronUp, ChevronsUpDown, BellOff, Ban} from "lucide-react";
 import { Link } from "react-router-dom";
 import clsx from "clsx";
 import { api } from "../lib/api";
+import type { MaintenanceWindowBody } from "../lib/api";
 import { triggerDownload } from "../components/LoadModal";
-import type { AlertEvent, AlertRule, AlertType, Host, Severity, Webhook } from "../lib/types";
+import type { AlertEvent, AlertRule, AlertType, Host, MaintenanceWindow, Severity, Webhook } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
 import { useAuth } from "../auth/AuthContext";
@@ -16,7 +17,7 @@ import { useAlertPulse } from "../lib/alertStream";
 // one-core-is-100% figure; "cpu_total" normalises it across the host's cores.
 type Metric = "cpu" | "cpu_total" | "mem";
 
-type Tab = "feed" | "rules" | "webhooks";
+type Tab = "feed" | "rules" | "webhooks" | "maintenance";
 
 export function Alerts() {
   const [tab, setTab] = useState<Tab>("feed");
@@ -43,11 +44,13 @@ export function Alerts() {
             { key: "feed", label: "Feed" },
             { key: "rules", label: "Rules" },
             { key: "webhooks", label: "Webhooks" },
+            { key: "maintenance", label: "Maintenance", icon: <BellOff className="h-4 w-4" /> },
           ]}
         />
         {tab === "feed" && <Feed onAckAllReady={setAckAll} />}
         {tab === "rules" && <Rules />}
         {tab === "webhooks" && <Webhooks />}
+        {tab === "maintenance" && <MaintenanceWindows />}
       </div>
     </>
   );
@@ -360,6 +363,11 @@ function FeedRow({ e, onOpen, onAck }: { e: AlertEvent; onOpen: () => void; onAc
         </span>
         {e.kind && e.kind !== "firing" && e.kind !== "resolved" && (
           <span className="ml-1 text-[10px] uppercase tracking-wide text-muted">{e.kind}</span>
+        )}
+        {e.suppressed && (
+          <span className="ml-1 inline-flex items-center gap-0.5 text-[10px] uppercase tracking-wide text-muted" title="A maintenance window suppressed delivery for this event">
+            <BellOff className="h-3 w-3" /> silenced
+          </span>
         )}
       </td>
       <td className="px-4 py-2.5">{e.ruleName}</td>
@@ -971,6 +979,451 @@ function WebhookForm({ onDone }: { onDone: () => void }) {
       <div className="flex justify-end gap-2">
         <button type="button" className="btn-ghost" onClick={onDone}>Cancel</button>
         <button className="btn-primary" disabled={busy}>{busy ? "Saving…" : "Create webhook"}</button>
+      </div>
+    </form>
+  );
+}
+
+// ---- Maintenance windows -----------------------------------------------------
+
+const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+// A minimal host shape for the maintenance-window picker — deliberately
+// narrower than the full Host type, since the fallback below (for a caller
+// without the "hosts" section) can only ever know an id, never a name.
+interface HostOption {
+  id: number;
+  name: string;
+}
+
+function toInputDateTime(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function toInputDate(iso: string): string {
+  return toInputDateTime(iso).slice(0, 10);
+}
+function fromInputDateTime(value: string): string {
+  return new Date(value).toISOString();
+}
+function fromInputDate(value: string): string {
+  return new Date(`${value}T00:00`).toISOString();
+}
+
+// zonedDateString/fromZonedDate are toInputDate/fromInputDate's counterparts
+// for a recurring window's SERIES start/end date, which the server
+// interprets as a calendar date in the window's OWN schedule timezone, not
+// the browser's. toInputDate/fromInputDate round-trip through the browser's
+// local calendar date instead — harmless when they happen to match, but
+// when they don't, editing and re-saving a window WITHOUT changing its date
+// at all silently shifts it to a different absolute instant, which the
+// server then reads back as a different calendar date in the window's own
+// timezone (see the regression test for a worked example).
+function zonedDateString(iso: string, tz: string): string {
+  try {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: tz || "UTC", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
+  } catch {
+    return toInputDate(iso);
+  }
+}
+function fromZonedDate(value: string, tz: string): string {
+  const zone = tz || "UTC";
+  try {
+    // Start from a UTC guess at midnight of the requested date, read what
+    // that instant reads as IN the target zone, and correct by the
+    // difference — the standard offset-free way to place a wall-clock time
+    // into a named IANA zone without a date library.
+    const utcGuess = new Date(`${value}T00:00:00Z`);
+    const fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone, hour12: false,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+    });
+    const parts: Record<string, string> = {};
+    for (const p of fmt.formatToParts(utcGuess)) if (p.type !== "literal") parts[p.type] = p.value;
+    const hour = parts.hour === "24" ? 0 : Number(parts.hour); // some locales report midnight as "24"
+    const asIfUTC = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), hour, Number(parts.minute), Number(parts.second));
+    const offsetMs = asIfUTC - utcGuess.getTime();
+    return new Date(utcGuess.getTime() - offsetMs).toISOString();
+  } catch {
+    return fromInputDate(value);
+  }
+}
+
+function windowStatus(w: MaintenanceWindow): { label: string; cls: string } {
+  if (w.ended) return { label: "Ended", cls: "bg-panel2 text-muted" };
+  if (w.recurring) return { label: "Recurring", cls: "bg-accent/15 text-accent" };
+  // A one-off window always carries a real endsAt (the server requires it);
+  // only a recurring series — handled above — can omit it.
+  const now = Date.now();
+  if (new Date(w.endsAt ?? 0).getTime() <= now) return { label: "Expired", cls: "bg-panel2 text-muted" };
+  if (new Date(w.startsAt).getTime() > now) return { label: "Scheduled", cls: "bg-accent/15 text-accent" };
+  return { label: "Active", cls: "bg-warn/15 text-warn" };
+}
+
+// Exported (unlike its sibling sub-views) so it can be exercised directly in
+// a DOM test without mounting the whole Alerts page — the Feed tab's polling
+// (useAlertPulse) has nothing to do with this surface and would only add
+// unrelated setup/teardown to a maintenance-window test.
+export function MaintenanceWindows() {
+  const [windows, setWindows] = useState<MaintenanceWindow[] | null>(null);
+  const [rules, setRules] = useState<AlertRule[]>([]);
+  const [hosts, setHosts] = useState<HostOption[]>([]);
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<MaintenanceWindow | null>(null);
+  const dialogs = useDialogs();
+
+  const load = useCallback(() => {
+    api.maintenanceWindows().then(setWindows).catch(() => setWindows([]));
+    api.alertRules().then(setRules).catch(() => {});
+    api.hosts().then(setHosts).catch(() => {
+      // No "hosts" section (e.g. the built-in Operator role, which grants
+      // "alerts" but deliberately not "hosts") — fall back to just the host
+      // ids this grant can reach, so the picker still works (as "host #N"
+      // chips) instead of silently looking like zero hosts exist.
+      api.myAccess().then((access) => {
+        const g = access.effective?.find((eg) => eg.section === "alerts");
+        if (g && !g.allHosts && g.hosts) {
+          setHosts(g.hosts.map((id) => ({ id, name: `host #${id}` })));
+        }
+      }).catch(() => {});
+    });
+  }, []);
+  useEffect(() => load(), [load]);
+
+  const end = async (w: MaintenanceWindow) => {
+    if (!(await dialogs.confirm({
+      title: "End maintenance window",
+      message: <>Stop silencing <code className="font-mono text-text">{w.name}</code> now? Alerts covered by it will start paging again immediately.</>,
+      confirmLabel: "End now",
+    }))) return;
+    await api.endMaintenanceWindow(w.id);
+    load();
+  };
+  const del = async (w: MaintenanceWindow) => {
+    if (!(await dialogs.confirm({
+      title: "Delete maintenance window",
+      message: <>Delete <code className="font-mono text-text">{w.name}</code>? This does not undo any silencing that already happened.</>,
+      danger: true, confirmLabel: "Delete",
+    }))) return;
+    await api.deleteMaintenanceWindow(w.id);
+    load();
+  };
+
+  if (!windows) return <Loading />;
+
+  const hostName = (id: number) => hosts.find((h) => h.id === id)?.name ?? `host #${id}`;
+  const scopeSummary = (w: MaintenanceWindow): string => {
+    // Defensive: the server always sends [] rather than null for an
+    // unrestricted scope, but a nil Go slice marshals to JSON null, and an
+    // empty scope is the COMMON case (every auto-silence window has no
+    // severity restriction) — so a regression here would crash the whole
+    // tab, not just show a blank cell. Tolerate null/undefined too.
+    const hostIds = w.hostIds ?? [];
+    const severities = w.severities ?? [];
+    const parts: string[] = [];
+    if (hostIds.length > 0) parts.push(hostIds.map(hostName).join(", "));
+    if (w.project) parts.push(`project~"${w.project}"`);
+    if (w.container) parts.push(`container~"${w.container}"`);
+    if (w.ruleId != null) parts.push(rules.find((r) => r.id === w.ruleId)?.name ?? `rule #${w.ruleId}`);
+    if (severities.length > 0) parts.push(severities.join("/"));
+    return parts.length > 0 ? parts.join(" · ") : "everything";
+  };
+  const scheduleSummary = (w: MaintenanceWindow): string => {
+    // A one-off window always carries a real endsAt; only a recurring
+    // series (handled below) can leave it unset.
+    if (!w.recurring) return `${new Date(w.startsAt).toLocaleString()} → ${new Date(w.endsAt ?? 0).toLocaleString()}`;
+    const days = (w.weekdays ?? []).map((d) => WEEKDAY_LABELS[d]).join(", ") || "—";
+    const until = w.endsAt ? ` until ${new Date(w.endsAt).toLocaleDateString()}` : "";
+    return `Every ${days} at ${w.timeOfDay || "?"} for ${w.durationMin ?? 0}m${until}`;
+  };
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted">
+        Suppress alert delivery for planned work — events still get recorded, just not paged. Distinct from a
+        disabled host, which is not monitored at all.
+      </p>
+      <div className="flex justify-end">
+        <button className="btn-primary" onClick={() => { setEditing(null); setShowForm((v) => !v); }}>
+          <Plus className="h-4 w-4" /> New window
+        </button>
+      </div>
+      {(showForm || editing) && (
+        <MaintenanceWindowForm
+          key={editing?.id ?? "new"}
+          rules={rules}
+          hosts={hosts}
+          existing={editing}
+          onDone={() => { setShowForm(false); setEditing(null); load(); }}
+          onCancel={() => { setShowForm(false); setEditing(null); }}
+        />
+      )}
+      {windows.length === 0 ? (
+        <EmptyState title="No maintenance windows" hint="Create one to silence alerts during planned work." />
+      ) : (
+        <div className="card overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="text-muted text-xs uppercase tracking-wide">
+              <tr className="border-b border-border">
+                <th className="text-left font-medium px-4 py-3">Name</th>
+                <th className="text-left font-medium px-4 py-3">Scope</th>
+                <th className="text-left font-medium px-4 py-3">Schedule</th>
+                <th className="text-left font-medium px-4 py-3">Status</th>
+                <th className="px-4 py-3"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {windows.map((w) => {
+                const status = windowStatus(w);
+                const canEnd = !w.ended && (w.recurring || new Date(w.endsAt ?? 0).getTime() > Date.now());
+                return (
+                  <tr key={w.id} className="border-b border-border/50">
+                    <td className="px-4 py-2.5 font-medium">
+                      {w.name}
+                      <div className="text-xs text-muted font-normal">{w.reason}</div>
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-muted max-w-[260px] truncate" title={scopeSummary(w)}>{scopeSummary(w)}</td>
+                    <td className="px-4 py-2.5 text-xs text-muted whitespace-nowrap">{scheduleSummary(w)}</td>
+                    <td className="px-4 py-2.5">
+                      <span className={clsx("text-xs px-2 py-0.5 rounded-md font-medium", status.cls)}>{status.label}</span>
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <button className="btn-ghost px-2 py-1" title="Edit" onClick={() => { setShowForm(false); setEditing(w); }}><Pencil className="h-4 w-4" /></button>
+                        {canEnd && (
+                          <button className="btn-ghost px-2 py-1" title="End now" onClick={() => end(w)}><Ban className="h-4 w-4" /></button>
+                        )}
+                        <button className="btn-ghost px-2 py-1 text-danger" title="Delete" onClick={() => del(w)}><Trash2 className="h-4 w-4" /></button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MaintenanceWindowForm({
+  rules, hosts, existing, onDone, onCancel,
+}: { rules: AlertRule[]; hosts: HostOption[]; existing?: MaintenanceWindow | null; onDone: () => void; onCancel: () => void }) {
+  const [name, setName] = useState(existing?.name ?? "");
+  const [reason, setReason] = useState(existing?.reason ?? "");
+  const [hostIds, setHostIds] = useState<number[]>(existing?.hostIds ?? []);
+  const [project, setProject] = useState(existing?.project ?? "");
+  const [container, setContainer] = useState(existing?.container ?? "");
+  const [ruleId, setRuleId] = useState<number | null>(existing?.ruleId ?? null);
+  const [severities, setSeverities] = useState<Set<Severity>>(new Set(existing?.severities ?? []));
+  const [recurring, setRecurring] = useState(existing?.recurring ?? false);
+
+  const nowIso = new Date().toISOString();
+  const [startLocal, setStartLocal] = useState(toInputDateTime(!existing || !existing.recurring ? existing?.startsAt ?? nowIso : nowIso));
+  // A one-off existing window always carries a real endsAt (the server
+  // requires it); only a recurring series can leave it unset.
+  const existingDurationMin = existing && !existing.recurring
+    ? Math.max(1, Math.round((new Date(existing.endsAt ?? existing.startsAt).getTime() - new Date(existing.startsAt).getTime()) / 60000))
+    : existing?.durationMin ?? 60;
+  const [durationMin, setDurationMin] = useState(existingDurationMin);
+
+  // An EXISTING window's stored timezone ("" meaning UTC, same convention
+  // the server uses) must be preserved as-is when merely editing it —
+  // falling back to the browser's own timezone here would silently change
+  // a saved window's actual wall-clock schedule. Only a brand-new window
+  // defaults to the browser's timezone. Computed before the series
+  // start/end date fields below, which need it to read/write the right
+  // calendar date in THIS timezone, not the browser's own.
+  const tz = existing ? (existing.timezone || "UTC") : Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const [seriesStartDate, setSeriesStartDate] = useState(zonedDateString(existing?.recurring ? existing.startsAt : nowIso, tz));
+  const [seriesEndDate, setSeriesEndDate] = useState(existing?.recurring && existing.endsAt ? zonedDateString(existing.endsAt, tz) : "");
+  const [weekdays, setWeekdays] = useState<Set<number>>(new Set(existing?.weekdays ?? []));
+  const [timeOfDay, setTimeOfDay] = useState(existing?.timeOfDay ?? "02:00");
+
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const toggleHost = (id: number) => setHostIds((prev) => (prev.includes(id) ? prev.filter((h) => h !== id) : [...prev, id]));
+  const toggleSeverity = (s: Severity) => setSeverities((prev) => {
+    const next = new Set(prev);
+    if (next.has(s)) next.delete(s); else next.add(s);
+    return next;
+  });
+  const toggleWeekday = (d: number) => setWeekdays((prev) => {
+    const next = new Set(prev);
+    if (next.has(d)) next.delete(d); else next.add(d);
+    return next;
+  });
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true); setErr("");
+    try {
+      const shared = {
+        name, reason, hostIds, project, container, ruleId,
+        severities: [...severities],
+      };
+      const body: MaintenanceWindowBody = recurring
+        ? {
+          ...shared, recurring: true,
+          // In the window's OWN schedule timezone, not the browser's — see
+          // zonedDateString/fromZonedDate's doc comment for why that matters.
+          startsAt: fromZonedDate(seriesStartDate, tz),
+          // undefined (never ""): Go's time.Time JSON decoder rejects an
+          // empty string for an open-ended series, but a missing key leaves
+          // it at its zero value, which the server treats as indefinite.
+          endsAt: seriesEndDate ? fromZonedDate(seriesEndDate, tz) : undefined,
+          weekdays: [...weekdays], timeOfDay, durationMin, timezone: tz,
+        }
+        : {
+          ...shared, recurring: false,
+          startsAt: fromInputDateTime(startLocal),
+          endsAt: new Date(new Date(fromInputDateTime(startLocal)).getTime() + durationMin * 60000).toISOString(),
+        };
+      if (existing) await api.updateMaintenanceWindow(existing.id, body);
+      else await api.createMaintenanceWindow(body);
+      onDone();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="card p-5 space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label className="label">Name</label>
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} required />
+        </div>
+        <div>
+          <label className="label">Reason</label>
+          <input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why — this suppresses paging, so make it explainable later" required />
+        </div>
+      </div>
+
+      <div>
+        <label className="label">Hosts (blank = every host)</label>
+        <div className="flex flex-wrap gap-1.5">
+          {hosts.length === 0 ? (
+            <span className="text-xs text-muted">No hosts configured.</span>
+          ) : hosts.map((h) => (
+            <button
+              key={h.id} type="button" onClick={() => toggleHost(h.id)}
+              className={clsx("text-xs px-2 py-0.5 rounded-md border",
+                hostIds.includes(h.id) ? "bg-accent/20 border-accent/40 text-text" : "border-border text-muted")}
+            >
+              {h.name}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div>
+          <label className="label">Project (compose stack, contains)</label>
+          <input className="input" value={project} onChange={(e) => setProject(e.target.value)} placeholder="blank = every project" />
+        </div>
+        <div>
+          <label className="label">Container (name contains)</label>
+          <input className="input" value={container} onChange={(e) => setContainer(e.target.value)} placeholder="blank = every container" />
+        </div>
+        <div>
+          <label className="label">Rule</label>
+          <select className="input" value={ruleId ?? ""} onChange={(e) => setRuleId(e.target.value ? Number(e.target.value) : null)}>
+            <option value="">Any rule</option>
+            {rules.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label className="label">Severities (blank = every severity)</label>
+        <div className="flex flex-wrap gap-1.5">
+          {(["info", "warning", "critical"] as Severity[]).map((s) => (
+            <button
+              key={s} type="button" onClick={() => toggleSeverity(s)}
+              className={clsx("text-xs px-2 py-0.5 rounded-md border capitalize",
+                severities.has(s) ? "bg-accent/20 border-accent/40 text-text" : "border-border text-muted")}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex gap-1 rounded-lg bg-panel2/50 p-0.5 max-w-xs">
+        <button
+          type="button" onClick={() => setRecurring(false)}
+          className={clsx("flex-1 px-2 py-1.5 rounded-md text-sm", !recurring ? "bg-panel text-text shadow-sm" : "text-muted hover:text-text")}
+        >
+          One-off
+        </button>
+        <button
+          type="button" onClick={() => setRecurring(true)}
+          className={clsx("flex-1 px-2 py-1.5 rounded-md text-sm", recurring ? "bg-panel text-text shadow-sm" : "text-muted hover:text-text")}
+        >
+          Recurring
+        </button>
+      </div>
+
+      {!recurring ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="label">Starts</label>
+            <input type="datetime-local" className="input" value={startLocal} onChange={(e) => setStartLocal(e.target.value)} required />
+          </div>
+          <div>
+            <label className="label">Duration (minutes)</label>
+            <input type="number" min={1} className="input" value={durationMin} onChange={(e) => setDurationMin(Number(e.target.value))} required />
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div>
+            <label className="label">Weekdays</label>
+            <div className="flex flex-wrap gap-1.5">
+              {WEEKDAY_LABELS.map((label, d) => (
+                <button
+                  key={d} type="button" onClick={() => toggleWeekday(d)}
+                  className={clsx("text-xs px-2 py-0.5 rounded-md border",
+                    weekdays.has(d) ? "bg-accent/20 border-accent/40 text-text" : "border-border text-muted")}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <label className="label">Time of day</label>
+              <input type="time" className="input" value={timeOfDay} onChange={(e) => setTimeOfDay(e.target.value)} required />
+            </div>
+            <div>
+              <label className="label">Duration (minutes)</label>
+              <input type="number" min={1} className="input" value={durationMin} onChange={(e) => setDurationMin(Number(e.target.value))} required />
+            </div>
+            <div>
+              <label className="label">Series starts</label>
+              <input type="date" className="input" value={seriesStartDate} onChange={(e) => setSeriesStartDate(e.target.value)} required />
+            </div>
+            <div>
+              <label className="label">Series ends (optional)</label>
+              <input type="date" className="input" value={seriesEndDate} onChange={(e) => setSeriesEndDate(e.target.value)} />
+            </div>
+          </div>
+          <p className="text-xs text-muted">Evaluated in your browser's timezone, <span className="font-mono">{tz}</span>.</p>
+        </div>
+      )}
+
+      {err && <p className="text-sm text-danger">{err}</p>}
+      <div className="flex justify-end gap-2">
+        <button type="button" className="btn-ghost" onClick={onCancel}>Cancel</button>
+        <button className="btn-primary" disabled={busy}>{busy ? "Saving…" : existing ? "Save changes" : "Create window"}</button>
       </div>
     </form>
   );

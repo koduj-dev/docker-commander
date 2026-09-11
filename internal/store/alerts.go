@@ -73,6 +73,13 @@ type AlertEvent struct {
 	// this" is only useful if you can ask them about it.
 	AcknowledgedBy string     `json:"acknowledgedBy,omitempty"`
 	AcknowledgedAt *time.Time `json:"acknowledgedAt,omitempty"`
+	// Suppressed means an active maintenance window matched this event, so
+	// delivery (webhook/email) was skipped — the event is still recorded and
+	// visible in the feed either way. SuppressedBy names the window that did
+	// it (0 if not suppressed); it outlives a deleted window on purpose, so a
+	// past event never stops explaining why nothing was sent.
+	Suppressed   bool  `json:"suppressed"`
+	SuppressedBy int64 `json:"suppressedBy,omitempty"`
 	// Deliveries is filled in on request, not on every list.
 	Deliveries []AlertDelivery `json:"deliveries,omitempty"`
 }
@@ -288,10 +295,10 @@ func (s *Store) InsertAlertEvent(ctx context.Context, e *AlertEvent) (int64, err
 	kind := orDefault(e.Kind, KindFiring)
 	settled := e.Acknowledged || kind == KindResolved
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO alert_events (rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name, message, value, kind, duration_sec, acknowledged, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO alert_events (rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name, message, value, kind, duration_sec, acknowledged, suppressed, suppressed_by, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.RuleID, e.RuleName, e.Type, e.Severity, e.HostID, e.HostName, e.ContainerID, e.ContainerName, e.Message, e.Value,
-		kind, e.DurationSec, boolToInt(settled),
+		kind, e.DurationSec, boolToInt(settled), boolToInt(e.Suppressed), e.SuppressedBy,
 		time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		return 0, err
@@ -376,7 +383,8 @@ func (s *Store) ListAlertEvents(ctx context.Context, q AlertQuery) ([]AlertEvent
 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name,
-		       message, value, acknowledged, kind, duration_sec, acknowledged_by, acknowledged_at, created_at
+		       message, value, acknowledged, kind, duration_sec, acknowledged_by, acknowledged_at,
+		       suppressed, suppressed_by, created_at
 		FROM alert_events WHERE `+cond+`
 		ORDER BY `+q.orderBy()+` LIMIT ? OFFSET ?`, append(args, q.Limit, q.Offset)...)
 	if err != nil {
@@ -388,15 +396,17 @@ func (s *Store) ListAlertEvents(ctx context.Context, q AlertQuery) ([]AlertEvent
 		var e AlertEvent
 		var created, ackAt string
 		var value sql.NullFloat64
-		var ack int
+		var ack, suppressed int
 		if err := rows.Scan(&e.ID, &e.RuleID, &e.RuleName, &e.Type, &e.Severity, &e.HostID, &e.HostName, &e.ContainerID,
-			&e.ContainerName, &e.Message, &value, &ack, &e.Kind, &e.DurationSec, &e.AcknowledgedBy, &ackAt, &created); err != nil {
+			&e.ContainerName, &e.Message, &value, &ack, &e.Kind, &e.DurationSec, &e.AcknowledgedBy, &ackAt,
+			&suppressed, &e.SuppressedBy, &created); err != nil {
 			return nil, 0, err
 		}
 		if value.Valid {
 			e.Value = &value.Float64
 		}
 		e.Acknowledged = ack != 0
+		e.Suppressed = suppressed != 0
 		e.CreatedAt, _ = time.Parse(time.RFC3339, created)
 		if t, err := time.Parse(time.RFC3339, ackAt); err == nil {
 			e.AcknowledgedAt = &t
