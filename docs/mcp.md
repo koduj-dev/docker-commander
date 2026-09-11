@@ -164,6 +164,14 @@ answer the same questions and a great many others nobody intended to allow.
   real problem from a badly chosen threshold. It reports which channels a rule
   notifies through, but never the recipients or the webhook URL — those are
   delivery configuration, and a webhook URL routinely carries a token.
+- **list_maintenance_windows** — active/scheduled planned-work silences: alert
+  delivery is suppressed for their scope while they're active, but events still
+  get recorded
+- **create_maintenance_window** — start one now, for a given duration and scope
+  (host/project/container/rule/severity, all optional) — the "I'm working on
+  this, silence it" shape an agent call fits. A reason is required
+- **end_maintenance_window** — stop one early. Editing an existing window's
+  scope or schedule is UI/REST-only
 
 The split between the first two is deliberate. Since alerts became conditions
 with a lifetime, "what happened" and "what is wrong now" are different questions,
@@ -247,6 +255,9 @@ then decides *where* each one may act.
 | `list_alert_rules` | alerts | R | Rules and thresholds; channels, never recipients or webhook URLs |
 | `alert_delivery` | alerts | R | Whether an alert reached anyone (authorized against the alert's host) |
 | `acknowledge_alert` | alerts | **W** | Record that a human saw it, attributed to the caller |
+| `list_maintenance_windows` | alerts | R | Active/scheduled planned-work silences |
+| `create_maintenance_window` | alerts | **W** | Start a silence now, for a duration and scope |
+| `end_maintenance_window` | alerts | **W** | Stop a window early |
 | `start_container` / `stop_container` / `restart_container` | containers | **W** | One container's lifecycle |
 | `start_stack` / `stop_stack` / `restart_stack` | containers | **W** | A whole Compose stack by project name |
 | `restart_stack_containers` / `stop_stack_containers` | containers | **W** | Up to 10 of one stack's own containers, membership verified server-side |

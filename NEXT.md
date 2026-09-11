@@ -31,13 +31,6 @@ The alert engine now tracks conditions with a lifetime (firing → escalated →
 resolved), which is the foundation the next two items assume. Building them on
 the old repeat-every-cooldown engine would have produced a timeline of noise.
 
-- **Maintenance windows and silences.** Suppress notifications during planned work
-  without turning monitoring off. Scope by host, project/stack, container, rule or
-  severity; one-off and recurring; a reason and an author; audited. An incident
-  should still be *recorded* while silenced — the point is to stop the paging, not
-  the observing. Also: automatic silence during a deploy, with a configurable grace
-  period afterwards. This is distinct from a **disabled host**, which is not
-  monitored at all.
 - **Incident timeline / correlation.** Join alerts, Docker events, deploys, log
   matches and metrics into one explainable incident: what changed, what broke, what
   it affected, and a link to the revision to roll back to. Feeds MCP tools
@@ -463,7 +456,7 @@ together (a silence is, among other things, a reason a delivery legitimately
 doesn't retry). Project secrets pushed to #4, unchanged in scope.
 
 1. [x] Per-session MCP token revocation (#20)
-2. [ ] Maintenance windows / silences (#6)
+2. [x] Maintenance windows / silences (#6)
 3. [ ] Alert delivery retry (#12)
 4. [ ] Project secrets (#10)
 5. [ ] Controlled image updates (#11) — together with self-update auto-apply

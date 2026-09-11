@@ -7,6 +7,19 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Maintenance windows.** Suppress alert *delivery* (webhook/e-mail) for
+  planned work — host, compose project/stack, container, rule and/or
+  severity, one-off or weekly-recurring — without turning monitoring off:
+  the alert still fires and is recorded in the feed (shown with a
+  **silenced** badge), it just doesn't page. A required reason and the
+  author are audited on every create/update/end/delete. A successful
+  **deploy now opens a short auto-silence window** for that project's own
+  host+stack (default 3 minutes, configurable via
+  `-deploy-silence-grace`/`DC_DEPLOY_SILENCE_GRACE`, `0` disables) —
+  containers restarting or warming up right after a deploy are expected
+  noise, not a fresh incident. Manage windows from the new **Maintenance**
+  tab on the Alerts page, or via MCP (`list_maintenance_windows`,
+  `create_maintenance_window`, `end_maintenance_window`).
 - **Volume backup jobs.** A trigger-and-status wrapper around your own backup
   command (restic, borg, or anything else already pointed at its own
   repository) — not a backup engine of our own: no repositories, retention
