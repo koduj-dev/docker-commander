@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -164,8 +165,20 @@ func TestEveryRecordScopedToolChecksItsRecordsHost(t *testing.T) {
 		return id
 	}
 
+	mkWindow := func(hostID int64) int64 {
+		id, err := st.CreateMaintenanceWindow(ctx0, &store.MaintenanceWindow{
+			Name: "w", Reason: "r", HostIDs: []int64{hostID},
+			StartsAt: time.Now(), EndsAt: time.Now().Add(time.Hour),
+		})
+		if err != nil {
+			t.Fatalf("seed maintenance window: %v", err)
+		}
+		return id
+	}
+
 	okProject, badProject := mkProject("ok", inScope), mkProject("hidden", outOfScope)
 	okAlert, badAlert := mkAlert(inScope), mkAlert(outOfScope)
+	okWindow, badWindow := mkWindow(inScope), mkWindow(outOfScope)
 
 	// A refused ack must leave the alert unacknowledged: an error that still
 	// performed the write would otherwise pass.
@@ -185,15 +198,27 @@ func TestEveryRecordScopedToolChecksItsRecordsHost(t *testing.T) {
 			t.Errorf("the refused call ran the operation anyway: %v", *reached)
 		}
 	}
+	// A refused end must leave the window running: an error that still ended it
+	// would otherwise pass.
+	windowUntouched := func(t *testing.T, st *store.Store) {
+		w, err := st.MaintenanceWindowByID(ctx0, badWindow)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if w.Ended {
+			t.Error("the refused call ended the out-of-scope maintenance window anyway")
+		}
+	}
 
 	// Every record-scoped tool needs an entry. A tool the sweep detects but finds
 	// no entry for fails below rather than being skipped.
 	fixtures := map[string]recordFixture{
-		"deploy_project":    {arg: "project_id", inScope: okProject, outOfScope: badProject, verifyUntouched: projectUntouched},
-		"down_project":      {arg: "project_id", inScope: okProject, outOfScope: badProject, verifyUntouched: projectUntouched},
-		"preview_deploy":    {arg: "project_id", inScope: okProject, outOfScope: badProject, verifyUntouched: projectUntouched},
-		"alert_delivery":    {arg: "alert_id", inScope: okAlert, outOfScope: badAlert, verifyUntouched: func(*testing.T, *store.Store) {}},
-		"acknowledge_alert": {arg: "id", inScope: okAlert, outOfScope: badAlert, verifyUntouched: alertUntouched},
+		"deploy_project":         {arg: "project_id", inScope: okProject, outOfScope: badProject, verifyUntouched: projectUntouched},
+		"down_project":           {arg: "project_id", inScope: okProject, outOfScope: badProject, verifyUntouched: projectUntouched},
+		"preview_deploy":         {arg: "project_id", inScope: okProject, outOfScope: badProject, verifyUntouched: projectUntouched},
+		"alert_delivery":         {arg: "alert_id", inScope: okAlert, outOfScope: badAlert, verifyUntouched: func(*testing.T, *store.Store) {}},
+		"acknowledge_alert":      {arg: "id", inScope: okAlert, outOfScope: badAlert, verifyUntouched: alertUntouched},
+		"end_maintenance_window": {arg: "id", inScope: okWindow, outOfScope: badWindow, verifyUntouched: windowUntouched},
 	}
 
 	mkToken(t, st, uid, "scope-secret", nil, false)
