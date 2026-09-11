@@ -697,6 +697,12 @@ CREATE INDEX IF NOT EXISTS idx_backup_runs_job ON backup_runs(job_id);
 		// must not make past events look like they were never silenced.
 		`ALTER TABLE alert_events ADD COLUMN suppressed INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE alert_events ADD COLUMN suppressed_by INTEGER NOT NULL DEFAULT 0`,
+		// The container's compose project at the time this event fired,
+		// resolved by the live alert path (Docker event attributes,
+		// ListContainers labels, or the stats snapshot) and persisted here so
+		// a LATER read — a maintenance-window check for a queued delivery
+		// retry — can still scope by project, which nothing else stores.
+		`ALTER TABLE alert_events ADD COLUMN project TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := s.db.ExecContext(ctx, alter); err != nil && !isDuplicateColumn(err) {
 			return err

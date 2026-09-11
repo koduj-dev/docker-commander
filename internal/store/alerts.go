@@ -42,19 +42,27 @@ type AlertRule struct {
 
 // AlertEvent is a fired alert recorded for the in-app feed.
 type AlertEvent struct {
-	ID            int64     `json:"id"`
-	RuleID        int64     `json:"ruleId"`
-	RuleName      string    `json:"ruleName"`
-	Type          string    `json:"type"`
-	Severity      string    `json:"severity"`
-	HostID        int64     `json:"hostId"`
-	HostName      string    `json:"hostName"`
-	ContainerID   string    `json:"containerId"`
-	ContainerName string    `json:"containerName"`
-	Message       string    `json:"message"`
-	Value         *float64  `json:"value"`
-	Acknowledged  bool      `json:"acknowledged"`
-	CreatedAt     time.Time `json:"createdAt"`
+	ID            int64  `json:"id"`
+	RuleID        int64  `json:"ruleId"`
+	RuleName      string `json:"ruleName"`
+	Type          string `json:"type"`
+	Severity      string `json:"severity"`
+	HostID        int64  `json:"hostId"`
+	HostName      string `json:"hostName"`
+	ContainerID   string `json:"containerId"`
+	ContainerName string `json:"containerName"`
+	// Project is the container's compose project (stack) name at the time
+	// this event fired, resolved by the alert engine (not re-derived here) —
+	// "" for a container Compose doesn't manage. Persisted specifically so a
+	// LATER read (a maintenance-window check for a queued delivery retry)
+	// can still scope by project; the live alert path that resolves it
+	// (docker events' actor attributes, ListContainers' labels, or the stats
+	// snapshot) has no equivalent available after the fact.
+	Project      string    `json:"project,omitempty"`
+	Message      string    `json:"message"`
+	Value        *float64  `json:"value"`
+	Acknowledged bool      `json:"acknowledged"`
+	CreatedAt    time.Time `json:"createdAt"`
 	// Kind is the point in a condition's life this event marks:
 	//
 	//	firing    the condition started
@@ -295,9 +303,9 @@ func (s *Store) InsertAlertEvent(ctx context.Context, e *AlertEvent) (int64, err
 	kind := orDefault(e.Kind, KindFiring)
 	settled := e.Acknowledged || kind == KindResolved
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO alert_events (rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name, message, value, kind, duration_sec, acknowledged, suppressed, suppressed_by, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.RuleID, e.RuleName, e.Type, e.Severity, e.HostID, e.HostName, e.ContainerID, e.ContainerName, e.Message, e.Value,
+		INSERT INTO alert_events (rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name, project, message, value, kind, duration_sec, acknowledged, suppressed, suppressed_by, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.RuleID, e.RuleName, e.Type, e.Severity, e.HostID, e.HostName, e.ContainerID, e.ContainerName, e.Project, e.Message, e.Value,
 		kind, e.DurationSec, boolToInt(settled), boolToInt(e.Suppressed), e.SuppressedBy,
 		time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
@@ -382,7 +390,7 @@ func (s *Store) ListAlertEvents(ctx context.Context, q AlertQuery) ([]AlertEvent
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name,
+		SELECT id, rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name, project,
 		       message, value, acknowledged, kind, duration_sec, acknowledged_by, acknowledged_at,
 		       suppressed, suppressed_by, created_at
 		FROM alert_events WHERE `+cond+`
@@ -398,7 +406,7 @@ func (s *Store) ListAlertEvents(ctx context.Context, q AlertQuery) ([]AlertEvent
 		var value sql.NullFloat64
 		var ack, suppressed int
 		if err := rows.Scan(&e.ID, &e.RuleID, &e.RuleName, &e.Type, &e.Severity, &e.HostID, &e.HostName, &e.ContainerID,
-			&e.ContainerName, &e.Message, &value, &ack, &e.Kind, &e.DurationSec, &e.AcknowledgedBy, &ackAt,
+			&e.ContainerName, &e.Project, &e.Message, &value, &ack, &e.Kind, &e.DurationSec, &e.AcknowledgedBy, &ackAt,
 			&suppressed, &e.SuppressedBy, &created); err != nil {
 			return nil, 0, err
 		}
@@ -651,16 +659,11 @@ func (s *Store) DeleteAlertState(ctx context.Context, hostID int64, containerID,
 	return err
 }
 
-// AlertEventHost returns the Docker host an alert event belongs to.
-//
-// Exists so a caller holding only an alert id can authorise against that alert's
-// host before reading anything about it. Alert ids are sequential integers, so
-// "you need the id first" is not an access control.
 // AlertEventByID loads one event — used by delivery retry to reconstruct the
 // payload a queued retry needs without keeping its own copy of the event.
 func (s *Store) AlertEventByID(ctx context.Context, id int64) (*AlertEvent, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name,
+		SELECT id, rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name, project,
 		       message, value, acknowledged, kind, duration_sec, acknowledged_by, acknowledged_at,
 		       suppressed, suppressed_by, created_at
 		FROM alert_events WHERE id = ?`, id)
@@ -669,7 +672,7 @@ func (s *Store) AlertEventByID(ctx context.Context, id int64) (*AlertEvent, erro
 	var value sql.NullFloat64
 	var ack, suppressed int
 	if err := row.Scan(&e.ID, &e.RuleID, &e.RuleName, &e.Type, &e.Severity, &e.HostID, &e.HostName, &e.ContainerID,
-		&e.ContainerName, &e.Message, &value, &ack, &e.Kind, &e.DurationSec, &e.AcknowledgedBy, &ackAt,
+		&e.ContainerName, &e.Project, &e.Message, &value, &ack, &e.Kind, &e.DurationSec, &e.AcknowledgedBy, &ackAt,
 		&suppressed, &e.SuppressedBy, &created); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -688,6 +691,11 @@ func (s *Store) AlertEventByID(ctx context.Context, id int64) (*AlertEvent, erro
 	return &e, nil
 }
 
+// AlertEventHost returns the Docker host an alert event belongs to.
+//
+// Exists so a caller holding only an alert id can authorise against that alert's
+// host before reading anything about it. Alert ids are sequential integers, so
+// "you need the id first" is not an access control.
 func (s *Store) AlertEventHost(ctx context.Context, id int64) (int64, error) {
 	var hostID sql.NullInt64
 	err := s.db.QueryRowContext(ctx, `SELECT host_id FROM alert_events WHERE id = ?`, id).Scan(&hostID)

@@ -3,8 +3,10 @@ package monitor
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -231,6 +233,106 @@ func TestSweepSkipsButDoesNotBurnAttemptWhenWindowActive(t *testing.T) {
 	}
 	if len(deliveries[eventID]) != 0 {
 		t.Fatalf("a skipped-for-suppression retry must not record a delivery attempt: %+v", deliveries[eventID])
+	}
+}
+
+// TestSweepRespectsAProjectOnlyMaintenanceWindowForARetry is the fix for a
+// real bug: the retry lookup used to pass an empty project unconditionally,
+// so a window scoped ONLY by project (no host/rule/severity restriction —
+// exactly what auto-silence-after-deploy windows look like) could never
+// suppress a retry, even though the original live alert resolved and
+// persisted that same project. The concrete scenario: a webhook fails, a
+// project-scoped deploy grace window starts before the retry is due — the
+// retry must wait it out, not send.
+func TestSweepRespectsAProjectOnlyMaintenanceWindowForARetry(t *testing.T) {
+	m, st, ctx := newMaintenanceMonitor(t)
+	recv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("webhook must not be called: a project-only window covers this event's persisted project")
+	}))
+	defer recv.Close()
+	whID, err := st.CreateWebhook(ctx, &store.Webhook{Name: "wh", URL: recv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The project is part of the ORIGINAL event, exactly as the live alert
+	// path would have persisted it — not supplied by the test at retry time.
+	eventID, err := st.InsertAlertEvent(ctx, &store.AlertEvent{
+		RuleName: "r", ContainerName: "web-1", Message: "boom", HostID: 1, Severity: "critical", Project: "shop-prod",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateMaintenanceWindow(ctx, &store.MaintenanceWindow{
+		Name: "deploy grace", Reason: "auto", Project: "shop-prod",
+		StartsAt: time.Now().Add(-time.Minute), EndsAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.EnqueueAlertDeliveryRetry(ctx, &store.AlertDeliveryRetry{
+		EventID: eventID, Channel: "webhook", WebhookID: &whID, NextAttemptAt: time.Now().Add(-time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	m.sweepDeliveryRetries(ctx)
+
+	rows, err := st.DueAlertDeliveryRetries(ctx, time.Now().Add(time.Hour), 10)
+	if err != nil || len(rows) != 1 || rows[0].Attempt != 0 {
+		t.Fatalf("a project-scoped window should suppress the retry without spending an attempt: %+v err=%v", rows, err)
+	}
+	deliveries, err := st.AlertDeliveriesFor(ctx, []int64{eventID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deliveries[eventID]) != 0 {
+		t.Fatalf("a skipped-for-suppression retry must not record a delivery attempt: %+v", deliveries[eventID])
+	}
+}
+
+// TestSweepDoesNotHangOnAnUnresponsiveSMTPServer is the fix for a real bug:
+// attemptEmail's SMTP send had no deadline on the connection itself (only
+// net/smtp.SendMail's opaque net.Dial, no timeout at all), and the retry
+// sweep runs one batch sequentially in a single goroutine — a server that
+// accepts the TCP connection and then never greets would hang the whole
+// sweep forever, silently stalling every OTHER queued retry (including
+// unrelated webhooks) behind it. This proves SendMail itself returns once
+// its context expires, well under a test timeout, against exactly that kind
+// of server.
+func TestSweepDoesNotHangOnAnUnresponsiveSMTPServer(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		// Accept and then say nothing at all — never sends the SMTP greeting.
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn // deliberately never written to or closed by us
+		}
+	}()
+	host, portStr, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, _ := strconv.Atoi(portStr)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	start := time.Now()
+	err = SendMail(ctx, store.SMTPConfig{
+		Host: host, Port: port, From: "a@example.com", To: "b@example.com",
+	}, "subject", "body")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("a server that never greets should fail the send")
+	}
+	if elapsed > 3*time.Second {
+		t.Fatalf("SendMail should have returned once its 2s context expired, took %s", elapsed)
 	}
 }
 

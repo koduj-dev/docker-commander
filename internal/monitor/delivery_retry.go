@@ -21,6 +21,19 @@ const (
 	// retrySweepBatch bounds one sweep tick's work so a large backlog (e.g.
 	// after an extended outage) can't make a single tick run unbounded.
 	retrySweepBatch = 20
+
+	// deliveryRetryWebhookTimeout mirrors dispatch()'s own per-attempt budget
+	// (webhook.go) — the retry sweep drives the identical attempt() call and
+	// must bound it the same way.
+	deliveryRetryWebhookTimeout = 12 * time.Second
+	// deliveryRetryDBTimeout bounds each individual store call the sweep
+	// makes AROUND a send attempt (loading the event, checking for an active
+	// maintenance window, recording the outcome). Each of these gets its OWN
+	// fresh context rather than sharing one across the whole retryOne call —
+	// sharing one meant a send that used most of its own budget left almost
+	// nothing for the bookkeeping call needed right after it, which could
+	// then silently fail to record what just happened.
+	deliveryRetryDBTimeout = 5 * time.Second
 )
 
 // backoffFor returns how long to wait before the NEXT attempt, given attempt
@@ -72,7 +85,9 @@ func (m *Monitor) retrySweepLoop(ctx context.Context) {
 }
 
 func (m *Monitor) sweepDeliveryRetries(ctx context.Context) {
-	due, err := m.store.DueAlertDeliveryRetries(ctx, time.Now(), retrySweepBatch)
+	listCtx, cancel := context.WithTimeout(ctx, deliveryRetryDBTimeout)
+	due, err := m.store.DueAlertDeliveryRetries(listCtx, time.Now(), retrySweepBatch)
+	cancel()
 	if err != nil {
 		log.Printf("monitor: list due delivery retries: %v", err)
 		return
@@ -85,34 +100,52 @@ func (m *Monitor) sweepDeliveryRetries(ctx context.Context) {
 // retryOne drives one queued retry to its next outcome: delivered (delete
 // the queue row), still failing but with attempts left (reschedule, further
 // out), or done trying (delete, having given up).
+//
+// Every store call below gets its OWN short-lived context (deliveryRetryDBTimeout),
+// and the send attempt gets its own (channel-appropriate) one — none of them
+// share a budget. Sharing one context across the whole call used to mean a
+// send that consumed most of its own timeout left almost nothing for the
+// bookkeeping call needed right after it, which could then silently fail to
+// record what had just happened; ctx itself (the sweep loop's long-lived
+// context) is only the parent each of these derives from, for shutdown to
+// still cancel an in-flight retry.
 func (m *Monitor) retryOne(ctx context.Context, r store.AlertDeliveryRetry) {
-	ev, err := m.store.AlertEventByID(ctx, r.EventID)
+	loadCtx, loadCancel := context.WithTimeout(ctx, deliveryRetryDBTimeout)
+	ev, err := m.store.AlertEventByID(loadCtx, r.EventID)
+	loadCancel()
 	if err != nil {
 		// The event itself is gone (or unreadable) — nothing left to retry
 		// against.
-		if err := m.store.DeleteAlertDeliveryRetry(ctx, r.ID); err != nil {
+		delCtx, delCancel := context.WithTimeout(ctx, deliveryRetryDBTimeout)
+		if err := m.store.DeleteAlertDeliveryRetry(delCtx, r.ID); err != nil {
 			log.Printf("monitor: delete orphaned delivery retry: %v", err)
 		}
+		delCancel()
 		return
 	}
 
 	// A maintenance window may have STARTED after the original failure, or
 	// still be running — a retry must respect it too, or "silence" would
-	// have a hole a failed-then-retried delivery slips through. Reduced
-	// scope on purpose: AlertEvent doesn't persist the container's compose
-	// project (only the live alert path resolves that), so a window scoped
-	// ONLY by project won't suppress a retry here. The safe direction to be
-	// wrong in is "retries a bit too eagerly," never "silently swallows a
-	// delivery forever."
-	if win, werr := m.store.FindActiveMaintenanceWindow(ctx, ev.HostID, "", ev.ContainerName, ev.RuleID, ev.Severity, time.Now()); werr != nil {
+	// have a hole a failed-then-retried delivery slips through. ev.Project
+	// is the compose project the live alert path resolved when the event
+	// first fired, persisted specifically so this later read can still use
+	// it — the live resolution itself (Docker event attributes,
+	// ListContainers labels, the stats snapshot) has nothing left to consult
+	// by retry time.
+	winCtx, winCancel := context.WithTimeout(ctx, deliveryRetryDBTimeout)
+	win, werr := m.store.FindActiveMaintenanceWindow(winCtx, ev.HostID, ev.Project, ev.ContainerName, ev.RuleID, ev.Severity, time.Now())
+	winCancel()
+	if werr != nil {
 		log.Printf("monitor: check maintenance window for delivery retry: %v", werr)
 	} else if win != nil {
 		// Not an attempt — don't burn down the retry budget for a send this
 		// deliberately chose not to make. Just wait the window out and check
 		// again on the same cadence.
-		if err := m.store.RescheduleAlertDeliveryRetry(ctx, r.ID, false, time.Now().Add(backoffFor(r.Attempt)), r.LastError); err != nil {
+		rescheduleCtx, rescheduleCancel := context.WithTimeout(ctx, deliveryRetryDBTimeout)
+		if err := m.store.RescheduleAlertDeliveryRetry(rescheduleCtx, r.ID, false, time.Now().Add(backoffFor(r.Attempt)), r.LastError); err != nil {
 			log.Printf("monitor: reschedule suppressed delivery retry: %v", err)
 		}
+		rescheduleCancel()
 		return
 	}
 
@@ -120,29 +153,41 @@ func (m *Monitor) retryOne(ctx context.Context, r store.AlertDeliveryRetry) {
 	var detail string
 	switch {
 	case r.Channel == "webhook" && r.WebhookID != nil:
+		sendCtx, sendCancel := context.WithTimeout(ctx, deliveryRetryWebhookTimeout)
 		var status int
 		var target string
-		ok, status, target, detail, retriable = m.dispatcher.attempt(ctx, *r.WebhookID, ev)
-		m.dispatcher.record(ctx, ev.ID, target, ok, status, detail)
+		ok, status, target, detail, retriable = m.dispatcher.attempt(sendCtx, *r.WebhookID, ev)
+		sendCancel()
+		recordCtx, recordCancel := context.WithTimeout(ctx, deliveryRetryDBTimeout)
+		m.dispatcher.record(recordCtx, ev.ID, target, ok, status, detail)
+		recordCancel()
 	case r.Channel == "email":
+		sendCtx, sendCancel := context.WithTimeout(ctx, emailSendTimeout)
 		var target string
-		ok, target, detail, retriable = m.attemptEmail(ctx, ev, r.RuleEmails)
-		m.recordDelivery(ctx, ev.ID, target, ok, detail)
+		ok, target, detail, retriable = m.attemptEmail(sendCtx, ev, r.RuleEmails)
+		sendCancel()
+		recordCtx, recordCancel := context.WithTimeout(ctx, deliveryRetryDBTimeout)
+		m.recordDelivery(recordCtx, ev.ID, target, ok, detail)
+		recordCancel()
 	default:
 		// An unrecognised or malformed row (e.g. a webhook retry with no
 		// webhook id) — nothing sane to retry.
-		_ = m.store.DeleteAlertDeliveryRetry(ctx, r.ID)
+		delCtx, delCancel := context.WithTimeout(ctx, deliveryRetryDBTimeout)
+		_ = m.store.DeleteAlertDeliveryRetry(delCtx, r.ID)
+		delCancel()
 		return
 	}
 
+	finalCtx, finalCancel := context.WithTimeout(ctx, deliveryRetryDBTimeout)
+	defer finalCancel()
 	switch {
 	case ok:
-		_ = m.store.DeleteAlertDeliveryRetry(ctx, r.ID)
+		_ = m.store.DeleteAlertDeliveryRetry(finalCtx, r.ID)
 	case !retriable || r.Attempt+1 >= maxDeliveryRetries:
 		log.Printf("monitor: giving up on delivery retry for event %d after %d attempt(s): %s", r.EventID, r.Attempt+1, detail)
-		_ = m.store.DeleteAlertDeliveryRetry(ctx, r.ID)
+		_ = m.store.DeleteAlertDeliveryRetry(finalCtx, r.ID)
 	default:
-		if err := m.store.RescheduleAlertDeliveryRetry(ctx, r.ID, true, time.Now().Add(backoffFor(r.Attempt+1)), detail); err != nil {
+		if err := m.store.RescheduleAlertDeliveryRetry(finalCtx, r.ID, true, time.Now().Add(backoffFor(r.Attempt+1)), detail); err != nil {
 			log.Printf("monitor: reschedule delivery retry: %v", err)
 		}
 	}

@@ -896,7 +896,7 @@ func (m *Monitor) emit(ctx context.Context, r store.AlertRule, hostID int64, hos
 	ev := &store.AlertEvent{
 		RuleID: r.ID, RuleName: r.Name, Type: r.Type, Severity: r.Severity,
 		HostID: hostID, HostName: hostName,
-		ContainerID: cid, ContainerName: name, Message: message, Value: value,
+		ContainerID: cid, ContainerName: name, Project: project, Message: message, Value: value,
 		Kind: kind, DurationSec: durationSec,
 	}
 	wctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
