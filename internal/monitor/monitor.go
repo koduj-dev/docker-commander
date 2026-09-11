@@ -289,20 +289,6 @@ func (m *Monitor) pollStats(ctx context.Context) {
 	m.evalResourceRules(ctx, next, sampled)
 }
 
-// projectFor returns the compose project (stack) name for a container, from
-// the cached stats snapshot rather than a fresh Docker call — the snapshot is
-// already refreshed every stats poll, and this is called on the alert path,
-// which must not add a Docker round trip per event. "" (unknown container, or
-// one Compose doesn't manage) means "every window scoped by project still
-// matches" is decided the same way an empty rule Target would be: it isn't
-// scoped, so it always matches, and only a window that DOES set Project can
-// ever fail to match here.
-func (m *Monitor) projectFor(cid string) string {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.snapshot[cid].Project
-}
-
 // applyNetRates fills in per-container throughput from the previous poll.
 //
 // Split out so the three cases that matter can be tested without a daemon: a
@@ -433,19 +419,20 @@ func (m *Monitor) evalResourceRules(ctx context.Context, snap map[string]Contain
 		v := c.value
 		st, existed := prev[ck]
 
+		var suppressed bool
 		switch {
 		case !existed:
-			m.emit(ctx, c.rule, c.stat.HostID, c.stat.HostName, c.stat.ID, c.stat.Name,
+			suppressed = m.emit(ctx, c.rule, c.stat.HostID, c.stat.HostName, c.stat.ID, c.stat.Name, c.stat.Project,
 				msg, &v, store.KindFiring, 0)
 			st = store.AlertState{StartedAt: now}
 		case severityRank(c.rule.Severity) > severityRank(st.Severity):
-			m.emit(ctx, c.rule, c.stat.HostID, c.stat.HostName, c.stat.ID, c.stat.Name,
+			suppressed = m.emit(ctx, c.rule, c.stat.HostID, c.stat.HostName, c.stat.ID, c.stat.Name, c.stat.Project,
 				msg, &v, store.KindEscalated, int(now.Sub(st.StartedAt).Seconds()))
 		case severityRank(c.rule.Severity) < severityRank(st.Severity):
-			m.emit(ctx, c.rule, c.stat.HostID, c.stat.HostName, c.stat.ID, c.stat.Name,
+			suppressed = m.emit(ctx, c.rule, c.stat.HostID, c.stat.HostName, c.stat.ID, c.stat.Name, c.stat.Project,
 				msg, &v, store.KindEased, int(now.Sub(st.StartedAt).Seconds()))
 		case c.rule.CooldownSec > 0 && now.Sub(st.NotifiedAt) >= time.Duration(c.rule.CooldownSec)*time.Second:
-			m.emit(ctx, c.rule, c.stat.HostID, c.stat.HostName, c.stat.ID, c.stat.Name,
+			suppressed = m.emit(ctx, c.rule, c.stat.HostID, c.stat.HostName, c.stat.ID, c.stat.Name, c.stat.Project,
 				msg, &v, store.KindRepeat, int(now.Sub(st.StartedAt).Seconds()))
 		default:
 			// Still true, nothing changed, not yet time to repeat: say nothing.
@@ -457,7 +444,17 @@ func (m *Monitor) evalResourceRules(ctx context.Context, snap map[string]Contain
 			m.saveState(ctx, c.stat, c.cfg, c.rule, &v, st.StartedAt, st.NotifiedAt)
 			continue
 		}
-		m.saveState(ctx, c.stat, c.cfg, c.rule, &v, orNow(st.StartedAt, now), now)
+		// A suppressed emit didn't actually notify anyone. Keeping the
+		// PREVIOUS NotifiedAt (zero, for a condition that just started)
+		// instead of stamping `now` here means the repeat-interval check
+		// above stays eligible to retry on the very next poll once any
+		// active maintenance window ends — not after a full interval
+		// measured from a notification nobody received.
+		notifiedAt := now
+		if suppressed {
+			notifiedAt = st.NotifiedAt
+		}
+		m.saveState(ctx, c.stat, c.cfg, c.rule, &v, orNow(st.StartedAt, now), notifiedAt)
 	}
 
 	// Anything that was firing and no longer wins its condition has ended.
@@ -477,22 +474,23 @@ func (m *Monitor) evalResourceRules(ctx context.Context, snap map[string]Contain
 		dur := int(now.Sub(st.StartedAt).Seconds())
 		m.emit(ctx, store.AlertRule{
 			ID: st.RuleID, Name: st.RuleName, Type: "resource", Severity: "info",
-		}, st.HostID, st.HostName, st.ContainerID, st.ContainerName,
+		}, st.HostID, st.HostName, st.ContainerID, st.ContainerName, snap[st.ContainerID].Project,
 			sprintf("%s back to normal after %s", strings.ToUpper(st.Metric), humanDuration(dur)),
 			nil, store.KindResolved, dur)
 		_ = m.store.DeleteAlertState(ctx, st.HostID, st.ContainerID, st.Metric)
 	}
 }
 
-// saveState persists a condition, preserving when it started.
+// saveState persists a condition, preserving when it started. notifiedAt is
+// deliberately NOT defaulted to now when zero — a zero value means "this
+// condition has never actually been delivered" (its only emit so far was
+// suppressed by a maintenance window), and callers rely on that to keep the
+// repeat-interval check eligible to retry as soon as any window ends.
 func (m *Monitor) saveState(ctx context.Context, cs ContainerStat, cfg resourceConfig,
 	r store.AlertRule, value *float64, startedAt, notifiedAt time.Time,
 ) {
 	if startedAt.IsZero() {
 		startedAt = time.Now()
-	}
-	if notifiedAt.IsZero() {
-		notifiedAt = time.Now()
 	}
 	_ = m.store.UpsertAlertState(ctx, &store.AlertState{
 		HostID: cs.HostID, HostName: cs.HostName,
@@ -674,7 +672,7 @@ func (m *Monitor) handleEvent(ctx context.Context, hostID int64, hostName string
 		case "state":
 			cfg, err := parseState(r.Config)
 			if err == nil && cfg.matches(e.Action) {
-				m.fire(ctx, r, hostID, hostName, e.ContainerID, e.ContainerName, "container event: "+e.Action, nil)
+				m.fire(ctx, r, hostID, hostName, e.ContainerID, e.ContainerName, e.Project, "container event: "+e.Action, nil)
 			}
 		case "restart":
 			if e.Action == "start" || e.Action == "restart" {
@@ -682,7 +680,7 @@ func (m *Monitor) handleEvent(ctx context.Context, hostID int64, hostName string
 				if err == nil {
 					if n := m.restartCount(e.ContainerID, cfg.WindowSec); n >= cfg.Count {
 						v := float64(n)
-						m.fire(ctx, r, hostID, hostName, e.ContainerID, e.ContainerName,
+						m.fire(ctx, r, hostID, hostName, e.ContainerID, e.ContainerName, e.Project,
 							sprintf("restarted %d times in %ds (possible crash loop)", n, cfg.WindowSec), &v)
 					}
 				}
@@ -781,7 +779,7 @@ func (m *Monitor) reconcileLogFollowers(ctx context.Context) {
 				}
 				key := ruleKey(lr.r.ID, c.ID)
 				want[key] = struct{}{}
-				m.ensureFollower(ctx, key, lr.r, lr.cfg, h.ID, h.Name, c.ID, c.Name)
+				m.ensureFollower(ctx, key, lr.r, lr.cfg, h.ID, h.Name, c.ID, c.Name, c.Labels[docker.LabelComposeProject])
 			}
 		}
 	}
@@ -797,7 +795,7 @@ func (m *Monitor) reconcileLogFollowers(ctx context.Context) {
 	m.logMu.Unlock()
 }
 
-func (m *Monitor) ensureFollower(ctx context.Context, key string, r store.AlertRule, cfg logMatcher, hostID int64, hostName, cid, name string) {
+func (m *Monitor) ensureFollower(ctx context.Context, key string, r store.AlertRule, cfg logMatcher, hostID int64, hostName, cid, name, project string) {
 	m.logMu.Lock()
 	if _, ok := m.logCancels[key]; ok {
 		m.logMu.Unlock()
@@ -815,7 +813,7 @@ func (m *Monitor) ensureFollower(ctx context.Context, key string, r store.AlertR
 		// tail "0": only match new lines, never the historical backlog.
 		return m.docker.StreamLogs(fctx, hostID, cid, true, "0", func(l docker.LogLine) {
 			if cfg.match(l.Message) {
-				m.fire(fctx, r, hostID, hostName, cid, name, "log match: "+truncate(l.Message, 200), nil)
+				m.fire(fctx, r, hostID, hostName, cid, name, project, "log match: "+truncate(l.Message, 200), nil)
 			}
 		})
 	})
@@ -855,7 +853,7 @@ func (m *Monitor) stopAllFollowers() {
 // Level-triggered threshold rules go through evalResourceRules and emit
 // directly, because a cooldown is the wrong tool for a condition that persists:
 // it turns "still broken" into a fresh alarm every interval.
-func (m *Monitor) fire(ctx context.Context, r store.AlertRule, hostID int64, hostName, cid, name, message string, value *float64) {
+func (m *Monitor) fire(ctx context.Context, r store.AlertRule, hostID int64, hostName, cid, name, project, message string, value *float64) {
 	key := ruleKey(r.ID, cid)
 	cooldown := time.Duration(r.CooldownSec) * time.Second
 	if last, ok := m.cooldowns.Load(key); ok {
@@ -863,15 +861,27 @@ func (m *Monitor) fire(ctx context.Context, r store.AlertRule, hostID int64, hos
 			return
 		}
 	}
-	m.cooldowns.Store(key, time.Now())
-	m.emit(ctx, r, hostID, hostName, cid, name, message, value, store.KindFiring, 0)
+	// Only a REAL delivery consumes the cooldown. A suppressed emit (an
+	// active maintenance window matched) must not — otherwise the next
+	// genuine event of this rule+container, occurring right after the window
+	// ends, would be silently dropped by a cooldown that only "fired"
+	// because of a notification nobody actually got.
+	if !m.emit(ctx, r, hostID, hostName, cid, name, project, message, value, store.KindFiring, 0) {
+		m.cooldowns.Store(key, time.Now())
+	}
 }
 
-// emit records an alert event and delivers it. kind says where in a condition's
-// life this is; durationSec is how long it had been going.
-func (m *Monitor) emit(ctx context.Context, r store.AlertRule, hostID int64, hostName, cid, name, message string,
+// emit records an alert event and delivers it, returning whether an active
+// maintenance window suppressed that delivery. kind says where in a
+// condition's life this is; durationSec is how long it had been going.
+// project is the container's compose project (stack), resolved by the
+// caller from whatever source is immediately available to it (a Docker
+// event's own actor attributes, ListContainers' labels, or the stats
+// snapshot) — NOT re-derived here from the snapshot, which can lag a
+// container created between stats polls by up to the poll interval.
+func (m *Monitor) emit(ctx context.Context, r store.AlertRule, hostID int64, hostName, cid, name, project, message string,
 	value *float64, kind string, durationSec int,
-) {
+) bool {
 	// Emit every fired alert to the process log (stderr) as a structured line.
 	// Under systemd this lands in the journal — and from there into syslog / any
 	// central log collector — so failures are visible beyond the in-app feed.
@@ -893,7 +903,7 @@ func (m *Monitor) emit(ctx context.Context, r store.AlertRule, hostID int64, hos
 	// The event is recorded regardless of any active maintenance window — a
 	// silence stops paging, not observing — so this check only ever decides
 	// whether delivery below runs, never whether InsertAlertEvent does.
-	if win, err := m.store.FindActiveMaintenanceWindow(wctx, hostID, m.projectFor(cid), name, r.ID, severity, time.Now()); err != nil {
+	if win, err := m.store.FindActiveMaintenanceWindow(wctx, hostID, project, name, r.ID, severity, time.Now()); err != nil {
 		log.Printf("monitor: check maintenance window: %v", err)
 	} else if win != nil {
 		ev.Suppressed = true
@@ -906,7 +916,7 @@ func (m *Monitor) emit(ctx context.Context, r store.AlertRule, hostID int64, hos
 		ev.ID = id
 	}
 	if ev.Suppressed {
-		return
+		return true
 	}
 	if r.WebhookID != nil {
 		m.dispatcher.dispatch(*r.WebhookID, ev)
@@ -914,6 +924,7 @@ func (m *Monitor) emit(ctx context.Context, r store.AlertRule, hostID int64, hos
 	if r.Email {
 		m.emailNotify(ev, r.Emails)
 	}
+	return false
 }
 
 // ---- host reachability ------------------------------------------------------
