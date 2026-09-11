@@ -1011,6 +1011,46 @@ function fromInputDate(value: string): string {
   return new Date(`${value}T00:00`).toISOString();
 }
 
+// zonedDateString/fromZonedDate are toInputDate/fromInputDate's counterparts
+// for a recurring window's SERIES start/end date, which the server
+// interprets as a calendar date in the window's OWN schedule timezone, not
+// the browser's. toInputDate/fromInputDate round-trip through the browser's
+// local calendar date instead — harmless when they happen to match, but
+// when they don't, editing and re-saving a window WITHOUT changing its date
+// at all silently shifts it to a different absolute instant, which the
+// server then reads back as a different calendar date in the window's own
+// timezone (see the regression test for a worked example).
+function zonedDateString(iso: string, tz: string): string {
+  try {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: tz || "UTC", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
+  } catch {
+    return toInputDate(iso);
+  }
+}
+function fromZonedDate(value: string, tz: string): string {
+  const zone = tz || "UTC";
+  try {
+    // Start from a UTC guess at midnight of the requested date, read what
+    // that instant reads as IN the target zone, and correct by the
+    // difference — the standard offset-free way to place a wall-clock time
+    // into a named IANA zone without a date library.
+    const utcGuess = new Date(`${value}T00:00:00Z`);
+    const fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone, hour12: false,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+    });
+    const parts: Record<string, string> = {};
+    for (const p of fmt.formatToParts(utcGuess)) if (p.type !== "literal") parts[p.type] = p.value;
+    const hour = parts.hour === "24" ? 0 : Number(parts.hour); // some locales report midnight as "24"
+    const asIfUTC = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), hour, Number(parts.minute), Number(parts.second));
+    const offsetMs = asIfUTC - utcGuess.getTime();
+    return new Date(utcGuess.getTime() - offsetMs).toISOString();
+  } catch {
+    return fromInputDate(value);
+  }
+}
+
 function windowStatus(w: MaintenanceWindow): { label: string; cls: string } {
   if (w.ended) return { label: "Ended", cls: "bg-panel2 text-muted" };
   if (w.recurring) return { label: "Recurring", cls: "bg-accent/15 text-accent" };
@@ -1075,12 +1115,19 @@ export function MaintenanceWindows() {
 
   const hostName = (id: number) => hosts.find((h) => h.id === id)?.name ?? `host #${id}`;
   const scopeSummary = (w: MaintenanceWindow): string => {
+    // Defensive: the server always sends [] rather than null for an
+    // unrestricted scope, but a nil Go slice marshals to JSON null, and an
+    // empty scope is the COMMON case (every auto-silence window has no
+    // severity restriction) — so a regression here would crash the whole
+    // tab, not just show a blank cell. Tolerate null/undefined too.
+    const hostIds = w.hostIds ?? [];
+    const severities = w.severities ?? [];
     const parts: string[] = [];
-    if (w.hostIds.length > 0) parts.push(w.hostIds.map(hostName).join(", "));
+    if (hostIds.length > 0) parts.push(hostIds.map(hostName).join(", "));
     if (w.project) parts.push(`project~"${w.project}"`);
     if (w.container) parts.push(`container~"${w.container}"`);
     if (w.ruleId != null) parts.push(rules.find((r) => r.id === w.ruleId)?.name ?? `rule #${w.ruleId}`);
-    if (w.severities.length > 0) parts.push(w.severities.join("/"));
+    if (severities.length > 0) parts.push(severities.join("/"));
     return parts.length > 0 ? parts.join(" · ") : "everything";
   };
   const scheduleSummary = (w: MaintenanceWindow): string => {
@@ -1183,16 +1230,18 @@ function MaintenanceWindowForm({
     : existing?.durationMin ?? 60;
   const [durationMin, setDurationMin] = useState(existingDurationMin);
 
-  const [seriesStartDate, setSeriesStartDate] = useState(toInputDate(existing?.recurring ? existing.startsAt : nowIso));
-  const [seriesEndDate, setSeriesEndDate] = useState(existing?.recurring && existing.endsAt ? toInputDate(existing.endsAt) : "");
-  const [weekdays, setWeekdays] = useState<Set<number>>(new Set(existing?.weekdays ?? []));
-  const [timeOfDay, setTimeOfDay] = useState(existing?.timeOfDay ?? "02:00");
   // An EXISTING window's stored timezone ("" meaning UTC, same convention
   // the server uses) must be preserved as-is when merely editing it —
   // falling back to the browser's own timezone here would silently change
   // a saved window's actual wall-clock schedule. Only a brand-new window
-  // defaults to the browser's timezone.
+  // defaults to the browser's timezone. Computed before the series
+  // start/end date fields below, which need it to read/write the right
+  // calendar date in THIS timezone, not the browser's own.
   const tz = existing ? (existing.timezone || "UTC") : Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const [seriesStartDate, setSeriesStartDate] = useState(zonedDateString(existing?.recurring ? existing.startsAt : nowIso, tz));
+  const [seriesEndDate, setSeriesEndDate] = useState(existing?.recurring && existing.endsAt ? zonedDateString(existing.endsAt, tz) : "");
+  const [weekdays, setWeekdays] = useState<Set<number>>(new Set(existing?.weekdays ?? []));
+  const [timeOfDay, setTimeOfDay] = useState(existing?.timeOfDay ?? "02:00");
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -1220,11 +1269,13 @@ function MaintenanceWindowForm({
       const body: MaintenanceWindowBody = recurring
         ? {
           ...shared, recurring: true,
-          startsAt: fromInputDate(seriesStartDate),
+          // In the window's OWN schedule timezone, not the browser's — see
+          // zonedDateString/fromZonedDate's doc comment for why that matters.
+          startsAt: fromZonedDate(seriesStartDate, tz),
           // undefined (never ""): Go's time.Time JSON decoder rejects an
           // empty string for an open-ended series, but a missing key leaves
           // it at its zero value, which the server treats as indefinite.
-          endsAt: seriesEndDate ? fromInputDate(seriesEndDate) : undefined,
+          endsAt: seriesEndDate ? fromZonedDate(seriesEndDate, tz) : undefined,
           weekdays: [...weekdays], timeOfDay, durationMin, timezone: tz,
         }
         : {

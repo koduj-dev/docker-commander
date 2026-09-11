@@ -108,31 +108,64 @@ func validateMaintenanceWindow(b maintenanceWindowBody) error {
 // go deaf about a host you otherwise cannot see. Empty hostIDs means "every
 // host", which needs unrestricted host access for the same reason.
 func (s *Server) maintenanceWindowHostsAllowed(r *http.Request, hostIDs []int64) bool {
+	g, ok := s.resolveMaintenanceWindowGrant(r)
+	return s.hostsAllowedByGrant(r.Context(), g, ok, hostIDs)
+}
+
+// maintenanceWindowGrant is the caller's effective "alerts" host-scope,
+// resolved once and reused — see resolveMaintenanceWindowGrant.
+type maintenanceWindowGrant struct {
+	admin bool
+	grant store.Grant
+}
+
+// resolveMaintenanceWindowGrant loads the caller's user record and effective
+// "alerts" grant ONCE. Call this before a loop over many windows (as
+// handleListMaintenanceWindows does) and reuse the result via
+// hostsAllowedByGrant — calling maintenanceWindowHostsAllowed itself inside
+// such a loop used to redo this (a user lookup plus several
+// EffectiveGrants queries) once PER WINDOW, turning listing N windows into
+// O(N) authorization queries instead of one.
+func (s *Server) resolveMaintenanceWindowGrant(r *http.Request) (maintenanceWindowGrant, bool) {
 	claims, ok := auth.ClaimsFrom(r.Context())
 	if !ok {
-		return false
+		return maintenanceWindowGrant{}, false
 	}
 	u, err := s.store.UserByID(r.Context(), claims.UserID)
 	if err != nil {
-		return false
+		return maintenanceWindowGrant{}, false
 	}
 	if u.IsAdmin() {
-		return true
+		return maintenanceWindowGrant{admin: true}, true
 	}
 	grants, err := s.store.EffectiveGrants(r.Context(), u)
 	if err != nil {
+		return maintenanceWindowGrant{}, false
+	}
+	return maintenanceWindowGrant{grant: grants["alerts"]}, true
+}
+
+// hostsAllowedByGrant applies an already-resolved grant to one window's
+// scope. Empty hostIDs means "every host", which needs unrestricted host
+// access — a host-restricted caller holding "alerts" must not be able to
+// silence (or see) a host outside their own grant, or "alerts" would become
+// a way to go deaf about a host they otherwise cannot reach.
+func (s *Server) hostsAllowedByGrant(ctx context.Context, g maintenanceWindowGrant, resolved bool, hostIDs []int64) bool {
+	if !resolved {
 		return false
 	}
-	g := grants["alerts"]
+	if g.admin {
+		return true
+	}
 	if len(hostIDs) == 0 {
-		return g.AllHosts
+		return g.grant.AllHosts
 	}
 	for _, id := range hostIDs {
 		// Grant.HasHost treats 0 as the local-daemon alias; a caller (or a
 		// stored window) may instead carry the local host's REAL seeded-row
 		// id, so without normalizing first a host-restricted grant would
 		// wrongly refuse its own local daemon.
-		if !g.HasHost(s.store.NormalizeHostID(r.Context(), id)) {
+		if !g.grant.HasHost(s.store.NormalizeHostID(ctx, id)) {
 			return false
 		}
 	}
@@ -195,9 +228,24 @@ type maintenanceWindowView struct {
 }
 
 func toMaintenanceWindowView(w store.MaintenanceWindow) maintenanceWindowView {
+	// HostIDs/Severities come back from the store as nil (not empty) when
+	// unset — unmarshalIDs/unmarshalSections return nil for "" — and a nil
+	// Go slice marshals to JSON null, not []. The frontend type promises an
+	// array and calls .length on both unconditionally (an empty scope is the
+	// COMMON case: every auto-silence-after-deploy window has no severity
+	// restriction), so a nil here isn't cosmetic — it throws a TypeError and
+	// takes down the whole Maintenance tab the moment such a row is listed.
+	hostIDs := w.HostIDs
+	if hostIDs == nil {
+		hostIDs = []int64{}
+	}
+	severities := w.Severities
+	if severities == nil {
+		severities = []string{}
+	}
 	v := maintenanceWindowView{
 		ID: w.ID, Name: w.Name, Reason: w.Reason, AuthorID: w.AuthorID, Author: w.Author,
-		HostIDs: w.HostIDs, Project: w.Project, Container: w.Container, RuleID: w.RuleID, Severities: w.Severities,
+		HostIDs: hostIDs, Project: w.Project, Container: w.Container, RuleID: w.RuleID, Severities: severities,
 		Recurring: w.Recurring, StartsAt: w.StartsAt, Weekdays: w.Weekdays, TimeOfDay: w.TimeOfDay,
 		DurationMin: w.DurationMin, Timezone: w.Timezone, Ended: w.Ended, CreatedAt: w.CreatedAt,
 	}
@@ -213,12 +261,14 @@ func (s *Server) handleListMaintenanceWindows(w http.ResponseWriter, r *http.Req
 		writeErr(w, http.StatusInternalServerError, "could not list maintenance windows")
 		return
 	}
+	// Resolved ONCE, not once per window — see resolveMaintenanceWindowGrant.
+	g, ok := s.resolveMaintenanceWindowGrant(r)
 	// Filtered the same way scoping is enforced on write: a window covering a
 	// host outside the caller's grant would otherwise leak that host's name
 	// and the window's reason to someone who cannot reach it any other way.
 	windows := make([]maintenanceWindowView, 0, len(all))
 	for _, win := range all {
-		if s.maintenanceWindowHostsAllowed(r, win.HostIDs) {
+		if s.hostsAllowedByGrant(r.Context(), g, ok, win.HostIDs) {
 			windows = append(windows, toMaintenanceWindowView(win))
 		}
 	}

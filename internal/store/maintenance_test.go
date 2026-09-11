@@ -310,6 +310,56 @@ func TestMaintenanceWindowCRUD(t *testing.T) {
 	}
 }
 
+// TestPruneOldMaintenanceWindowsOnlyRemovesOldFinishedOneOffs is the fix for
+// unbounded growth: every successful deploy creates a new auto-silence
+// window (see api.autoSilenceForDeploy) and nothing else ever deletes them.
+// Pruning must be selective — a recurring series has no "it's over" moment
+// the way a one-off window's EndsAt does, and a recent one-off (even an
+// already-expired one) is still worth keeping as an audit record for a
+// while.
+func TestPruneOldMaintenanceWindowsOnlyRemovesOldFinishedOneOffs(t *testing.T) {
+	st, uid := maintenanceStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	old, err := st.CreateMaintenanceWindow(ctx, &MaintenanceWindow{
+		Name: "old auto-silence", Reason: "r", AuthorID: uid,
+		StartsAt: now.Add(-40 * 24 * time.Hour), EndsAt: now.Add(-31 * 24 * time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recent, err := st.CreateMaintenanceWindow(ctx, &MaintenanceWindow{
+		Name: "recent auto-silence", Reason: "r", AuthorID: uid,
+		StartsAt: now.Add(-2 * time.Hour), EndsAt: now.Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recurring, err := st.CreateMaintenanceWindow(ctx, &MaintenanceWindow{
+		Name: "weekly", Reason: "r", AuthorID: uid, Recurring: true,
+		StartsAt: now.Add(-40 * 24 * time.Hour),
+		Weekdays: []time.Weekday{time.Sunday}, TimeOfDay: "02:00", DurationMin: 60,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.PruneOldMaintenanceWindows(ctx, 30*24*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := st.MaintenanceWindowByID(ctx, old); err != ErrNotFound {
+		t.Errorf("the old finished one-off window should have been pruned, err=%v", err)
+	}
+	if _, err := st.MaintenanceWindowByID(ctx, recent); err != nil {
+		t.Errorf("a recent one-off window should NOT be pruned yet: %v", err)
+	}
+	if _, err := st.MaintenanceWindowByID(ctx, recurring); err != nil {
+		t.Errorf("a recurring window should never be pruned by this: %v", err)
+	}
+}
+
 func TestMaintenanceWindowUpdateEndDeleteUnknownIDReportsNotFound(t *testing.T) {
 	st, uid := maintenanceStore(t)
 	ctx := context.Background()

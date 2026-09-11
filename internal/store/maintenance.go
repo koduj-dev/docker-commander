@@ -324,6 +324,21 @@ func (s *Store) DeleteMaintenanceWindow(ctx context.Context, id int64) error {
 	return rowsAffectedOrNotFound(res)
 }
 
+// PruneOldMaintenanceWindows deletes ONE-OFF windows whose EndsAt is more
+// than olderThan in the past. Every successful deploy creates a new
+// auto-silence window (see api.autoSilenceForDeploy) and nothing else ever
+// removes them, so without this the table — and the list every caller
+// re-authorizes against — grows without bound. Recurring windows are left
+// alone: a recurring series has no single "it's over" moment the way a
+// one-off window's EndsAt does.
+func (s *Store) PruneOldMaintenanceWindows(ctx context.Context, olderThan time.Duration) error {
+	cutoff := time.Now().Add(-olderThan).UTC().Format(time.RFC3339)
+	_, err := s.db.ExecContext(ctx, `
+		DELETE FROM maintenance_windows
+		WHERE recurring = 0 AND ends_at != '' AND ends_at < ?`, cutoff)
+	return err
+}
+
 func rowsAffectedOrNotFound(res sql.Result) error {
 	n, err := res.RowsAffected()
 	if err != nil {

@@ -96,6 +96,28 @@ function typeInto(el: Element, value: string) {
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
+// Stands in for a browser whose local timezone is NOT UTC, so a test can
+// tell "used the window's own tz" from "fell back to the browser's"
+// regardless of what timezone the test runner itself is in. Only the no-arg
+// "what's my own timezone" call (Intl.DateTimeFormat().resolvedOptions()) is
+// faked; an explicit-args call (zonedDateString/fromZonedDate's actual date
+// math, always called with `new`) still goes to the real formatter — must be
+// a real `function`, not an arrow function, since arrow functions cannot be
+// used as constructors and `new` on one throws.
+function stubBrowserTimeZone(fakeTZ: string): () => void {
+  const originalDTF = globalThis.Intl.DateTimeFormat;
+  function fake(...args: unknown[]) {
+    if (args.length === 0) return { resolvedOptions: () => ({ timeZone: fakeTZ }) };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return new (originalDTF as any)(...args);
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (globalThis.Intl as any).DateTimeFormat = fake;
+  return () => {
+    globalThis.Intl.DateTimeFormat = originalDTF;
+  };
+}
+
 function rowButton(rowText: string, title: string): HTMLButtonElement {
   const row = [...container.querySelectorAll("tr")].find((r) => r.textContent?.includes(rowText));
   if (!row) throw new Error(`row containing ${JSON.stringify(rowText)} not found`);
@@ -209,12 +231,7 @@ describe("MaintenanceWindows", () => {
   // switched it to the browser's own timezone, changing the window's actual
   // wall-clock schedule without the user asking for that.
   it("editing an existing recurring window preserves its stored UTC timezone, not the browser's", async () => {
-    const originalDTF = globalThis.Intl.DateTimeFormat;
-    // Stand in for a browser whose local timezone is NOT UTC, so the test
-    // can tell "preserved the window's own tz" from "fell back to the
-    // browser's" regardless of what timezone the test runner itself is in.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis.Intl as any).DateTimeFormat = () => ({ resolvedOptions: () => ({ timeZone: "America/New_York" }) });
+    const restore = stubBrowserTimeZone("America/New_York");
     try {
       const editBtn = rowButton("Nightly backup window", "Edit");
       await act(async () => editBtn.click());
@@ -227,7 +244,68 @@ describe("MaintenanceWindows", () => {
       const [, body] = updateMaintenanceWindow.mock.calls[0];
       expect(body.timezone).toBe("UTC");
     } finally {
-      globalThis.Intl.DateTimeFormat = originalDTF;
+      restore();
+    }
+  });
+});
+
+// A regression test for a real bug: toInputDate/fromInputDate round-tripped
+// a recurring window's series start/end through the BROWSER's own calendar
+// date, but the server interprets that date in the WINDOW's own schedule
+// timezone. Editing (and re-saving unchanged) a UTC window from a browser in
+// a different timezone silently shifted its series start to a different
+// absolute instant — one the server reads back as a different calendar date.
+describe("MaintenanceWindows — recurring series date across timezones", () => {
+  const fixedWindow: MaintenanceWindow = {
+    id: 9, name: "Fixed schedule", reason: "planned", authorId: 1, author: "alice",
+    hostIds: [], project: "", container: "", ruleId: null, severities: [],
+    recurring: true, startsAt: "2026-09-11T00:00:00Z",
+    weekdays: [5], timeOfDay: "02:00", durationMin: 60, timezone: "",
+    ended: false, createdAt: "2026-09-01T00:00:00Z",
+  };
+
+  beforeEach(async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    maintenanceWindows.mockResolvedValue([fixedWindow]);
+    hosts.mockResolvedValue([{ id: 0, name: "local" }]);
+    updateMaintenanceWindow.mockResolvedValue({ ok: true });
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <DialogProvider>
+          <MaintenanceWindows />
+        </DialogProvider>,
+      );
+    });
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  it("does not shift a UTC window's series start date when edited from a non-UTC browser", async () => {
+    const restore = stubBrowserTimeZone("America/New_York");
+    try {
+      const editBtn = rowButton("Fixed schedule", "Edit");
+      await act(async () => editBtn.click());
+
+      // Save with NO changes to the series start date field.
+      const form = container.querySelector("form");
+      if (!form) throw new Error("form not found");
+      await act(async () => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+
+      expect(updateMaintenanceWindow).toHaveBeenCalledTimes(1);
+      const [, body] = updateMaintenanceWindow.mock.calls[0];
+      // Still September 11 in the window's own (UTC) timezone — not shifted
+      // to the 10th by round-tripping through America/New_York.
+      expect(body.startsAt.slice(0, 10)).toBe("2026-09-11");
+    } finally {
+      restore();
     }
   });
 });

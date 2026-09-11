@@ -118,6 +118,41 @@ func TestListMaintenanceWindowsOmitsEndsAtForAnOpenEndedSeries(t *testing.T) {
 	}
 }
 
+// TestListMaintenanceWindowsSerializesEmptyScopeAsArraysNotNull is the fix
+// for a real bug: unmarshalIDs/unmarshalSections return a nil slice for an
+// unset scope, and a nil Go slice marshals to JSON null rather than [].
+// The frontend type promises an array and calls .length on it
+// unconditionally, so a null here crashed the whole Maintenance tab — and
+// an unrestricted scope is the COMMON case, not a corner one: every
+// auto-silence-after-deploy window has no severity restriction at all.
+// This asserts on the literal response bytes, not a decoded Go struct,
+// because decoding null back into a Go slice silently produces nil again
+// and would have hidden the bug.
+func TestListMaintenanceWindowsSerializesEmptyScopeAsArraysNotNull(t *testing.T) {
+	srv, st, uid := newMaintenanceServer(t)
+	if _, err := st.CreateMaintenanceWindow(t.Context(), &store.MaintenanceWindow{
+		Name: "auto: shop deploy", Reason: "automatic grace period after a deploy", AuthorID: uid,
+		HostIDs:  []int64{0}, // scoped by host, but NOT by severity — the auto-silence shape
+		StartsAt: time.Now(), EndsAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	r := httptest.NewRequest("GET", "/api/maintenance-windows", nil).WithContext(ctxAs(uid, "admin"))
+	w := httptest.NewRecorder()
+	srv.handleListMaintenanceWindows(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list: %d (%s)", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	if strings.Contains(body, `"severities":null`) {
+		t.Errorf("SECURITY-ADJACENT (crashes the UI): severities serialized as null, not []: %s", body)
+	}
+	if !strings.Contains(body, `"severities":[]`) {
+		t.Errorf("expected an explicit empty array for severities: %s", body)
+	}
+}
+
 // TestCreateMaintenanceWindowNormalizesTheLocalHostAlias is the REST half of
 // the local-host normalization fix: a host-restricted grant that reaches the
 // local daemon must be able to scope a window using either the 0 alias OR
