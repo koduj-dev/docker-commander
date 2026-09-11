@@ -591,6 +591,16 @@ export interface ProjectRevision {
   createdAt: string;
 }
 
+// ProjectSecret mirrors internal/store/project_secrets.go — metadata only,
+// the value is never part of this shape and is never returned by the API.
+export interface ProjectSecret {
+  id: number;
+  name: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ProjectFile {
   name: string;
   size: number;

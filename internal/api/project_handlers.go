@@ -939,7 +939,12 @@ func (s *Server) handleValidateProject(w http.ResponseWriter, r *http.Request) {
 		dir = tmp
 	}
 
-	out, err := docker.ComposeConfig(r.Context(), dir, p.Slug)
+	_, masked, _, serr := s.projectSecretEnvs(r.Context(), p.ID)
+	if serr != nil {
+		writeErr(w, http.StatusInternalServerError, serr.Error())
+		return
+	}
+	out, err := docker.ComposeConfigEnv(r.Context(), dir, p.Slug, masked)
 	if err != nil {
 		msg := strings.TrimSpace(out)
 		if msg == "" {
@@ -983,7 +988,12 @@ func (s *Server) handleResolveProject(w http.ResponseWriter, r *http.Request) {
 		defer os.RemoveAll(tmp)
 		dir = tmp
 	}
-	out, err := docker.ComposeResolvedConfig(r.Context(), dir, p.Slug)
+	_, masked, _, serr := s.projectSecretEnvs(r.Context(), p.ID)
+	if serr != nil {
+		writeErr(w, http.StatusInternalServerError, serr.Error())
+		return
+	}
+	out, err := docker.ComposeResolvedConfigEnv(r.Context(), dir, p.Slug, masked)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -1141,7 +1151,12 @@ func (s *Server) handleProjectSummary(w http.ResponseWriter, r *http.Request) {
 		defer os.RemoveAll(tmp)
 		dir = tmp
 	}
-	raw, err := docker.ComposeConfigJSON(r.Context(), dir, p.Slug)
+	_, masked, _, serr := s.projectSecretEnvs(r.Context(), p.ID)
+	if serr != nil {
+		writeErr(w, http.StatusInternalServerError, serr.Error())
+		return
+	}
+	raw, err := docker.ComposeConfigJSONFiles(r.Context(), dir, p.Slug, nil, masked, nil)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -1431,7 +1446,25 @@ func (s *Server) projectHost(ctx context.Context, p *store.Project) (*store.Host
 // pointing outside the project folder are refused rather than mounted blind on
 // the remote. Returns the extra `-f` files (empty for a local deploy), a note to
 // show the user, and a cleanup that must always be called.
+//
+// The project's secrets are appended as real, decrypted "NAME=value" env
+// last — this is the one path that must receive the real value, since it's
+// what an actual deploy runs with.
 func (s *Server) projectDeployEnv(ctx context.Context, p *store.Project, dir string) (env, files []string, note string, cleanup func(), err error) {
+	env, files, note, cleanup, err = s.projectDeployEnvBase(ctx, p, dir)
+	if err != nil {
+		return env, files, note, cleanup, err
+	}
+	real, _, _, serr := s.projectSecretEnvs(ctx, p.ID)
+	if serr != nil {
+		cleanup()
+		return nil, nil, "", func() {}, serr
+	}
+	env = append(env, real...)
+	return env, files, note, cleanup, nil
+}
+
+func (s *Server) projectDeployEnvBase(ctx context.Context, p *store.Project, dir string) (env, files []string, note string, cleanup func(), err error) {
 	noop := func() {}
 	h, err := s.projectHost(ctx, p)
 	if err != nil {

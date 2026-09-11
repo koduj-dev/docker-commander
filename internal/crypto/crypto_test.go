@@ -85,3 +85,43 @@ func TestTamperedCiphertextFails(t *testing.T) {
 		t.Error("tampered ciphertext should fail authentication")
 	}
 }
+
+func TestFingerprintIsDeterministic(t *testing.T) {
+	c := newCipher(t)
+	a := c.Fingerprint("same-value")
+	b := c.Fingerprint("same-value")
+	if a != b {
+		t.Errorf("Fingerprint should be deterministic: got %q and %q for the same input", a, b)
+	}
+}
+
+func TestFingerprintDiffersForDifferentInput(t *testing.T) {
+	c := newCipher(t)
+	values := []string{"secret", "secreT", "secret:0000", "", "a", "b"}
+	seen := map[string]string{}
+	for _, v := range values {
+		fp := c.Fingerprint(v)
+		if prev, ok := seen[fp]; ok {
+			t.Errorf("Fingerprint(%q) == Fingerprint(%q) == %q, want distinct fingerprints", v, prev, fp)
+		}
+		seen[fp] = v
+	}
+}
+
+func TestFingerprintDoesNotLeakPlaintext(t *testing.T) {
+	c := newCipher(t)
+	for _, pt := range []string{"hunter2", "secret:0000000000000000", "***"} {
+		fp := c.Fingerprint(pt)
+		if strings.Contains(fp, pt) {
+			t.Errorf("Fingerprint(%q) = %q contains the plaintext", pt, fp)
+		}
+	}
+}
+
+func TestFingerprintDiffersAcrossKeys(t *testing.T) {
+	a := newCipher(t)
+	b := newCipher(t)
+	if a.Fingerprint("same") == b.Fingerprint("same") {
+		t.Error("Fingerprint must be keyed — two different keys should (almost certainly) yield different fingerprints for the same value")
+	}
+}

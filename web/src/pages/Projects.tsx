@@ -4,11 +4,11 @@ import clsx from "clsx";
 import {
   FolderGit2, Plus, Rocket, Square, Trash2, X, FilePlus, FolderPlus, Upload, Loader2,
   ExternalLink, Save, FileText, FileBox, Folder, Terminal, Pencil, ChevronRight, Download, Search, CheckCircle2, AlertCircle, AlertTriangle, Eye, Boxes,
-  LayoutTemplate, Puzzle, KeyRound, Anchor, Server, GitCompare, History, RotateCcw,
+  LayoutTemplate, Puzzle, KeyRound, Anchor, Server, GitCompare, History, RotateCcw, Lock,
 } from "lucide-react";
 import { bytes as fmtBytes } from "../lib/format";
 import { api, ApiError } from "../lib/api";
-import type { Project, ProjectFile, Stack, ComposeModel, ComposeService, ProjectTemplateMeta, ServiceBlockMeta, ComposeFragmentMeta, TemplateRef, TemplateVariable, Host, DeployPreview, ServiceChange, ProjectRevision, BackupJob } from "../lib/types";
+import type { Project, ProjectFile, Stack, ComposeModel, ComposeService, ProjectTemplateMeta, ServiceBlockMeta, ComposeFragmentMeta, TemplateRef, TemplateVariable, Host, DeployPreview, ServiceChange, ProjectRevision, ProjectSecret, BackupJob } from "../lib/types";
 import type { ServerCheck } from "../components/CodeEditor";
 import { buildTree, TreeItem } from "../components/FileTree";
 import { PageHeader } from "../layout/Shell";
@@ -431,6 +431,157 @@ export function RevisionHistoryModal({ project, onClose, onOutput, onRestored }:
   );
 }
 
+// ProjectSecretsModal manages a project's named secrets (see NEXT.md's
+// "Project secrets"): reference one from the compose file via plain ${NAME}
+// interpolation. The value is write-only — the list never carries it, and
+// updating a secret asks for a fresh value rather than showing the old one.
+export function ProjectSecretsModal({ project, onClose }: { project: Project; onClose: () => void }) {
+  const [secrets, setSecrets] = useState<ProjectSecret[] | null>(null);
+  const [newName, setNewName] = useState("");
+  const [newValue, setNewValue] = useState("");
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const dialogs = useDialogs();
+
+  const load = useCallback(() => {
+    api.listProjectSecrets(project.id).then(setSecrets).catch(() => setSecrets([]));
+  }, [project.id]);
+  useEffect(() => { load(); }, [load]);
+
+  const create = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!newName.trim() || !newValue) return;
+    setBusy("create");
+    setErr("");
+    try {
+      await api.createProjectSecret(project.id, newName.trim(), newValue);
+      setNewName("");
+      setNewValue("");
+      load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "failed to create secret");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const saveEdit = async (name: string) => {
+    if (!editValue) return;
+    setBusy(`update-${name}`);
+    setErr("");
+    try {
+      await api.updateProjectSecret(project.id, name, editValue);
+      setEditing(null);
+      setEditValue("");
+      load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "failed to update secret");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const remove = async (name: string) => {
+    if (!(await dialogs.confirm({
+      title: `Delete secret "${name}"?`,
+      message: "Any compose service still referencing ${" + name + "} will fail to resolve on the next deploy.",
+      danger: true, confirmLabel: "Delete",
+    }))) return;
+    setBusy(`delete-${name}`);
+    try {
+      await api.deleteProjectSecret(project.id, name);
+      load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "failed to delete secret");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
+      <div className="card w-full max-w-2xl flex flex-col max-h-[88vh]" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2 p-4 border-b border-border">
+          <Lock className="h-4 w-4 text-accent" />
+          <span className="font-medium">Secrets</span>
+          <span className="text-xs text-muted font-mono">{project.name}</span>
+          <button className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-4 space-y-3 overflow-y-auto">
+          <p className="text-xs text-muted">
+            Reference a secret from the compose file with <code className="font-mono">${"{NAME}"}</code>, exactly
+            like any other environment variable. The value is encrypted at rest and never shown again after it's
+            saved — previews, diffs and revision history show a stable placeholder instead.
+          </p>
+          {err && (
+            <div className="text-sm text-danger flex items-center gap-2"><AlertCircle className="h-4 w-4 shrink-0" /> {err}</div>
+          )}
+          {secrets === null ? (
+            <div className="flex items-center gap-2 text-sm text-muted"><Spinner /> Loading…</div>
+          ) : secrets.length === 0 ? (
+            <div className="text-sm text-muted">No secrets yet.</div>
+          ) : (
+            <div className="space-y-2">
+              {secrets.map((sec) => (
+                <div key={sec.id} className="card p-3 flex items-start gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-mono text-sm">{sec.name}</div>
+                    <div className="text-xs text-muted">updated {new Date(sec.updatedAt).toLocaleString()}</div>
+                    {editing === sec.name && (
+                      <form className="mt-2 flex gap-2" onSubmit={(e) => { e.preventDefault(); saveEdit(sec.name); }}>
+                        <input
+                          type="password" autoFocus className="input flex-1 text-sm" placeholder="new value"
+                          value={editValue} onChange={(e) => setEditValue(e.target.value)}
+                        />
+                        <button type="submit" className="btn-primary px-2 py-1 text-xs disabled:opacity-40" disabled={!editValue || busy === `update-${sec.name}`}>
+                          {busy === `update-${sec.name}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                        </button>
+                        <button type="button" className="btn-ghost px-2 py-1 text-xs" onClick={() => { setEditing(null); setEditValue(""); }}>Cancel</button>
+                      </form>
+                    )}
+                  </div>
+                  <div className="shrink-0 flex items-center gap-1">
+                    <button className="btn-ghost px-2 py-1" title="Update value" onClick={() => { setEditing(sec.name); setEditValue(""); }}>
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                    <button
+                      className="btn-ghost px-2 py-1 text-danger disabled:opacity-40" title="Delete"
+                      disabled={busy === `delete-${sec.name}`} onClick={() => remove(sec.name)}
+                    >
+                      {busy === `delete-${sec.name}` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <form className="flex items-end gap-2 p-4 border-t border-border" onSubmit={create}>
+          <div className="flex-1">
+            <label className="label">Name</label>
+            <input
+              className="input w-full text-sm font-mono" placeholder="DB_PASSWORD"
+              value={newName} onChange={(e) => setNewName(e.target.value)}
+            />
+          </div>
+          <div className="flex-1">
+            <label className="label">Value</label>
+            <input
+              type="password" className="input w-full text-sm" placeholder="value"
+              value={newValue} onChange={(e) => setNewValue(e.target.value)}
+            />
+          </div>
+          <button type="submit" className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40" disabled={!newName.trim() || !newValue || busy === "create"}>
+            {busy === "create" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Add
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // isDockerfile reports whether a file is a Dockerfile (Dockerfile, Dockerfile.*,
 // *.dockerfile) — these can live in subdirectories, unlike compose files.
 function isDockerfile(name: string): boolean {
@@ -456,6 +607,7 @@ export function Projects() {
   const [busy, setBusy] = useState(""); // slug acting
   const [editing, setEditing] = useState<Project | null>(null);
   const [editMeta, setEditMeta] = useState<Project | null>(null);
+  const [secretsFor, setSecretsFor] = useState<Project | null>(null);
   const [hosts, setHosts] = useState<Host[]>([]);
   const [output, setOutput] = useState<Output | null>(null);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
@@ -612,6 +764,7 @@ export function Projects() {
                       <>
                         <button className="btn-ghost px-2 py-1" title="Edit files" onClick={() => setEditing(p)}><FileText className="h-4 w-4" /></button>
                         <button className="btn-ghost px-2 py-1" title="Settings (name, host)" onClick={() => setEditMeta(p)}><Pencil className="h-4 w-4" /></button>
+                        <button className="btn-ghost px-2 py-1" title="Secrets" onClick={() => setSecretsFor(p)}><Lock className="h-4 w-4" /></button>
                         {st.deployed ? (
                           <>
                             <button className="btn-ghost px-2 py-1 text-accent disabled:opacity-40" title="Redeploy (docker compose up -d)" disabled={!composeAvailable} onClick={() => runCompose(p, "deploy")}><Rocket className="h-4 w-4" /></button>
@@ -657,6 +810,7 @@ export function Projects() {
 
       {showNew && <NewProjectModal hosts={hosts} onClose={() => setShowNew(false)} onCreated={onCreated} />}
       {editMeta && <EditProjectModal project={editMeta} hosts={hosts} deployed={projectState(stackBySlug.get(editMeta.slug)).deployed} onClose={() => setEditMeta(null)} onSaved={() => { setEditMeta(null); load(); }} />}
+      {secretsFor && <ProjectSecretsModal project={secretsFor} onClose={() => setSecretsFor(null)} />}
 
       {editing && (
         <ProjectEditor

@@ -165,16 +165,33 @@ func ComposeConfig(ctx context.Context, dir, slug string) (string, error) {
 	return runCompose(ctx, dir, slug, nil, "config", "--quiet")
 }
 
+// ComposeConfigEnv is ComposeConfig with an explicit process environment —
+// used when the compose file interpolates a value (e.g. a project secret's
+// placeholder) that must be supplied without ever going through .env or any
+// file on disk.
+func ComposeConfigEnv(ctx context.Context, dir, slug string, env []string) (string, error) {
+	return runCompose(ctx, dir, slug, env, "config", "--quiet")
+}
+
 // ComposeResolvedConfig returns the fully-resolved compose configuration
 // (`docker compose config` without --quiet): anchors, merge keys, ${VAR}
 // interpolation and extends/include flattened into one canonical YAML — exactly
 // what `up` will deploy. Only stdout (the YAML) is returned; on failure the
 // error carries stderr.
 func ComposeResolvedConfig(ctx context.Context, dir, slug string) (string, error) {
+	return ComposeResolvedConfigEnv(ctx, dir, slug, nil)
+}
+
+// ComposeResolvedConfigEnv is ComposeResolvedConfig with an explicit process
+// environment — see ComposeConfigEnv.
+func ComposeResolvedConfigEnv(ctx context.Context, dir, slug string, env []string) (string, error) {
 	cctx, cancel := context.WithTimeout(ctx, composeTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(cctx, "docker", "compose", "-p", slug, "config")
 	cmd.Dir = dir
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

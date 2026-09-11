@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -17,6 +18,8 @@ import (
 
 	"github.com/koduj-dev/docker-commander/internal/auth"
 	"github.com/koduj-dev/docker-commander/internal/config"
+	"github.com/koduj-dev/docker-commander/internal/crypto"
+	"github.com/koduj-dev/docker-commander/internal/docker"
 	"github.com/koduj-dev/docker-commander/internal/store"
 )
 
@@ -38,7 +41,11 @@ func newProjectServer(t *testing.T) (*Server, int64) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := &Server{cfg: config.Config{DataDir: t.TempDir()}, store: st}
+	key := make([]byte, 32)
+	_, _ = rand.Read(key)
+	cph, _ := crypto.New(key)
+	st.SetCipher(cph)
+	srv := &Server{cfg: config.Config{DataDir: t.TempDir()}, store: st, docker: docker.NewManager(st)}
 	// The project folder exists in the real flow (created at project creation);
 	// mirror that so safeJoin's sandbox resolution has a root to anchor on.
 	if err := os.MkdirAll(srv.projectRoot(id), 0o700); err != nil {

@@ -143,7 +143,11 @@ func (s *Server) mcpPreviewProject(ctx context.Context, id int64) (mcp.ProjectPr
 		return out, err
 	}
 	dir := s.projectRoot(p.ID)
-	cfgJSON, err := docker.ComposeConfigJSON(ctx, dir, p.Slug)
+	_, masked, names, serr := s.projectSecretEnvs(ctx, p.ID)
+	if serr != nil {
+		return out, serr
+	}
+	cfgJSON, err := docker.ComposeConfigJSONFiles(ctx, dir, p.Slug, nil, masked, nil)
 	if err != nil {
 		// An invalid compose file is the single most useful thing a preview can
 		// report, so it comes back as a result rather than an error.
@@ -173,6 +177,7 @@ func (s *Server) mcpPreviewProject(ctx context.Context, id int64) (mcp.ProjectPr
 	// healthcheck. Worth it here: this is an explicit, user-triggered
 	// preview, not a hot loop.
 	running := s.docker.LiveServices(ctx, p.HostID, containers)
+	s.maskLiveSecrets(running, names)
 
 	prev := docker.BuildDeployPreview(resolved, running)
 	// Best-effort: a mutable tag can point at a new image without the tag

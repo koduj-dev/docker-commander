@@ -117,6 +117,9 @@ func (s *Store) DeleteProject(ctx context.Context, id int64) error {
 	if err := s.deleteProjectRevisions(ctx, id); err != nil {
 		return err
 	}
+	if err := s.deleteProjectSecrets(ctx, id); err != nil {
+		return err
+	}
 	_, err := s.db.ExecContext(ctx, `DELETE FROM projects WHERE id = ?`, id)
 	return err
 }

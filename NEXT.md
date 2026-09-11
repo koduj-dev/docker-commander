@@ -219,19 +219,24 @@ publishing a per-network number that looks authoritative and is wrong.
 
 ### Configuration and secrets
 
-- **Project secrets.** A GitHub-Actions-secrets-style store: name a value once
-  (`DB_PASSWORD`, `API_TOKEN`…), reference it from compose/`.env` instead of
-  inlining it, and it never appears in plaintext again — not in the compose
-  file, not in a git-sourced repo, not in the resolved-config preview, not in
-  a deployment plan/diff, not in logs, not in a normal API response. Matters
-  more now that GitOps/build-from-source deploy is planned: a repo pulled
-  from git must never need a real secret committed to it to run. RBAC on who
-  can view/edit which secrets; audit *that* a secret changed, never its
-  value; detect a likely-secret pasted directly into a compose editor and
-  offer to move it. Storage stays DC's own encrypted-at-rest store for now
-  (matching the registry/SMTP/LDAP secret pattern already in place) — `.env`
-  import and an external provider (SOPS+age, Docker Secrets, Vault…) are
-  later, optional backends, not a prerequisite. Don't try to become Vault.
+- ~~**Project secrets.**~~ **Shipped**, except the compose-editor heuristic
+  below: name a value once (`DB_PASSWORD`, `API_TOKEN`…), reference it from
+  the compose file via plain `${NAME}` interpolation instead of inlining it —
+  DC supplies it as a process env var at deploy time only, never written to
+  `.env` or any file on disk. Never appears in plaintext again: not in the
+  resolved-config preview, not in a deployment plan/diff, not in a normal API
+  response, not in the audit log (which records *that* a secret changed, by
+  name, never its value) — everywhere a resolved value is shown, a stable
+  `secret:<fingerprint>` placeholder appears instead, so a diff can still
+  show *that* a secret changed without ever showing what it is. RBAC reuses
+  the project's own "projects" section grants (view lists names, write
+  manages them) rather than a new per-secret permission model. Storage is
+  DC's own encrypted-at-rest store, same pattern as registry/SMTP/LDAP
+  credentials. Still open: **detect a likely-secret pasted directly into the
+  compose editor and offer to move it** — deliberately deferred as a
+  fast-follow, orthogonal UI work. Also still open, now that this exists: a
+  git-sourced repo (GitOps deploy, not yet built) must never need a real
+  secret committed to it to run — revisit once that lands.
 - **Parameterized user templates.** Built-in presets support `{{.Var}}`;
   user-saved ones are literal snapshots. Add variables, validation and safe
   handling of generated secrets.
@@ -455,7 +460,7 @@ doesn't retry). Project secrets pushed to #4, unchanged in scope.
 1. [x] Per-session MCP token revocation (#20)
 2. [x] Maintenance windows / silences (#6)
 3. [x] Alert delivery retry (#12)
-4. [ ] Project secrets (#10)
+4. [x] Project secrets (#10)
 5. [ ] Controlled image updates (#11) — together with self-update auto-apply
    policy (#19), same poll/policy/audit/notify shape, one applied to
    workloads and the other to DC's own binary

@@ -242,6 +242,10 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/projects/{id}/revisions/{rev}/diff", s.handleRevisionDiff)
 			r.Post("/projects/{id}/revisions/{rev}/restore", s.handleRestoreRevision)
 			r.Post("/projects/{id}/summary", s.handleProjectSummary)
+			r.Get("/projects/{id}/secrets", s.handleListProjectSecrets)
+			r.Post("/projects/{id}/secrets", s.handleCreateProjectSecret)
+			r.Put("/projects/{id}/secrets/{name}", s.handleUpdateProjectSecret)
+			r.Delete("/projects/{id}/secrets/{name}", s.handleDeleteProjectSecret)
 
 			// Portable recovery bundle: export/inspect/import an instance-wide
 			// snapshot (projects, hosts, registries, alert rules, settings).

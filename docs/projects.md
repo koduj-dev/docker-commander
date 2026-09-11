@@ -163,6 +163,31 @@ On the compose file, two extra actions sit in the editor toolbar:
 - **Delete** — refuses while the project is deployed (offers to bring it down
   first); deleting the last file offers to delete the now-empty project.
 
+## Secrets
+
+Named values — `DB_PASSWORD`, `API_TOKEN`, and so on — referenced from the
+compose file exactly like any other environment variable: `${NAME}`. Docker
+Commander supplies the value as a process environment variable at deploy
+time only; it is never written to `.env` or any file on disk, so it can
+never end up in a revision snapshot.
+
+A secret's value is encrypted at rest and can only be **replaced**, never
+read back — the "Secrets" panel (the lock icon on a project's card) never
+shows it again after it's saved, the same convention as a registry
+credential. Deleting a secret is immediate; any compose service still
+referencing it will fail to resolve on the next deploy.
+
+Everywhere a resolved compose value would normally be displayed — the
+Resolved tab, the deploy preview, a revision diff — a secret's value is
+shown as a redacted `secret:<fingerprint>` placeholder instead. The same
+value always produces the same fingerprint and a different value a
+different one, so you can still see *that* something changed without ever
+seeing *what*.
+
+RBAC follows the project's own "projects" section grants: a read grant can
+list a project's secret names, a write grant is required to add, replace or
+delete one — there is no separate secrets-specific permission.
+
 ## Deploying to a remote host
 A project can target the **local daemon** (default) or any **remote host** you've
 added under [Hosts](hosts.md) — pick it when creating the project or via its
