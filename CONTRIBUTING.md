@@ -30,7 +30,7 @@ The production artifact is a **single CGO-free binary** with the UI embedded
 
 ## Development setup
 
-You need **Go ≥ 1.25**, **Node.js ≥ 18** (to build the UI) and a running
+You need **Go ≥ 1.26**, **Node.js ≥ 18** (to build the UI) and a running
 **Docker daemon** (the app talks to it; some tests use it).
 
 ```bash

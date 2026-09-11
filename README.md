@@ -168,7 +168,7 @@ Installs the signed release binary for your OS/arch from the
 
 ### Option C — build from source
 
-Requires **Go ≥ 1.25**, **Node.js ≥ 18** (to build the UI) and a running Docker
+Requires **Go ≥ 1.26**, **Node.js ≥ 18** (to build the UI) and a running Docker
 daemon. See [Building](#-building) for per-OS details.
 
 ```bash
