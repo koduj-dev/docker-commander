@@ -48,11 +48,16 @@ type HostHealth struct {
 
 // ContainerStat is the cached per-container snapshot used by the exporter.
 type ContainerStat struct {
-	HostID     int64
-	HostName   string
-	ID         string
-	Name       string
-	State      string
+	HostID   int64
+	HostName string
+	ID       string
+	Name     string
+	State    string
+	// Project is the container's compose project (stack) name, read from its
+	// com.docker.compose.project label — "" for a container not managed by
+	// Compose. Used to scope maintenance windows by stack; nothing else in
+	// the engine reads it today.
+	Project    string
 	CPUPercent float64 // `docker stats` convention: 100% == one core
 	CPUCores   float64 // cores the daemon reports, so CPUPercent can be normalised
 	MemBytes   uint64
@@ -235,7 +240,7 @@ func (m *Monitor) pollStats(ctx context.Context) {
 		}
 		sampled[h.ID] = true
 		for _, c := range containers {
-			cs := ContainerStat{HostID: h.ID, HostName: h.Name, ID: c.ID, Name: c.Name, State: c.State}
+			cs := ContainerStat{HostID: h.ID, HostName: h.Name, ID: c.ID, Name: c.Name, State: c.State, Project: c.Labels[docker.LabelComposeProject]}
 			if c.State != "running" {
 				mu.Lock()
 				next[cs.ID] = cs
@@ -282,6 +287,20 @@ func (m *Monitor) pollStats(ctx context.Context) {
 
 	m.recordHistory(ctx, next)
 	m.evalResourceRules(ctx, next, sampled)
+}
+
+// projectFor returns the compose project (stack) name for a container, from
+// the cached stats snapshot rather than a fresh Docker call — the snapshot is
+// already refreshed every stats poll, and this is called on the alert path,
+// which must not add a Docker round trip per event. "" (unknown container, or
+// one Compose doesn't manage) means "every window scoped by project still
+// matches" is decided the same way an empty rule Target would be: it isn't
+// scoped, so it always matches, and only a window that DOES set Project can
+// ever fail to match here.
+func (m *Monitor) projectFor(cid string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.snapshot[cid].Project
 }
 
 // applyNetRates fills in per-container throughput from the previous poll.
@@ -871,11 +890,23 @@ func (m *Monitor) emit(ctx context.Context, r store.AlertRule, hostID int64, hos
 	}
 	wctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	// The event is recorded regardless of any active maintenance window — a
+	// silence stops paging, not observing — so this check only ever decides
+	// whether delivery below runs, never whether InsertAlertEvent does.
+	if win, err := m.store.FindActiveMaintenanceWindow(wctx, hostID, m.projectFor(cid), name, r.ID, severity, time.Now()); err != nil {
+		log.Printf("monitor: check maintenance window: %v", err)
+	} else if win != nil {
+		ev.Suppressed = true
+		ev.SuppressedBy = win.ID
+	}
 	// The id is what delivery records attach to, so capture it before notifying.
 	if id, err := m.store.InsertAlertEvent(wctx, ev); err != nil {
 		log.Printf("monitor: insert alert event: %v", err)
 	} else {
 		ev.ID = id
+	}
+	if ev.Suppressed {
+		return
 	}
 	if r.WebhookID != nil {
 		m.dispatcher.dispatch(*r.WebhookID, ev)
@@ -958,10 +989,22 @@ func (m *Monitor) fireHostAlert(hostID int64, hostName string, online bool, down
 	}
 	wctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	// No container or rule to scope by, but a maintenance window covering the
+	// whole host still applies — that's the "planned work on this host"
+	// case the feature exists for.
+	if win, err := m.store.FindActiveMaintenanceWindow(wctx, hostID, "", "", 0, severity, time.Now()); err != nil {
+		log.Printf("monitor: check maintenance window: %v", err)
+	} else if win != nil {
+		ev.Suppressed = true
+		ev.SuppressedBy = win.ID
+	}
 	if id, err := m.store.InsertAlertEvent(wctx, ev); err != nil {
 		log.Printf("monitor: insert host alert event: %v", err)
 	} else {
 		ev.ID = id
+	}
+	if ev.Suppressed {
+		return
 	}
 	// Host reachability isn't tied to a rule, so it uses the host/instance
 	// recipients.
