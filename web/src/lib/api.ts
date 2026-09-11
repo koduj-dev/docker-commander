@@ -230,7 +230,10 @@ export interface MaintenanceWindowBody {
   severities: string[];
   recurring: boolean;
   startsAt: string;
-  endsAt: string;
+  /** Omit (don't send "") for an open-ended recurring series — Go's
+   * time.Time JSON decoder rejects an empty string but leaves the field at
+   * its zero value for a missing key or an explicit null. */
+  endsAt?: string;
   weekdays?: number[];
   timeOfDay?: string;
   durationMin?: number;

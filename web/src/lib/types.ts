@@ -822,7 +822,8 @@ export interface MaintenanceWindow {
   severities: Severity[];
   recurring: boolean;
   startsAt: string;
-  endsAt: string;
+  /** Absent for an open-ended recurring series — never a zero-time sentinel. */
+  endsAt?: string;
   /** Recurring only: time.Weekday numbering, 0 = Sunday. */
   weekdays?: number[];
   /** Recurring only: "HH:MM", 24h, in `timezone`. */

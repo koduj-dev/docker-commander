@@ -988,6 +988,14 @@ function WebhookForm({ onDone }: { onDone: () => void }) {
 
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+// A minimal host shape for the maintenance-window picker — deliberately
+// narrower than the full Host type, since the fallback below (for a caller
+// without the "hosts" section) can only ever know an id, never a name.
+interface HostOption {
+  id: number;
+  name: string;
+}
+
 function toInputDateTime(iso: string): string {
   const d = new Date(iso);
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -1006,8 +1014,10 @@ function fromInputDate(value: string): string {
 function windowStatus(w: MaintenanceWindow): { label: string; cls: string } {
   if (w.ended) return { label: "Ended", cls: "bg-panel2 text-muted" };
   if (w.recurring) return { label: "Recurring", cls: "bg-accent/15 text-accent" };
+  // A one-off window always carries a real endsAt (the server requires it);
+  // only a recurring series — handled above — can omit it.
   const now = Date.now();
-  if (new Date(w.endsAt).getTime() <= now) return { label: "Expired", cls: "bg-panel2 text-muted" };
+  if (new Date(w.endsAt ?? 0).getTime() <= now) return { label: "Expired", cls: "bg-panel2 text-muted" };
   if (new Date(w.startsAt).getTime() > now) return { label: "Scheduled", cls: "bg-accent/15 text-accent" };
   return { label: "Active", cls: "bg-warn/15 text-warn" };
 }
@@ -1019,7 +1029,7 @@ function windowStatus(w: MaintenanceWindow): { label: string; cls: string } {
 export function MaintenanceWindows() {
   const [windows, setWindows] = useState<MaintenanceWindow[] | null>(null);
   const [rules, setRules] = useState<AlertRule[]>([]);
-  const [hosts, setHosts] = useState<Host[]>([]);
+  const [hosts, setHosts] = useState<HostOption[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<MaintenanceWindow | null>(null);
   const dialogs = useDialogs();
@@ -1027,7 +1037,18 @@ export function MaintenanceWindows() {
   const load = useCallback(() => {
     api.maintenanceWindows().then(setWindows).catch(() => setWindows([]));
     api.alertRules().then(setRules).catch(() => {});
-    api.hosts().then(setHosts).catch(() => {});
+    api.hosts().then(setHosts).catch(() => {
+      // No "hosts" section (e.g. the built-in Operator role, which grants
+      // "alerts" but deliberately not "hosts") — fall back to just the host
+      // ids this grant can reach, so the picker still works (as "host #N"
+      // chips) instead of silently looking like zero hosts exist.
+      api.myAccess().then((access) => {
+        const g = access.effective?.find((eg) => eg.section === "alerts");
+        if (g && !g.allHosts && g.hosts) {
+          setHosts(g.hosts.map((id) => ({ id, name: `host #${id}` })));
+        }
+      }).catch(() => {});
+    });
   }, []);
   useEffect(() => load(), [load]);
 
@@ -1063,7 +1084,9 @@ export function MaintenanceWindows() {
     return parts.length > 0 ? parts.join(" · ") : "everything";
   };
   const scheduleSummary = (w: MaintenanceWindow): string => {
-    if (!w.recurring) return `${new Date(w.startsAt).toLocaleString()} → ${new Date(w.endsAt).toLocaleString()}`;
+    // A one-off window always carries a real endsAt; only a recurring
+    // series (handled below) can leave it unset.
+    if (!w.recurring) return `${new Date(w.startsAt).toLocaleString()} → ${new Date(w.endsAt ?? 0).toLocaleString()}`;
     const days = (w.weekdays ?? []).map((d) => WEEKDAY_LABELS[d]).join(", ") || "—";
     const until = w.endsAt ? ` until ${new Date(w.endsAt).toLocaleDateString()}` : "";
     return `Every ${days} at ${w.timeOfDay || "?"} for ${w.durationMin ?? 0}m${until}`;
@@ -1107,7 +1130,7 @@ export function MaintenanceWindows() {
             <tbody>
               {windows.map((w) => {
                 const status = windowStatus(w);
-                const canEnd = !w.ended && (w.recurring || new Date(w.endsAt).getTime() > Date.now());
+                const canEnd = !w.ended && (w.recurring || new Date(w.endsAt ?? 0).getTime() > Date.now());
                 return (
                   <tr key={w.id} className="border-b border-border/50">
                     <td className="px-4 py-2.5 font-medium">
@@ -1141,7 +1164,7 @@ export function MaintenanceWindows() {
 
 function MaintenanceWindowForm({
   rules, hosts, existing, onDone, onCancel,
-}: { rules: AlertRule[]; hosts: Host[]; existing?: MaintenanceWindow | null; onDone: () => void; onCancel: () => void }) {
+}: { rules: AlertRule[]; hosts: HostOption[]; existing?: MaintenanceWindow | null; onDone: () => void; onCancel: () => void }) {
   const [name, setName] = useState(existing?.name ?? "");
   const [reason, setReason] = useState(existing?.reason ?? "");
   const [hostIds, setHostIds] = useState<number[]>(existing?.hostIds ?? []);
@@ -1153,8 +1176,10 @@ function MaintenanceWindowForm({
 
   const nowIso = new Date().toISOString();
   const [startLocal, setStartLocal] = useState(toInputDateTime(!existing || !existing.recurring ? existing?.startsAt ?? nowIso : nowIso));
+  // A one-off existing window always carries a real endsAt (the server
+  // requires it); only a recurring series can leave it unset.
   const existingDurationMin = existing && !existing.recurring
-    ? Math.max(1, Math.round((new Date(existing.endsAt).getTime() - new Date(existing.startsAt).getTime()) / 60000))
+    ? Math.max(1, Math.round((new Date(existing.endsAt ?? existing.startsAt).getTime() - new Date(existing.startsAt).getTime()) / 60000))
     : existing?.durationMin ?? 60;
   const [durationMin, setDurationMin] = useState(existingDurationMin);
 
@@ -1162,7 +1187,12 @@ function MaintenanceWindowForm({
   const [seriesEndDate, setSeriesEndDate] = useState(existing?.recurring && existing.endsAt ? toInputDate(existing.endsAt) : "");
   const [weekdays, setWeekdays] = useState<Set<number>>(new Set(existing?.weekdays ?? []));
   const [timeOfDay, setTimeOfDay] = useState(existing?.timeOfDay ?? "02:00");
-  const tz = existing?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  // An EXISTING window's stored timezone ("" meaning UTC, same convention
+  // the server uses) must be preserved as-is when merely editing it —
+  // falling back to the browser's own timezone here would silently change
+  // a saved window's actual wall-clock schedule. Only a brand-new window
+  // defaults to the browser's timezone.
+  const tz = existing ? (existing.timezone || "UTC") : Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -1191,7 +1221,10 @@ function MaintenanceWindowForm({
         ? {
           ...shared, recurring: true,
           startsAt: fromInputDate(seriesStartDate),
-          endsAt: seriesEndDate ? fromInputDate(seriesEndDate) : "",
+          // undefined (never ""): Go's time.Time JSON decoder rejects an
+          // empty string for an open-ended series, but a missing key leaves
+          // it at its zero value, which the server treats as indefinite.
+          endsAt: seriesEndDate ? fromInputDate(seriesEndDate) : undefined,
           weekdays: [...weekdays], timeOfDay, durationMin, timezone: tz,
         }
         : {
