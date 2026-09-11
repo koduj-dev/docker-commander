@@ -123,15 +123,22 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/mcp/tokens", s.handleListMCPTokens)
 			r.Post("/mcp/tokens", s.handleCreateMCPToken)
 			r.Delete("/mcp/tokens/{id}", s.handleRevokeMCPToken)
+			// Own OAuth connector sessions: a session can only ever be the
+			// caller's own, same narrowing as the tokens above.
+			r.Get("/mcp/sessions", s.handleListMCPSessions)
+			r.Delete("/mcp/sessions/{id}", s.handleRevokeMCPSession)
 
-			// MCP admin overview — every user's tokens + registered OAuth clients,
-			// with revoke/delete. Admin only (section "__admin").
+			// MCP admin overview — every user's tokens + registered OAuth clients
+			// + live connector sessions, with revoke/delete. Admin only (section
+			// "__admin").
 			r.Get("/mcp-admin/tokens", s.handleAdminListMCPTokens)
 			r.Delete("/mcp-admin/tokens/{id}", s.handleAdminRevokeMCPToken)
 			r.Get("/mcp-admin/token-policy", s.handleAdminGetMCPTokenPolicy)
 			r.Put("/mcp-admin/token-policy", s.handleAdminSetMCPTokenPolicy)
 			r.Get("/mcp-admin/oauth-clients", s.handleAdminListOAuthClients)
 			r.Delete("/mcp-admin/oauth-clients/{id}", s.handleAdminDeleteOAuthClient)
+			r.Get("/mcp-admin/sessions", s.handleAdminListMCPSessions)
+			r.Delete("/mcp-admin/sessions/{id}", s.handleAdminRevokeMCPSession)
 
 			// Roles: named bundles of section grants. Admin only (section
 			// "__admin") — editing a role widens authority, so this must never be

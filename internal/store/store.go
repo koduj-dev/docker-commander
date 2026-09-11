@@ -412,8 +412,34 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
 	scope       TEXT NOT NULL DEFAULT '',
 	resource    TEXT NOT NULL DEFAULT '',
 	expires_at  TEXT NOT NULL DEFAULT '',
-	created_at  TEXT NOT NULL
+	created_at  TEXT NOT NULL,
+	session_id  TEXT NOT NULL DEFAULT ''
 );
+
+-- One MCP connector pairing (an OAuth authorization grant and the refresh-token
+-- chain it started), keyed by a stable session id minted once at the initial
+-- authorization-code exchange and carried forward, unchanged, across every
+-- refresh. An access-token JWT is self-contained and re-minted every
+-- AccessTokenTTL, so without a row per session there is nothing to revoke short
+-- of deleting the whole oauth_clients row — this is the same "the row IS the
+-- session" shape as the sessions table above, applied to MCP.
+--
+-- Revoking a session must delete its oauth_refresh_tokens row in the same
+-- transaction (see RevokeMCPOAuthSession): otherwise the still-valid refresh
+-- token silently mints a fresh access token and the "revoked" session comes
+-- back to life on its own next use.
+CREATE TABLE IF NOT EXISTS mcp_oauth_sessions (
+	id           TEXT PRIMARY KEY,        -- the stable session id (not a jti)
+	client_id    TEXT NOT NULL,
+	user_id      INTEGER NOT NULL,
+	ip           TEXT NOT NULL DEFAULT '',
+	user_agent   TEXT NOT NULL DEFAULT '',
+	created_at   TEXT NOT NULL,
+	last_used_at TEXT NOT NULL,
+	expires_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_oauth_sessions_user ON mcp_oauth_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_mcp_oauth_sessions_client ON mcp_oauth_sessions(client_id);
 
 -- A vulnerability a human has reviewed and accepted, so a Trivy scan stops
 -- re-flagging it. Keyed by CVE id alone, not per-image: the identifier is
@@ -596,6 +622,13 @@ CREATE INDEX IF NOT EXISTS idx_backup_runs_job ON backup_runs(job_id);
 		// which never matches a real fingerprint, so it simply stops applying
 		// rather than mismatching something it was never meant to cover.
 		`ALTER TABLE project_drift_ignores ADD COLUMN fingerprint TEXT NOT NULL DEFAULT ''`,
+		// Carries a session's stable id across refresh-token rotation, so
+		// RevokeMCPOAuthSession can find and delete the CURRENT refresh token
+		// for a session without knowing its (single-use, rotating) hash. A
+		// pre-existing row predates per-session revocation and defaults to '',
+		// which matches no session id — it simply isn't individually
+		// revocable until its owner refreshes again after upgrade.
+		`ALTER TABLE oauth_refresh_tokens ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := s.db.ExecContext(ctx, alter); err != nil && !isDuplicateColumn(err) {
 			return err

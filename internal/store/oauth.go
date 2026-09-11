@@ -93,6 +93,9 @@ func (s *Store) DeleteOAuthClient(ctx context.Context, id string) (bool, error) 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM oauth_refresh_tokens WHERE client_id = ?`, id); err != nil {
 		return false, err
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM mcp_oauth_sessions WHERE client_id = ?`, id); err != nil {
+		return false, err
+	}
 	if err := tx.Commit(); err != nil {
 		return false, err
 	}
@@ -153,16 +156,20 @@ func (s *Store) ConsumeOAuthCode(ctx context.Context, codeHash string) (*OAuthCo
 	return &c, nil
 }
 
-// DeleteExpiredOAuth purges authorization codes and refresh tokens whose expiry
-// has passed (issued-but-never-redeemed codes, lapsed refresh tokens). Run
-// periodically so the tables don't grow unbounded.
+// DeleteExpiredOAuth purges authorization codes, refresh tokens and MCP
+// sessions whose expiry has passed (issued-but-never-redeemed codes, lapsed
+// refresh tokens, abandoned connector pairings). Run periodically so the
+// tables don't grow unbounded.
 func (s *Store) DeleteExpiredOAuth(ctx context.Context) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM oauth_codes WHERE expires_at < ?`, now); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx,
-		`DELETE FROM oauth_refresh_tokens WHERE expires_at != '' AND expires_at < ?`, now)
+	if _, err := s.db.ExecContext(ctx,
+		`DELETE FROM oauth_refresh_tokens WHERE expires_at != '' AND expires_at < ?`, now); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM mcp_oauth_sessions WHERE expires_at < ?`, now)
 	return err
 }
 
@@ -173,6 +180,13 @@ type OAuthRefreshToken struct {
 	Scope     string
 	Resource  string
 	ExpiresAt time.Time
+	// SessionID names the mcp_oauth_sessions row this refresh token belongs
+	// to. It is minted once (at the authorization-code grant) and carried
+	// forward unchanged across every rotation, unlike TokenHash — it is what
+	// lets RevokeMCPOAuthSession find and delete the CURRENT refresh token
+	// for a session without ever seeing its hash. Empty for a refresh token
+	// issued before per-session revocation existed.
+	SessionID string
 }
 
 // CreateRefreshToken stores a refresh token (by hash).
@@ -183,9 +197,9 @@ func (s *Store) CreateRefreshToken(ctx context.Context, tokenHash string, t *OAu
 		expires = t.ExpiresAt.UTC().Format(time.RFC3339)
 	}
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO oauth_refresh_tokens (token_hash, client_id, user_id, scope, resource, expires_at, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		tokenHash, t.ClientID, t.UserID, t.Scope, t.Resource, expires, now)
+		INSERT INTO oauth_refresh_tokens (token_hash, client_id, user_id, scope, resource, expires_at, created_at, session_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		tokenHash, t.ClientID, t.UserID, t.Scope, t.Resource, expires, now, t.SessionID)
 	return err
 }
 
@@ -202,9 +216,9 @@ func (s *Store) ConsumeRefreshToken(ctx context.Context, tokenHash string) (*OAu
 	var t OAuthRefreshToken
 	var expires string
 	err = tx.QueryRowContext(ctx, `
-		SELECT client_id, user_id, scope, resource, expires_at
+		SELECT client_id, user_id, scope, resource, expires_at, session_id
 		FROM oauth_refresh_tokens WHERE token_hash = ?`, tokenHash).
-		Scan(&t.ClientID, &t.UserID, &t.Scope, &t.Resource, &expires)
+		Scan(&t.ClientID, &t.UserID, &t.Scope, &t.Resource, &expires, &t.SessionID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

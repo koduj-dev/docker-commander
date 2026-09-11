@@ -914,6 +914,26 @@ export interface AdminOAuthClient {
   createdAt: string;
 }
 
+// One MCP connector session — an OAuth authorization grant plus the
+// refresh-token chain it started. Revoking one kills both its current access
+// token and its refresh token, without touching the client's other sessions
+// or de-registering the client itself.
+export interface MCPSession {
+  id: string;
+  clientId: string;
+  clientName: string;
+  ip: string;
+  userAgent: string;
+  createdAt: string;
+  lastUsedAt: string;
+  expiresAt: string;
+}
+
+export interface AdminMCPSession extends MCPSession {
+  userId: number;
+  username: string;
+}
+
 /** One section a user can reach, and which role(s) or grant it came from. */
 export interface EffectiveGrant {
   section: string;

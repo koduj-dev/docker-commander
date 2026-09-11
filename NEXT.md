@@ -61,10 +61,6 @@ the old repeat-every-cooldown engine would have produced a timeline of noise.
 - **Alert delivery retry.** Failures are now *recorded* but never re-attempted.
   Retry needs a queue and a backoff policy, and silently retrying a webhook that
   returns 500 for a good reason is its own hazard — worth doing deliberately.
-- **Per-session MCP token revocation.** Revoking is currently per OAuth *client*:
-  there is no "sign this one tool out", and a stolen token can't be killed
-  individually short of removing its client. A `jti` denylist would buy that, at
-  the cost of a lookup and a table to prune.
 
 ### Safe changes
 
@@ -460,7 +456,7 @@ items off as they ship; revisit the order deliberately if priorities change,
 don't just silently reshuffle it. (Original numbering from the candidate list
 kept in parentheses for traceability.)
 
-1. [ ] Per-session MCP token revocation (#20)
+1. [x] Per-session MCP token revocation (#20)
 2. [ ] Project secrets (#10)
 3. [ ] Alert delivery retry (#12)
 4. [ ] Maintenance windows / silences (#6)

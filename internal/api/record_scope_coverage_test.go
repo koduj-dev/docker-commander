@@ -74,9 +74,13 @@ var recordRouteDecision = map[string]string{
 	// Likewise a second factor: it belongs to an account, names no host, and the
 	// delete is scoped by the caller's own user id (and needs their password).
 	"/api/auth/factors/{id}": "own authenticators only; a factor names no host",
+	// An MCP connector session belongs to an account, not to a Docker host,
+	// same as its own OAuth token/session-cookie counterparts above.
+	"/api/mcp/sessions/{id}": "own sessions only; a session names no host",
 	// Fleet-wide MCP administration is admin-only, and admins bypass host scope.
 	"/api/mcp-admin/tokens/{id}":        "admin-only prefix",
 	"/api/mcp-admin/oauth-clients/{id}": "admin-only prefix",
+	"/api/mcp-admin/sessions/{id}":      "admin-only prefix",
 	// Instance-wide alerting configuration: a rule, a webhook or a parse rule
 	// names no host — the alert EVENTS they produce do, and those are scoped.
 	"/api/alert-rules/{id}":        "an alert rule is instance-wide; it names no host",

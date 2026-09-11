@@ -24,6 +24,16 @@ All notable changes to Docker Commander are documented here. The format follows
   just replaced. Admin-only — configuring one is arbitrary-command execution
   plus a stored secret, the same class of surface as policy rules and the
   recovery bundle above.
+- **Per-session MCP token revocation.** Revoking used to mean removing an
+  entire OAuth client (a connector's registration), which also killed every
+  other session that connector held. Each authorization now gets its own
+  stable session id, carried across refresh-token rotation, so one specific
+  connector session — "sign out just this laptop's Claude Desktop" — can be
+  revoked on its own: both its live access token and its refresh token stop
+  working immediately, while the client's other sessions are untouched.
+  Sessions are listed and revocable from a new **Sessions** tab on the
+  self-service MCP Access page (your own only) and on the admin MCP overview
+  (every user's).
 - **Portable recovery bundle.** Export everything Docker Commander itself
   knows — every project's compose + sidecar files, host and registry
   definitions, alert rules and webhooks, image digests, and (opt-in)

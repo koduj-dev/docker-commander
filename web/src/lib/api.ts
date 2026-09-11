@@ -34,6 +34,8 @@ import type {
   Role,
   RoleSection,
   MCPToken,
+  MCPSession,
+  AdminMCPSession,
   MCPStatus,
   MCPTokenPolicy,
   AdminMCPToken,
@@ -754,8 +756,11 @@ export const api = {
   }) =>
     req<{ id: number; token: string }>("POST", "/api/mcp/tokens", b),
   deleteMcpToken: (id: number) => req<{ ok: boolean }>("DELETE", `/api/mcp/tokens/${id}`),
+  mcpSessions: () => req<MCPSession[]>("GET", "/api/mcp/sessions"),
+  revokeMcpSession: (id: string) => req<{ ok: boolean }>("DELETE", `/api/mcp/sessions/${encodeURIComponent(id)}`),
 
-  // MCP admin overview (admin-only): every user's tokens + registered OAuth clients.
+  // MCP admin overview (admin-only): every user's tokens + registered OAuth
+  // clients + live connector sessions.
   mcpAdminTokens: () => req<AdminMCPToken[]>("GET", "/api/mcp-admin/tokens"),
   mcpAdminRevokeToken: (id: number) => req<{ ok: boolean }>("DELETE", `/api/mcp-admin/tokens/${id}`),
   mcpAdminTokenPolicy: () => req<MCPTokenPolicy>("GET", "/api/mcp-admin/token-policy"),
@@ -763,6 +768,9 @@ export const api = {
   mcpAdminOAuthClients: () => req<AdminOAuthClient[]>("GET", "/api/mcp-admin/oauth-clients"),
   mcpAdminDeleteOAuthClient: (id: string) =>
     req<{ ok: boolean }>("DELETE", `/api/mcp-admin/oauth-clients/${encodeURIComponent(id)}`),
+  mcpAdminSessions: () => req<AdminMCPSession[]>("GET", "/api/mcp-admin/sessions"),
+  mcpAdminRevokeSession: (id: string) =>
+    req<{ ok: boolean }>("DELETE", `/api/mcp-admin/sessions/${encodeURIComponent(id)}`),
 
   networkStats: (id: string) =>
     req<NetworkStats>("GET", `/api/networks/${encodeURIComponent(id)}/stats${hostParam()}`),
