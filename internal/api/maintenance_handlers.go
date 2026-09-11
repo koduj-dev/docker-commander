@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -116,6 +118,34 @@ func (s *Server) maintenanceWindowHostsAllowed(r *http.Request, hostIDs []int64)
 		}
 	}
 	return true
+}
+
+// autoSilenceForDeploy suppresses alert delivery for a project's host+stack
+// for a configurable grace period right after a successful deploy —
+// containers restarting, warming up, or briefly failing a health check are
+// expected noise from the deploy itself, not a new incident. Best-effort,
+// like the revision capture and audit calls around it: the deploy already
+// succeeded, so a failure here must not turn into a user-facing error, only
+// a log line.
+//
+// Called from both the REST and MCP deploy paths (project_handlers.go's
+// handleDeployProject, mcp_projects.go's mcpDeployProject) — there is no
+// shared "after a successful deploy" hook in this codebase to attach to
+// instead, so both call sites call this directly, matching how they already
+// each call captureRevision and their own audit action independently.
+func (s *Server) autoSilenceForDeploy(ctx context.Context, p *store.Project) {
+	if s.cfg.DeploySilenceGrace <= 0 {
+		return
+	}
+	now := time.Now()
+	_, err := s.store.CreateMaintenanceWindow(ctx, &store.MaintenanceWindow{
+		Name: "auto: " + p.Name + " deploy", Reason: "automatic grace period after a deploy",
+		HostIDs: []int64{p.HostID}, Project: p.Slug,
+		StartsAt: now, EndsAt: now.Add(s.cfg.DeploySilenceGrace),
+	})
+	if err != nil {
+		log.Printf("project deploy: auto-silence for %q: %v", p.Slug, err)
+	}
 }
 
 func (s *Server) handleListMaintenanceWindows(w http.ResponseWriter, r *http.Request) {

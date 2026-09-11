@@ -106,6 +106,14 @@ type Config struct {
 	// (use an SSH tunnel) since they leak goroutine stacks and heap detail.
 	PProf bool
 
+	// DeploySilenceGrace is how long alert delivery is automatically silenced
+	// for a project immediately after a successful deploy — containers
+	// restarting, warming up or briefly reporting a stale health check are
+	// expected noise, not an incident. 0 disables the automatic silence
+	// entirely (unlike MetricsInterval, 0 here is a valid, deliberate choice,
+	// not clamped to a default).
+	DeploySilenceGrace time.Duration
+
 	// TrustedProxies is the set of reverse-proxy networks whose forwarded client
 	// IP (X-Forwarded-For) we trust. Empty (default) means forwarded headers are
 	// IGNORED and the real TCP peer is used for every IP-based decision (rate
@@ -175,6 +183,7 @@ func Load() (Config, error) {
 	retention := flag.Duration("metrics-retention", envDuration("DC_METRICS_RETENTION", 6*time.Hour), "how long to keep metric history")
 	interval := flag.Duration("metrics-interval", envDuration("DC_METRICS_INTERVAL", 15*time.Second), "how often to sample container stats (raise on hosts with many containers)")
 	flag.BoolVar(&c.PProf, "pprof", lookup("DC_PPROF") == "1", "expose net/http/pprof under /debug/pprof (loopback only; for debugging)")
+	deploySilence := flag.Duration("deploy-silence-grace", envDuration("DC_DEPLOY_SILENCE_GRACE", 3*time.Minute), "automatically silence alert delivery for a project for this long after a successful deploy (0 disables)")
 	trustedProxies := flag.String("trusted-proxies", lookup("DC_TRUSTED_PROXIES"), "comma-separated reverse-proxy IPs/CIDRs whose X-Forwarded-For is trusted (empty = trust none; use the real peer)")
 	flag.Parse()
 
@@ -203,6 +212,9 @@ func Load() (Config, error) {
 		c.MetricsInterval = 15 * time.Second
 	}
 	c.SessionTTL = *ttl
+	if *deploySilence > 0 {
+		c.DeploySilenceGrace = *deploySilence
+	}
 
 	// HTTPS needs both halves of the keypair.
 	if (c.TLSCert == "") != (c.TLSKey == "") {

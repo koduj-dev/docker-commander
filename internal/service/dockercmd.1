@@ -187,6 +187,16 @@ Expose Go's net/http/pprof on a loopback-only listener
 .RB ( 127.0.0.1:6060 )
 for debugging.
 .TP
+.BI \-deploy-silence-grace " duration"
+Automatically silence alert delivery for a project for this long after a
+successful deploy; restarting/warming containers are expected noise, not an
+incident
+(default
+.BR 3m ).
+Set to
+.B 0
+to disable.
+.TP
 .BI \-trusted-proxies " list"
 Comma-separated reverse-proxy IPs/CIDRs whose
 .B X-Forwarded-For

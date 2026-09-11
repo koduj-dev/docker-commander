@@ -898,6 +898,7 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 	}
 	s.captureRevision(r.Context(), p, body.Profiles, out, body.Reason, currentUsername(r))
 	s.audit(r, "project.deploy", p.Slug, strings.Join(body.Profiles, ","))
+	s.autoSilenceForDeploy(r.Context(), p)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out, "note": note})
 }
 
