@@ -2,7 +2,7 @@
 
 # 1. Build the static binary. The committed web/dist is embedded via go:embed,
 #    so the image is fully self-contained and no Node stage is required.
-FROM golang:1.25-alpine AS build
+FROM golang:1.27-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
