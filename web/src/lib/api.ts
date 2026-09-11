@@ -72,6 +72,7 @@ import type {
   BackupJob,
   BackupJobInput,
   BackupRun,
+  MaintenanceWindow,
 } from "./types";
 import { getHostId, hostParam } from "./host";
 import type { CreationOptions, RequestOptions } from "./webauthn";
@@ -217,6 +218,23 @@ export interface AlertListParams {
   desc?: boolean;
   limit?: number;
   offset?: number;
+}
+
+export interface MaintenanceWindowBody {
+  name: string;
+  reason: string;
+  hostIds: number[];
+  project: string;
+  container: string;
+  ruleId: number | null;
+  severities: string[];
+  recurring: boolean;
+  startsAt: string;
+  endsAt: string;
+  weekdays?: number[];
+  timeOfDay?: string;
+  durationMin?: number;
+  timezone?: string;
 }
 
 export const api = {
@@ -844,6 +862,13 @@ export const api = {
   exportAlertRulesUrl: () => "/api/alert-rules/export",
   importAlertRules: (bundle: unknown) =>
     req<{ imported: number; warnings: string[] }>("POST", "/api/alert-rules/import", bundle),
+
+  maintenanceWindows: () => req<MaintenanceWindow[]>("GET", "/api/maintenance-windows"),
+  createMaintenanceWindow: (body: MaintenanceWindowBody) => req<{ id: number }>("POST", "/api/maintenance-windows", body),
+  updateMaintenanceWindow: (id: number, body: MaintenanceWindowBody) =>
+    req<{ ok: boolean }>("PUT", `/api/maintenance-windows/${id}`, body),
+  endMaintenanceWindow: (id: number) => req<{ ok: boolean }>("POST", `/api/maintenance-windows/${id}/end`),
+  deleteMaintenanceWindow: (id: number) => req<{ ok: boolean }>("DELETE", `/api/maintenance-windows/${id}`),
 
   alerts: (params?: AlertListParams) => {
     const p = new URLSearchParams();
