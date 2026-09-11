@@ -68,13 +68,11 @@ func (w MaintenanceWindow) Active(now time.Time) bool {
 // window whose occurrence spans midnight in its own timezone (e.g. starts
 // 23:00 for 120 minutes) is still found active just after midnight, when the
 // occurrence that covers "now" actually started on the previous calendar day.
+// This two-day lookback is only sufficient because DurationMin is capped at
+// 24h for a recurring window (enforced where one is created/updated) — any
+// occurrence that could still cover "now" therefore started within the last
+// 24h, which both candidate days together always contain.
 func (w MaintenanceWindow) recurringActiveAt(now time.Time) bool {
-	if now.Before(w.StartsAt) {
-		return false // the series hasn't begun yet
-	}
-	if !w.EndsAt.IsZero() && !now.Before(w.EndsAt) {
-		return false // the series has stopped recurring
-	}
 	loc, err := time.LoadLocation(w.Timezone)
 	if err != nil || w.Timezone == "" {
 		loc = time.UTC
@@ -83,9 +81,25 @@ func (w MaintenanceWindow) recurringActiveAt(now time.Time) bool {
 	if !ok || w.DurationMin <= 0 {
 		return false
 	}
+	// The series begins on StartsAt's CALENDAR DATE in the schedule's own
+	// timezone — its time-of-day is documented as ignored (see the field's
+	// doc comment), so a series whose StartsAt happens to carry a non-midnight
+	// time still covers that same day's occurrence, not just later ones.
+	sy, sm, sd := w.StartsAt.In(loc).Date()
+	seriesStart := time.Date(sy, sm, sd, 0, 0, 0, 0, loc)
+	if now.Before(seriesStart) {
+		return false // the series hasn't begun yet
+	}
+	if !w.EndsAt.IsZero() && !now.Before(w.EndsAt) {
+		return false // the series has stopped recurring
+	}
 	local := now.In(loc)
 	for _, dayOffset := range [2]int{0, -1} {
 		day := local.AddDate(0, 0, dayOffset)
+		occDate := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, loc)
+		if occDate.Before(seriesStart) {
+			continue // this occurrence would predate the series itself
+		}
 		if !weekdayIn(w.Weekdays, day.Weekday()) {
 			continue
 		}
@@ -97,6 +111,13 @@ func (w MaintenanceWindow) recurringActiveAt(now time.Time) bool {
 	}
 	return false
 }
+
+// MaxRecurringDurationMin bounds how long a single recurring occurrence may
+// last. Enforced by callers that create/update a window (REST and MCP);
+// recurringActiveAt's two-candidate-day lookback is only correct up to this
+// bound — a longer occurrence could start further back than either candidate
+// day covers and be missed.
+const MaxRecurringDurationMin = 24 * 60
 
 // Matches reports whether this window's SCOPE covers the given event —
 // independent of whether it is currently Active. hostID/container/severity
@@ -216,6 +237,13 @@ func (s *Store) activeCandidateMaintenanceWindows(ctx context.Context, now time.
 // Active at now and Matches the given event scope — the single call the
 // alert engine needs to decide whether to suppress a delivery.
 func (s *Store) FindActiveMaintenanceWindow(ctx context.Context, hostID int64, project, container string, ruleID int64, severity string, now time.Time) (*MaintenanceWindow, error) {
+	// The monitor emits alert events with the LOCAL daemon's real seeded-row
+	// id (whatever autoincrement gave it, commonly 1) — not 0, the alias every
+	// other part of the app uses for "the local host". A window's own HostIDs
+	// are normalized to that same 0 alias when it's created/updated (see the
+	// REST/MCP handlers), so without normalizing here too, a window scoped to
+	// "local" would silently never match a real local-host alert.
+	hostID = s.NormalizeHostID(ctx, hostID)
 	candidates, err := s.activeCandidateMaintenanceWindows(ctx, now)
 	if err != nil {
 		return nil, err

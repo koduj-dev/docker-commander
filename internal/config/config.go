@@ -212,9 +212,12 @@ func Load() (Config, error) {
 		c.MetricsInterval = 15 * time.Second
 	}
 	c.SessionTTL = *ttl
-	if *deploySilence > 0 {
-		c.DeploySilenceGrace = *deploySilence
-	}
+	// Unlike MetricsInterval above, 0 here is a deliberate, valid choice (the
+	// flag's own help text promises "0 disables"), so it's assigned
+	// unconditionally rather than clamped to a default — the default already
+	// lives in the flag's own envDuration(...) call, which *deploySilence
+	// resolves to whenever nothing overrides it.
+	c.DeploySilenceGrace = *deploySilence
 
 	// HTTPS needs both halves of the keypair.
 	if (c.TLSCert == "") != (c.TLSKey == "") {

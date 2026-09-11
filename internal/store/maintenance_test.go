@@ -74,6 +74,50 @@ func TestMaintenanceWindowRecurringSpansMidnight(t *testing.T) {
 	}
 }
 
+// TestMaintenanceWindowRecurringIgnoresSeriesStartTimeOfDay pins the doc
+// comment's claim ("StartsAt's time-of-day is ignored") — a series whose
+// StartsAt happens to carry an afternoon time must still cover that same
+// calendar day's EARLIER occurrence, not just ones after the clock time.
+func TestMaintenanceWindowRecurringIgnoresSeriesStartTimeOfDay(t *testing.T) {
+	// StartsAt is a Sunday at 15:00, but the schedule's own occurrence is
+	// 02:00-04:00 that same Sunday — earlier in the day than StartsAt's clock
+	// time, but not a different calendar day.
+	w := MaintenanceWindow{
+		Recurring: true, StartsAt: time.Date(2026, 9, 13, 15, 0, 0, 0, time.UTC),
+		Weekdays: []time.Weekday{time.Sunday}, TimeOfDay: "02:00", DurationMin: 120,
+	}
+	sameDayEarlier := time.Date(2026, 9, 13, 3, 0, 0, 0, time.UTC)
+	if !w.Active(sameDayEarlier) {
+		t.Fatal("a series' StartsAt time-of-day should be ignored — its own day's earlier occurrence should still be active")
+	}
+}
+
+// TestMaintenanceWindowRecurringRejectsOccurrenceBeforeSeriesStart is the
+// point of checking both today's and yesterday's candidate day: the
+// yesterday candidate must not be allowed to predate the series itself. A
+// Monday-starting series that recurs on Sunday must not report its first
+// (out-of-order) occurrence as the Sunday immediately BEFORE the Monday it
+// started on.
+func TestMaintenanceWindowRecurringRejectsOccurrenceBeforeSeriesStart(t *testing.T) {
+	// 2026-09-14 is a Monday; the series recurs on Sunday at 23:00.
+	w := MaintenanceWindow{
+		Recurring: true, StartsAt: time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC),
+		Weekdays: []time.Weekday{time.Sunday}, TimeOfDay: "23:00", DurationMin: 120,
+	}
+	// Just after the series' own start (Monday 00:30) — the "yesterday"
+	// candidate lands on Sunday 2026-09-13, which is BEFORE the Monday the
+	// series starts on, and must not count.
+	justAfterSeriesStart := time.Date(2026, 9, 14, 0, 30, 0, 0, time.UTC)
+	if w.Active(justAfterSeriesStart) {
+		t.Fatal("SECURITY-ADJACENT: an occurrence predating the series' own start was reported active")
+	}
+	// The FOLLOWING Sunday's occurrence (2026-09-20 23:00) must still work.
+	followingSunday := time.Date(2026, 9, 21, 0, 30, 0, 0, time.UTC)
+	if !w.Active(followingSunday) {
+		t.Fatal("the first real occurrence after the series starts should be active")
+	}
+}
+
 func TestMaintenanceWindowRecurringSeriesEndsAt(t *testing.T) {
 	w := MaintenanceWindow{
 		Recurring: true, StartsAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
@@ -153,6 +197,43 @@ func maintenanceStore(t *testing.T) (*Store, int64) {
 		t.Fatal(err)
 	}
 	return st, uid
+}
+
+// TestFindActiveMaintenanceWindowNormalizesTheLocalHostAlias is the point of
+// the fix in FindActiveMaintenanceWindow: the monitor emits alert events
+// carrying the local daemon's REAL seeded-row id (whatever autoincrement
+// gave it — EnsureLocalHost is the first host created in a fresh store, so
+// it lands on id 1), not the 0 every other part of the app uses as "local".
+// A window scoped to host 0 must still suppress a real local-host alert.
+func TestFindActiveMaintenanceWindowNormalizesTheLocalHostAlias(t *testing.T) {
+	st, uid := maintenanceStore(t)
+	ctx := context.Background()
+	if err := st.EnsureLocalHost(ctx); err != nil {
+		t.Fatal(err)
+	}
+	hosts, err := st.ListHosts(ctx)
+	if err != nil || len(hosts) != 1 {
+		t.Fatalf("expected exactly the seeded local host, got %d err=%v", len(hosts), err)
+	}
+	realLocalID := hosts[0].ID
+	if realLocalID == 0 {
+		t.Fatal("test setup: the seeded local host's real row id should not be 0 (that's the ALIAS this test is checking normalization against)")
+	}
+
+	if _, err := st.CreateMaintenanceWindow(ctx, &MaintenanceWindow{
+		Name: "local maintenance", Reason: "r", AuthorID: uid, HostIDs: []int64{0},
+		StartsAt: time.Now().Add(-time.Minute), EndsAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	win, err := st.FindActiveMaintenanceWindow(ctx, realLocalID, "", "web-1", 0, "critical", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if win == nil {
+		t.Fatal("a window scoped to host 0 (the local alias) should suppress an alert carrying the local host's REAL row id")
+	}
 }
 
 func TestMaintenanceWindowCRUD(t *testing.T) {

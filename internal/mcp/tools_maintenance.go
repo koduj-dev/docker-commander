@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -53,8 +54,15 @@ type maintenanceWindowOut struct {
 	Recurring  bool     `json:"recurring"`
 	StartsAt   string   `json:"startsAt"`
 	EndsAt     string   `json:"endsAt,omitempty"`
-	Active     bool     `json:"active"`
-	Ended      bool     `json:"ended"`
+	// Recurring-only schedule fields, so a caller listing a recurring window
+	// (created via the UI or REST — this tool set never creates one itself)
+	// can actually explain when it runs rather than just that it's recurring.
+	Weekdays    []int  `json:"weekdays,omitempty"`
+	TimeOfDay   string `json:"timeOfDay,omitempty"`
+	DurationMin int    `json:"durationMin,omitempty"`
+	Timezone    string `json:"timezone,omitempty"`
+	Active      bool   `json:"active"`
+	Ended       bool   `json:"ended"`
 }
 
 func toMaintenanceWindowOut(w store.MaintenanceWindow) maintenanceWindowOut {
@@ -62,10 +70,17 @@ func toMaintenanceWindowOut(w store.MaintenanceWindow) maintenanceWindowOut {
 		ID: w.ID, Name: w.Name, Reason: w.Reason, Author: w.Author,
 		HostIDs: w.HostIDs, Project: w.Project, Container: w.Container, RuleID: w.RuleID, Severities: w.Severities,
 		Recurring: w.Recurring, StartsAt: w.StartsAt.Format(time.RFC3339),
+		TimeOfDay: w.TimeOfDay, DurationMin: w.DurationMin, Timezone: w.Timezone,
 		Active: w.Active(time.Now()), Ended: w.Ended,
 	}
 	if !w.EndsAt.IsZero() {
 		out.EndsAt = w.EndsAt.Format(time.RFC3339)
+	}
+	if len(w.Weekdays) > 0 {
+		out.Weekdays = make([]int, len(w.Weekdays))
+		for i, d := range w.Weekdays {
+			out.Weekdays[i] = int(d)
+		}
 	}
 	return out
 }
@@ -124,13 +139,19 @@ func (h *handler) createMaintenanceWindow(ctx context.Context, req *mcpsdk.CallT
 	if in.DurationMin <= 0 {
 		return nil, maintenanceWindowOut{}, errors.New("duration_min must be positive")
 	}
-	if !h.maintenanceWindowHostsAllowed(ctx, p, in.HostIDs) {
+	for _, sev := range in.Severities {
+		if !validMaintenanceSeverity[sev] {
+			return nil, maintenanceWindowOut{}, fmt.Errorf("unknown severity %q (must be info, warning or critical)", sev)
+		}
+	}
+	hostIDs := h.normalizeHostIDs(ctx, in.HostIDs)
+	if !h.maintenanceWindowHostsAllowed(ctx, p, hostIDs) {
 		return nil, maintenanceWindowOut{}, errors.New("cannot scope a maintenance window to a host outside your access")
 	}
 	now := time.Now()
 	win := &store.MaintenanceWindow{
 		Name: in.Name, Reason: in.Reason, AuthorID: p.user.ID,
-		HostIDs: in.HostIDs, Project: in.Project, Container: in.Container, RuleID: in.RuleID, Severities: in.Severities,
+		HostIDs: hostIDs, Project: in.Project, Container: in.Container, RuleID: in.RuleID, Severities: in.Severities,
 		StartsAt: now, EndsAt: now.Add(time.Duration(in.DurationMin) * time.Minute),
 	}
 	id, err := h.deps.Store.CreateMaintenanceWindow(ctx, win)
@@ -173,16 +194,34 @@ func (h *handler) endMaintenanceWindow(ctx context.Context, req *mcpsdk.CallTool
 	return nil, endMaintenanceWindowOut{OK: true}, nil
 }
 
+// validMaintenanceSeverity is the documented severity enum — the same three
+// values AlertRule.Severity and AlertQuery.Severities already use.
+var validMaintenanceSeverity = map[string]bool{"info": true, "warning": true, "critical": true}
+
+// normalizeHostIDs canonicalizes every id in place — in particular, the local
+// daemon's REAL seeded-row id (whatever autoincrement gave it) becomes the 0
+// alias the rest of the app uses, matching what FindActiveMaintenanceWindow
+// normalizes an alert event's host id to at match time.
+func (h *handler) normalizeHostIDs(ctx context.Context, ids []int64) []int64 {
+	for i, id := range ids {
+		ids[i] = h.deps.Store.NormalizeHostID(ctx, id)
+	}
+	return ids
+}
+
 // maintenanceWindowHostsAllowed is the MCP-side twin of the REST handler's
 // check of the same name: a window naming a host outside the principal's
 // reach must be neither creatable, visible, nor endable by them. Empty
-// hostIDs ("every host") requires unrestricted host access.
+// hostIDs ("every host") requires unrestricted host access. hostIDs is
+// expected already normalized (see normalizeHostIDs) — callers reading a
+// STORED window's ids pass them through here too, as defense in depth.
 func (h *handler) maintenanceWindowHostsAllowed(ctx context.Context, p *principal, hostIDs []int64) bool {
 	if len(hostIDs) == 0 {
 		_, all := h.scopedHostIDs(ctx, p)
 		return all
 	}
 	for _, id := range hostIDs {
+		id := h.deps.Store.NormalizeHostID(ctx, id)
 		if p.narrowed("alerts", false, id) != nil {
 			return false
 		}

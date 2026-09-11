@@ -137,6 +137,65 @@ func TestLoadMetricsIntervalClamp(t *testing.T) {
 	}
 }
 
+// TestLoadDeploySilenceGrace exercises the deploy-silence-grace flag's full
+// default/override/disable path THROUGH Load() itself — the maintenance
+// window auto-silence tests construct config.Config directly, so they could
+// not have caught a regression in this flag/env mapping (e.g. the default
+// silently failing to reach the resolved Config, as a `> 0` guard around the
+// assignment once did).
+func TestLoadDeploySilenceGrace(t *testing.T) {
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	defer func() { os.Args, flag.CommandLine = oldArgs, oldFS }()
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = []string{"dockercmd"}
+	t.Setenv("DC_DATA_DIR", t.TempDir())
+
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.DeploySilenceGrace != 3*time.Minute {
+		t.Errorf("default deploy silence grace = %v, want 3m", c.DeploySilenceGrace)
+	}
+}
+
+func TestLoadDeploySilenceGraceEnvOverride(t *testing.T) {
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	defer func() { os.Args, flag.CommandLine = oldArgs, oldFS }()
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = []string{"dockercmd"}
+	t.Setenv("DC_DATA_DIR", t.TempDir())
+	t.Setenv("DC_DEPLOY_SILENCE_GRACE", "10m")
+
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.DeploySilenceGrace != 10*time.Minute {
+		t.Errorf("DC_DEPLOY_SILENCE_GRACE not mapped: got %v, want 10m", c.DeploySilenceGrace)
+	}
+}
+
+// TestLoadDeploySilenceGraceExplicitZeroDisables pins the documented
+// behaviour that 0 really means "off", not "use the default" — the flag's
+// own help text promises this.
+func TestLoadDeploySilenceGraceExplicitZeroDisables(t *testing.T) {
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	defer func() { os.Args, flag.CommandLine = oldArgs, oldFS }()
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = []string{"dockercmd"}
+	t.Setenv("DC_DATA_DIR", t.TempDir())
+	t.Setenv("DC_DEPLOY_SILENCE_GRACE", "0s")
+
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.DeploySilenceGrace != 0 {
+		t.Errorf("an explicit 0 should disable auto-silence, got %v", c.DeploySilenceGrace)
+	}
+}
+
 func TestParseCIDRs(t *testing.T) {
 	// Valid: a CIDR, a bare IPv4 (→ /32) and a bare IPv6 (→ /128), plus blanks.
 	nets, err := parseCIDRs(" 10.0.0.0/8 , 127.0.0.1 ,, ::1 ")

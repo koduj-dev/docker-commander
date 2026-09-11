@@ -45,7 +45,9 @@ func (b maintenanceWindowBody) toWindow() *store.MaintenanceWindow {
 // validateMaintenanceWindow enforces the shape NEXT.md describes: a reason is
 // mandatory (this suppresses paging — "why" must always be answerable later),
 // a one-off window needs a real start/end, and a recurring one needs an
-// actual schedule to recur on.
+// actual schedule to recur on. Also rejects scope values that could never
+// match anything (an unknown severity, an out-of-range weekday) — those would
+// otherwise persist as a silently ineffective window instead of an error.
 func validateMaintenanceWindow(b maintenanceWindowBody) error {
 	if b.Name == "" {
 		return errors.New("name is required")
@@ -53,15 +55,28 @@ func validateMaintenanceWindow(b maintenanceWindowBody) error {
 	if b.Reason == "" {
 		return errors.New("reason is required")
 	}
+	for _, sev := range b.Severities {
+		if !validSeverities[sev] {
+			return fmt.Errorf("unknown severity %q (must be info, warning or critical)", sev)
+		}
+	}
 	if b.Recurring {
 		if len(b.Weekdays) == 0 {
 			return errors.New("recurring windows need at least one weekday")
+		}
+		for _, d := range b.Weekdays {
+			if d < time.Sunday || d > time.Saturday {
+				return fmt.Errorf("weekday %d is out of range (0=Sunday..6=Saturday)", d)
+			}
 		}
 		if _, err := time.Parse("15:04", b.TimeOfDay); err != nil {
 			return errors.New("timeOfDay must be \"HH:MM\"")
 		}
 		if b.DurationMin <= 0 {
 			return errors.New("durationMin must be positive")
+		}
+		if b.DurationMin > store.MaxRecurringDurationMin {
+			return fmt.Errorf("a recurring occurrence can last at most %d minutes (24h)", store.MaxRecurringDurationMin)
 		}
 		if b.StartsAt.IsZero() {
 			return errors.New("startsAt is required (when the series begins)")
@@ -113,7 +128,11 @@ func (s *Server) maintenanceWindowHostsAllowed(r *http.Request, hostIDs []int64)
 		return g.AllHosts
 	}
 	for _, id := range hostIDs {
-		if !g.HasHost(id) {
+		// Grant.HasHost treats 0 as the local-daemon alias; a caller (or a
+		// stored window) may instead carry the local host's REAL seeded-row
+		// id, so without normalizing first a host-restricted grant would
+		// wrongly refuse its own local daemon.
+		if !g.HasHost(s.store.NormalizeHostID(r.Context(), id)) {
 			return false
 		}
 	}
@@ -140,12 +159,52 @@ func (s *Server) autoSilenceForDeploy(ctx context.Context, p *store.Project) {
 	now := time.Now()
 	_, err := s.store.CreateMaintenanceWindow(ctx, &store.MaintenanceWindow{
 		Name: "auto: " + p.Name + " deploy", Reason: "automatic grace period after a deploy",
-		HostIDs: []int64{p.HostID}, Project: p.Slug,
+		HostIDs: s.normalizeHostIDs(ctx, []int64{p.HostID}), Project: p.Slug,
 		StartsAt: now, EndsAt: now.Add(s.cfg.DeploySilenceGrace),
 	})
 	if err != nil {
 		log.Printf("project deploy: auto-silence for %q: %v", p.Slug, err)
 	}
+}
+
+// maintenanceWindowView is the wire shape for a window, distinct from
+// store.MaintenanceWindow so an unset (zero-value) EndsAt — a recurring
+// series with no end date — serializes as an OMITTED field rather than Go's
+// zero-time sentinel "0001-01-01T00:00:00Z", which the UI would otherwise
+// render as a real (bogus) series end.
+type maintenanceWindowView struct {
+	ID          int64          `json:"id"`
+	Name        string         `json:"name"`
+	Reason      string         `json:"reason"`
+	AuthorID    int64          `json:"authorId"`
+	Author      string         `json:"author,omitempty"`
+	HostIDs     []int64        `json:"hostIds"`
+	Project     string         `json:"project"`
+	Container   string         `json:"container"`
+	RuleID      *int64         `json:"ruleId"`
+	Severities  []string       `json:"severities"`
+	Recurring   bool           `json:"recurring"`
+	StartsAt    time.Time      `json:"startsAt"`
+	EndsAt      string         `json:"endsAt,omitempty"`
+	Weekdays    []time.Weekday `json:"weekdays,omitempty"`
+	TimeOfDay   string         `json:"timeOfDay,omitempty"`
+	DurationMin int            `json:"durationMin,omitempty"`
+	Timezone    string         `json:"timezone,omitempty"`
+	Ended       bool           `json:"ended"`
+	CreatedAt   time.Time      `json:"createdAt"`
+}
+
+func toMaintenanceWindowView(w store.MaintenanceWindow) maintenanceWindowView {
+	v := maintenanceWindowView{
+		ID: w.ID, Name: w.Name, Reason: w.Reason, AuthorID: w.AuthorID, Author: w.Author,
+		HostIDs: w.HostIDs, Project: w.Project, Container: w.Container, RuleID: w.RuleID, Severities: w.Severities,
+		Recurring: w.Recurring, StartsAt: w.StartsAt, Weekdays: w.Weekdays, TimeOfDay: w.TimeOfDay,
+		DurationMin: w.DurationMin, Timezone: w.Timezone, Ended: w.Ended, CreatedAt: w.CreatedAt,
+	}
+	if !w.EndsAt.IsZero() {
+		v.EndsAt = w.EndsAt.Format(time.RFC3339)
+	}
+	return v
 }
 
 func (s *Server) handleListMaintenanceWindows(w http.ResponseWriter, r *http.Request) {
@@ -157,13 +216,24 @@ func (s *Server) handleListMaintenanceWindows(w http.ResponseWriter, r *http.Req
 	// Filtered the same way scoping is enforced on write: a window covering a
 	// host outside the caller's grant would otherwise leak that host's name
 	// and the window's reason to someone who cannot reach it any other way.
-	windows := make([]store.MaintenanceWindow, 0, len(all))
+	windows := make([]maintenanceWindowView, 0, len(all))
 	for _, win := range all {
 		if s.maintenanceWindowHostsAllowed(r, win.HostIDs) {
-			windows = append(windows, win)
+			windows = append(windows, toMaintenanceWindowView(win))
 		}
 	}
 	writeJSON(w, http.StatusOK, windows)
+}
+
+// normalizeHostIDs canonicalizes every id in place — in particular, the local
+// daemon's REAL seeded-row id (whatever autoincrement gave it) becomes the 0
+// alias the rest of the app uses, so what's stored always matches what
+// FindActiveMaintenanceWindow normalizes an alert event's host id to.
+func (s *Server) normalizeHostIDs(ctx context.Context, ids []int64) []int64 {
+	for i, id := range ids {
+		ids[i] = s.store.NormalizeHostID(ctx, id)
+	}
+	return ids
 }
 
 func (s *Server) handleCreateMaintenanceWindow(w http.ResponseWriter, r *http.Request) {
@@ -172,6 +242,7 @@ func (s *Server) handleCreateMaintenanceWindow(w http.ResponseWriter, r *http.Re
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	b.HostIDs = s.normalizeHostIDs(r.Context(), b.HostIDs)
 	if err := validateMaintenanceWindow(b); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -200,6 +271,7 @@ func (s *Server) handleUpdateMaintenanceWindow(w http.ResponseWriter, r *http.Re
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	b.HostIDs = s.normalizeHostIDs(r.Context(), b.HostIDs)
 	if err := validateMaintenanceWindow(b); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
