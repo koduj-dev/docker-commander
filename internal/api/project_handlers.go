@@ -1212,7 +1212,12 @@ func (s *Server) handleProjectProfiles(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"profiles": []string{}})
 		return
 	}
-	profiles, err := docker.ComposeProfiles(r.Context(), s.projectRoot(p.ID), p.Slug)
+	_, masked, _, serr := s.projectSecretEnvs(r.Context(), p.ID)
+	if serr != nil {
+		writeErr(w, http.StatusInternalServerError, serr.Error())
+		return
+	}
+	profiles, err := docker.ComposeProfilesEnv(r.Context(), s.projectRoot(p.ID), p.Slug, masked)
 	if err != nil {
 		// Best-effort: an invalid compose file just means no profiles to offer.
 		writeJSON(w, http.StatusOK, map[string]any{"profiles": []string{}, "error": err.Error()})
@@ -1409,15 +1414,32 @@ func boolWord(b bool) string {
 }
 
 // projectComposeEnv resolves the `docker compose` environment for a project's
-// target host (nil for the local daemon). The returned cleanup must always be
-// called (it removes any materialised TLS certs).
+// target host (host TLS vars only, for a remote one) PLUS the project's
+// secrets as their masked placeholders — every caller of this function only
+// parses/tears down the compose file (down, restart, force-delete,
+// retarget's teardown), never deploys it, so a real value is never needed,
+// only that ${NAME} interpolation succeeds instead of failing a required
+// (`${NAME:?...}`) variable. The returned cleanup must always be called (it
+// removes any materialised TLS certs).
 func (s *Server) projectComposeEnv(ctx context.Context, p *store.Project, dir string) ([]string, func(), error) {
 	noop := func() {}
-	h, err := s.projectHost(ctx, p)
-	if err != nil || h == nil {
+	var env []string
+	var cleanup func() = noop
+	if h, err := s.projectHost(ctx, p); err != nil {
+		return nil, noop, err
+	} else if h != nil {
+		hostEnv, hostCleanup, err := docker.ComposeHostEnv(h)
+		if err != nil {
+			return nil, noop, err
+		}
+		env, cleanup = hostEnv, hostCleanup
+	}
+	_, masked, _, err := s.projectSecretEnvs(ctx, p.ID)
+	if err != nil {
+		cleanup()
 		return nil, noop, err
 	}
-	return docker.ComposeHostEnv(h)
+	return append(env, masked...), cleanup, nil
 }
 
 // projectHost resolves a project's target host, or (nil, nil) for the local
@@ -1475,8 +1497,14 @@ func (s *Server) projectDeployEnvBase(ctx context.Context, p *store.Project, dir
 		return env, nil, "", cleanup, err
 	}
 	// Fail closed: without a resolved config we can't prove which paths this
-	// project would mount on the remote host, so don't deploy at all.
-	cfgJSON, err := docker.ComposeConfigJSON(ctx, dir, p.Slug)
+	// project would mount on the remote host, so don't deploy at all. Only
+	// the masked placeholder is needed here — this classifies bind mounts,
+	// it doesn't need a real secret value, just successful interpolation.
+	_, preflightMasked, _, err := s.projectSecretEnvs(ctx, p.ID)
+	if err != nil {
+		return nil, nil, "", noop, err
+	}
+	cfgJSON, err := docker.ComposeConfigJSONFiles(ctx, dir, p.Slug, nil, preflightMasked, nil)
 	if err != nil {
 		return nil, nil, "", noop, fmt.Errorf("cannot validate the compose file for remote deploy: %v", err)
 	}

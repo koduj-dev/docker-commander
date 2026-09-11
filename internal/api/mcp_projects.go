@@ -143,7 +143,7 @@ func (s *Server) mcpPreviewProject(ctx context.Context, id int64) (mcp.ProjectPr
 		return out, err
 	}
 	dir := s.projectRoot(p.ID)
-	_, masked, names, serr := s.projectSecretEnvs(ctx, p.ID)
+	_, masked, secretValues, serr := s.projectSecretEnvs(ctx, p.ID)
 	if serr != nil {
 		return out, serr
 	}
@@ -177,7 +177,7 @@ func (s *Server) mcpPreviewProject(ctx context.Context, id int64) (mcp.ProjectPr
 	// healthcheck. Worth it here: this is an explicit, user-triggered
 	// preview, not a hot loop.
 	running := s.docker.LiveServices(ctx, p.HostID, containers)
-	s.maskLiveSecrets(running, names)
+	s.maskLiveSecrets(running, secretValues)
 
 	prev := docker.BuildDeployPreview(resolved, running)
 	// Best-effort: a mutable tag can point at a new image without the tag

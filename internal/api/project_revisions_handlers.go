@@ -272,13 +272,13 @@ func (s *Server) handleRevisionDiff(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		_, _, names, serr := s.projectSecretEnvs(r.Context(), p.ID)
+		_, _, secretValues, serr := s.projectSecretEnvs(r.Context(), p.ID)
 		if serr != nil {
 			writeErr(w, http.StatusInternalServerError, serr.Error())
 			return
 		}
 		running = s.docker.LiveServices(r.Context(), p.HostID, containers)
-		s.maskLiveSecrets(running, names)
+		s.maskLiveSecrets(running, secretValues)
 	} else {
 		otherN, err := strconv.Atoi(against)
 		if err != nil {

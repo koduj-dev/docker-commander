@@ -149,7 +149,13 @@ func (s *Store) ResolveProjectSecretEnv(ctx context.Context, projectID int64) (m
 // value must never appear: compose interpolation for preview/validate, and
 // redacting the live side of a diff. Same value -> same placeholder;
 // different value -> a different one; the real value cannot be recovered
-// from it.
+// from it. A nil cipher (never expected in a running server — main.go
+// configures one unconditionally — but defensive against a caller invoking
+// this before that setup) returns a fixed, inert placeholder rather than
+// panicking.
 func (s *Store) MaskSecretValue(value string) string {
+	if s.cipher == nil {
+		return "secret:unavailable"
+	}
 	return "secret:" + s.cipher.Fingerprint(value)
 }

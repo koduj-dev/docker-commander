@@ -142,7 +142,13 @@ func composeUp(ctx context.Context, dir, slug string, profiles, env, files []str
 // ComposeProfiles lists the profiles defined in the project's compose file
 // (`docker compose config --profiles`), one per line.
 func ComposeProfiles(ctx context.Context, dir, slug string) ([]string, error) {
-	out, err := runCompose(ctx, dir, slug, nil, "config", "--profiles")
+	return ComposeProfilesEnv(ctx, dir, slug, nil)
+}
+
+// ComposeProfilesEnv is ComposeProfiles with an explicit process environment
+// — see ComposeConfigEnv.
+func ComposeProfilesEnv(ctx context.Context, dir, slug string, env []string) ([]string, error) {
+	out, err := runCompose(ctx, dir, slug, env, "config", "--profiles")
 	if err != nil {
 		return nil, err
 	}

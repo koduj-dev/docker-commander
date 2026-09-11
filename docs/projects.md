@@ -182,7 +182,17 @@ Resolved tab, the deploy preview, a revision diff — a secret's value is
 shown as a redacted `secret:<fingerprint>` placeholder instead. The same
 value always produces the same fingerprint and a different value a
 different one, so you can still see *that* something changed without ever
-seeing *what*.
+seeing *what*. This redaction matches by the secret's **value**, not by which
+env var it's assigned to, so it still applies if a compose service maps it to
+a differently-named variable (`DATABASE_PASSWORD: ${DB_PASSWORD}`).
+
+One limitation worth knowing: redaction only covers what is *currently* one
+of the project's secrets. A container already running with a value from a
+secret that was since deleted or changed keeps showing that stale value in
+a preview/diff — Docker Commander no longer has anything to compare it
+against. This narrows what Docker Commander's own screens expose; it doesn't
+change what anyone with direct `docker inspect`/exec access to that host
+could already see.
 
 RBAC follows the project's own "projects" section grants: a read grant can
 list a project's secret names, a write grant is required to add, replace or
