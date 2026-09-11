@@ -51,9 +51,6 @@ the old repeat-every-cooldown engine would have produced a timeline of noise.
   scoping narrowly (a new alert-rule *source*, reusing the existing
   rule/lifecycle/notification machinery) rather than growing into a general
   monitoring tool.
-- **Alert delivery retry.** Failures are now *recorded* but never re-attempted.
-  Retry needs a queue and a backoff policy, and silently retrying a webhook that
-  returns 500 for a good reason is its own hazard — worth doing deliberately.
 
 ### Safe changes
 
@@ -457,7 +454,7 @@ doesn't retry). Project secrets pushed to #4, unchanged in scope.
 
 1. [x] Per-session MCP token revocation (#20)
 2. [x] Maintenance windows / silences (#6)
-3. [ ] Alert delivery retry (#12)
+3. [x] Alert delivery retry (#12)
 4. [ ] Project secrets (#10)
 5. [ ] Controlled image updates (#11) — together with self-update auto-apply
    policy (#19), same poll/policy/audit/notify shape, one applied to

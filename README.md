@@ -65,7 +65,7 @@ level filters, regex search and structured parsing.
 **Alerting & integrations**
 - Rules on **state**, **resource thresholds**, **log patterns** and **restart/crash-loops** — editable, with severity & cooldown.
 - Threshold alerts are **conditions with a lifetime** (`firing` → `escalated`/`eased` → `resolved`), one per container + metric, so overlapping rules produce one incident instead of one each — and the feed is server-side **paged, filtered and sorted**, with **who acknowledged** it and every **delivery attempt** recorded against it.
-- Notify via **webhooks**, **email (SMTP, per-host routing)**, an in-app feed, and a **Prometheus `/metrics`** exporter. Rules **import/export** as a portable JSON bundle.
+- Notify via **webhooks**, **email (SMTP, per-host routing)**, an in-app feed, and a **Prometheus `/metrics`** exporter. Rules **import/export** as a portable JSON bundle. A transient failure (timeout, `429`/`5xx`, an SMTP hiccup) is **retried automatically** — bounded, exponential backoff, and only for failures worth retrying; a `4xx` or missing config never is.
 - **Maintenance windows** suppress alert delivery — not observation — for planned work: scope by host, compose project/container, rule and/or severity, one-off or weekly-**recurring**, with a required reason/author, audited. A successful **deploy auto-opens a short window** for that project (configurable grace period, disableable).
 
 **Remote control from AI tools (MCP)**
@@ -394,7 +394,7 @@ that project.
 ## 🧪 How it's tested
 
 You're pointing this at real Docker daemons, so the fast tests are the floor, not
-the ceiling. Alongside **~840 Go unit tests** and **~240 frontend tests**, the repo
+the ceiling. Alongside **~940 Go unit tests** and **~240 frontend tests**, the repo
 carries **132 adversarial "pentest" cases** that assert attacks are *rejected* (token
 forgery, OAuth replay, CSRF, IDOR, per-host scope bypass, privilege escalation,
 path traversal), an integration tier against a **real Docker daemon** (plus

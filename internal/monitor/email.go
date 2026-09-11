@@ -13,6 +13,20 @@ import (
 	"github.com/koduj-dev/docker-commander/internal/store"
 )
 
+// emailSendTimeout bounds one SendMail call end to end — dial, optional TLS
+// handshake, and the whole SMTP dialog — not just the initial connect. A
+// server that accepts the TCP connection and then stalls before its greeting
+// must not be able to hang this forever.
+const emailSendTimeout = 15 * time.Second
+
+// dbBookkeepingTimeout bounds the store write that records what happened,
+// AFTER the send attempt itself has already used its own budget above. Using
+// the SAME context for both (as this used to) meant a send that took close
+// to its full timeout left the bookkeeping call almost no time of its own —
+// a slow-but-not-quite-hung server could make the delivery/retry record
+// silently fail to write, right when it's needed most.
+const dbBookkeepingTimeout = 5 * time.Second
+
 // emailNotify sends a fired alert by e-mail. It runs in its own goroutine so a
 // slow mail server never blocks the engine.
 //
@@ -26,39 +40,57 @@ import (
 // still resolves to 2 or 3 and delivers exactly as it did before.
 func (m *Monitor) emailNotify(ev *store.AlertEvent, ruleEmails []string) {
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		cfg, err := m.store.GetSMTP(ctx)
-		if err != nil || cfg.Host == "" || cfg.From == "" {
-			if err != nil {
-				log.Printf("monitor: smtp config: %v", err)
-			}
-			m.recordDelivery(ctx, ev.ID, "", false, "SMTP is not configured, so this alert was not e-mailed")
-			return
+		sendCtx, cancel := context.WithTimeout(context.Background(), emailSendTimeout)
+		ok, to, detail, retriable := m.attemptEmail(sendCtx, ev, ruleEmails)
+		cancel()
+
+		dbCtx, dbCancel := context.WithTimeout(context.Background(), dbBookkeepingTimeout)
+		defer dbCancel()
+		m.recordDelivery(dbCtx, ev.ID, to, ok, detail)
+		if !ok && retriable {
+			m.enqueueEmailRetry(dbCtx, ev.ID, ruleEmails, detail)
 		}
-		if len(ruleEmails) > 0 {
-			cfg.To = strings.Join(ruleEmails, ", ")
-		} else if ev.HostID != 0 {
-			// Per-host recipient override: a host may route its alerts elsewhere.
-			if h, err := m.store.HostByID(ctx, ev.HostID); err == nil && h.AlertEmail != "" {
-				cfg.To = h.AlertEmail
-			}
-		}
-		if cfg.To == "" {
-			m.recordDelivery(ctx, ev.ID, "", false, "no recipient: the rule, the host and the SMTP settings all leave it empty")
-			return
-		}
-		subject := fmt.Sprintf("[%s] %s — %s", strings.ToUpper(ev.Severity), ev.RuleName, ev.ContainerName)
-		body := fmt.Sprintf("Rule: %s\nType: %s\nSeverity: %s\nContainer: %s (%s)\nMessage: %s\nTime: %s\n",
-			ev.RuleName, ev.Type, ev.Severity, ev.ContainerName, shortID(ev.ContainerID), ev.Message,
-			time.Now().UTC().Format(time.RFC3339))
-		if err := SendMail(cfg, subject, body); err != nil {
-			log.Printf("monitor: email send failed: %v", err)
-			m.recordDelivery(ctx, ev.ID, cfg.To, false, err.Error())
-			return
-		}
-		m.recordDelivery(ctx, ev.ID, cfg.To, true, "")
 	}()
+}
+
+// attemptEmail sends ONE email, synchronously. Split out from emailNotify so
+// the retry sweep (delivery_retry.go) can drive the exact same attempt — see
+// dispatcher.attempt's doc comment for why. ctx bounds the SMTP config read
+// and the send itself; callers own it (and any separate context for their
+// own bookkeeping afterward).
+//
+// retriable is true only for an actual send failure (a transient SMTP
+// problem) — NOT for "SMTP isn't configured" or "no recipient resolves",
+// both permanent-until-an-admin-fixes-them configuration states that a timed
+// retry cannot do anything about.
+func (m *Monitor) attemptEmail(ctx context.Context, ev *store.AlertEvent, ruleEmails []string) (ok bool, to, detail string, retriable bool) {
+	cfg, err := m.store.GetSMTP(ctx)
+	if err != nil || cfg.Host == "" || cfg.From == "" {
+		if err != nil {
+			log.Printf("monitor: smtp config: %v", err)
+		}
+		return false, "", "SMTP is not configured, so this alert was not e-mailed", false
+	}
+	if len(ruleEmails) > 0 {
+		cfg.To = strings.Join(ruleEmails, ", ")
+	} else if ev.HostID != 0 {
+		// Per-host recipient override: a host may route its alerts elsewhere.
+		if h, err := m.store.HostByID(ctx, ev.HostID); err == nil && h.AlertEmail != "" {
+			cfg.To = h.AlertEmail
+		}
+	}
+	if cfg.To == "" {
+		return false, "", "no recipient: the rule, the host and the SMTP settings all leave it empty", false
+	}
+	subject := fmt.Sprintf("[%s] %s — %s", strings.ToUpper(ev.Severity), ev.RuleName, ev.ContainerName)
+	body := fmt.Sprintf("Rule: %s\nType: %s\nSeverity: %s\nContainer: %s (%s)\nMessage: %s\nTime: %s\n",
+		ev.RuleName, ev.Type, ev.Severity, ev.ContainerName, shortID(ev.ContainerID), ev.Message,
+		time.Now().UTC().Format(time.RFC3339))
+	if err := SendMail(ctx, cfg, subject, body); err != nil {
+		log.Printf("monitor: email send failed: %v", err)
+		return false, cfg.To, err.Error(), true
+	}
+	return true, cfg.To, "", false
 }
 
 // recordDelivery notes whether an alert actually left by e-mail.
@@ -83,9 +115,18 @@ func (m *Monitor) recordDelivery(ctx context.Context, eventID int64, to string, 
 }
 
 // SendMail delivers one message via the configured SMTP server. It supports
-// implicit TLS (cfg.TLS, e.g. port 465) and otherwise lets net/smtp negotiate
-// STARTTLS when the server offers it. Exported so the API can send a test mail.
-func SendMail(cfg store.SMTPConfig, subject, body string) error {
+// implicit TLS (cfg.TLS, e.g. port 465) and otherwise opportunistically
+// upgrades with STARTTLS when the server offers it. Exported so the API can
+// send a test mail.
+//
+// ctx bounds the ENTIRE call — dial, TLS handshake, and the full SMTP dialog
+// (EHLO/AUTH/MAIL/RCPT/DATA/QUIT) — not just the initial connect. Neither
+// net/smtp nor crypto/tls's plain Dial takes a context, so this dials via
+// net.Dialer/tls.Dialer's *Context variants and then applies ctx's deadline
+// directly to the resulting connection; without that second step, a server
+// that accepts the TCP/TLS handshake and then stalls before its greeting
+// could still hang indefinitely once past the dial itself.
+func SendMail(ctx context.Context, cfg store.SMTPConfig, subject, body string) error {
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	recipients := splitRecipients(cfg.To)
 	if len(recipients) == 0 {
@@ -93,21 +134,17 @@ func SendMail(cfg store.SMTPConfig, subject, body string) error {
 	}
 	msg := buildMessage(cfg.From, cfg.To, subject, body)
 
-	var auth smtp.Auth
-	if cfg.Username != "" {
-		auth = smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
-	}
-
-	if !cfg.TLS {
-		// Plain connection; net/smtp upgrades to STARTTLS if the server offers it.
-		return smtp.SendMail(addr, auth, cfg.From, recipients, msg)
-	}
-
-	// Implicit TLS: dial a TLS socket first, then speak SMTP over it.
-	conn, err := tlsDial("tcp", addr, &tls.Config{ServerName: cfg.Host, MinVersion: tls.VersionTLS12})
+	conn, err := smtpDial(ctx, addr, cfg.TLS, cfg.Host)
 	if err != nil {
 		return err
 	}
+	if dl, ok := ctx.Deadline(); ok {
+		if err := conn.SetDeadline(dl); err != nil {
+			_ = conn.Close()
+			return err
+		}
+	}
+
 	// NewClient takes ownership of conn even when it fails: it wraps the socket in
 	// a textproto.Conn and closes that if the greeting doesn't arrive. So there is
 	// nothing to close here — an explicit conn.Close() on this path would be dead
@@ -120,8 +157,20 @@ func SendMail(cfg store.SMTPConfig, subject, body string) error {
 		return err
 	}
 	defer c.Close()
-	if auth != nil {
-		if err := c.Auth(auth); err != nil {
+
+	if !cfg.TLS {
+		// Opportunistic STARTTLS — the same upgrade net/smtp.SendMail performed
+		// implicitly, which SendMail replaced with this manual dialog so BOTH
+		// paths (implicit TLS and plain/STARTTLS) go through the same
+		// context-bounded connection.
+		if ok, _ := c.Extension("STARTTLS"); ok {
+			if err := c.StartTLS(&tls.Config{ServerName: cfg.Host, MinVersion: tls.VersionTLS12}); err != nil {
+				return err
+			}
+		}
+	}
+	if cfg.Username != "" {
+		if err := c.Auth(smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)); err != nil {
 			return err
 		}
 	}
@@ -161,11 +210,17 @@ func headerValue(v string) string {
 	return strings.NewReplacer("\r", " ", "\n", " ").Replace(v)
 }
 
-// tlsDial is tls.Dial, swappable so the ownership of the connection — who closes
-// it when the SMTP handshake fails — can be asserted without a certificate
-// authority. Production always uses tls.Dial.
-var tlsDial = func(network, addr string, cfg *tls.Config) (net.Conn, error) {
-	return tls.Dial(network, addr, cfg)
+// smtpDial opens the connection SendMail speaks over — plain TCP (STARTTLS
+// upgrades later, if offered) or implicit TLS — using ctx for the dial
+// itself. Swappable so tests can assert the connection-ownership contract
+// above without a certificate authority or a real socket.
+var smtpDial = func(ctx context.Context, addr string, useTLS bool, tlsServerName string) (net.Conn, error) {
+	if useTLS {
+		d := &tls.Dialer{NetDialer: &net.Dialer{}, Config: &tls.Config{ServerName: tlsServerName, MinVersion: tls.VersionTLS12}}
+		return d.DialContext(ctx, "tcp", addr)
+	}
+	var d net.Dialer
+	return d.DialContext(ctx, "tcp", addr)
 }
 
 func buildMessage(from, to, subject, body string) []byte {

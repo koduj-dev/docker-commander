@@ -7,6 +7,16 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Alert delivery retry.** A webhook that timed out, couldn't be reached, or
+  returned `429`/`5xx`, and an e-mail that failed to send, are now retried
+  automatically — up to 5 attempts, exponential backoff (1m, 2m, 4m, 8m,
+  16m), then it gives up. Deliberately bounded and selective: a webhook
+  returning any other `4xx`, or e-mail failing because SMTP is unconfigured
+  or no recipient resolves, is a configuration problem retrying won't fix,
+  so those are never queued — same as before. Every attempt, retried or not,
+  still lands in the same per-alert Delivery history. A maintenance window
+  that starts (or is still running) by the time a retry is due makes it wait
+  the window out instead of sending, without spending one of its attempts.
 - **Maintenance windows.** Suppress alert *delivery* (webhook/e-mail) for
   planned work — host, compose project/stack, container, rule and/or
   severity, one-off or weekly-recurring — without turning monitoring off:

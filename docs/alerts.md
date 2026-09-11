@@ -138,7 +138,26 @@ Two deliberate limits:
   usually say why it refused, but a remote server must not be able to write
   unbounded text into the database.
 
-There is no automatic retry yet — a failed delivery is recorded, not re-attempted.
+**A transient failure is retried automatically**, deliberately and boundedly —
+not every failure, and not forever:
+
+- **What's retried:** a webhook that timed out, couldn't be reached, or
+  returned `429`/`5xx` (the endpoint's own "try later"); an e-mail that
+  failed to send.
+- **What isn't:** a webhook returning any other `4xx` (a bad payload, bad
+  auth — the endpoint has already told you it won't accept this, and
+  hammering it won't change that), SMTP left unconfigured, or a rule with no
+  recipient resolvable anywhere. These are configuration problems, not
+  transient ones, and stay exactly as visible as they always were.
+- **Backoff:** up to 5 retries, exponential (1m, 2m, 4m, 8m, 16m — roughly
+  half an hour total), then it gives up. Each attempt — retried or not — adds
+  its own row to the same Delivery list above, so the full history is always
+  there to read, not hidden in a separate queue view.
+- **Maintenance windows still apply.** If a window starts (or is still
+  running) by the time a retry is due, the retry waits it out instead of
+  sending — the same "stop the paging, not the observing" rule the window
+  applies everywhere else — without spending one of its 5 attempts on a send
+  it chose not to make.
 
 ## Maintenance windows
 
