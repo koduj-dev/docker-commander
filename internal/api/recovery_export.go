@@ -173,7 +173,7 @@ func (s *Server) buildRecoveryManifest(ctx context.Context, includeSecrets bool,
 	if err != nil {
 		return nil, err
 	}
-	projects, err := s.recoveryProjects(ctx, projectIDs, hostNames)
+	projects, err := s.recoveryProjects(ctx, includeSecrets, projectIDs, hostNames)
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +333,7 @@ func (s *Server) recoverySettings(ctx context.Context, includeSecrets bool) (rec
 	return out, nil
 }
 
-func (s *Server) recoveryProjects(ctx context.Context, projectIDs []int64, hostNames map[int64]string) ([]recoveryProjectMeta, error) {
+func (s *Server) recoveryProjects(ctx context.Context, includeSecrets bool, projectIDs []int64, hostNames map[int64]string) ([]recoveryProjectMeta, error) {
 	all, err := s.store.ListProjects(ctx)
 	if err != nil {
 		return nil, err
@@ -358,10 +358,24 @@ func (s *Server) recoveryProjects(ctx context.Context, projectIDs []int64, hostN
 		for _, img := range s.captureRevisionImages(ctx, &p) {
 			images = append(images, recoveryProjectImage{Service: img.Service, Image: img.Image, Digest: img.Digest})
 		}
+		// Secret NAMES are always exported (harmless metadata, same as a
+		// webhook's name without its URL); values only when the export
+		// explicitly included secrets — same gate as every other credential
+		// this bundle can carry.
+		var secrets []recoveryProjectSecret
+		if names, serr := s.store.ListProjectSecrets(ctx, p.ID); serr == nil {
+			var values map[string]string
+			if includeSecrets {
+				values, _ = s.store.ResolveProjectSecretEnv(ctx, p.ID)
+			}
+			for _, n := range names {
+				secrets = append(secrets, recoveryProjectSecret{Name: n.Name, Value: values[n.Name]})
+			}
+		}
 		out = append(out, recoveryProjectMeta{
 			Slug: p.Slug, Name: p.Name, ComposeFile: p.ComposeFile,
 			HostName: hostNames[p.HostID], AllowRemoteHostPaths: p.AllowRemoteHostPaths,
-			LastDeployedProfiles: p.LastDeployedProfiles, Images: images,
+			LastDeployedProfiles: p.LastDeployedProfiles, Images: images, Secrets: secrets,
 		})
 	}
 	return out, nil

@@ -176,16 +176,27 @@ type recoveryProjectImage struct {
 	Digest  string `json:"digest,omitempty"`
 }
 
+// recoveryProjectSecret is one project secret's name — always exported, the
+// same way a webhook's name is exported without its URL — and, only when the
+// export explicitly included secrets, its plaintext value. Value is
+// re-encrypted with the destination store's own cipher on import, exactly
+// like a registry password or SMTP credential.
+type recoveryProjectSecret struct {
+	Name  string `json:"name"`
+	Value string `json:"value,omitempty"`
+}
+
 // recoveryProjectMeta is one project's metadata; its files live in the
 // bundle's zip under "projects/<Slug>/...".
 type recoveryProjectMeta struct {
-	Slug                 string                 `json:"slug"`
-	Name                 string                 `json:"name"`
-	ComposeFile          string                 `json:"composeFile"`
-	HostName             string                 `json:"hostName"` // "" = local; resolved by NAME, not id
-	AllowRemoteHostPaths bool                   `json:"allowRemoteHostPaths"`
-	LastDeployedProfiles []string               `json:"lastDeployedProfiles,omitempty"`
-	Images               []recoveryProjectImage `json:"images,omitempty"`
+	Slug                 string                  `json:"slug"`
+	Name                 string                  `json:"name"`
+	ComposeFile          string                  `json:"composeFile"`
+	HostName             string                  `json:"hostName"` // "" = local; resolved by NAME, not id
+	AllowRemoteHostPaths bool                    `json:"allowRemoteHostPaths"`
+	LastDeployedProfiles []string                `json:"lastDeployedProfiles,omitempty"`
+	Images               []recoveryProjectImage  `json:"images,omitempty"`
+	Secrets              []recoveryProjectSecret `json:"secrets,omitempty"`
 }
 
 // recoveryAlertRule is an exported alert rule plus its per-rule email

@@ -7,6 +7,19 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Project secrets.** A GitHub-Actions-secrets-style store for a project: name
+  a value once (`DB_PASSWORD`, `API_TOKEN`…) and reference it from the compose
+  file with plain `${NAME}` interpolation instead of inlining it. The value is
+  encrypted at rest, supplied as a process environment variable at deploy time
+  only (never written to `.env` or any file on disk, so it can never end up in
+  a revision snapshot), and can only be replaced, never read back. Everywhere a
+  resolved compose value is normally shown — the Resolved tab, deploy preview,
+  revision diff — a secret renders as a redacted, stable `secret:<fingerprint>`
+  placeholder instead: the same value always fingerprints the same way, so a
+  diff can still show *that* it changed without ever showing *what* it is.
+  RBAC reuses the project's own "projects" section grants (view lists names,
+  write manages them) — no separate secrets permission. Every create/update/
+  delete is audited by name, never by value.
 - **Alert delivery retry.** A webhook that timed out, couldn't be reached, or
   returned `429`/`5xx`, and an e-mail that failed to send, are now retried
   automatically — up to 5 attempts, exponential backoff (1m, 2m, 4m, 8m,

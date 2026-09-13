@@ -53,6 +53,7 @@ import type {
   ProjectFile,
   DeployPreview,
   ProjectRevision,
+  ProjectSecret,
   ResourceOverview,
   SmtpConfig,
   Stack,
@@ -600,6 +601,16 @@ export const api = {
     req<{ ok: boolean; output?: string; error?: string; note?: string }>(
       "POST", `/api/projects/${id}/revisions/${rev}/restore`, { reason: reason || "" },
     ),
+  // Project secrets: named values referenced from the compose file via plain
+  // ${NAME} interpolation. The value is write-only — never returned by list,
+  // and update replaces it without ever echoing the old one back.
+  listProjectSecrets: (id: number) => req<ProjectSecret[]>("GET", `/api/projects/${id}/secrets`),
+  createProjectSecret: (id: number, name: string, value: string) =>
+    req<{ id: number }>("POST", `/api/projects/${id}/secrets`, { name, value }),
+  updateProjectSecret: (id: number, name: string, value: string) =>
+    req<{ ok: boolean }>("PUT", `/api/projects/${id}/secrets/${encodeURIComponent(name)}`, { value }),
+  deleteProjectSecret: (id: number, name: string) =>
+    req<{ ok: boolean }>("DELETE", `/api/projects/${id}/secrets/${encodeURIComponent(name)}`),
   // Lint a Dockerfile via `docker build --check` (no build steps run).
   checkDockerfile: (id: number, content: string) =>
     req<{ level: "ok" | "warning" | "error"; output?: string; unavailable?: boolean }>("POST", `/api/projects/${id}/dockerfile-check`, { content }),

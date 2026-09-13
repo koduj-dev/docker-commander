@@ -596,6 +596,25 @@ CREATE TABLE IF NOT EXISTS backup_runs (
 	triggered_by TEXT NOT NULL DEFAULT '' -- 'schedule' or a username
 );
 CREATE INDEX IF NOT EXISTS idx_backup_runs_job ON backup_runs(job_id);
+
+-- A project's named secret values, referenced from its compose file via
+-- plain ${NAME} interpolation. docker-commander supplies NAME as a process
+-- env var at compose-invocation time only — never written to .env or any
+-- file on disk, so it can never leak into a project_revisions zip snapshot.
+-- value_enc is AES-256-GCM, base64(nonce||ciphertext), same pattern as
+-- registries.secret_enc / backup_jobs.env_enc — write-only: no query in
+-- this file selects it except ResolveProjectSecretEnv.
+CREATE TABLE IF NOT EXISTS project_secrets (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	project_id INTEGER NOT NULL,
+	name       TEXT NOT NULL,       -- env-style identifier, e.g. DB_PASSWORD
+	value_enc  TEXT NOT NULL,
+	created_by TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	UNIQUE (project_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_project_secrets_project ON project_secrets(project_id);
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err

@@ -508,7 +508,24 @@ func (s *Server) applyRecoveryBundle(ctx context.Context, m *recoveryManifest, z
 			}
 			continue
 		}
-		if _, verr := docker.ComposeConfig(ctx, staging, pm.Slug); verr != nil {
+		// Validate with a stand-in for each secret this project references —
+		// never the real value pre-restore, but ANY non-empty value, so a
+		// compose file requiring one (${NAME:?required}) doesn't get rejected
+		// outright just because secrets weren't restored yet (they're created
+		// below, after CreateProject gives us a project id to attach them
+		// to). A value the bundle actually carried is masked normally; one it
+		// didn't (secrets excluded from this export) still gets a non-empty
+		// placeholder purely so validation reflects the compose file's own
+		// correctness, not the unrelated fact that a secret is missing.
+		var validateEnv []string
+		for _, sec := range pm.Secrets {
+			placeholder := "secret:unavailable"
+			if sec.Value != "" {
+				placeholder = s.store.MaskSecretValue(sec.Value)
+			}
+			validateEnv = append(validateEnv, sec.Name+"="+placeholder)
+		}
+		if _, verr := docker.ComposeConfigEnv(ctx, staging, pm.Slug, validateEnv); verr != nil {
 			warnings = append(warnings, fmt.Sprintf("project %q skipped: its files no longer validate: %s", pm.Slug, verr))
 			os.RemoveAll(staging)
 			continue
@@ -534,6 +551,20 @@ func (s *Server) applyRecoveryBundle(ctx context.Context, m *recoveryManifest, z
 			os.RemoveAll(staging)
 			_ = s.store.DeleteProject(ctx, id)
 			continue
+		}
+		// Restore only the secrets this bundle actually carried a value for —
+		// a name exported without a value (secrets excluded from this export)
+		// is not recreated with an empty/fake value, since that would let the
+		// project's compose file silently resolve ${NAME} to nothing instead
+		// of telling the operator it still needs restoring.
+		for _, sec := range pm.Secrets {
+			if sec.Value == "" {
+				warnings = append(warnings, fmt.Sprintf("project %q: secret %q was not included in this export (secrets excluded) — add it before deploying", pm.Slug, sec.Name))
+				continue
+			}
+			if _, serr := s.store.CreateProjectSecret(ctx, id, sec.Name, sec.Value, createdBy); serr != nil {
+				warnings = append(warnings, fmt.Sprintf("project %q: could not restore secret %q: %s", pm.Slug, sec.Name, serr))
+			}
 		}
 		summary.ProjectsCreated++
 	}

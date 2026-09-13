@@ -58,6 +58,7 @@ level filters, regex search and structured parsing.
   *selected for the next deploy*, so a profile-excluded service reads as such — not as
   stopped) and `.zip` import/export — to the **local or a remote host** (a remote deploy copies the project's bind-mounted configs/scripts into volumes on that host, and `build:` contexts are uploaded with the build; a redeploy **rebuilds** an edited image).
 - **Policy checks before deploy** — seven rules (privileged containers, host network/PID, Docker socket mounts, unpinned `:latest` images, missing resource limits, missing healthchecks), each independently **off / warn / block**. A warn needs the operator's confirmation before the deploy runs; a block has no per-deploy override. Off by default for every rule.
+- **Project secrets** — name a value once and reference it from the compose file with plain `${NAME}` interpolation; the value is **encrypted at rest**, supplied at deploy time only (never written to disk), and can be replaced but never read back. Every place a resolved value is shown — the Resolved tab, deploy preview, revision diff — redacts it to a stable placeholder instead.
 
 **Multi-host**
 - Manage **local**, **TCP(+TLS)** and **SSH** daemons; SSH **host keys are verified** (known_hosts / trust-on-first-use). Every view rebinds to the selected host, and the alert engine watches **all** hosts. A per-host **detail** panel shows the hardware / OS / engine, and a host can be **disabled** to take it out of monitoring (e.g. an offline laptop).
@@ -395,7 +396,7 @@ that project.
 
 You're pointing this at real Docker daemons, so the fast tests are the floor, not
 the ceiling. Alongside **~940 Go unit tests** and **~240 frontend tests**, the repo
-carries **132 adversarial "pentest" cases** that assert attacks are *rejected* (token
+carries **148 adversarial "pentest" cases** that assert attacks are *rejected* (token
 forgery, OAuth replay, CSRF, IDOR, per-host scope bypass, privilege escalation,
 path traversal), an integration tier against a **real Docker daemon** (plus
 throwaway Redis / OpenLDAP / SMTP), and an end-to-end tier that deploys to

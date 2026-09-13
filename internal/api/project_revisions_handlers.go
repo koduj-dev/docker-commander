@@ -219,7 +219,11 @@ func (s *Server) revisionServiceSpecs(ctx context.Context, p *store.Project, rev
 	}
 	defer os.RemoveAll(tmp)
 	extractZipToDir(zr, tmp)
-	cfgJSON, err := docker.ComposeConfigJSON(ctx, tmp, p.Slug)
+	_, masked, _, serr := s.projectSecretEnvs(ctx, p.ID)
+	if serr != nil {
+		return nil, serr
+	}
+	cfgJSON, err := docker.ComposeConfigJSONFiles(ctx, tmp, p.Slug, nil, masked, nil)
 	if err != nil {
 		return nil, fmt.Errorf("revision %d no longer resolves as valid compose: %w", revision, err)
 	}
@@ -268,7 +272,13 @@ func (s *Server) handleRevisionDiff(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		_, _, secretValues, serr := s.projectSecretEnvs(r.Context(), p.ID)
+		if serr != nil {
+			writeErr(w, http.StatusInternalServerError, serr.Error())
+			return
+		}
 		running = s.docker.LiveServices(r.Context(), p.HostID, containers)
+		s.maskLiveSecrets(running, secretValues)
 	} else {
 		otherN, err := strconv.Atoi(against)
 		if err != nil {
@@ -416,7 +426,12 @@ func (s *Server) handleRestoreRevision(w http.ResponseWriter, r *http.Request) {
 	}
 	defer os.RemoveAll(staging) // no-op once it's been renamed away below
 	extractZipToDir(zr, staging)
-	if out, verr := docker.ComposeConfig(r.Context(), staging, p.Slug); verr != nil {
+	_, restoreMasked, _, serr := s.projectSecretEnvs(r.Context(), p.ID)
+	if serr != nil {
+		writeErr(w, http.StatusInternalServerError, serr.Error())
+		return
+	}
+	if out, verr := docker.ComposeConfigEnv(r.Context(), staging, p.Slug, restoreMasked); verr != nil {
 		msg := strings.TrimSpace(out)
 		if msg == "" {
 			msg = verr.Error()
