@@ -73,10 +73,18 @@ lets it happen automatically instead:
 
 It checks on the same cadence as the manual update banner, downloads and
 verifies the release the same way the one-tap **Update & restart** button
-does, and never runs at the same time as a manual apply. Every automatic
-apply is recorded in the audit log, and every admin sees a one-time
-"you're now on vX.Y.Z — applied automatically" notice at their next login,
-until they dismiss it.
+does, and never runs at the same time as a manual apply. The granularity
+ceiling is enforced against the exact release resolved at the moment of
+install, never an earlier cached check, so it can't be bypassed by a release
+that ships between two checks. Every automatic apply is recorded in the
+audit log, and every admin sees a one-time "you're now on vX.Y.Z — applied
+automatically" notice at their next login, until they dismiss it.
+
+The control is disabled, with an explanation, when auto-apply could never
+actually run: the update check itself is off (`DC_UPDATE_CHECK=0`), or
+self-update is unavailable (`DC_SELF_UPDATE=0`, or a platform that can't
+restart itself in place, e.g. Windows) — the same capability the one-tap
+button already keys off, so a saved policy is never silently dormant.
 
 ## LDAP / Active Directory
 

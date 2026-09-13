@@ -14,13 +14,19 @@ All notable changes to Docker Commander are documented here. The format follows
   **Update & restart**. Off by default; when enabled, a granularity choice
   (patch only, patch+minor, or everything including major) caps how far it's
   allowed to jump — the WordPress-style default once enabled is patch+minor,
-  not "auto-apply everything". Serialises against a concurrent manual apply
-  through the same lock the one-tap button already uses, so the two can
-  never race. Every automatic apply is recorded in the audit log (as
-  `update.apply`, same as a manual one, with the detail noting it was
-  automatic and which policy triggered it), and every admin sees a one-time
-  "you're now on vX.Y.Z — applied automatically" notice at next login until
-  they dismiss it. Configurable from **Settings → Security**.
+  not "auto-apply everything". The ceiling is checked against the exact
+  release resolved at the moment of install, not an earlier cached status, so
+  a release published between two checks can never slip past it. Serialises
+  against a concurrent manual apply through the same lock the one-tap button
+  already uses, so the two can never race. Every automatic apply is recorded
+  in the audit log (as `update.apply`, same as a manual one, with the detail
+  noting it was automatic and which policy triggered it), and every admin
+  sees a one-time "you're now on vX.Y.Z — applied automatically" notice at
+  next login until they dismiss it. Configurable from **Settings →
+  Security**, which explains and disables the control when the update check
+  or self-update itself is unavailable (`DC_UPDATE_CHECK=0`,
+  `DC_SELF_UPDATE=0`, or a platform that can't restart itself) rather than
+  silently accepting a policy that could never run.
 - **Project secrets.** A GitHub-Actions-secrets-style store for a project: name
   a value once (`DB_PASSWORD`, `API_TOKEN`…) and reference it from the compose
   file with plain `${NAME}` interpolation instead of inlining it. The value is

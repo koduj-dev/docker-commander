@@ -220,8 +220,8 @@ func TestAccessSettings(t *testing.T) {
 		t.Error("localhost-2FA should be on")
 	}
 
-	if pol, _ := s.SelfUpdatePolicy(ctx); pol.Enabled {
-		t.Error("self-update auto-apply off by default")
+	if pol, _ := s.SelfUpdatePolicy(ctx); pol.Enabled || pol.Granularity != "minor" {
+		t.Errorf("self-update auto-apply should default to off with granularity=minor, got %+v", pol)
 	}
 	if err := s.SetSelfUpdatePolicy(ctx, SelfUpdatePolicy{Enabled: true, Granularity: "minor"}); err != nil {
 		t.Fatal(err)

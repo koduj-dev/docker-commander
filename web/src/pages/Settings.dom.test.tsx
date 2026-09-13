@@ -27,7 +27,7 @@ vi.mock("../lib/api", () => ({
     // The Security tab also renders the MCP token-lifetime editor and the
     // self-update auto-apply policy editor.
     mcpAdminTokenPolicy: () => Promise.resolve({ defaultDays: 30, maxDays: 365, allowUnlimited: false }),
-    updateStatus: () => Promise.resolve({ updateAvailable: false, selfUpdatePolicy: { enabled: false, granularity: "minor" } }),
+    updateStatus: () => Promise.resolve({ updateAvailable: false, selfUpdate: true, selfUpdatePolicy: { enabled: false, granularity: "minor" } }),
   },
 }));
 

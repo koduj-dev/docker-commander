@@ -165,6 +165,27 @@ func (u *updateChecker) apply(ctx context.Context) (selfupdate.Result, error) {
 	return res, err
 }
 
+// applyIfPolicyAllows is apply, but for the auto-apply path: allowed is
+// checked against the exact release this call resolves, never a value from
+// an earlier, possibly-stale check (see selfupdate.ApplyChecked) — so a
+// release published after the last policy evaluation can never slip past a
+// granularity ceiling.
+func (u *updateChecker) applyIfPolicyAllows(ctx context.Context, allowed func(latestTag string) bool) (selfupdate.Result, error) {
+	if !u.enabled || !u.selfUpdate {
+		return selfupdate.Result{}, errSelfUpdateDisabled
+	}
+	if !u.applyMu.TryLock() {
+		return selfupdate.Result{}, errUpdateInProgress
+	}
+	defer u.applyMu.Unlock()
+
+	res, err := selfupdate.ApplyChecked(ctx, u.current, allowed)
+	if err == nil {
+		u.invalidate()
+	}
+	return res, err
+}
+
 func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 	st := s.update.status(r.Context())
 	// The one-tap button is offered only when self-update is allowed and the

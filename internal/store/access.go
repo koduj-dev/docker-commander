@@ -77,15 +77,21 @@ type SelfUpdatePolicy struct {
 	Granularity string `json:"granularity"` // "patch" | "minor" | "major"
 }
 
-// SelfUpdatePolicy returns the current auto-apply policy. Off by default
-// when the key has never been set.
+// SelfUpdatePolicy returns the current auto-apply policy. Off by default when
+// the key has never been set, with Granularity always normalized to a valid
+// value ("minor" when absent/empty) — never the zero value "", which is not
+// one of the three choices the API/UI accept and would otherwise reach the
+// editor as an invalid select option.
 func (s *Store) SelfUpdatePolicy(ctx context.Context) (SelfUpdatePolicy, error) {
 	raw, err := s.Setting(ctx, selfUpdatePolicyKey)
 	if err != nil || raw == "" {
-		return SelfUpdatePolicy{}, err
+		return SelfUpdatePolicy{Granularity: "minor"}, err
 	}
-	var out SelfUpdatePolicy
+	out := SelfUpdatePolicy{Granularity: "minor"}
 	_ = json.Unmarshal([]byte(raw), &out)
+	if out.Granularity == "" {
+		out.Granularity = "minor"
+	}
 	return out, nil
 }
 

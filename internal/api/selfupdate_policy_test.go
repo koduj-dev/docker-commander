@@ -33,83 +33,59 @@ func TestGranularityAllows(t *testing.T) {
 	}
 }
 
-// TestShouldAutoApply exercises every gate in isolation, in pure code with no
-// I/O, so a removed gate is caught deterministically regardless of whether
+// TestAutoApplyEnabled exercises every non-network gate in isolation, in pure
+// code, so a removed gate is caught deterministically regardless of whether
 // the test sandbox happens to have network access.
-func TestShouldAutoApply(t *testing.T) {
-	base := func() (updateStatus, store.SelfUpdatePolicy) {
-		return updateStatus{Current: "1.0.0", Latest: "1.1.0", UpdateAvailable: true},
-			store.SelfUpdatePolicy{Enabled: true, Granularity: "minor"}
-	}
-
+func TestAutoApplyEnabled(t *testing.T) {
 	t.Run("all gates pass", func(t *testing.T) {
 		srv := &Server{update: newUpdateChecker("1.0.0", true, true)}
 		srv.OnRestart(func() {})
-		st, pol := base()
-		if !srv.shouldAutoApply(pol, st) {
+		if !srv.autoApplyEnabled(store.SelfUpdatePolicy{Enabled: true, Granularity: "minor"}) {
 			t.Error("expected true when every gate passes")
 		}
 	})
 	t.Run("update check disabled", func(t *testing.T) {
 		srv := &Server{update: newUpdateChecker("1.0.0", false, true)}
 		srv.OnRestart(func() {})
-		st, pol := base()
-		if srv.shouldAutoApply(pol, st) {
+		if srv.autoApplyEnabled(store.SelfUpdatePolicy{Enabled: true, Granularity: "minor"}) {
 			t.Error("must be false when the update check itself is disabled")
 		}
 	})
 	t.Run("self-update disabled", func(t *testing.T) {
 		srv := &Server{update: newUpdateChecker("1.0.0", true, false)}
 		srv.OnRestart(func() {})
-		st, pol := base()
-		if srv.shouldAutoApply(pol, st) {
+		if srv.autoApplyEnabled(store.SelfUpdatePolicy{Enabled: true, Granularity: "minor"}) {
 			t.Error("must be false when self-update (web-triggered apply) is disabled")
 		}
 	})
 	t.Run("no restart hook", func(t *testing.T) {
 		srv := &Server{update: newUpdateChecker("1.0.0", true, true)} // OnRestart never called
-		st, pol := base()
-		if srv.shouldAutoApply(pol, st) {
+		if srv.autoApplyEnabled(store.SelfUpdatePolicy{Enabled: true, Granularity: "minor"}) {
 			t.Error("must be false without a restart hook — auto-apply would swap the binary and never restart")
 		}
 	})
 	t.Run("policy disabled", func(t *testing.T) {
 		srv := &Server{update: newUpdateChecker("1.0.0", true, true)}
 		srv.OnRestart(func() {})
-		st, pol := base()
-		pol.Enabled = false
-		if srv.shouldAutoApply(pol, st) {
+		if srv.autoApplyEnabled(store.SelfUpdatePolicy{Enabled: false, Granularity: "minor"}) {
 			t.Error("must be false when the admin has not opted in")
-		}
-	})
-	t.Run("no update available", func(t *testing.T) {
-		srv := &Server{update: newUpdateChecker("1.0.0", true, true)}
-		srv.OnRestart(func() {})
-		st, pol := base()
-		st.UpdateAvailable = false
-		if srv.shouldAutoApply(pol, st) {
-			t.Error("must be false when no update is available, regardless of policy")
-		}
-	})
-	t.Run("delta above granularity ceiling", func(t *testing.T) {
-		srv := &Server{update: newUpdateChecker("1.0.0", true, true)}
-		srv.OnRestart(func() {})
-		st, pol := base()
-		st.Latest = "2.0.0" // major bump
-		pol.Granularity = "patch"
-		if srv.shouldAutoApply(pol, st) {
-			t.Error("a major bump under a patch-only policy must never auto-apply")
 		}
 	})
 }
 
-// fakeApply is a stand-in for the checker's real apply() so autoApply's
-// wiring (does it call applyFn, does it record the result) can be tested
-// without ever touching the network.
-func fakeApply(result selfupdate.Result, err error) (func(context.Context) (selfupdate.Result, error), *int) {
+// fakeApplyFn stands in for the checker's real applyIfPolicyAllows so
+// autoApply's wiring (does it call applyFn with a predicate reflecting the
+// stored policy, does it record the result) can be tested without ever
+// touching the network. It invokes the predicate against latestTag exactly
+// as the real ApplyChecked would, so a test can assert the predicate makes
+// the right call for a given (policy, resolved-tag) pair.
+func fakeApplyFn(latestTag string, result selfupdate.Result, err error) (func(context.Context, func(string) bool) (selfupdate.Result, error), *int) {
 	calls := 0
-	return func(context.Context) (selfupdate.Result, error) {
+	return func(_ context.Context, allowed func(string) bool) (selfupdate.Result, error) {
 		calls++
+		if !allowed(latestTag) {
+			return selfupdate.Result{}, selfupdate.ErrPolicyRefused
+		}
 		return result, err
 	}, &calls
 }
@@ -126,11 +102,6 @@ func newAutoApplyTestServer(t *testing.T) (*Server, *store.Store) {
 	return srv, st
 }
 
-func seedAvailable(u *updateChecker, current, latest string) {
-	u.ok, u.at = true, time.Now()
-	u.cached = updateStatus{Current: current, Latest: latest, UpdateAvailable: current != latest}
-}
-
 func TestAutoApply_GateFailureNeverCallsApplyFn(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -138,18 +109,16 @@ func TestAutoApply_GateFailureNeverCallsApplyFn(t *testing.T) {
 	}{
 		{"no policy configured", store.SelfUpdatePolicy{}},
 		{"policy disabled", store.SelfUpdatePolicy{Enabled: false, Granularity: "major"}},
-		{"granularity below delta", store.SelfUpdatePolicy{Enabled: true, Granularity: "patch"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			srv, st := newAutoApplyTestServer(t)
-			seedAvailable(srv.update, "1.0.0", "2.0.0") // major bump
 			if c.policy.Granularity != "" || c.policy.Enabled {
 				if err := st.SetSelfUpdatePolicy(t.Context(), c.policy); err != nil {
 					t.Fatal(err)
 				}
 			}
-			fn, calls := fakeApply(selfupdate.Result{}, nil)
+			fn, calls := fakeApplyFn("2.0.0", selfupdate.Result{}, nil)
 			srv.autoApply(t.Context(), fn)
 			if *calls != 0 {
 				t.Errorf("applyFn must not be called, was called %d time(s)", *calls)
@@ -161,16 +130,34 @@ func TestAutoApply_GateFailureNeverCallsApplyFn(t *testing.T) {
 	}
 }
 
+// This is the exact TOCTOU scenario a stale-status-based gate would miss: the
+// policy only allows patch releases, and the release actually resolved at
+// apply time (simulated by fakeApplyFn) is a major bump — the predicate
+// autoApply builds must refuse it regardless of what any earlier check saw.
+func TestAutoApply_GranularityCheckedAgainstResolvedRelease(t *testing.T) {
+	srv, st := newAutoApplyTestServer(t)
+	if err := st.SetSelfUpdatePolicy(t.Context(), store.SelfUpdatePolicy{Enabled: true, Granularity: "patch"}); err != nil {
+		t.Fatal(err)
+	}
+	fn, calls := fakeApplyFn("2.0.0", selfupdate.Result{From: "1.0.0", To: "2.0.0"}, nil)
+	srv.autoApply(t.Context(), fn)
+	if *calls != 1 {
+		t.Fatalf("applyFn should be called exactly once, got %d", *calls)
+	}
+	if got, _ := st.LastAutoUpdate(t.Context()); got != nil {
+		t.Errorf("a major bump under a patch-only policy must never be recorded as applied, got %+v", got)
+	}
+}
+
 func TestAutoApply_SuccessRecordsUpdateAuditsAndRestarts(t *testing.T) {
 	srv, st := newAutoApplyTestServer(t)
-	seedAvailable(srv.update, "1.0.0", "1.0.1")
 	if err := st.SetSelfUpdatePolicy(t.Context(), store.SelfUpdatePolicy{Enabled: true, Granularity: "patch"}); err != nil {
 		t.Fatal(err)
 	}
 	restarted := make(chan struct{}, 1)
 	srv.OnRestart(func() { restarted <- struct{}{} })
 
-	fn, calls := fakeApply(selfupdate.Result{From: "1.0.0", To: "1.0.1"}, nil)
+	fn, calls := fakeApplyFn("1.0.1", selfupdate.Result{From: "1.0.0", To: "1.0.1"}, nil)
 	srv.autoApply(t.Context(), fn)
 
 	if *calls != 1 {
@@ -193,14 +180,13 @@ func TestAutoApply_SuccessRecordsUpdateAuditsAndRestarts(t *testing.T) {
 
 func TestAutoApply_ApplyFnErrorNeverRecordsOrRestarts(t *testing.T) {
 	srv, st := newAutoApplyTestServer(t)
-	seedAvailable(srv.update, "1.0.0", "1.0.1")
 	if err := st.SetSelfUpdatePolicy(t.Context(), store.SelfUpdatePolicy{Enabled: true, Granularity: "patch"}); err != nil {
 		t.Fatal(err)
 	}
 	restarted := make(chan struct{}, 1)
 	srv.OnRestart(func() { restarted <- struct{}{} })
 
-	fn, calls := fakeApply(selfupdate.Result{}, errors.New("checksum mismatch"))
+	fn, calls := fakeApplyFn("1.0.1", selfupdate.Result{}, errors.New("checksum mismatch"))
 	srv.autoApply(t.Context(), fn)
 
 	if *calls != 1 {

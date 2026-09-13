@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"log"
 	"time"
 
@@ -28,29 +29,38 @@ func (s *Server) StartSelfUpdatePolicyLoop(ctx context.Context) {
 }
 
 // tryAutoApply is the production entry point: delegate to autoApply bound to
-// the real self-update apply function (which itself serialises against a
-// concurrent manual apply via applyMu).
+// the real checker's applyIfPolicyAllows.
 func (s *Server) tryAutoApply(ctx context.Context) {
-	s.autoApply(ctx, s.update.apply)
+	s.autoApply(ctx, s.update.applyIfPolicyAllows)
 }
 
-// autoApply applies the latest release once shouldAutoApply's gates all pass,
-// calling applyFn (production: the checker's own locked apply; tests: a fake)
-// so the gating logic is verifiable without ever reaching the network. Any
-// gate failing, or applyFn itself failing (including "already in progress"),
-// is a silent no-op — the next tick tries again.
-func (s *Server) autoApply(ctx context.Context, applyFn func(context.Context) (selfupdate.Result, error)) {
+// autoApply applies the latest release once autoApplyEnabled passes, calling
+// applyFn (production: the checker's own locked, policy-checked apply; tests:
+// a fake) so the gating logic is verifiable without ever reaching the
+// network. The granularity ceiling is evaluated by applyFn against the EXACT
+// release it resolves and is about to install — never against an earlier
+// cached status — closing the TOCTOU gap a stale check would otherwise leave:
+// a release published between two ticks, or even between an admin's last
+// banner load and this call, can never slip past the gate. Any gate failing,
+// or applyFn itself declining (already in progress, up to date, or the
+// resolved release fails the policy check), is a silent no-op — the next
+// tick tries again.
+func (s *Server) autoApply(ctx context.Context, applyFn func(context.Context, func(string) bool) (selfupdate.Result, error)) {
 	pol, err := s.store.SelfUpdatePolicy(ctx)
-	if err != nil {
+	if err != nil || !s.autoApplyEnabled(pol) {
 		return
 	}
-	st := s.update.status(ctx)
-	if !s.shouldAutoApply(pol, st) {
-		return
-	}
-	res, err := applyFn(ctx)
+	current := s.update.current
+	res, err := applyFn(ctx, func(latestTag string) bool {
+		return granularityAllows(pol.Granularity, version.Delta(current, latestTag))
+	})
 	if err != nil {
-		log.Printf("self-update: auto-apply failed: %v", err)
+		// ErrUpToDate, ErrPolicyRefused, "already in progress" and "disabled" are
+		// all expected "not now" outcomes on any given tick, not failures.
+		if !errors.Is(err, selfupdate.ErrUpToDate) && !errors.Is(err, selfupdate.ErrPolicyRefused) &&
+			!errors.Is(err, errUpdateInProgress) && !errors.Is(err, errSelfUpdateDisabled) {
+			log.Printf("self-update: auto-apply failed: %v", err)
+		}
 		return
 	}
 	_ = s.store.SetLastAutoUpdate(ctx, store.LastAutoUpdate{Version: res.To, AppliedAt: time.Now()})
@@ -61,18 +71,13 @@ func (s *Server) autoApply(ctx context.Context, applyFn func(context.Context) (s
 	go s.onRestart()
 }
 
-// shouldAutoApply is the pure decision behind autoApply: self-update must be
-// enabled, the process must be able to restart itself, an admin must have
-// opted into the policy, an update must actually be available, and its
-// version delta must fall within the configured granularity ceiling.
-func (s *Server) shouldAutoApply(pol store.SelfUpdatePolicy, st updateStatus) bool {
-	if !s.update.enabled || !s.update.selfUpdate || s.onRestart == nil {
-		return false
-	}
-	if !pol.Enabled || !st.UpdateAvailable {
-		return false
-	}
-	return granularityAllows(pol.Granularity, version.Delta(st.Current, st.Latest))
+// autoApplyEnabled is the pure, network-free half of the decision: self-update
+// must be enabled, the process must be able to restart itself, and an admin
+// must have opted into the policy. (Whether an update actually exists, and
+// whether its granularity is within the chosen ceiling, is checked later by
+// applyFn against the release it actually resolves — see autoApply's doc.)
+func (s *Server) autoApplyEnabled(pol store.SelfUpdatePolicy) bool {
+	return s.update.enabled && s.update.selfUpdate && s.onRestart != nil && pol.Enabled
 }
 
 // granularityAllows reports whether delta ("major"/"minor"/"patch") is within
