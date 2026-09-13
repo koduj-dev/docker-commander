@@ -206,6 +206,20 @@ func BuildDeployPreview(resolved, running []ServiceSpec) DeployPreview {
 // configured, image never pulled from a registry) just skips that service —
 // this only ever informs a preview, never blocks one.
 func (m *Manager) AugmentDigestDrift(ctx context.Context, hostID int64, prev *DeployPreview, containers []StackContainer) {
+	m.AugmentDigestDriftChecked(ctx, hostID, prev, containers)
+}
+
+// AugmentDigestDriftChecked does the same work as AugmentDigestDrift, and
+// additionally returns which services it positively confirmed to be
+// unchanged (both the registry and the running-container digest resolved,
+// and they matched). A service can be ABSENT from that set for two very
+// different reasons — no image, not currently running, already flagged by
+// BuildDeployPreview, or a registry/inspect lookup failure — and callers that
+// need to tell "confirmed unchanged" apart from "unknown" (e.g. to decide
+// whether it's safe to clear their own dedup state) must consult this
+// returned set rather than inferring it from the absence of a "digest"
+// change in prev.Changes.
+func (m *Manager) AugmentDigestDriftChecked(ctx context.Context, hostID int64, prev *DeployPreview, containers []StackContainer) map[string]bool {
 	containerByService := map[string]string{}
 	for _, c := range containers {
 		if c.Service != "" {
@@ -217,6 +231,7 @@ func (m *Manager) AugmentDigestDrift(ctx context.Context, hostID int64, prev *De
 		changed[ch.Service] = true
 	}
 
+	confirmedUnchanged := map[string]bool{}
 	for _, svc := range prev.Services {
 		if svc.Image == "" || changed[svc.Name] {
 			continue
@@ -230,7 +245,11 @@ func (m *Manager) AugmentDigestDrift(ctx context.Context, hostID int64, prev *De
 			continue
 		}
 		local, err := m.RunningImageDigest(ctx, hostID, cid, svc.Image)
-		if err != nil || local == "" || local == remote {
+		if err != nil || local == "" {
+			continue
+		}
+		if local == remote {
+			confirmedUnchanged[svc.Name] = true
 			continue
 		}
 		prev.Changes = append(prev.Changes, ServiceChange{
@@ -246,6 +265,7 @@ func (m *Manager) AugmentDigestDrift(ctx context.Context, hostID int64, prev *De
 		}
 		return prev.Changes[i].Service < prev.Changes[j].Service
 	})
+	return confirmedUnchanged
 }
 
 // ExtendServiceComparison adds env/port/volume/network/restart/resource/

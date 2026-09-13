@@ -1,6 +1,10 @@
 package monitor
 
 import (
+	"bytes"
+	"log"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -77,4 +81,51 @@ func TestNotifySystem_ReturnsErrorWhenInsertFails(t *testing.T) {
 	if err := m.NotifySystem(&store.AlertEvent{Type: "image_update", Severity: "info"}); err == nil {
 		t.Error("expected an error when the event can't be recorded, got nil")
 	}
+}
+
+// Before this fix, an InsertAlertEvent failure made NotifySystem return
+// immediately without ever attempting delivery — silently dropping a
+// critical, unsuppressed alert (e.g. "host is unreachable") on a transient DB
+// hiccup. Delivery must still be attempted so the primary message has a
+// chance to reach someone, even though bookkeeping (and thus dedup/retry
+// state keyed by ev.ID) didn't happen.
+func TestNotifySystem_StillAttemptsDeliveryWhenInsertFails(t *testing.T) {
+	m, st, _ := newMaintenanceMonitor(t)
+	_ = st.Close() // force InsertAlertEvent (and GetSMTP) to fail
+
+	var buf bytes.Buffer
+	var mu sync.Mutex
+	log.SetOutput(&syncWriter{mu: &mu, w: &buf})
+	t.Cleanup(func() { log.SetOutput(logDefaultOutput) })
+
+	if err := m.NotifySystem(&store.AlertEvent{Type: "image_update", Severity: "info"}); err == nil {
+		t.Fatal("expected an error when the event can't be recorded, got nil")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		mu.Lock()
+		got := buf.String()
+		mu.Unlock()
+		if strings.Contains(got, "monitor: smtp config:") {
+			return // attemptEmail ran despite the insert failure
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("delivery was never attempted after an insert failure; log output: %q", got)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+var logDefaultOutput = log.Writer()
+
+type syncWriter struct {
+	mu *sync.Mutex
+	w  *bytes.Buffer
+}
+
+func (s *syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
 }

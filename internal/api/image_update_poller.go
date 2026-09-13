@@ -61,7 +61,7 @@ func (s *Server) pollImageUpdates(ctx context.Context) {
 	}
 	for _, p := range projectsToPoll(projects, hosts) {
 		p := p
-		s.pollImageUpdatesForProject(ctx, &p, hostForProject(p.HostID, hosts), s.buildProjectImagePreview)
+		s.pollImageUpdatesForProject(ctx, &p, hostForProject(p.HostID, hosts), s.buildProjectImagePreviewChecked)
 	}
 }
 
@@ -100,8 +100,8 @@ func projectsToPoll(projects []store.Project, hosts []store.Host) []store.Projec
 // compose CLI/registry) and notifies about anything newly drifted. host may
 // be nil (host inventory couldn't resolve it, e.g. it was deleted between
 // listing and here) — the event still gets a sane "local"/id-0 fallback.
-func (s *Server) pollImageUpdatesForProject(ctx context.Context, p *store.Project, host *store.Host, buildPreview func(context.Context, *store.Project) (docker.DeployPreview, error)) {
-	prev, err := buildPreview(ctx, p)
+func (s *Server) pollImageUpdatesForProject(ctx context.Context, p *store.Project, host *store.Host, buildPreview func(context.Context, *store.Project) (docker.DeployPreview, map[string]bool, error)) {
+	prev, confirmedUnchanged, err := buildPreview(ctx, p)
 	if err != nil {
 		return
 	}
@@ -117,18 +117,18 @@ func (s *Server) pollImageUpdatesForProject(ctx context.Context, p *store.Projec
 			digestChanged[ch.Service] = true
 		}
 	}
-	// A currently-running service with no digest drift has resolved —
-	// redeployed, or the registry reverted to what's running — so clear any
-	// stale dedup state for it: otherwise a LATER drift back to that same
-	// old digest would be silently suppressed by state that describes a
-	// situation which no longer exists. Best-effort: AugmentDigestDrift
-	// can't be asked to distinguish "confirmed no drift" from "a registry
-	// or inspect call failed" from out here, so a transient blip can
-	// occasionally clear state that then causes one extra re-notification
-	// later — a real but minor cost, and safer than the alternative of
-	// never clearing stale state at all.
+	// A currently-running service positively confirmed unchanged (both the
+	// registry and the running-container digest resolved, and matched) has
+	// resolved — redeployed, or the registry reverted to what's running —
+	// so clear any stale dedup state for it: otherwise a LATER drift back to
+	// that same old digest would be silently suppressed by state that
+	// describes a situation which no longer exists. A service that is
+	// merely ABSENT from digestChanged but NOT in confirmedUnchanged (a
+	// registry timeout, auth failure, or inspect error) is left alone —
+	// clearing it there would let a still-unresolved, already-notified
+	// drift renotify on every registry hiccup.
 	for _, svc := range prev.Running {
-		if digestChanged[svc.Name] {
+		if digestChanged[svc.Name] || !confirmedUnchanged[svc.Name] {
 			continue
 		}
 		if _, ok := lastNotified[svc.Name]; ok {
@@ -154,21 +154,26 @@ func (s *Server) pollImageUpdatesForProject(ctx context.Context, p *store.Projec
 	}
 }
 
-// buildProjectImagePreview resolves one project's deploy preview — compose
-// vs. running services, with registry digest drift merged in — the same
-// computation the on-demand deploy preview performs (see
+// buildProjectImagePreviewChecked resolves one project's deploy preview —
+// compose vs. running services, with registry digest drift merged in — the
+// same computation the on-demand deploy preview performs (see
 // internal/api/mcp_projects.go's mcpPreviewProject), just callable on a
-// schedule instead of only when a human opens it. Resolved with every
-// declared Compose profile enabled (not just the default set), so a service
-// gated behind `profiles:` is still checked — the same fix domain-mapping
-// validation needed for the same underlying reason (a plain `compose
-// config` silently omits profile-gated services) — and against the
-// project's own recorded compose filename, not compose's default-name
-// auto-discovery, which a non-default filename would silently miss.
-func (s *Server) buildProjectImagePreview(ctx context.Context, p *store.Project) (docker.DeployPreview, error) {
+// schedule instead of only when a human opens it, and additionally
+// returning which services AugmentDigestDriftChecked positively confirmed
+// unchanged (see its doc comment — the poller's dedup-state clearing needs
+// this to avoid treating a failed registry/inspect lookup the same as a
+// confirmed resolve). Resolved with every declared Compose profile enabled
+// (not just the default set), so a service gated behind `profiles:` is still
+// checked — the same fix domain-mapping validation needed for the same
+// underlying reason (a plain `compose config` silently omits profile-gated
+// services) — and against the project's own recorded compose filename for
+// BOTH the profile list and the config itself, not compose's default-name
+// auto-discovery, which a non-default filename would either fail outright or
+// silently resolve profiles from the wrong file.
+func (s *Server) buildProjectImagePreviewChecked(ctx context.Context, p *store.Project) (docker.DeployPreview, map[string]bool, error) {
 	stacks, err := s.docker.ListStacks(ctx, p.HostID)
 	if err != nil {
-		return docker.DeployPreview{}, err
+		return docker.DeployPreview{}, nil, err
 	}
 	var stack *docker.Stack
 	for i := range stacks {
@@ -178,7 +183,7 @@ func (s *Server) buildProjectImagePreview(ctx context.Context, p *store.Project)
 		}
 	}
 	if stack == nil {
-		return docker.DeployPreview{}, errProjectNotDeployed
+		return docker.DeployPreview{}, nil, errProjectNotDeployed
 	}
 	running := make([]docker.StackContainer, 0, len(stack.Containers))
 	for _, c := range stack.Containers {
@@ -187,32 +192,32 @@ func (s *Server) buildProjectImagePreview(ctx context.Context, p *store.Project)
 		}
 	}
 	if len(running) == 0 {
-		return docker.DeployPreview{}, errProjectNotDeployed
+		return docker.DeployPreview{}, nil, errProjectNotDeployed
 	}
 
 	dir := s.projectRoot(p.ID)
 	_, masked, _, serr := s.projectSecretEnvs(ctx, p.ID)
 	if serr != nil {
-		return docker.DeployPreview{}, serr
+		return docker.DeployPreview{}, nil, serr
 	}
 	files := []string{p.ComposeFile}
-	profiles, perr := docker.ComposeProfilesEnv(ctx, dir, p.Slug, masked)
+	profiles, perr := docker.ComposeProfilesEnvFiles(ctx, dir, p.Slug, masked, files)
 	if perr != nil {
 		profiles = nil // best-effort: fall back to the default-profile set rather than failing the whole project
 	}
 	cfgJSON, err := docker.ComposeConfigJSONFiles(ctx, dir, p.Slug, profiles, masked, files)
 	if err != nil {
-		return docker.DeployPreview{}, err
+		return docker.DeployPreview{}, nil, err
 	}
 	resolved, err := docker.ParseComposeServices(cfgJSON)
 	if err != nil {
-		return docker.DeployPreview{}, err
+		return docker.DeployPreview{}, nil, err
 	}
 
 	runningServices := docker.RunningServices(&docker.Stack{Project: stack.Project, Containers: running})
 	prev := docker.BuildDeployPreview(resolved, runningServices)
-	s.docker.AugmentDigestDrift(ctx, p.HostID, &prev, running)
-	return prev, nil
+	confirmedUnchanged := s.docker.AugmentDigestDriftChecked(ctx, p.HostID, &prev, running)
+	return prev, confirmedUnchanged, nil
 }
 
 // imageUpdatesToNotify filters a deploy preview's changes down to genuinely

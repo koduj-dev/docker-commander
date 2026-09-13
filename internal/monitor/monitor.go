@@ -1026,19 +1026,19 @@ func (m *Monitor) NotifySystem(ev *store.AlertEvent) error {
 		ev.Suppressed = true
 		ev.SuppressedBy = win.ID
 	}
-	id, err := m.store.InsertAlertEvent(wctx, ev)
-	if err != nil {
-		log.Printf("monitor: insert system alert event: %v", err)
-		return err
+	id, insertErr := m.store.InsertAlertEvent(wctx, ev)
+	if insertErr != nil {
+		log.Printf("monitor: insert system alert event: %v", insertErr)
+	} else {
+		ev.ID = id
 	}
-	ev.ID = id
-	if ev.Suppressed {
-		return nil
+	if !ev.Suppressed {
+		// A system event isn't tied to a rule, so it uses the host/instance
+		// recipients. Still attempted even if persistence failed, so a
+		// transient DB error can't silently swallow a critical alert.
+		m.emailNotify(ev, nil)
 	}
-	// A system event isn't tied to a rule, so it uses the host/instance
-	// recipients.
-	m.emailNotify(ev, nil)
-	return nil
+	return insertErr
 }
 
 // HostHealth returns a snapshot of every tracked host's reachability, keyed by

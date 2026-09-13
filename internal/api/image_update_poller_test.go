@@ -135,8 +135,18 @@ func newImageUpdateTestServer(t *testing.T) (*Server, *store.Store) {
 	return &Server{store: st, monitor: monitor.New(st, nil, nil)}, st
 }
 
-func fakeBuildPreview(prev docker.DeployPreview, err error) func(context.Context, *store.Project) (docker.DeployPreview, error) {
-	return func(context.Context, *store.Project) (docker.DeployPreview, error) { return prev, err }
+func fakeBuildPreview(prev docker.DeployPreview, err error) func(context.Context, *store.Project) (docker.DeployPreview, map[string]bool, error) {
+	return fakeBuildPreviewChecked(prev, nil, err)
+}
+
+// fakeBuildPreviewChecked lets a test control exactly which services were
+// "confirmed unchanged" by the digest check, independent of what's in
+// prev.Changes — needed to simulate a registry/inspect lookup failure (a
+// service that is neither digest-changed nor confirmed unchanged).
+func fakeBuildPreviewChecked(prev docker.DeployPreview, confirmedUnchanged map[string]bool, err error) func(context.Context, *store.Project) (docker.DeployPreview, map[string]bool, error) {
+	return func(context.Context, *store.Project) (docker.DeployPreview, map[string]bool, error) {
+		return prev, confirmedUnchanged, err
+	}
 }
 
 func TestPollImageUpdatesForProject_NotifiesAndPersistsOnFirstDrift(t *testing.T) {
@@ -190,11 +200,13 @@ func TestPollImageUpdatesForProject_ResolvedDriftClearsStateForFutureRenotify(t 
 		Changes: []docker.ServiceChange{{Service: "web", Kind: "digest", To: "sha256:B"}},
 	}, nil))
 
-	// Tick 2: redeployed to B, so no more drift — must clear the dedup row.
-	srv.pollImageUpdatesForProject(ctx, p, nil, fakeBuildPreview(docker.DeployPreview{
+	// Tick 2: redeployed to B, so no more drift, AND positively confirmed
+	// unchanged (registry + running digest both resolved and matched) —
+	// must clear the dedup row.
+	srv.pollImageUpdatesForProject(ctx, p, nil, fakeBuildPreviewChecked(docker.DeployPreview{
 		Running: []docker.ServiceSpec{{Name: "web", Image: "app:1"}},
 		Changes: nil,
-	}, nil))
+	}, map[string]bool{"web": true}, nil))
 	// Cleared means "no longer equal to any real digest a future drift could
 	// report" — an empty stored value satisfies that (imageUpdatesToNotify
 	// only ever suppresses an exact match, and a real digest is never "").
@@ -213,6 +225,49 @@ func TestPollImageUpdatesForProject_ResolvedDriftClearsStateForFutureRenotify(t 
 	events, _, err := st.ListAlertEvents(ctx, store.AlertQuery{})
 	if err != nil || len(events) != 2 {
 		t.Fatalf("expected 2 notifications (tick 1 and tick 3), got %d (err %v)", len(events), err)
+	}
+}
+
+// A registry/inspect lookup failure for a service must NOT be treated as
+// "confirmed unchanged": the digest check for a service can fail (registry
+// timeout, auth error, docker inspect error) without producing a "digest"
+// change, which used to be indistinguishable out here from a genuine
+// resolve — and used to wrongly clear that service's dedup row, causing the
+// SAME already-notified drift to renotify once the registry recovered.
+func TestPollImageUpdatesForProject_UnconfirmedLookupDoesNotClearDedupState(t *testing.T) {
+	srv, st := newImageUpdateTestServer(t)
+	p := &store.Project{ID: 1, Name: "shop", Slug: "shop"}
+	ctx := context.Background()
+
+	// Tick 1: drift to B, notified.
+	srv.pollImageUpdatesForProject(ctx, p, nil, fakeBuildPreview(docker.DeployPreview{
+		Running: []docker.ServiceSpec{{Name: "web", Image: "app:1"}},
+		Changes: []docker.ServiceChange{{Service: "web", Kind: "digest", To: "sha256:B"}},
+	}, nil))
+
+	// Tick 2: the registry/inspect lookup failed this time — no digest
+	// change reported, AND not in the confirmed-unchanged set. Must NOT
+	// clear the dedup row.
+	srv.pollImageUpdatesForProject(ctx, p, nil, fakeBuildPreviewChecked(docker.DeployPreview{
+		Running: []docker.ServiceSpec{{Name: "web", Image: "app:1"}},
+		Changes: nil,
+	}, map[string]bool{}, nil))
+
+	digests, _ := st.LastNotifiedImageDigests(ctx, p.ID)
+	if digests["web"] != "sha256:B" {
+		t.Fatalf("dedup state must survive an unconfirmed lookup, got %+v", digests)
+	}
+
+	// Tick 3: the same still-unresolved drift is seen again — must NOT
+	// renotify, since it was never actually confirmed resolved.
+	srv.pollImageUpdatesForProject(ctx, p, nil, fakeBuildPreview(docker.DeployPreview{
+		Running: []docker.ServiceSpec{{Name: "web", Image: "app:1"}},
+		Changes: []docker.ServiceChange{{Service: "web", Kind: "digest", To: "sha256:B"}},
+	}, nil))
+
+	events, _, err := st.ListAlertEvents(ctx, store.AlertQuery{})
+	if err != nil || len(events) != 1 {
+		t.Fatalf("expected exactly one notification across all three ticks, got %d (err %v)", len(events), err)
 	}
 }
 
@@ -247,10 +302,10 @@ func TestPollImageUpdatesForProject_NotifyFailureDoesNotPersistDedupState(t *tes
 	}
 }
 
-// buildProjectImagePreview needs a real Docker daemon + compose CLI (see
-// docker.ComposeAvailable), same gating other compose-integration tests in
-// this package already use.
-func TestBuildProjectImagePreview_NoStackReturnsNotDeployed(t *testing.T) {
+// buildProjectImagePreviewChecked needs a real Docker daemon + compose CLI
+// (see docker.ComposeAvailable), same gating other compose-integration tests
+// in this package already use.
+func TestBuildProjectImagePreviewChecked_NoStackReturnsNotDeployed(t *testing.T) {
 	if testing.Short() {
 		t.Skip("needs the docker compose CLI; skipped under -short")
 	}
@@ -263,7 +318,7 @@ func TestBuildProjectImagePreview_NoStackReturnsNotDeployed(t *testing.T) {
 	}
 	srv.docker = docker.NewManager(srv.store)
 	p := &store.Project{ID: 1, Name: "shop", Slug: "dctest-no-such-project", HostID: 0}
-	if _, err := srv.buildProjectImagePreview(context.Background(), p); !errors.Is(err, errProjectNotDeployed) {
+	if _, _, err := srv.buildProjectImagePreviewChecked(context.Background(), p); !errors.Is(err, errProjectNotDeployed) {
 		t.Errorf("expected errProjectNotDeployed for a project with no running stack, got %v", err)
 	}
 }
