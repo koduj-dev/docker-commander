@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/koduj-dev/docker-commander/internal/store"
 )
 
 func TestApplyErrorMessage_ReadOnlyFilesystemGetsGuidance(t *testing.T) {
@@ -105,10 +107,16 @@ func TestHandleApplyDisabled(t *testing.T) {
 // allowed AND a restart hook is wired. The cache is pre-seeded so status()
 // returns without an outbound GitHub call.
 func TestStatusSelfUpdateFlag(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+
 	seed := func(enabled, selfUpd, hook bool) updateStatus {
 		u := newUpdateChecker("1.0.0", enabled, selfUpd)
 		u.ok, u.at, u.cached = true, time.Now(), updateStatus{Current: "1.0.0"}
-		srv := &Server{update: u}
+		srv := &Server{update: u, store: st}
 		if hook {
 			srv.OnRestart(func() {})
 		}

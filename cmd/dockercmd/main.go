@@ -540,6 +540,9 @@ func runServer(shutdownCtx context.Context) error {
 		})
 	}
 
+	// Apply a newer release automatically once an admin opts in (off by default).
+	go srv.StartSelfUpdatePolicyLoop(shutdownCtx)
+
 	httpServer := newHTTPServer(cfg.Addr, srv.Handler())
 	tlsEnabled := cfg.TLSEnabled()
 	acmeMode := len(cfg.ACMEDomains) > 0

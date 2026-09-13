@@ -7,6 +7,20 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Self-update auto-apply policy.** Self-update already shipped (banner +
+  one-tap + `--self-upgrade`, SHA-256-verified atomic replace) — this adds an
+  opt-in to apply a newer release automatically, on the same 6-hour cadence
+  as the existing update check, instead of waiting for an admin to click
+  **Update & restart**. Off by default; when enabled, a granularity choice
+  (patch only, patch+minor, or everything including major) caps how far it's
+  allowed to jump — the WordPress-style default once enabled is patch+minor,
+  not "auto-apply everything". Serialises against a concurrent manual apply
+  through the same lock the one-tap button already uses, so the two can
+  never race. Every automatic apply is recorded in the audit log (as
+  `update.apply`, same as a manual one, with the detail noting it was
+  automatic and which policy triggered it), and every admin sees a one-time
+  "you're now on vX.Y.Z — applied automatically" notice at next login until
+  they dismiss it. Configurable from **Settings → Security**.
 - **Project secrets.** A GitHub-Actions-secrets-style store for a project: name
   a value once (`DB_PASSWORD`, `API_TOKEN`…) and reference it from the compose
   file with plain `${NAME}` interpolation instead of inlining it. The value is

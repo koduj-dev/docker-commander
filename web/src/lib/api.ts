@@ -7,6 +7,7 @@ import type {
   AlertRule,
   AppSettings,
   UpdateStatus,
+  SelfUpdatePolicy,
   ComposeModel,
   AuditEntry,
   DiagnosticsReport,
@@ -837,6 +838,7 @@ export const api = {
   updateStatus: () => req<UpdateStatus>("GET", "/api/update"), // admin-only
   applyUpdate: () => req<{ from: string; to: string; restartRequired: boolean }>("POST", "/api/update"), // admin-only
   restartServer: () => req<{ restarting: boolean }>("POST", "/api/update/restart"), // admin-only
+  setSelfUpdatePolicy: (p: SelfUpdatePolicy) => req<SelfUpdatePolicy>("PUT", "/api/update/policy", p), // admin-only
   prefs: () => req<Record<string, unknown>>("GET", "/api/prefs"),
   savePrefs: (obj: Record<string, unknown>) => req<{ ok: boolean }>("PUT", "/api/prefs", obj),
   system: () => req<SystemInfo>("GET", `/api/system${hostParam()}`),
