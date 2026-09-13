@@ -8,6 +8,7 @@ import { PageHeader } from "../layout/Shell";
 import { Spinner } from "../components/ui";
 import { Tabs } from "../components/Tabs";
 import { TokenPolicyEditor } from "../components/TokenPolicyEditor";
+import { SelfUpdatePolicyEditor } from "../components/SelfUpdatePolicyEditor";
 import { EmailConfig } from "../components/EmailConfig";
 
 type Tab = "features" | "security" | "ldap" | "email";
@@ -122,6 +123,7 @@ export function Settings() {
                 MCP admin page stays the operational view — who holds a token,
                 and revoking it. */}
             <TokenPolicyEditor />
+            <SelfUpdatePolicyEditor />
           </div>
         )}
 

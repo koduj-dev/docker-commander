@@ -26,3 +26,24 @@ func TestLess(t *testing.T) {
 		}
 	}
 }
+
+func TestDelta(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want string
+	}{
+		{"1.2.3", "2.0.0", "major"},
+		{"1.2.3", "1.3.0", "minor"},
+		{"1.2.3", "1.2.4", "patch"},
+		{"1.2.3", "1.2.3", ""},        // equal
+		{"1.3.0", "1.2.9", ""},        // b older than a
+		{"dev", "1.3.0", ""},          // unparseable a
+		{"1.3.0", "weird", ""},        // unparseable b
+		{"v1.2.3", "v2.0.0", "major"}, // leading v on both sides
+	}
+	for _, c := range cases {
+		if got := Delta(c.a, c.b); got != c.want {
+			t.Errorf("Delta(%q, %q) = %q, want %q", c.a, c.b, got, c.want)
+		}
+	}
+}

@@ -58,6 +58,34 @@ ceiling is lowered to it, and clearing the ceiling while never-expiring tokens a
 off puts the 365-day one back. The page shows what is actually in force after
 saving, not what was typed.
 
+## Security — self-update auto-apply
+
+Self-update itself (see [Deployment](deployment.md#self-update)) already lets
+an admin apply a new release by hand from the update banner. This setting
+lets it happen automatically instead:
+
+- **Off by default.** Nothing changes until an admin opts in.
+- **Granularity** caps how far an automatic apply is allowed to jump: **patch
+  only**, **patch & minor** (the sensible default once enabled — a
+  WordPress-style choice, not "auto-apply everything"), or **everything,
+  including major**. It's a ceiling, not an exact match — "patch & minor"
+  also lets a patch release through.
+
+It checks on the same cadence as the manual update banner, downloads and
+verifies the release the same way the one-tap **Update & restart** button
+does, and never runs at the same time as a manual apply. The granularity
+ceiling is enforced against the exact release resolved at the moment of
+install, never an earlier cached check, so it can't be bypassed by a release
+that ships between two checks. Every automatic apply is recorded in the
+audit log, and every admin sees a one-time "you're now on vX.Y.Z — applied
+automatically" notice at their next login, until they dismiss it.
+
+The control is disabled, with an explanation, when auto-apply could never
+actually run: the update check itself is off (`DC_UPDATE_CHECK=0`), or
+self-update is unavailable (`DC_SELF_UPDATE=0`, or a platform that can't
+restart itself in place, e.g. Windows) — the same capability the one-tap
+button already keys off, so a saved policy is never silently dormant.
+
 ## LDAP / Active Directory
 
 ![Settings → LDAP](images/settings_ldap.png)

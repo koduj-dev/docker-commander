@@ -377,6 +377,16 @@ rather require `sudo dockercmd --self-upgrade` outside the service instead.
 Disable web-triggered updates with `DC_SELF_UPDATE=0` (the banner still
 shows). Not offered on Windows — restart the service manually after updating.
 
+**Auto-apply policy.** An admin can opt into applying updates automatically
+instead of clicking **Update & restart** by hand, from **Settings →
+Security**. Off by default; when enabled, a granularity choice caps how far
+it's allowed to jump — patch only, patch+minor (the default once enabled),
+or everything including major. It checks on the same 6-hour cadence as the
+update banner, applies the same verified download-and-swap as the one-tap
+button, and never runs concurrently with a manual apply. Every automatic
+apply is audited (`update.apply`, noted as automatic) and every admin sees a
+one-time "you're now on vX.Y.Z" notice at next login.
+
 **From the CLI** (equivalent, for scripted or headless upgrades):
 
 ```bash
