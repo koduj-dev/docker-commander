@@ -15,10 +15,12 @@ import (
 func TestNotifySystem_RecordsAnUnsuppressedEvent(t *testing.T) {
 	m, st, ctx := newMaintenanceMonitor(t)
 
-	m.NotifySystem(&store.AlertEvent{
+	if err := m.NotifySystem(&store.AlertEvent{
 		Type: "image_update", Severity: "info", HostID: 1, HostName: "host1",
 		Project: "shop", ContainerName: "web", Message: "a newer image is available",
-	})
+	}); err != nil {
+		t.Fatalf("NotifySystem: %v", err)
+	}
 
 	events, _, err := st.ListAlertEvents(ctx, store.AlertQuery{})
 	if err != nil || len(events) != 1 {
@@ -48,10 +50,12 @@ func TestNotifySystem_SuppressedByProjectScopedMaintenanceWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m.NotifySystem(&store.AlertEvent{
+	if err := m.NotifySystem(&store.AlertEvent{
 		Type: "image_update", Severity: "info", HostID: hostID,
 		Project: "shop", ContainerName: "web", Message: "a newer image is available",
-	})
+	}); err != nil {
+		t.Fatalf("NotifySystem: %v", err)
+	}
 
 	events, _, err := st.ListAlertEvents(ctx, store.AlertQuery{})
 	if err != nil || len(events) != 1 {
@@ -59,5 +63,18 @@ func TestNotifySystem_SuppressedByProjectScopedMaintenanceWindow(t *testing.T) {
 	}
 	if !events[0].Suppressed {
 		t.Errorf("event should be suppressed by the project-scoped window: %+v", events[0])
+	}
+}
+
+// A caller (e.g. the image-update poller) keys its own idempotency state off
+// whether NotifySystem succeeded — it must return a non-nil error when the
+// event was never actually recorded, so that state is never advanced for a
+// notification nobody will ever see in the feed.
+func TestNotifySystem_ReturnsErrorWhenInsertFails(t *testing.T) {
+	m, st, _ := newMaintenanceMonitor(t)
+	_ = st.Close() // force InsertAlertEvent to fail
+
+	if err := m.NotifySystem(&store.AlertEvent{Type: "image_update", Severity: "info"}); err == nil {
+		t.Error("expected an error when the event can't be recorded, got nil")
 	}
 }

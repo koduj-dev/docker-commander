@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -13,6 +14,11 @@ import (
 // there's no particular reason to check a registry for image drift on a
 // different cadence than DC already checks GitHub for its own updates.
 const imageUpdatePollInterval = 6 * time.Hour
+
+// errProjectNotDeployed means the project has no running containers to check
+// — a normal, frequent case (never deployed, or currently down), not a
+// failure worth logging.
+var errProjectNotDeployed = errors.New("project is not currently deployed")
 
 // StartImageUpdatePollLoop periodically checks every project's running
 // services for a newer image at the registry (see NEXT.md's "Controlled
@@ -34,8 +40,8 @@ func (s *Server) StartImageUpdatePollLoop(ctx context.Context) {
 	}
 }
 
-// pollImageUpdates checks every project. Best-effort throughout: one
-// project's failure (compose file broken, host unreachable, registry
+// pollImageUpdates checks every eligible project. Best-effort per project
+// from here on: one project's failure (compose file broken, registry
 // timeout) must never stop the rest from being checked.
 func (s *Server) pollImageUpdates(ctx context.Context) {
 	if !docker.ComposeAvailable(ctx) {
@@ -45,28 +51,124 @@ func (s *Server) pollImageUpdates(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	hosts, _ := s.store.ListHosts(ctx)
-	hostByID := make(map[int64]*store.Host, len(hosts))
-	for i := range hosts {
-		hostByID[hosts[i].ID] = &hosts[i]
+	hosts, err := s.store.ListHosts(ctx)
+	if err != nil {
+		// An unusable host inventory means neither "is this host disabled"
+		// nor "what's its name" can be answered correctly — proceeding
+		// would poll projects on a disabled host and mislabel their host
+		// name, so skip this entire tick rather than guess.
+		return
 	}
-	for i := range projects {
-		p := &projects[i]
-		if h := hostByID[p.HostID]; h != nil && h.Disabled {
-			continue
-		}
-		s.pollImageUpdatesForProject(ctx, p, hostByID[p.HostID])
+	for _, p := range projectsToPoll(projects, hosts) {
+		p := p
+		s.pollImageUpdatesForProject(ctx, &p, hostForProject(p.HostID, hosts), s.buildProjectImagePreview)
 	}
 }
 
-// pollImageUpdatesForProject checks one project's running services against
-// their compose-declared image, resolving each running service's registry
-// digest exactly like the deploy preview does — the difference is this runs
-// on a schedule for every project, not only when a human opens the preview.
-func (s *Server) pollImageUpdatesForProject(ctx context.Context, p *store.Project, host *store.Host) {
-	stacks, err := s.docker.ListStacks(ctx, p.HostID)
+// hostForProject resolves a project's target host. A project's own HostID
+// convention uses 0 to mean "the local daemon," but store.ListHosts never
+// returns a row with id 0 — the local host has a real row (from
+// EnsureLocalHost) with a real, non-zero, auto-incremented id. So 0 is
+// treated as an alias for whichever host has Kind=="local", the same
+// resolution the rest of the store already relies on elsewhere.
+func hostForProject(hostID int64, hosts []store.Host) *store.Host {
+	for i := range hosts {
+		if hosts[i].ID == hostID || (hostID == 0 && hosts[i].Kind == "local") {
+			return &hosts[i]
+		}
+	}
+	return nil
+}
+
+// projectsToPoll drops any project whose target host is explicitly
+// disabled — mirroring monitoredHosts' own "skip disabled hosts" rule in
+// internal/monitor, via hostForProject's 0-is-local alias so a disabled
+// LOCAL host is caught too, not just a disabled remote one.
+func projectsToPoll(projects []store.Project, hosts []store.Host) []store.Project {
+	out := make([]store.Project, 0, len(projects))
+	for _, p := range projects {
+		if h := hostForProject(p.HostID, hosts); h != nil && h.Disabled {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// pollImageUpdatesForProject runs one project's digest-drift check (via
+// buildPreview, injected so this orchestration is testable without a live
+// compose CLI/registry) and notifies about anything newly drifted. host may
+// be nil (host inventory couldn't resolve it, e.g. it was deleted between
+// listing and here) — the event still gets a sane "local"/id-0 fallback.
+func (s *Server) pollImageUpdatesForProject(ctx context.Context, p *store.Project, host *store.Host, buildPreview func(context.Context, *store.Project) (docker.DeployPreview, error)) {
+	prev, err := buildPreview(ctx, p)
 	if err != nil {
 		return
+	}
+
+	lastNotified, err := s.store.LastNotifiedImageDigests(ctx, p.ID)
+	if err != nil {
+		lastNotified = map[string]string{}
+	}
+
+	digestChanged := make(map[string]bool, len(prev.Changes))
+	for _, ch := range prev.Changes {
+		if ch.Kind == "digest" {
+			digestChanged[ch.Service] = true
+		}
+	}
+	// A currently-running service with no digest drift has resolved —
+	// redeployed, or the registry reverted to what's running — so clear any
+	// stale dedup state for it: otherwise a LATER drift back to that same
+	// old digest would be silently suppressed by state that describes a
+	// situation which no longer exists. Best-effort: AugmentDigestDrift
+	// can't be asked to distinguish "confirmed no drift" from "a registry
+	// or inspect call failed" from out here, so a transient blip can
+	// occasionally clear state that then causes one extra re-notification
+	// later — a real but minor cost, and safer than the alternative of
+	// never clearing stale state at all.
+	for _, svc := range prev.Running {
+		if digestChanged[svc.Name] {
+			continue
+		}
+		if _, ok := lastNotified[svc.Name]; ok {
+			_ = s.store.SetLastNotifiedImageDigest(ctx, p.ID, svc.Name, "")
+		}
+	}
+
+	hostName, alertHostID := "local", p.HostID
+	if host != nil {
+		hostName, alertHostID = host.Name, host.ID
+	}
+	for _, ch := range imageUpdatesToNotify(prev.Changes, lastNotified) {
+		ev := &store.AlertEvent{
+			RuleName: "Image update", Type: "image_update", Severity: "info",
+			HostID: alertHostID, HostName: hostName,
+			Project: p.Slug, ContainerName: ch.Service,
+			Message: fmt.Sprintf("A newer image is available for service %q in project %q: %s", ch.Service, p.Name, ch.Detail),
+		}
+		if err := s.monitor.NotifySystem(ev); err != nil {
+			continue // never recorded — don't mark this digest as notified
+		}
+		_ = s.store.SetLastNotifiedImageDigest(ctx, p.ID, ch.Service, ch.To)
+	}
+}
+
+// buildProjectImagePreview resolves one project's deploy preview — compose
+// vs. running services, with registry digest drift merged in — the same
+// computation the on-demand deploy preview performs (see
+// internal/api/mcp_projects.go's mcpPreviewProject), just callable on a
+// schedule instead of only when a human opens it. Resolved with every
+// declared Compose profile enabled (not just the default set), so a service
+// gated behind `profiles:` is still checked — the same fix domain-mapping
+// validation needed for the same underlying reason (a plain `compose
+// config` silently omits profile-gated services) — and against the
+// project's own recorded compose filename, not compose's default-name
+// auto-discovery, which a non-default filename would silently miss.
+func (s *Server) buildProjectImagePreview(ctx context.Context, p *store.Project) (docker.DeployPreview, error) {
+	stacks, err := s.docker.ListStacks(ctx, p.HostID)
+	if err != nil {
+		return docker.DeployPreview{}, err
 	}
 	var stack *docker.Stack
 	for i := range stacks {
@@ -75,54 +177,52 @@ func (s *Server) pollImageUpdatesForProject(ctx context.Context, p *store.Projec
 			break
 		}
 	}
-	if stack == nil || len(stack.Containers) == 0 {
-		return // not currently deployed — nothing running to check
+	if stack == nil {
+		return docker.DeployPreview{}, errProjectNotDeployed
+	}
+	running := make([]docker.StackContainer, 0, len(stack.Containers))
+	for _, c := range stack.Containers {
+		if c.State == "running" {
+			running = append(running, c)
+		}
+	}
+	if len(running) == 0 {
+		return docker.DeployPreview{}, errProjectNotDeployed
 	}
 
 	dir := s.projectRoot(p.ID)
 	_, masked, _, serr := s.projectSecretEnvs(ctx, p.ID)
 	if serr != nil {
-		return
+		return docker.DeployPreview{}, serr
 	}
-	cfgJSON, err := docker.ComposeConfigJSONFiles(ctx, dir, p.Slug, nil, masked, nil)
+	files := []string{p.ComposeFile}
+	profiles, perr := docker.ComposeProfilesEnv(ctx, dir, p.Slug, masked)
+	if perr != nil {
+		profiles = nil // best-effort: fall back to the default-profile set rather than failing the whole project
+	}
+	cfgJSON, err := docker.ComposeConfigJSONFiles(ctx, dir, p.Slug, profiles, masked, files)
 	if err != nil {
-		return
+		return docker.DeployPreview{}, err
 	}
 	resolved, err := docker.ParseComposeServices(cfgJSON)
 	if err != nil {
-		return
+		return docker.DeployPreview{}, err
 	}
 
-	running := docker.RunningServices(stack)
-	prev := docker.BuildDeployPreview(resolved, running)
-	s.docker.AugmentDigestDrift(ctx, p.HostID, &prev, stack.Containers)
-
-	lastNotified, err := s.store.LastNotifiedImageDigests(ctx, p.ID)
-	if err != nil {
-		lastNotified = map[string]string{}
-	}
-
-	hostName := "local"
-	if host != nil {
-		hostName = host.Name
-	}
-	for _, ch := range imageUpdatesToNotify(prev.Changes, lastNotified) {
-		s.monitor.NotifySystem(&store.AlertEvent{
-			Type: "image_update", Severity: "info",
-			HostID: p.HostID, HostName: hostName,
-			Project: p.Slug, ContainerName: ch.Service,
-			Message: fmt.Sprintf("A newer image is available for service %q in project %q: %s", ch.Service, p.Name, ch.Detail),
-		})
-		_ = s.store.SetLastNotifiedImageDigest(ctx, p.ID, ch.Service, ch.To)
-	}
+	runningServices := docker.RunningServices(&docker.Stack{Project: stack.Project, Containers: running})
+	prev := docker.BuildDeployPreview(resolved, runningServices)
+	s.docker.AugmentDigestDrift(ctx, p.HostID, &prev, running)
+	return prev, nil
 }
 
 // imageUpdatesToNotify filters a deploy preview's changes down to genuinely
 // NEW digest drift — a "digest" change whose target differs from what was
 // last notified for that service. This is what makes polling idempotent: a
 // still-unresolved drift found again on the next tick is not renotified, but
-// a digest that moves again (or reverts to what's running, clearing the
-// entry implicitly since a future different value differs again) is.
+// a digest that moves again is (and pollImageUpdatesForProject's own
+// stale-state clearing above is what makes a REVERTED-then-repeated drift
+// notify again too, since this function alone only ever compares against
+// whatever is currently stored).
 func imageUpdatesToNotify(changes []docker.ServiceChange, lastNotified map[string]string) []docker.ServiceChange {
 	var out []docker.ServiceChange
 	for _, ch := range changes {
