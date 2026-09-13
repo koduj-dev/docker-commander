@@ -89,7 +89,11 @@ All notable changes to Docker Commander are documented here. The format follows
   skipped with a warning, exactly like alert rules' existing export/import.
   Instance-wide settings only apply when explicitly opted into
   (`applySettings=true`) — a restore onto a live instance never silently
-  repoints its mail relay or feature flags. Admin-only.
+  repoints its mail relay or feature flags. A project's own secrets travel
+  the same way: names are always carried (harmless metadata), values only
+  when the export included secrets, and import restores them before
+  validating the project so a required `${NAME:?...}` interpolation doesn't
+  reject it. Admin-only.
 - **Deployment plan / diff.** Before deploying a project, **Preview** shows
   exactly what would change: services added / recreated / left running as
   orphans, image and registry-digest changes (catches a mutable tag like
