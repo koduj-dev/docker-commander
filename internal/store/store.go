@@ -615,6 +615,28 @@ CREATE TABLE IF NOT EXISTS project_secrets (
 	UNIQUE (project_id, name)
 );
 CREATE INDEX IF NOT EXISTS idx_project_secrets_project ON project_secrets(project_id);
+
+-- A domain a human wants the (optional, not-yet-built) embedded reverse
+-- proxy to route to one service+port inside this project — see NEXT.md's
+-- "Per-container domain + TLS". This table stores intent only: nothing
+-- listens on the domain until the proxy engine itself ships. The domain
+-- column is UNIQUE across ALL projects, not just within one — two projects
+-- fighting over the same public hostname is a conflict the proxy could not
+-- resolve either, so it's rejected here at write time instead. No declared
+-- FK, matching this schema's existing convention — DeleteProject removes
+-- matching rows itself (see deleteDomainMappings).
+CREATE TABLE IF NOT EXISTS domain_mappings (
+	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	project_id  INTEGER NOT NULL,
+	domain      TEXT NOT NULL UNIQUE,
+	service     TEXT NOT NULL,
+	target_port INTEGER NOT NULL,
+	tls_mode    TEXT NOT NULL DEFAULT 'acme',
+	created_by  TEXT NOT NULL DEFAULT '',
+	created_at  TEXT NOT NULL,
+	updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_domain_mappings_project ON domain_mappings(project_id);
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
