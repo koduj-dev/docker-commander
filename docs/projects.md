@@ -198,6 +198,28 @@ RBAC follows the project's own "projects" section grants: a read grant can
 list a project's secret names, a write grant is required to add, replace or
 delete one — there is no separate secrets-specific permission.
 
+## Domains
+
+**Not yet a live feature.** The "Domains" panel (the globe icon on a
+project's card) records that a domain should route to one of the project's
+services — `app.example.com` → service `web`, port `8080` — for an embedded
+reverse proxy planned in a future release. Right now this only stores that
+intent: nothing listens on the domain, and saving a mapping has no effect on
+traffic. It exists so the config can be prepared ahead of the proxy itself
+shipping.
+
+A domain must be a real, fully-qualified hostname — no wildcards, no bare
+hostnames, no IP addresses — and can only ever be mapped once across the
+whole instance (two projects can't both claim `app.example.com`). It also
+can't be the same as Docker Commander's own configured admin domain. When
+the `docker compose` CLI is available, the target service must actually
+exist in the project's current compose file; the target port isn't
+otherwise validated, since a container can listen on a port its compose file
+never declares.
+
+RBAC follows the project's own "projects" section grants, same as secrets
+above.
+
 ## Deploying to a remote host
 A project can target the **local daemon** (default) or any **remote host** you've
 added under [Hosts](hosts.md) — pick it when creating the project or via its

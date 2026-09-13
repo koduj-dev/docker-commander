@@ -7,6 +7,8 @@ import type {
   AlertRule,
   AppSettings,
   UpdateStatus,
+  DomainMapping,
+  DomainMappingInput,
   ComposeModel,
   AuditEntry,
   DiagnosticsReport,
@@ -611,6 +613,15 @@ export const api = {
     req<{ ok: boolean }>("PUT", `/api/projects/${id}/secrets/${encodeURIComponent(name)}`, { value }),
   deleteProjectSecret: (id: number, name: string) =>
     req<{ ok: boolean }>("DELETE", `/api/projects/${id}/secrets/${encodeURIComponent(name)}`),
+  // Domain mappings (see NEXT.md's "Per-container domain + TLS"): Phase 1
+  // only stores intent — no reverse proxy listens on these domains yet.
+  listDomainMappings: (id: number) => req<DomainMapping[]>("GET", `/api/projects/${id}/domains`),
+  createDomainMapping: (id: number, body: DomainMappingInput) =>
+    req<{ id: number }>("POST", `/api/projects/${id}/domains`, body),
+  updateDomainMapping: (id: number, domainID: number, body: DomainMappingInput) =>
+    req<{ ok: boolean }>("PUT", `/api/projects/${id}/domains/${domainID}`, body),
+  deleteDomainMapping: (id: number, domainID: number) =>
+    req<{ ok: boolean }>("DELETE", `/api/projects/${id}/domains/${domainID}`),
   // Lint a Dockerfile via `docker build --check` (no build steps run).
   checkDockerfile: (id: number, content: string) =>
     req<{ level: "ok" | "warning" | "error"; output?: string; unavailable?: boolean }>("POST", `/api/projects/${id}/dockerfile-check`, { content }),
