@@ -282,3 +282,36 @@ func TestAugmentDigestDrift_SkipsAlreadyChangedAndUnmatched(t *testing.T) {
 		t.Errorf("Unchanged should be untouched when nothing new is found, got %d", prev.Unchanged)
 	}
 }
+
+// A service AugmentDigestDriftChecked never got far enough to actually
+// compare (already flagged by BuildDeployPreview, or no running container to
+// inspect) must be absent from its returned confirmed-unchanged set — a
+// caller (the image-update poller) must not treat "skipped" the same as
+// "positively confirmed unchanged".
+func TestAugmentDigestDriftChecked_SkippedServicesAreNotConfirmed(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	m := &Manager{store: st}
+
+	prev := DeployPreview{
+		Services: []ServiceSpec{
+			svc("web", "nginx:1.25"), // already flagged below — must be skipped
+			svc("cache", "redis:7"),  // unchanged, but no running container — must be skipped
+		},
+		Changes: []ServiceChange{
+			{Service: "web", Kind: "image", From: "nginx:1.24", To: "nginx:1.25"},
+		},
+		Unchanged: 1,
+	}
+
+	confirmed := m.AugmentDigestDriftChecked(context.Background(), 0, &prev, []StackContainer{
+		{Service: "web", ID: "c1"}, // "cache" deliberately has no matching container
+	})
+
+	if len(confirmed) != 0 {
+		t.Errorf("neither service was actually compared, so the confirmed set should be empty, got %v", confirmed)
+	}
+}

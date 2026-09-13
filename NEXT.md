@@ -129,6 +129,28 @@ networks/restart/resources/healthcheck differences, with a per-change
   prune`), gated behind the post-deploy verification above succeeding first
   (so a bad update still has its old image to roll back to), and it must
   write an **audit log** entry exactly like a manual prune would.
+
+  **Shipped so far (detection + notification, no auto-apply yet):** every
+  project's running services are checked on a schedule (every 6 hours)
+  against the registry's current digest for their compose-declared tag,
+  reusing the deploy preview's own digest-drift check
+  (`internal/docker/preview.go`'s `AugmentDigestDrift`) rather than
+  re-deriving it. A newly-observed digest raises an *info* `image_update`
+  alert once — dedup state lives in a new `project_image_update_state`
+  table, keyed by (project, service), storing only the last-notified
+  digest; a still-unresolved drift found again on a later poll never
+  renotifies, but a digest that moves again does. The notification path
+  itself (`Monitor.NotifySystem`) is new and shared: `fireHostAlert` (host
+  reachability) was refactored onto it too, so both are the same
+  ruleless-alert plumbing instead of two hand-rolled copies. **Still open,
+  in order:** per-image ignore controls (version / major / entire image) +
+  auto-apply + the policy gate + a minimum-age/cooldown gate; post-deploy
+  verification + auto-rollback; auto-prune of the superseded image; linking
+  the release notes in the notification. No opt-out setting exists yet for
+  the poll itself — deliberately deferred rather than adding a toggle Phase
+  3's richer per-project policy might reshape anyway; it runs whenever the
+  `docker compose` CLI is available, same as the on-demand preview already
+  does today, just on a schedule instead of only when a human opens it.
 - **Self-update auto-apply policy.** Self-update (banner + one-tap +
   `--self-upgrade`, SHA-256-verified atomic replace) already ships, but only
   as something an admin triggers by hand. The same poll/policy/audit/notify

@@ -994,33 +994,51 @@ func (m *Monitor) fireHostAlert(hostID int64, hostName string, online bool, down
 		message = fmt.Sprintf("Host %q recovered (was unreachable for %s)", hostName, downtime.Round(time.Second))
 	}
 	log.Printf("alert severity=%s rule=%q host=%q message=%q", severity, "Host reachability", hostName, message)
-
-	ev := &store.AlertEvent{
+	_ = m.NotifySystem(&store.AlertEvent{
 		RuleName: "Host reachability", Type: "host", Severity: severity,
 		HostID: hostID, HostName: hostName, Message: message,
-	}
+	})
+}
+
+// NotifySystem records and delivers a system-generated alert event that has
+// no per-rule webhook/email configuration to key off — the same shape
+// fireHostAlert used for host-reachability alerts before this was pulled out
+// so other system-triggered notifications (e.g. an available image update)
+// can reuse it instead of hand-rolling InsertAlertEvent + a
+// maintenance-window check + emailNotify themselves. ev.HostID/Project/
+// ContainerName/Severity are used to scope the maintenance-window lookup
+// exactly like a rule-driven fire() does; ev.Suppressed/SuppressedBy are set
+// on ev itself before it's inserted. Uses its own short-lived context rather
+// than a caller-supplied one, so a slow/cancelled caller can't abort the
+// write — the same reasoning fireHostAlert already relied on.
+// NotifySystem's error return is nil once ev is durably recorded in the
+// alert log (suppressed or not) — a caller with its own idempotency state
+// keyed off "was this notified" (e.g. the image-update poller's dedup table)
+// should only update that state once this returns nil; a non-nil error means
+// the event was never recorded at all, so treating it as "notified" would
+// permanently and silently lose the notification.
+func (m *Monitor) NotifySystem(ev *store.AlertEvent) error {
 	wctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	// No container or rule to scope by, but a maintenance window covering the
-	// whole host still applies — that's the "planned work on this host"
-	// case the feature exists for.
-	if win, err := m.store.FindActiveMaintenanceWindow(wctx, hostID, "", "", 0, severity, time.Now()); err != nil {
+	if win, err := m.store.FindActiveMaintenanceWindow(wctx, ev.HostID, ev.Project, ev.ContainerName, 0, ev.Severity, time.Now()); err != nil {
 		log.Printf("monitor: check maintenance window: %v", err)
 	} else if win != nil {
 		ev.Suppressed = true
 		ev.SuppressedBy = win.ID
 	}
-	if id, err := m.store.InsertAlertEvent(wctx, ev); err != nil {
-		log.Printf("monitor: insert host alert event: %v", err)
+	id, insertErr := m.store.InsertAlertEvent(wctx, ev)
+	if insertErr != nil {
+		log.Printf("monitor: insert system alert event: %v", insertErr)
 	} else {
 		ev.ID = id
 	}
-	if ev.Suppressed {
-		return
+	if !ev.Suppressed {
+		// A system event isn't tied to a rule, so it uses the host/instance
+		// recipients. Still attempted even if persistence failed, so a
+		// transient DB error can't silently swallow a critical alert.
+		m.emailNotify(ev, nil)
 	}
-	// Host reachability isn't tied to a rule, so it uses the host/instance
-	// recipients.
-	m.emailNotify(ev, nil)
+	return insertErr
 }
 
 // HostHealth returns a snapshot of every tracked host's reachability, keyed by
