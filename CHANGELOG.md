@@ -7,6 +7,16 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Controlled image updates — detection + notification (phase 1 of the
+  feature; auto-apply is a later phase).** Every project's running services
+  are now checked on a schedule (every 6 hours) against what the registry
+  currently reports for their compose-declared tag — the same digest-drift
+  check the deploy preview already does on demand, reused here instead of
+  re-derived. A newly-observed digest raises an *info* `image_update` alert
+  once; the same still-unresolved drift found again on a later poll is never
+  renotified, but a digest that moves again (or reverts) is. Detection and
+  notification only — nothing here applies an update; that, along with
+  per-image ignore controls and a minimum-age/cooldown gate, is later work.
 - **Self-update auto-apply policy.** Self-update already shipped (banner +
   one-tap + `--self-upgrade`, SHA-256-verified atomic replace) — this adds an
   opt-in to apply a newer release automatically, on the same 6-hour cadence
