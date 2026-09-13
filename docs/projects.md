@@ -210,14 +210,20 @@ shipping.
 
 A domain must be a real, fully-qualified hostname — no wildcards, no bare
 hostnames, no IP addresses — and can only ever be mapped once across the
-whole instance (two projects can't both claim `app.example.com`). It also
-can't be the same as Docker Commander's own configured admin domain. When
-the `docker compose` CLI is available, the target service must actually
-exist in the project's current compose file — resolved with every declared
-profile enabled, so a service gated behind `profiles:` is still offered and
-accepted, not just the ones active by default; the target port isn't
-otherwise validated, since a container can listen on a port its compose file
-never declares.
+whole instance (two projects can't both claim `app.example.com`, matched
+case-insensitively: `App.Example.com` and `app.example.com` are the same
+hostname). Internationalized domains using punycode (`xn--…`) are accepted.
+A domain also can't be the same as Docker Commander's own configured admin
+domain. When the `docker compose` CLI is available, the target service must
+actually exist in the project's current compose file — resolved with every
+declared profile enabled, so a service gated behind `profiles:` is still
+offered and accepted, not just the ones active by default; the target port
+isn't otherwise validated, since a container can listen on a port its
+compose file never declares.
+
+Once created, a mapping's **service and port can be edited** (the pencil
+icon); the domain itself is immutable — delete and recreate the mapping to
+repoint a hostname elsewhere.
 
 RBAC follows the project's own "projects" section grants, same as secrets
 above. A project's domain mappings travel with it in the portable recovery

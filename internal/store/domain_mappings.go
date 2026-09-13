@@ -49,10 +49,11 @@ func (s *Store) ListDomainMappings(ctx context.Context, projectID int64) ([]Doma
 
 // DomainMappingByDomain looks up a mapping by its domain alone (not
 // project-scoped) — the lookup the Phase-2 proxy's routing/HostPolicy needs.
+// Normalizes the lookup the same way CreateDomainMapping normalizes storage.
 func (s *Store) DomainMappingByDomain(ctx context.Context, domain string) (*DomainMapping, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, project_id, domain, service, target_port, tls_mode, created_by, created_at, updated_at
-		FROM domain_mappings WHERE domain = ?`, domain)
+		FROM domain_mappings WHERE domain = ?`, normalizeDomain(domain))
 	m, err := scanDomainMapping(row)
 	if err != nil {
 		return nil, err
@@ -79,10 +80,23 @@ func scanDomainMapping(row domainMappingScanner) (DomainMapping, error) {
 	return m, nil
 }
 
+// normalizeDomain is the ONE place a domain is canonicalized before it ever
+// reaches the UNIQUE(domain) column — the HTTP handler also lowercases for
+// its own validation, but a caller that doesn't (a recovery-bundle import,
+// or any future direct store user) would otherwise let "App.Example.com"
+// and "app.example.com" both exist, defeating the "one hostname, one place"
+// guarantee the column's plain (case-sensitive) UNIQUE constraint alone
+// cannot enforce.
+func normalizeDomain(domain string) string {
+	return strings.ToLower(strings.TrimSpace(domain))
+}
+
 // CreateDomainMapping stores a new mapping. Returns ErrDuplicate if the
 // domain is already mapped (by this project or any other — a public
-// hostname can only ever point at one place).
+// hostname can only ever point at one place; matched case-insensitively,
+// see normalizeDomain).
 func (s *Store) CreateDomainMapping(ctx context.Context, projectID int64, domain, service string, targetPort int, tlsMode, createdBy string) (int64, error) {
+	domain = normalizeDomain(domain)
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO domain_mappings (project_id, domain, service, target_port, tls_mode, created_by, created_at, updated_at)

@@ -70,6 +70,8 @@ func TestValidFQDN_LengthBoundaries(t *testing.T) {
 		{"64-octet TLD rejected", "app." + tld64, false},
 		{"ordinary domain accepted", "app.example.com", true},
 		{"numeric TLD rejected (IP-shaped)", "192.168.1.1", false},
+		{"punycode TLD accepted (real, ACME-usable IDN)", "app.xn--p1ai", true},
+		{"punycode label + punycode TLD accepted", "xn--e1afmkfd.xn--p1ai", true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -153,6 +155,27 @@ func TestDomainMappingHandlers_CRUD(t *testing.T) {
 	w = callDomainHandler(srv, "PUT", pid, "999999", 1, "admin", map[string]any{"service": "web", "targetPort": 1, "tlsMode": "acme"})
 	if w.Code != 404 {
 		t.Errorf("update missing status = %d, want 404", w.Code)
+	}
+
+	// A PUT trying to change the domain itself must be REJECTED, not
+	// silently ignored with a misleading 200 — the domain is immutable.
+	w = callDomainHandler(srv, "PUT", pid, id, 1, "admin", map[string]any{
+		"domain": "different.example.com", "service": "web", "targetPort": 9090, "tlsMode": "acme",
+	})
+	if w.Code != 400 {
+		t.Errorf("attempting to change the domain via PUT should be 400, got %d: %s", w.Code, w.Body.String())
+	}
+	list, _ = srv.store.ListDomainMappings(context.Background(), pid)
+	if list[0].Domain != "app.example.com" {
+		t.Errorf("the domain must not have changed: %+v", list[0])
+	}
+	// The SAME domain echoed back (a client re-sending what it read) is not
+	// an attempted change and must still succeed.
+	w = callDomainHandler(srv, "PUT", pid, id, 1, "admin", map[string]any{
+		"domain": "app.example.com", "service": "api2", "targetPort": 9091, "tlsMode": "acme",
+	})
+	if w.Code != 200 {
+		t.Errorf("PUT echoing the unchanged domain should succeed, got %d: %s", w.Code, w.Body.String())
 	}
 
 	// Delete.

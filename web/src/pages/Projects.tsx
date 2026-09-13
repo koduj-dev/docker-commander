@@ -594,6 +594,9 @@ export function ProjectDomainsModal({ project, onClose }: { project: Project; on
   const [newPort, setNewPort] = useState("");
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState("");
+  const [editingID, setEditingID] = useState<number | null>(null);
+  const [editService, setEditService] = useState("");
+  const [editPort, setEditPort] = useState("");
   const dialogs = useDialogs();
 
   const load = useCallback(() => {
@@ -621,6 +624,29 @@ export function ProjectDomainsModal({ project, onClose }: { project: Project; on
       load();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "failed to create domain mapping");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const startEdit = (m: DomainMapping) => {
+    setEditingID(m.id);
+    setEditService(m.service);
+    setEditPort(String(m.targetPort));
+    setErr("");
+  };
+
+  const saveEdit = async (m: DomainMapping) => {
+    const port = Number(editPort);
+    if (!editService || !port) return;
+    setBusy(`edit-${m.id}`);
+    setErr("");
+    try {
+      await api.updateDomainMapping(project.id, m.id, { domain: m.domain, service: editService, targetPort: port, tlsMode: "acme" });
+      setEditingID(null);
+      load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "failed to update domain mapping");
     } finally {
       setBusy("");
     }
@@ -673,9 +699,32 @@ export function ProjectDomainsModal({ project, onClose }: { project: Project; on
                 <div key={m.id} className="card p-3 flex items-start gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="font-mono text-sm">{m.domain}</div>
-                    <div className="text-xs text-muted">{m.service}:{m.targetPort} · Let&apos;s Encrypt (automatic)</div>
+                    {editingID === m.id ? (
+                      <form
+                        className="mt-2 flex items-end gap-2"
+                        onSubmit={(e) => { e.preventDefault(); saveEdit(m); }}
+                      >
+                        <select className="input text-xs" value={editService} onChange={(e) => setEditService(e.target.value)}>
+                          {services.length === 0 && <option value={editService}>{editService}</option>}
+                          {services.map((s) => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                        <input
+                          type="number" min={1} max={65535} className="input w-24 text-xs" placeholder="port"
+                          value={editPort} onChange={(e) => setEditPort(e.target.value)}
+                        />
+                        <button type="submit" className="btn-primary px-2 py-1 text-xs disabled:opacity-40" disabled={!editService || !editPort || busy === `edit-${m.id}`}>
+                          {busy === `edit-${m.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                        </button>
+                        <button type="button" className="btn-ghost px-2 py-1 text-xs" onClick={() => setEditingID(null)}>Cancel</button>
+                      </form>
+                    ) : (
+                      <div className="text-xs text-muted">{m.service}:{m.targetPort} · Let&apos;s Encrypt (automatic)</div>
+                    )}
                   </div>
                   <div className="shrink-0 flex items-center gap-1">
+                    <button className="btn-ghost px-2 py-1" title="Edit" onClick={() => startEdit(m)}>
+                      <Pencil className="h-4 w-4" />
+                    </button>
                     <button
                       className="btn-ghost px-2 py-1 text-danger disabled:opacity-40" title="Delete"
                       disabled={busy === `delete-${m.id}`} onClick={() => remove(m)}

@@ -19,10 +19,12 @@ import (
 // required boundary characters caps the whole label at 63).
 var domainLabelRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
-// tldLabelRE is the final label's stricter shape: purely alphabetic, so a
-// bare IP literal (whose last "label" is all digits) never validates as an
-// FQDN.
-var tldLabelRE = regexp.MustCompile(`^[a-z]{2,63}$`)
+// tldLabelRE is the final label's stricter shape: either purely alphabetic
+// (an ordinary TLD) or a punycode ACE label ("xn--…", a real, ACME-usable
+// FQDN for an internationalized domain, e.g. "app.xn--p1ai") — either way,
+// never all-digits, so a bare IP literal (whose last "label" is all digits)
+// still never validates as an FQDN.
+var tldLabelRE = regexp.MustCompile(`^([a-z]{2,63}|xn--[a-z0-9-]{1,59})$`)
 
 // validFQDN reports whether s is a syntactically valid, fully-qualified
 // domain name: at least two labels, each obeying domainLabelRE, a total
@@ -142,6 +144,15 @@ func (s *Server) handleUpdateDomainMapping(w http.ResponseWriter, r *http.Reques
 	}
 	if existing == nil {
 		writeErr(w, http.StatusNotFound, "domain mapping not found")
+		return
+	}
+	// A caller asking to change the domain itself must be told no, not have
+	// the request silently succeed against the old hostname — 200 with the
+	// request's own intent quietly discarded would read as "renamed" when
+	// nothing moved.
+	requestedDomain := strings.ToLower(strings.TrimSpace(b.Domain))
+	if requestedDomain != "" && requestedDomain != existing.Domain {
+		writeErr(w, http.StatusBadRequest, "domain is immutable; delete and recreate the mapping to repoint a hostname")
 		return
 	}
 	b.Domain = existing.Domain

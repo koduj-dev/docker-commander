@@ -18,10 +18,15 @@ All notable changes to Docker Commander are documented here. The format follows
   configured admin domain(s), and — when the `docker compose` CLI is
   available — must name a service that actually exists in the project's
   current compose file, resolved with every Compose profile enabled so a
-  service gated behind one is still mappable. RBAC reuses the project's own
-  "projects" section grants, the same as project secrets and drift ignores.
-  A project's domain mappings are included in the portable recovery bundle,
-  same as its secrets and images.
+  service gated behind one is still mappable. A domain is matched
+  case-insensitively for uniqueness (`App.Example.com` and `app.example.com`
+  are the same hostname) and internationalized domains using punycode
+  (`xn--…`) are accepted. RBAC reuses the project's own "projects" section
+  grants, the same as project secrets and drift ignores. A project's domain
+  mappings are included in the portable recovery bundle, same as its secrets
+  and images. Editing a mapping's service/port from the **Domains** panel is
+  supported (the domain itself is immutable — delete and recreate to
+  repoint a hostname).
 - **Project secrets.** A GitHub-Actions-secrets-style store for a project: name
   a value once (`DB_PASSWORD`, `API_TOKEN`…) and reference it from the compose
   file with plain `${NAME}` interpolation instead of inlining it. The value is

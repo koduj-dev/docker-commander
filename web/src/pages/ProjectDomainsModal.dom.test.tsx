@@ -17,6 +17,7 @@ vi.mock("../lib/api", () => ({
     listDomainMappings: vi.fn(),
     listDomainMappingServices: vi.fn(),
     createDomainMapping: vi.fn(),
+    updateDomainMapping: vi.fn(),
     deleteDomainMapping: vi.fn(),
   },
 }));
@@ -107,5 +108,34 @@ describe("ProjectDomainsModal", () => {
     await act(async () => fillAndSubmit("dup.example.com", "80"));
 
     expect(container.textContent).toContain("this domain is already mapped");
+  });
+
+  it("edits a mapping's service/port, sending the domain back unchanged, and reloads", async () => {
+    vi.mocked(api.listDomainMappings).mockResolvedValue([mapping]);
+    vi.mocked(api.listDomainMappingServices).mockResolvedValue({ services: ["web", "worker"] });
+    vi.mocked(api.updateDomainMapping).mockResolvedValue({ ok: true });
+    await renderModal();
+
+    const editButton = [...container.querySelectorAll("button")].find((b) => b.getAttribute("title") === "Edit") as HTMLButtonElement;
+    await act(async () => editButton.click());
+
+    const card = editButton.closest(".card") as HTMLElement;
+    const select = card.querySelector("select") as HTMLSelectElement;
+    const portInput = card.querySelector("input[type=number]") as HTMLInputElement;
+
+    const nativeSelectSetter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value")!.set!;
+    nativeSelectSetter.call(select, "worker");
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    const nativeInputSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+    nativeInputSetter.call(portInput, "9999");
+    portInput.dispatchEvent(new Event("input", { bubbles: true }));
+
+    const saveButton = [...card.querySelectorAll("button")].find((b) => b.type === "submit") as HTMLButtonElement;
+    await act(async () => saveButton.click());
+
+    expect(api.updateDomainMapping).toHaveBeenCalledWith(1, 1, {
+      domain: "app.example.com", service: "worker", targetPort: 9999, tlsMode: "acme",
+    });
+    expect(api.listDomainMappings).toHaveBeenCalledTimes(2); // initial load + reload after save
   });
 });

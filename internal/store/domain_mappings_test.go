@@ -97,6 +97,36 @@ func TestDomainMappingsCRUD(t *testing.T) {
 	}
 }
 
+// A caller that doesn't lowercase itself (a recovery-bundle import, or any
+// future direct store user) must not be able to sidestep global uniqueness
+// by case alone — CreateDomainMapping normalizes at the one choke point
+// every write goes through.
+func TestCreateDomainMapping_NormalizesCaseForUniqueness(t *testing.T) {
+	s, ctx := newStore(t)
+	pid, err := s.CreateProject(ctx, &Project{Name: "App", Slug: "app", CreatedBy: "admin"})
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	if _, err := s.CreateDomainMapping(ctx, pid, "App.Example.COM", "web", 8080, "acme", "admin"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	list, err := s.ListDomainMappings(ctx, pid)
+	if err != nil || len(list) != 1 || list[0].Domain != "app.example.com" {
+		t.Fatalf("mixed-case input should be stored lowercase, got %+v (err %v)", list, err)
+	}
+
+	pid2, err := s.CreateProject(ctx, &Project{Name: "App2", Slug: "app2", CreatedBy: "admin"})
+	if err != nil {
+		t.Fatalf("create project 2: %v", err)
+	}
+	if _, err := s.CreateDomainMapping(ctx, pid2, "APP.EXAMPLE.COM", "web", 80, "acme", "admin"); !errors.Is(err, ErrDuplicate) {
+		t.Errorf("a domain differing only by case must still collide, got %v", err)
+	}
+	if _, err := s.DomainMappingByDomain(ctx, "App.Example.Com"); err != nil {
+		t.Errorf("lookup should normalize case too, got %v", err)
+	}
+}
+
 func TestDeleteProjectCascadesDomainMappings(t *testing.T) {
 	s, ctx := newStore(t)
 	pid, err := s.CreateProject(ctx, &Project{Name: "App", Slug: "app", CreatedBy: "admin"})
