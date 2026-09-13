@@ -252,6 +252,9 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/projects/{id}/domains", s.handleCreateDomainMapping)
 			r.Put("/projects/{id}/domains/{domainID}", s.handleUpdateDomainMapping)
 			r.Delete("/projects/{id}/domains/{domainID}", s.handleDeleteDomainMapping)
+			// Every profile enabled, so a profile-gated service is still offered
+			// (and still accepted) — see resolvedComposeServices.
+			r.Get("/projects/{id}/domains/services", s.handleListDomainMappingServices)
 
 			// Portable recovery bundle: export/inspect/import an instance-wide
 			// snapshot (projects, hosts, registries, alert rules, settings).

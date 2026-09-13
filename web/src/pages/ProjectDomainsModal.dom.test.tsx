@@ -15,7 +15,7 @@ import type { Project, DomainMapping } from "../lib/types";
 vi.mock("../lib/api", () => ({
   api: {
     listDomainMappings: vi.fn(),
-    projectSummary: vi.fn(),
+    listDomainMappingServices: vi.fn(),
     createDomainMapping: vi.fn(),
     deleteDomainMapping: vi.fn(),
   },
@@ -47,7 +47,7 @@ beforeEach(() => {
   document.body.appendChild(container);
   root = createRoot(container);
   vi.mocked(api.listDomainMappings).mockResolvedValue([]);
-  vi.mocked(api.projectSummary).mockResolvedValue({ ok: true, model: { services: { web: { image: "nginx" } } } });
+  vi.mocked(api.listDomainMappingServices).mockResolvedValue({ services: ["web"] });
 });
 
 afterEach(() => {
@@ -71,7 +71,7 @@ describe("ProjectDomainsModal", () => {
   });
 
   it("populates the service select from the project's actual compose services", async () => {
-    vi.mocked(api.projectSummary).mockResolvedValue({ ok: true, model: { services: { web: {}, worker: {} } } });
+    vi.mocked(api.listDomainMappingServices).mockResolvedValue({ services: ["web", "worker"] });
     await renderModal();
     const select = container.querySelector("select") as HTMLSelectElement;
     const options = [...select.options].map((o) => o.value);

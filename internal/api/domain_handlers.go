@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"regexp"
@@ -13,14 +14,39 @@ import (
 	"github.com/koduj-dev/docker-commander/internal/store"
 )
 
-// domainRE is a conservative FQDN check: lowercase letters/digits/hyphens in
-// each label, labels separated by dots, at least one dot (rejects bare
-// hostnames and IP literals), no leading/trailing hyphen per label. It
-// deliberately rejects a wildcard ("*.example.com") — the (future) embedded
-// proxy's ACME issuance is tls-alpn-01 per exact hostname, the same
-// constraint autocert.HostWhitelist already imposes on Docker Commander's
-// own admin domain(s).
-var domainRE = regexp.MustCompile(`^(?:[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$`)
+// domainLabelRE matches one DNS label: lowercase letters/digits/hyphens, no
+// leading/trailing hyphen, 1-63 octets (the {0,61} bound plus the two
+// required boundary characters caps the whole label at 63).
+var domainLabelRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
+// tldLabelRE is the final label's stricter shape: purely alphabetic, so a
+// bare IP literal (whose last "label" is all digits) never validates as an
+// FQDN.
+var tldLabelRE = regexp.MustCompile(`^[a-z]{2,63}$`)
+
+// validFQDN reports whether s is a syntactically valid, fully-qualified
+// domain name: at least two labels, each obeying domainLabelRE, a total
+// length of at most 253 octets (the real DNS name-length ceiling — RFC 1035
+// — that a single label-level regex can't express), and an alphabetic final
+// (TLD) label. Deliberately rejects a wildcard ("*.example.com") — the
+// (future) embedded proxy's ACME issuance is tls-alpn-01 per exact hostname,
+// the same constraint autocert.HostWhitelist already imposes on Docker
+// Commander's own admin domain(s).
+func validFQDN(s string) bool {
+	if s == "" || len(s) > 253 {
+		return false
+	}
+	labels := strings.Split(s, ".")
+	if len(labels) < 2 {
+		return false
+	}
+	for _, l := range labels {
+		if !domainLabelRE.MatchString(l) {
+			return false
+		}
+	}
+	return tldLabelRE.MatchString(labels[len(labels)-1])
+}
 
 // validDomainTLSModes is the only value Phase 1 accepts. "none" is a
 // reserved-but-unimplemented value: see NEXT.md/the design doc for why it's
@@ -178,7 +204,7 @@ func (s *Server) handleDeleteDomainMapping(w http.ResponseWriter, r *http.Reques
 // available — that Service names a real service in the project's current
 // compose config. Returns (errorMessage, false) on the first failure.
 func (s *Server) validateDomainMapping(r *http.Request, p *store.Project, b domainMappingBody) (string, bool) {
-	if !domainRE.MatchString(b.Domain) {
+	if !validFQDN(b.Domain) {
 		return "domain must be a valid FQDN (e.g. app.example.com); wildcards and IP literals aren't accepted", false
 	}
 	for _, own := range s.cfg.ACMEDomains {
@@ -195,21 +221,9 @@ func (s *Server) validateDomainMapping(r *http.Request, p *store.Project, b doma
 	if !validDomainTLSModes[b.TLSMode] {
 		return "tlsMode must be one of: acme", false
 	}
-	if !docker.ComposeAvailable(r.Context()) {
+	services, err := s.resolvedComposeServices(r.Context(), p)
+	if err != nil {
 		return "", true // best-effort: can't verify the service exists, don't block on it
-	}
-	dir := s.projectRoot(p.ID)
-	_, masked, _, err := s.projectSecretEnvs(r.Context(), p.ID)
-	if err != nil {
-		return "", true
-	}
-	cfgJSON, err := docker.ComposeConfigJSONFiles(r.Context(), dir, p.Slug, nil, masked, nil)
-	if err != nil {
-		return "", true
-	}
-	services, err := docker.ParseComposeServices(cfgJSON)
-	if err != nil {
-		return "", true
 	}
 	for _, svc := range services {
 		if svc.Name == b.Service {
@@ -217,4 +231,58 @@ func (s *Server) validateDomainMapping(r *http.Request, p *store.Project, b doma
 		}
 	}
 	return "service \"" + b.Service + "\" is not defined in this project's compose file", false
+}
+
+// resolvedComposeServices resolves every service the project's compose file
+// declares, WITH EVERY PROFILE ENABLED — not just the default (no-profile)
+// set. A plain `compose config` (nil profiles) silently omits a service
+// gated behind an inactive profile (see ComposeConfigJSONFiles's own doc
+// comment), which would otherwise make a perfectly valid `profiles: [admin]`
+// service unmappable: rejected by this validation and absent from the
+// frontend's service picker alike. Returns an error (not a partial result)
+// when the compose CLI is unavailable or the file doesn't parse, so callers
+// can decide whether that's fatal or best-effort-skippable.
+func (s *Server) resolvedComposeServices(ctx context.Context, p *store.Project) ([]docker.ServiceSpec, error) {
+	if !docker.ComposeAvailable(ctx) {
+		return nil, errors.New("the `docker compose` CLI is not available on the host running Docker Commander")
+	}
+	dir := s.projectRoot(p.ID)
+	_, masked, _, err := s.projectSecretEnvs(ctx, p.ID)
+	if err != nil {
+		return nil, err
+	}
+	profiles, err := docker.ComposeProfilesEnv(ctx, dir, p.Slug, masked)
+	if err != nil {
+		// No profiles to enumerate is not fatal on its own — a compose file
+		// with none declared, or a transient CLI hiccup — fall through and
+		// resolve with the default (no-profile) set rather than failing outright.
+		profiles = nil
+	}
+	cfgJSON, err := docker.ComposeConfigJSONFiles(ctx, dir, p.Slug, profiles, masked, nil)
+	if err != nil {
+		return nil, err
+	}
+	return docker.ParseComposeServices(cfgJSON)
+}
+
+// handleListDomainMappingServices returns the project's compose service
+// names, every profile enabled, for the "Domains" panel's service picker —
+// the exact same catalog handleCreateDomainMapping/handleUpdateDomainMapping
+// validate Service against, so the picker never offers something the server
+// would then reject.
+func (s *Server) handleListDomainMappingServices(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	services, err := s.resolvedComposeServices(r.Context(), p)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"services": []string{}, "error": err.Error()})
+		return
+	}
+	names := make([]string, len(services))
+	for i, svc := range services {
+		names[i] = svc.Name
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"services": names})
 }

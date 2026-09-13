@@ -7,8 +7,8 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
-- **Domain mappings (project secrets phase 1 of "Per-container domain +
-  TLS").** A project can now record that a domain (e.g. `app.example.com`)
+- **Domain mappings (phase 1 of "Per-container domain + TLS").** A project
+  can now record that a domain (e.g. `app.example.com`)
   should route to one of its compose services' ports — manage them from the
   new **Domains** button on a project's card. This release only stores that
   intent: there is no reverse proxy yet, so nothing actually routes traffic
@@ -17,8 +17,11 @@ All notable changes to Docker Commander are documented here. The format follows
   the same public hostname), can't collide with Docker Commander's own
   configured admin domain(s), and — when the `docker compose` CLI is
   available — must name a service that actually exists in the project's
-  current compose file. RBAC reuses the project's own "projects" section
-  grants, the same as project secrets and drift ignores.
+  current compose file, resolved with every Compose profile enabled so a
+  service gated behind one is still mappable. RBAC reuses the project's own
+  "projects" section grants, the same as project secrets and drift ignores.
+  A project's domain mappings are included in the portable recovery bundle,
+  same as its secrets and images.
 - **Project secrets.** A GitHub-Actions-secrets-style store for a project: name
   a value once (`DB_PASSWORD`, `API_TOKEN`…) and reference it from the compose
   file with plain `${NAME}` interpolation instead of inlining it. The value is

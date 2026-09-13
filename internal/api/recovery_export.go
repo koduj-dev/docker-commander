@@ -372,10 +372,19 @@ func (s *Server) recoveryProjects(ctx context.Context, includeSecrets bool, proj
 				secrets = append(secrets, recoveryProjectSecret{Name: n.Name, Value: values[n.Name]})
 			}
 		}
+		var domains []recoveryDomainMapping
+		if list, derr := s.store.ListDomainMappings(ctx, p.ID); derr == nil {
+			for _, m := range list {
+				domains = append(domains, recoveryDomainMapping{
+					Domain: m.Domain, Service: m.Service, TargetPort: m.TargetPort, TLSMode: m.TLSMode,
+				})
+			}
+		}
 		out = append(out, recoveryProjectMeta{
 			Slug: p.Slug, Name: p.Name, ComposeFile: p.ComposeFile,
 			HostName: hostNames[p.HostID], AllowRemoteHostPaths: p.AllowRemoteHostPaths,
 			LastDeployedProfiles: p.LastDeployedProfiles, Images: images, Secrets: secrets,
+			DomainMappings: domains,
 		})
 	}
 	return out, nil

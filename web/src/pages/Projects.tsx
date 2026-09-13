@@ -601,8 +601,8 @@ export function ProjectDomainsModal({ project, onClose }: { project: Project; on
   }, [project.id]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    api.projectSummary(project.id).then((res) => {
-      const names = Object.keys(res.model?.services ?? {});
+    api.listDomainMappingServices(project.id).then((res) => {
+      const names = res.services ?? [];
       setServices(names);
       setNewService((cur) => cur || names[0] || "");
     }).catch(() => {});

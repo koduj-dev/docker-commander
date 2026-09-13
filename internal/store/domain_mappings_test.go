@@ -1,9 +1,36 @@
 package store
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 )
+
+// A project with no mappings must get "[]" back, never "null" — the
+// frontend's modal uses a nil vs. non-nil array specifically to distinguish
+// "still loading" from "loaded, no mappings yet", so a nil slice here would
+// leave the UI stuck on its loading spinner forever.
+func TestListDomainMappingsEmptyIsNeverNil(t *testing.T) {
+	s, ctx := newStore(t)
+	pid, err := s.CreateProject(ctx, &Project{Name: "App", Slug: "app", CreatedBy: "admin"})
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	list, err := s.ListDomainMappings(ctx, pid)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if list == nil {
+		t.Fatal("ListDomainMappings must return a non-nil empty slice, got nil")
+	}
+	b, err := json.Marshal(list)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "[]" {
+		t.Errorf("JSON encoding of an empty list = %q, want []", b)
+	}
+}
 
 func TestDomainMappingsCRUD(t *testing.T) {
 	s, ctx := newStore(t)

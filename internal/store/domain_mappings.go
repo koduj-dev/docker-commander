@@ -33,7 +33,10 @@ func (s *Store) ListDomainMappings(ctx context.Context, projectID int64) ([]Doma
 		return nil, err
 	}
 	defer rows.Close()
-	var out []DomainMapping
+	// Never nil: the API always returns "[]", not "null", for an empty
+	// list — the frontend uses a nil vs. non-nil array specifically to
+	// distinguish "still loading" from "loaded, no mappings yet".
+	out := make([]DomainMapping, 0)
 	for rows.Next() {
 		m, err := scanDomainMapping(rows)
 		if err != nil {

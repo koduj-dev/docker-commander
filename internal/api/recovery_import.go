@@ -566,6 +566,20 @@ func (s *Server) applyRecoveryBundle(ctx context.Context, m *recoveryManifest, z
 				warnings = append(warnings, fmt.Sprintf("project %q: could not restore secret %q: %s", pm.Slug, sec.Name, serr))
 			}
 		}
+		// Restore domain mappings. A domain already claimed by something on
+		// the destination (another project, or this bundle importing twice) is
+		// a real conflict, not something to silently drop — same "skip with a
+		// warning" treatment collisions get everywhere else in this import.
+		for _, dm := range pm.DomainMappings {
+			_, derr := s.store.CreateDomainMapping(ctx, id, dm.Domain, dm.Service, dm.TargetPort, dm.TLSMode, createdBy)
+			if errors.Is(derr, store.ErrDuplicate) {
+				warnings = append(warnings, fmt.Sprintf("project %q: domain %q is already mapped on this instance, skipped", pm.Slug, dm.Domain))
+				continue
+			}
+			if derr != nil {
+				warnings = append(warnings, fmt.Sprintf("project %q: could not restore domain %q: %s", pm.Slug, dm.Domain, derr))
+			}
+		}
 		summary.ProjectsCreated++
 	}
 

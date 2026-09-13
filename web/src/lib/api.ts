@@ -622,6 +622,9 @@ export const api = {
     req<{ ok: boolean }>("PUT", `/api/projects/${id}/domains/${domainID}`, body),
   deleteDomainMapping: (id: number, domainID: number) =>
     req<{ ok: boolean }>("DELETE", `/api/projects/${id}/domains/${domainID}`),
+  // Every profile enabled, so a profile-gated service is offered too — the
+  // exact same catalog the server validates a mapping's `service` against.
+  listDomainMappingServices: (id: number) => req<{ services: string[]; error?: string }>("GET", `/api/projects/${id}/domains/services`),
   // Lint a Dockerfile via `docker build --check` (no build steps run).
   checkDockerfile: (id: number, content: string) =>
     req<{ level: "ok" | "warning" | "error"; output?: string; unavailable?: boolean }>("POST", `/api/projects/${id}/dockerfile-check`, { content }),

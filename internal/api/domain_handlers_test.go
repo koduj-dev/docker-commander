@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -47,6 +48,67 @@ func callDomainHandler(srv *Server, method string, pid int64, domainID string, u
 
 func validDomainBody() map[string]any {
 	return map[string]any{"domain": "app.example.com", "service": "web", "targetPort": 8080, "tlsMode": "acme"}
+}
+
+// Boundary cases a single naive regex got wrong: an unbounded final (TLD)
+// label, and no cap on the complete name — DNS/IDNA and ACME both impose a
+// 63-octet-per-label and a 253-octet-total limit (RFC 1035).
+func TestValidFQDN_LengthBoundaries(t *testing.T) {
+	label63 := strings.Repeat("a", 63)
+	label64 := strings.Repeat("a", 64)
+	tld63 := strings.Repeat("a", 63)
+	tld64 := strings.Repeat("a", 64)
+
+	cases := []struct {
+		name   string
+		domain string
+		want   bool
+	}{
+		{"63-octet label accepted", label63 + ".example.com", true},
+		{"64-octet label rejected", label64 + ".example.com", false},
+		{"63-octet TLD accepted", "app." + tld63, true},
+		{"64-octet TLD rejected", "app." + tld64, false},
+		{"ordinary domain accepted", "app.example.com", true},
+		{"numeric TLD rejected (IP-shaped)", "192.168.1.1", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := validFQDN(c.domain); got != c.want {
+				t.Errorf("validFQDN(%d-char domain) = %v, want %v", len(c.domain), got, c.want)
+			}
+		})
+	}
+
+	// Total name length: build a domain out of many max-length labels until
+	// it crosses 253 octets, and confirm the boundary is enforced even when
+	// every individual label is itself valid.
+	var labels []string
+	for total := 0; total < 253; {
+		labels = append(labels, label63)
+		total += 64 // label + dot
+	}
+	labels = append(labels, "com")
+	tooLong := strings.Join(labels, ".")
+	if len(tooLong) <= 253 {
+		t.Fatalf("test setup bug: constructed domain is only %d octets, want >253", len(tooLong))
+	}
+	if validFQDN(tooLong) {
+		t.Errorf("a %d-octet domain name should be rejected (DNS max is 253)", len(tooLong))
+	}
+}
+
+// A project with no mappings must return the literal JSON "[]", never
+// "null" — the frontend modal treats a null/undefined body as "still
+// loading" and would otherwise never show "No domains yet.".
+func TestDomainMappingHandlers_EmptyListIsJSONArrayNotNull(t *testing.T) {
+	srv, pid := newProjectServer(t)
+	w := callDomainHandler(srv, "GET", pid, "", 1, "admin", nil)
+	if w.Code != 200 {
+		t.Fatalf("list status = %d: %s", w.Code, w.Body.String())
+	}
+	if got := w.Body.String(); got != "[]\n" && got != "[]" {
+		t.Errorf("empty list body = %q, want []", got)
+	}
 }
 
 func TestDomainMappingHandlers_CRUD(t *testing.T) {
@@ -222,5 +284,62 @@ func TestDomainMappingHandlers_ServiceMustExistInCompose(t *testing.T) {
 	})
 	if w.Code != 400 {
 		t.Errorf("nonexistent service should be rejected: status = %d, want 400: %s", w.Code, w.Body.String())
+	}
+}
+
+// A service gated behind a Compose profile must still be mappable: a plain
+// `compose config` (no profiles active) silently omits it, so validation
+// must resolve the catalog with every declared profile enabled instead of
+// rejecting a perfectly valid service.
+func TestDomainMappingHandlers_ProfileGatedServiceIsAccepted(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs the docker compose CLI; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	dir := t.TempDir()
+	srv := &Server{cfg: config.Config{DataDir: dir}, store: st, docker: docker.NewManager(st)}
+
+	if _, err := st.CreateUser(ctx, &store.User{Username: "root", Role: "admin"}); err != nil {
+		t.Fatal(err)
+	}
+	pid, err := st.CreateProject(ctx, &store.Project{Name: "app", Slug: "dctest-domains-profile", ComposeFile: "compose.yml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := srv.projectRoot(pid)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	compose := "services:\n  web:\n    image: " + deployTestImage + "\n" +
+		"  admin:\n    image: " + deployTestImage + "\n    profiles: [\"admin\"]\n"
+	if err := os.WriteFile(filepath.Join(root, "compose.yml"), []byte(compose), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	w := callDomainHandler(srv, "POST", pid, "", 1, "admin", map[string]any{
+		"domain": "admin.example.com", "service": "admin", "targetPort": 9000, "tlsMode": "acme",
+	})
+	if w.Code != 200 {
+		t.Fatalf("a profile-gated but real service should be accepted: status = %d: %s", w.Code, w.Body.String())
+	}
+
+	// The service picker endpoint must offer it too, not just accept it once typed.
+	sw := httptest.NewRequest("GET", "/api/projects/"+strconv.FormatInt(pid, 10)+"/domains/services", nil).WithContext(ctxAs(1, "admin"))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", strconv.FormatInt(pid, 10))
+	sw = sw.WithContext(context.WithValue(sw.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+	srv.handleListDomainMappingServices(rec, sw)
+	if !bytes.Contains(rec.Body.Bytes(), []byte("admin")) {
+		t.Errorf("service picker should include the profile-gated service, got %s", rec.Body.String())
 	}
 }
