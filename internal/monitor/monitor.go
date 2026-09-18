@@ -74,6 +74,16 @@ type ContainerStat struct {
 	// meaningful rate yet, and inventing one would be worse than showing none.
 	NetRxRate float64 // bytes/s
 	NetTxRate float64 // bytes/s
+	// True only when applyNetRates actually computed the corresponding rate
+	// THIS poll — a failed sample, a first-ever sample, or a counter reset
+	// all leave the rate at its zero value but these at false. Without this,
+	// a netrx_rate/nettx_rate resource rule couldn't tell "measured, genuinely
+	// under threshold" from "couldn't measure it this poll", and the latter
+	// would read as a legitimate recovery (see evalResourceRules' unmeasured
+	// map) — turning one ongoing incident into a resolve/fire pair every time
+	// a sample was missed.
+	NetRxRateOK bool
+	NetTxRateOK bool
 	// Sampled is true only when this poll's SampleStats call for the
 	// container actually succeeded. A container stays in the snapshot (it's
 	// still running, per ListContainers) even when the stats call itself
@@ -100,9 +110,9 @@ func (cs ContainerStat) metric(name string) (float64, bool) {
 		}
 		return cs.CPUPercent / cs.CPUCores, true
 	case "netrx_rate":
-		return cs.NetRxRate, true
+		return cs.NetRxRate, cs.NetRxRateOK
 	case "nettx_rate":
-		return cs.NetTxRate, true
+		return cs.NetTxRate, cs.NetTxRateOK
 	default:
 		return cs.CPUPercent, true
 	}
@@ -332,9 +342,11 @@ func applyNetRates(next, prev map[string]ContainerStat, elapsed float64) {
 		}
 		if cs.NetRx >= p.NetRx {
 			cs.NetRxRate = float64(cs.NetRx-p.NetRx) / elapsed
+			cs.NetRxRateOK = true
 		}
 		if cs.NetTx >= p.NetTx {
 			cs.NetTxRate = float64(cs.NetTx-p.NetTx) / elapsed
+			cs.NetTxRateOK = true
 		}
 		next[id] = cs
 	}
@@ -408,6 +420,14 @@ func (m *Monitor) evalResourceRules(ctx context.Context, snap map[string]Contain
 		value float64
 	}
 	winners := map[string]candidate{}
+	// Condition keys where a matching rule tried to read the metric this poll
+	// but couldn't (cs.metric returned ok=false) — a missing core count, or a
+	// netrx_rate/nettx_rate that has no rate yet (failed sample, first poll,
+	// or a counter reset). The resolve sweep below must treat these the same
+	// as "host not sampled": not winning is not the same as "measured and
+	// found fine", and resolving here would turn one ongoing incident into a
+	// resolve/fire pair every time a single poll couldn't read the metric.
+	unmeasured := map[string]bool{}
 
 	for _, r := range rules {
 		if !r.Enabled || r.Type != "resource" {
@@ -423,6 +443,7 @@ func (m *Monitor) evalResourceRules(ctx context.Context, snap map[string]Contain
 			}
 			val, ok := cs.metric(cfg.Metric)
 			if !ok {
+				unmeasured[stateKey(cs.HostID, cs.ID, cfg.metricKey())] = true
 				continue
 			}
 			key := ruleKey(r.ID, cs.ID)
@@ -503,6 +524,12 @@ func (m *Monitor) evalResourceRules(ctx context.Context, snap map[string]Contain
 		if !sampled[st.HostID] {
 			continue
 		}
+		// The metric itself couldn't be read this poll (see unmeasured
+		// above) — silence here is exactly as uninformative as an
+		// unreachable host, not a signal the condition actually cleared.
+		if unmeasured[ck] {
+			continue
+		}
 		dur := int(now.Sub(st.StartedAt).Seconds())
 		m.emit(ctx, store.AlertRule{
 			ID: st.RuleID, Name: st.RuleName, Type: "resource", Severity: "info",
@@ -553,6 +580,13 @@ func (m *Monitor) evalNetworkRules(ctx context.Context, snap map[string]Containe
 		}
 	}
 
+	// attempted tracks every (metric, window) already queried THIS poll,
+	// successful or not — series only holds the successful ones, so without
+	// a separate "did we already try" record, a failing QueryAll (a Redis
+	// timeout/outage) would be retried once per rule sharing that key
+	// instead of once for the whole poll, exactly the N×1 regression this
+	// batching exists to avoid.
+	attempted := make(map[netRuleWindow]bool)
 	series := make(map[netRuleWindow]map[string][]history.Point)
 	for _, r := range rules {
 		if !r.Enabled || r.Type != "network" {
@@ -567,14 +601,18 @@ func (m *Monitor) evalNetworkRules(ctx context.Context, snap map[string]Containe
 			metric = history.MetricNetErrors
 		}
 		key := netRuleWindow{metric: metric, windowSec: cfg.WindowSec}
-		if _, cached := series[key]; !cached {
+		if !attempted[key] {
+			attempted[key] = true
 			pts, err := m.history.QueryAll(ctx, metric, now.Add(-time.Duration(cfg.WindowSec)*time.Second), ids)
 			if err != nil {
 				continue
 			}
 			series[key] = pts
 		}
-		byContainer := series[key]
+		byContainer, ok := series[key]
+		if !ok {
+			continue // this key's query failed this poll — already tried, don't retry
+		}
 		for _, cs := range snap {
 			if cs.State != "running" || !matchTarget(r.Target, cs.Name) {
 				continue

@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +10,8 @@ import (
 	"github.com/koduj-dev/docker-commander/internal/history"
 	"github.com/koduj-dev/docker-commander/internal/store"
 )
+
+var errNetworkRulesTestBoom = errors.New("boom: simulated history backend failure")
 
 // Tests for the "network" rule type — drops/errors alerted on their INCREASE
 // over a window, never their absolute value. Unlike evalResourceRules, this
@@ -195,11 +198,14 @@ func TestRecordHistorySkipsAFailedSample(t *testing.T) {
 
 // queryCountingStore wraps a real history.Store and counts calls, so a test
 // can assert evalNetworkRules batches its reads instead of issuing one Query
-// per (rule, container) pair.
+// per (rule, container) pair. failQueryAll, when set, makes every QueryAll
+// call fail instead of reaching the real store — for the "don't retry a
+// failed batch within the same poll" regression below.
 type queryCountingStore struct {
 	history.Store
 	queryCalls    int
 	queryAllCalls int
+	failQueryAll  error
 }
 
 func (s *queryCountingStore) Query(ctx context.Context, containerID, metric string, since time.Time) ([]history.Point, error) {
@@ -209,6 +215,9 @@ func (s *queryCountingStore) Query(ctx context.Context, containerID, metric stri
 
 func (s *queryCountingStore) QueryAll(ctx context.Context, metric string, since time.Time, containerIDs []string) (map[string][]history.Point, error) {
 	s.queryAllCalls++
+	if s.failQueryAll != nil {
+		return nil, s.failQueryAll
+	}
 	return s.Store.QueryAll(ctx, metric, since, containerIDs)
 }
 
@@ -257,18 +266,62 @@ func TestNetworkRulesBatchHistoryReads(t *testing.T) {
 	}
 }
 
+// TestNetworkRulesDoNotRetryAFailedBatchWithinOnePoll is the regression for
+// the P2 the second review pass caught: a failed QueryAll wasn't cached, so
+// rules sharing that (metric, window) each re-triggered the same failing
+// call — during a Redis outage, N rules sharing one window made N sequential
+// failing round trips instead of one, on the same goroutine that has to
+// finish before the next poll can run.
+func TestNetworkRulesDoNotRetryAFailedBatchWithinOnePoll(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	spy := &queryCountingStore{Store: history.Open(ctx, history.Config{}), failQueryAll: errNetworkRulesTestBoom}
+	t.Cleanup(func() { _ = spy.Close() })
+	m := New(st, nil, spy)
+
+	// Three rules sharing one (metric, window) — the failing query must
+	// still be attempted only once for the whole poll.
+	addNetworkRule(t, st, ctx, "netdrops", 5, 300)
+	addNetworkRule(t, st, ctx, "netdrops", 50, 300)
+	addNetworkRule(t, st, ctx, "netdrops", 500, 300)
+	cs := netContainer()
+
+	m.evalNetworkRules(ctx, snapOf(cs))
+
+	if spy.queryAllCalls != 1 {
+		t.Errorf("a failing batch shared by 3 rules should still be attempted once per poll, got %d calls", spy.queryAllCalls)
+	}
+}
+
 // TestNetworkThroughputRuleUsesLiveRate: netrx_rate/nettx_rate resource
 // rules read the same live per-poll rate the dashboard shows — a plain
 // absolute-threshold rule, no history query involved.
+// TestNetworkThroughputRuleUsesLiveRate: netrx_rate/nettx_rate is unavailable
+// (ok=false) whenever applyNetRates hasn't actually computed it this poll —
+// a plain zero-valued ContainerStat (as a failed sample, a first poll, or a
+// counter reset all produce) must read as "unmeasured", never as "measured,
+// genuinely zero throughput".
 func TestNetworkThroughputRuleUsesLiveRate(t *testing.T) {
-	cs := ContainerStat{NetRxRate: 12_000_000, NetTxRate: 500}
+	cs := ContainerStat{NetRxRate: 12_000_000, NetRxRateOK: true, NetTxRate: 500, NetTxRateOK: true}
 	rx, ok := cs.metric("netrx_rate")
 	if !ok || rx != 12_000_000 {
-		t.Errorf("netrx_rate = %v (ok=%v), want 12000000", rx, ok)
+		t.Errorf("netrx_rate = %v (ok=%v), want 12000000, true", rx, ok)
 	}
 	tx, ok := cs.metric("nettx_rate")
 	if !ok || tx != 500 {
-		t.Errorf("nettx_rate = %v (ok=%v), want 500", tx, ok)
+		t.Errorf("nettx_rate = %v (ok=%v), want 500, true", tx, ok)
+	}
+
+	unmeasured := ContainerStat{} // no rate ever computed this poll
+	if _, ok := unmeasured.metric("netrx_rate"); ok {
+		t.Error("a rate that was never computed must read as unavailable (ok=false), not as a real zero")
+	}
+	if _, ok := unmeasured.metric("nettx_rate"); ok {
+		t.Error("a rate that was never computed must read as unavailable (ok=false), not as a real zero")
 	}
 }
 
@@ -282,7 +335,7 @@ func TestNetworkThroughputRuleFiresAboveThreshold(t *testing.T) {
 		t.Fatal(err)
 	}
 	cs := netContainer()
-	cs.NetRxRate = 20_000_000 // 20 MB/s, above the 10 MB/s threshold
+	cs.NetRxRate, cs.NetRxRateOK = 20_000_000, true // 20 MB/s, above the 10 MB/s threshold
 
 	m.ready(id, cs.ID)
 	m.evalResourceRules(ctx, snapOf(cs), hostsOf(cs))
@@ -295,7 +348,8 @@ func TestNetworkThroughputRuleFiresAboveThreshold(t *testing.T) {
 		t.Errorf("message should state direction and units: %q", evs[0].Message)
 	}
 
-	// And below threshold, it must resolve rather than stay firing.
+	// And below threshold (genuinely MEASURED, not just unavailable), it must
+	// resolve rather than stay firing.
 	calm := cs
 	calm.NetRxRate = 1_000_000
 	m.ready(id, calm.ID)
@@ -303,5 +357,81 @@ func TestNetworkThroughputRuleFiresAboveThreshold(t *testing.T) {
 	evs = events(t, st, ctx)
 	if len(evs) != 2 || evs[0].Kind != store.KindResolved {
 		t.Fatalf("expected firing + resolved, got %d:\n%s", len(evs), dump(evs))
+	}
+}
+
+// TestNetworkThroughputConditionSurvivesAnUnmeasuredPoll is the regression
+// for the P1 the second review pass caught: netrx_rate/nettx_rate used to
+// return (0, true) whenever no rate was available (a failed sample, or the
+// poll right after one), which the resolve sweep couldn't tell apart from
+// "measured, genuinely back under threshold" — so a transient stats hiccup
+// on an already-firing throughput condition announced a false recovery and
+// split one ongoing incident into a resolve/fire pair.
+func TestNetworkThroughputConditionSurvivesAnUnmeasuredPoll(t *testing.T) {
+	m, st, ctx := newAlertMonitor(t)
+	id, err := st.CreateAlertRule(ctx, &store.AlertRule{
+		Name: "RX spike", Enabled: true, Type: "resource", Target: "",
+		Config: `{"metric":"netrx_rate","op":">","threshold":10000000,"durationSec":30}`, Severity: "warning",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := netContainer()
+	cs.NetRxRate, cs.NetRxRateOK = 20_000_000, true
+
+	// Poll 1: fires.
+	m.ready(id, cs.ID)
+	m.evalResourceRules(ctx, snapOf(cs), hostsOf(cs))
+	if evs := events(t, st, ctx); len(evs) != 1 || evs[0].Kind != store.KindFiring {
+		t.Fatalf("expected exactly one firing event, got %d:\n%s", len(events(t, st, ctx)), dump(evs))
+	}
+
+	// Poll 2: the sample failed — NetRxRateOK false, exactly what a real
+	// failed SampleStats call (or the poll right after one) leaves behind.
+	// Real throughput never actually dropped; we just couldn't measure it.
+	unmeasured := cs
+	unmeasured.NetRxRate, unmeasured.NetRxRateOK = 0, false
+	m.ready(id, unmeasured.ID)
+	m.evalResourceRules(ctx, snapOf(unmeasured), hostsOf(unmeasured))
+	if evs := events(t, st, ctx); len(evs) != 1 {
+		t.Fatalf("an unmeasured poll must not resolve an ongoing condition, got %d events:\n%s", len(evs), dump(evs))
+	}
+	if states, _ := st.ListAlertStates(ctx); len(states) != 1 {
+		t.Errorf("the condition must survive an unmeasured poll, %d states left", len(states))
+	}
+
+	// Poll 3: sampling recovers, still over threshold — must stay silent
+	// (still the SAME incident), not fire a second time.
+	m.ready(id, cs.ID)
+	m.evalResourceRules(ctx, snapOf(cs), hostsOf(cs))
+	evs := events(t, st, ctx)
+	if len(evs) != 1 {
+		t.Fatalf("recovery of an unchanged, still-over-threshold condition must stay quiet, got %d events:\n%s", len(evs), dump(evs))
+	}
+}
+
+// TestNetworkThroughputBelowRuleIgnoresUnmeasuredPolls: a "<" rule (e.g.
+// "alert if throughput drops below X", used to detect a stalled feed) must
+// not accumulate dwell time or fire off an unmeasured poll's invented zero.
+func TestNetworkThroughputBelowRuleIgnoresUnmeasuredPolls(t *testing.T) {
+	m, st, ctx := newAlertMonitor(t)
+	id, err := st.CreateAlertRule(ctx, &store.AlertRule{
+		Name: "RX stalled", Enabled: true, Type: "resource", Target: "",
+		Config: `{"metric":"netrx_rate","op":"<","threshold":1000,"durationSec":30}`, Severity: "warning",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := netContainer() // NetRxRateOK is false by construction — unmeasured
+
+	for i := 0; i < 3; i++ {
+		m.evalResourceRules(ctx, snapOf(cs), hostsOf(cs))
+	}
+
+	if evs := events(t, st, ctx); len(evs) != 0 {
+		t.Fatalf("repeated unmeasured polls must never fire a '<' rule off an invented zero, got %d:\n%s", len(evs), dump(evs))
+	}
+	if _, ok := m.overSince.Load(ruleKey(id, cs.ID)); ok {
+		t.Error("an unmeasured poll must not start (or keep) the dwell-time clock")
 	}
 }
