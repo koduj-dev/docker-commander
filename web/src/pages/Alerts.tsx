@@ -15,7 +15,10 @@ import { useAlertPulse } from "../lib/alertStream";
 
 // Metric names understood by a resource rule. "cpu" is Docker's own
 // one-core-is-100% figure; "cpu_total" normalises it across the host's cores.
-type Metric = "cpu" | "cpu_total" | "mem";
+// netrx_rate/nettx_rate are bytes/s, entered here as MB/s (same convention as
+// the memory-limit field elsewhere) and converted in buildConfig().
+type Metric = "cpu" | "cpu_total" | "mem" | "netrx_rate" | "nettx_rate";
+const isRateMetric = (m: Metric) => m === "netrx_rate" || m === "nettx_rate";
 
 type Tab = "feed" | "rules" | "webhooks" | "maintenance";
 
@@ -537,7 +540,8 @@ const STATE_EVENTS = [
   { id: "health_status: unhealthy", label: "Unhealthy" },
 ];
 
-function Rules() {
+// Exported for Alerts.networkRule.dom.test.tsx.
+export function Rules() {
   const [rules, setRules] = useState<AlertRule[] | null>(null);
   const [hooks, setHooks] = useState<Webhook[]>([]);
   const [showForm, setShowForm] = useState(false);
@@ -683,12 +687,21 @@ function RuleForm({ hooks, existing, onDone }: { hooks: Webhook[]; existing?: Al
   const [events, setEvents] = useState<Set<string>>(new Set((cfg.events as string[]) ?? ["die"]));
   const [metric, setMetric] = useState<Metric>((cfg.metric as Metric) ?? "cpu");
   const [op, setOp] = useState<">" | "<">((cfg.op as ">" | "<") ?? ">");
-  const [threshold, setThreshold] = useState((cfg.threshold as number) ?? 80);
+  // A rate metric's threshold is stored in bytes/s but edited here as MB/s.
+  const [threshold, setThreshold] = useState(() => {
+    const raw = (cfg.threshold as number) ?? 80;
+    return isRateMetric((cfg.metric as Metric) ?? "cpu") ? raw / (1024 * 1024) : raw;
+  });
   const [duration, setDuration] = useState((cfg.durationSec as number) ?? 30);
   const [pattern, setPattern] = useState((cfg.pattern as string) ?? "");
   const [isRegex, setIsRegex] = useState((cfg.isRegex as boolean) ?? false);
   const [windowSec, setWindowSec] = useState((cfg.windowSec as number) ?? 60);
   const [count, setCount] = useState((cfg.count as number) ?? 3);
+  // "network" type: alert on the INCREASE of a cumulative counter over a
+  // window, never its absolute value — see the help text below the fields.
+  const [netMetric, setNetMetric] = useState<"netdrops" | "neterrors">((cfg.metric as "netdrops" | "neterrors") ?? "netdrops");
+  const [netThreshold, setNetThreshold] = useState((cfg.threshold as number) ?? 1);
+  const [netWindowSec, setNetWindowSec] = useState((cfg.windowSec as number) ?? 300);
   const [busy, setBusy] = useState(false);
 
   const buildConfig = (): unknown => {
@@ -696,11 +709,13 @@ function RuleForm({ hooks, existing, onDone }: { hooks: Webhook[]; existing?: Al
       case "state":
         return { events: [...events] };
       case "resource":
-        return { metric, op, threshold, durationSec: duration };
+        return { metric, op, threshold: isRateMetric(metric) ? Math.round(threshold * 1024 * 1024) : threshold, durationSec: duration };
       case "log":
         return { pattern, isRegex };
       case "restart":
         return { windowSec, count };
+      case "network":
+        return { metric: netMetric, threshold: netThreshold, windowSec: netWindowSec };
     }
   };
 
@@ -735,6 +750,7 @@ function RuleForm({ hooks, existing, onDone }: { hooks: Webhook[]; existing?: Al
             <option value="resource">Resource threshold</option>
             <option value="log">Log pattern</option>
             <option value="restart">Restart / crash loop</option>
+            <option value="network">Network drops / errors</option>
           </select>
         </div>
         <div>
@@ -775,13 +791,17 @@ function RuleForm({ hooks, existing, onDone }: { hooks: Webhook[]; existing?: Al
               <option value="cpu">CPU % (of one core)</option>
               <option value="cpu_total">CPU % (of all cores)</option>
               <option value="mem">Memory % (of container limit)</option>
+              <option value="netrx_rate">Network RX rate</option>
+              <option value="nettx_rate">Network TX rate</option>
             </select>
             <span className="block text-xs text-muted mt-1">
               {metric === "cpu"
                 ? "Docker's own figure: 100% is one core, so a container busy on 4 cores reads ~400%. A fixed threshold here fires constantly on multi-core hosts."
                 : metric === "cpu_total"
                   ? "Normalised across the host's cores, so 0–100% whatever the core count. Usually what you want."
-                  : "Share of the container's memory limit, not of host RAM."}
+                  : metric === "mem"
+                    ? "Share of the container's memory limit, not of host RAM."
+                    : "The live per-poll rate (same figure the dashboard shows), not averaged over a window."}
             </span>
           </div>
           <div>
@@ -792,7 +812,7 @@ function RuleForm({ hooks, existing, onDone }: { hooks: Webhook[]; existing?: Al
             </select>
           </div>
           <div>
-            <label className="label">Threshold %</label>
+            <label className="label">{isRateMetric(metric) ? "Threshold (MB/s)" : "Threshold %"}</label>
             <input className="input" type="number" value={threshold} onChange={(e) => setThreshold(+e.target.value)} />
           </div>
           <div>
@@ -823,6 +843,31 @@ function RuleForm({ hooks, existing, onDone }: { hooks: Webhook[]; existing?: Al
             <label className="label">Within (seconds)</label>
             <input className="input" type="number" value={windowSec} onChange={(e) => setWindowSec(+e.target.value)} />
           </div>
+        </div>
+      )}
+      {type === "network" && (
+        <div>
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className="label">Metric</label>
+              <select className="input" value={netMetric} onChange={(e) => setNetMetric(e.target.value as "netdrops" | "neterrors")}>
+                <option value="netdrops">Dropped packets</option>
+                <option value="neterrors">Interface errors</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">Increase by at least</label>
+              <input className="input" type="number" value={netThreshold} onChange={(e) => setNetThreshold(+e.target.value)} />
+            </div>
+            <div>
+              <label className="label">Within (seconds)</label>
+              <input className="input" type="number" value={netWindowSec} onChange={(e) => setNetWindowSec(+e.target.value)} />
+            </div>
+          </div>
+          <span className="block text-xs text-muted mt-1">
+            Fires on the INCREASE within the window, never on the counter's absolute value — a container whose drops sat
+            at a high total since a bad afternoon last month won't trigger this by itself.
+          </span>
         </div>
       )}
 

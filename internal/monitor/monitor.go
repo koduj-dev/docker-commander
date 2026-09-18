@@ -88,6 +88,10 @@ func (cs ContainerStat) metric(name string) (float64, bool) {
 			return 0, false // without a core count the figure would be a guess
 		}
 		return cs.CPUPercent / cs.CPUCores, true
+	case "netrx_rate":
+		return cs.NetRxRate, true
+	case "nettx_rate":
+		return cs.NetTxRate, true
 	default:
 		return cs.CPUPercent, true
 	}
@@ -288,6 +292,7 @@ func (m *Monitor) pollStats(ctx context.Context) {
 
 	m.recordHistory(ctx, next)
 	m.evalResourceRules(ctx, next, sampled)
+	m.evalNetworkRules(ctx, next)
 }
 
 // applyNetRates fills in per-container throughput from the previous poll.
@@ -482,6 +487,64 @@ func (m *Monitor) evalResourceRules(ctx context.Context, snap map[string]Contain
 	}
 }
 
+// evalNetworkRules fires "network" rules — packet drops/errors that grew by
+// at least Threshold within the last WindowSec. Unlike evalResourceRules,
+// this is NOT a condition with a lifetime: an "increase over a window" has
+// no stable "current value" the way CPU% does (the same window, queried a
+// second later, is a different window), so there is nothing to escalate,
+// ease or resolve. It fires edge-triggered through m.fire, exactly like the
+// "restart" rule type's crash-loop detection, just polled instead of
+// event-driven, since there's no single Docker event a packet drop maps to.
+func (m *Monitor) evalNetworkRules(ctx context.Context, snap map[string]ContainerStat) {
+	if m.history == nil {
+		return // no history store configured, nothing to query a window from
+	}
+	rules, err := m.store.ListAlertRules(ctx)
+	if err != nil {
+		return
+	}
+	now := time.Now()
+	for _, r := range rules {
+		if !r.Enabled || r.Type != "network" {
+			continue
+		}
+		cfg, err := parseNetwork(r.Config)
+		if err != nil {
+			continue
+		}
+		metric := history.MetricNetDrops
+		if cfg.Metric == "neterrors" {
+			metric = history.MetricNetErrors
+		}
+		since := now.Add(-time.Duration(cfg.WindowSec) * time.Second)
+		for _, cs := range snap {
+			if cs.State != "running" || !matchTarget(r.Target, cs.Name) {
+				continue
+			}
+			pts, err := m.history.Query(ctx, cs.ID, metric, since)
+			if err != nil {
+				continue
+			}
+			inc, ok := history.Increase(pts)
+			if !ok || inc < cfg.Threshold {
+				continue
+			}
+			v := inc
+			m.fire(ctx, r, cs.HostID, cs.HostName, cs.ID, cs.Name, cs.Project,
+				sprintf("%s increased by %.0f in the last %s", networkMetricLabel(cfg.Metric), inc, humanDuration(cfg.WindowSec)),
+				&v)
+		}
+	}
+}
+
+// networkMetricLabel says what a network rule's metric actually counts.
+func networkMetricLabel(metric string) string {
+	if metric == "neterrors" {
+		return "interface errors"
+	}
+	return "dropped packets"
+}
+
 // saveState persists a condition, preserving when it started. notifiedAt is
 // deliberately NOT defaulted to now when zero — a zero value means "this
 // condition has never actually been delivered" (its only emit so far was
@@ -545,6 +608,13 @@ func resourceMessage(cfg resourceConfig, cs ContainerStat, val float64) string {
 	case "cpu_total":
 		return sprintf("CPU %.1f%% of %.0f cores %s %.0f%% for %ds",
 			val, cs.CPUCores, cfg.Op, cfg.Threshold, cfg.DurationSec)
+	case "netrx_rate", "nettx_rate":
+		dir := "RX"
+		if cfg.Metric == "nettx_rate" {
+			dir = "TX"
+		}
+		return sprintf("%s %s/s %s %s/s for %ds",
+			dir, humanBytes(uint64(val)), cfg.Op, humanBytes(uint64(cfg.Threshold)), cfg.DurationSec)
 	default:
 		return sprintf("CPU %.1f%% of one core (%.0f cores available) %s %.0f%% for %ds",
 			val, cs.CPUCores, cfg.Op, cfg.Threshold, cfg.DurationSec)

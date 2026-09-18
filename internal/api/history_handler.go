@@ -1,7 +1,10 @@
 package api
 
 import (
+	"context"
 	"net/http"
+	"sort"
+	"strconv"
 	"time"
 
 	"github.com/koduj-dev/docker-commander/internal/history"
@@ -84,4 +87,136 @@ func (s *Server) handleMetricsHistory(w http.ResponseWriter, r *http.Request) {
 		points = []history.Point{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"metric": metric, "points": points})
+}
+
+// topTalkerWindows are the only windows offered — a fixed allow-list rather
+// than a raw duration string, since the window becomes a history query's
+// `since` and an unbounded one could ask for far more than the UI needs.
+var topTalkerWindows = map[string]time.Duration{
+	"5m":  5 * time.Minute,
+	"15m": 15 * time.Minute,
+	"1h":  time.Hour,
+}
+
+type topTalker struct {
+	ID       string  `json:"id"`
+	Name     string  `json:"name"`
+	HostID   int64   `json:"hostId"`
+	HostName string  `json:"hostName"`
+	RxRate   float64 `json:"rxRate"` // bytes/s, averaged over the window
+	TxRate   float64 `json:"txRate"` // bytes/s, averaged over the window
+	Rate     float64 `json:"rate"`   // the requested metric's rate — what rows are sorted by
+}
+
+// topTalkerMeta is the display info the handler already has from the live
+// snapshot (name/host), keyed by container id.
+type topTalkerMeta struct {
+	name, hostName string
+	hostID         int64
+}
+
+// rankTopTalkers is handleTopTalkers' testable core: given a history store,
+// the running containers' ids/meta, and a window, it ranks by the requested
+// metric's rate averaged over that window. Split out from the handler so the
+// ranking/skip logic can be tested directly against a real in-memory
+// history.Store, without a live Monitor/Docker daemon behind it.
+func rankTopTalkers(ctx context.Context, hist history.Store, ids []string, metaByID map[string]topTalkerMeta, since time.Time, metric string, limit int) ([]topTalker, error) {
+	rx, err := hist.QueryAll(ctx, history.MetricNetRx, since, ids)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := hist.QueryAll(ctx, history.MetricNetTx, since, ids)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]topTalker, 0, len(ids))
+	for _, cid := range ids {
+		rxRate, rxOK := history.RateOverWindow(rx[cid])
+		txRate, txOK := history.RateOverWindow(tx[cid])
+		if !rxOK && !txOK {
+			continue // not enough history yet (e.g. a container that just started)
+		}
+		meta := metaByID[cid]
+		t := topTalker{ID: cid, Name: meta.name, HostID: meta.hostID, HostName: meta.hostName, RxRate: rxRate, TxRate: txRate}
+		switch metric {
+		case history.MetricNetRx:
+			t.Rate = rxRate
+		case history.MetricNetTx:
+			t.Rate = txRate
+		default:
+			t.Rate = rxRate + txRate
+		}
+		out = append(out, t)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Rate > out[j].Rate })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// handleTopTalkers ranks running containers by network throughput AVERAGED
+// OVER A STORED WINDOW — never a point-in-time poll sample, which reorders
+// itself every poll (8-15s) and is unreadable; see the "top talkers" note in
+// docs/alerts.md and ResourceBreakdown.tsx's comment on why the live
+// dashboard snapshot deliberately doesn't attempt this ranking.
+// Query params: window ("5m"|"15m"|"1h", default "5m"), metric
+// ("total"|"netrx"|"nettx", default "total"), limit (1-50, default 8).
+func (s *Server) handleTopTalkers(w http.ResponseWriter, r *http.Request) {
+	if s.history == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"window": "", "metric": "", "containers": []topTalker{}})
+		return
+	}
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	windowName := r.URL.Query().Get("window")
+	if windowName == "" {
+		windowName = "5m"
+	}
+	win, ok := topTalkerWindows[windowName]
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "unknown window")
+		return
+	}
+	metric := r.URL.Query().Get("metric")
+	if metric == "" {
+		metric = "total"
+	}
+	if metric != "total" && metric != history.MetricNetRx && metric != history.MetricNetTx {
+		writeErr(w, http.StatusBadRequest, "unknown metric")
+		return
+	}
+	limit := 8
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			limit = n
+		}
+	}
+	if limit < 1 {
+		limit = 1
+	} else if limit > 50 {
+		limit = 50
+	}
+
+	hid, _ := s.docker.ResolveHostID(r.Context(), hostID)
+	metaByID := make(map[string]topTalkerMeta)
+	ids := make([]string, 0)
+	for _, cs := range s.monitor.Snapshot() {
+		if cs.HostID != hid || cs.State != "running" {
+			continue
+		}
+		ids = append(ids, cs.ID)
+		metaByID[cs.ID] = topTalkerMeta{name: cs.Name, hostName: cs.HostName, hostID: cs.HostID}
+	}
+
+	out, err := rankTopTalkers(r.Context(), s.history, ids, metaByID, time.Now().Add(-win), metric, limit)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "history query failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"window": windowName, "metric": metric, "containers": out})
 }

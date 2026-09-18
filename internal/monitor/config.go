@@ -15,17 +15,20 @@ import (
 // Metric picks what the threshold is compared against, and the choice matters
 // more than it looks:
 //
-//	cpu       percent of ONE core, the `docker stats` convention. A container
-//	          busy on four cores reads ~400%, so a "> 80%" rule on a multi-core
-//	          host is over threshold essentially always.
-//	cpu_total percent of ALL the host's cores — 0–100% whatever the core count,
-//	          which is what most people mean when they write "> 80%".
-//	mem       percent of the container's memory LIMIT (not of host RAM).
+//	cpu        percent of ONE core, the `docker stats` convention. A container
+//	           busy on four cores reads ~400%, so a "> 80%" rule on a multi-core
+//	           host is over threshold essentially always.
+//	cpu_total  percent of ALL the host's cores — 0–100% whatever the core count,
+//	           which is what most people mean when they write "> 80%".
+//	mem        percent of the container's memory LIMIT (not of host RAM).
+//	netrx_rate/nettx_rate
+//	           bytes/sec, the same live per-poll rate the dashboard shows —
+//	           an absolute threshold, unlike the network rule type below.
 //
 // "cpu" stays the default so rules written before cpu_total existed keep the
 // exact meaning they had.
 type resourceConfig struct {
-	Metric      string  `json:"metric"` // "cpu" | "cpu_total" | "mem"
+	Metric      string  `json:"metric"` // "cpu" | "cpu_total" | "mem" | "netrx_rate" | "nettx_rate"
 	Op          string  `json:"op"`     // ">" | "<"
 	Threshold   float64 `json:"threshold"`
 	DurationSec int     `json:"durationSec"`
@@ -33,7 +36,9 @@ type resourceConfig struct {
 
 // metricKey groups rules that talk about the same thing, so overlapping rules
 // over one metric are one condition rather than competing alerts. Both CPU
-// flavours describe the same underlying usage, so they share a key.
+// flavours describe the same underlying usage, so they share a key. The two
+// network rate metrics are directional and never overlap with anything else,
+// so they keep their own metric name as the key.
 func (c resourceConfig) metricKey() string {
 	if c.Metric == "cpu_total" {
 		return "cpu"
@@ -99,6 +104,33 @@ func parseRestart(s string) (restartConfig, error) {
 	}
 	if c.Count <= 0 {
 		c.Count = 3
+	}
+	return c, nil
+}
+
+// networkConfig is an increase-triggered rule: it fires when a cumulative
+// counter (packet drops or errors) grows by at least Threshold within the
+// last WindowSec, never on the counter's absolute value — a drops counter
+// that has sat at 12 since a bad afternoon last month is not an incident.
+type networkConfig struct {
+	Metric    string  `json:"metric"` // "netdrops" | "neterrors"
+	Threshold float64 `json:"threshold"`
+	WindowSec int     `json:"windowSec"`
+}
+
+func parseNetwork(s string) (networkConfig, error) {
+	var c networkConfig
+	if err := json.Unmarshal([]byte(s), &c); err != nil {
+		return c, err
+	}
+	if c.Metric == "" {
+		c.Metric = "netdrops"
+	}
+	if c.Threshold <= 0 {
+		c.Threshold = 1
+	}
+	if c.WindowSec <= 0 {
+		c.WindowSec = 300
 	}
 	return c, nil
 }

@@ -194,19 +194,14 @@ networks/restart/resources/healthcheck differences, with a per-change
 
 ### Network statistics
 
-Phases 1 and 2 have shipped — per-container throughput, totals, packets, drops,
+Phases 1–3 have shipped — per-container throughput, totals, packets, drops,
 errors and a per-interface breakdown; endpoint totals on a network's detail; a
-host-wide summary on the dashboard — and so has phase 3's storage half: history
-keeps the **raw cumulative counters** and derives rates at read time. What is left
-is what you *do* with them.
+host-wide summary on the dashboard; history storing raw cumulative counters and
+deriving rates at read time; alert rules for throughput (absolute threshold)
+and drops/errors (alert on increase within a window, never the absolute
+value); and a Top Talkers ranking (dashboard widget + full page) averaged over
+a stored window, never a point-in-time sample. What is left is optional:
 
-- **Alert on network.** Rule metrics are still `cpu` / `cpu_total` / `mem` only.
-  Throughput needs a rule of its own, and drops and errors should be alerted on by
-  their **increase**, not their absolute value — a counter sitting at 12 since a
-  bad afternoon last month is not an incident.
-- **Top talkers.** Only readable over a window: point-in-time throughput reorders
-  itself on every poll, which is why the dashboard shows a host-wide time series
-  rather than a ranking. Rank over a stored interval, not over a sample.
 - **Phase 4 (optional) — a Linux collector** via netlink/eBPF for flows, protocols,
   connections and retransmits. Keep it an optional capability, never a condition of
   running Docker Commander: it is Linux-only, awkward under Docker Desktop and
@@ -515,7 +510,7 @@ was already in flight when the call was made.
    one applied to workloads and the other to DC's own binary
 6. [x] Per-container domain + TLS / embedded reverse proxy (#13; phase 1,
    config only, shipped — live proxy engine still open, see below)
-7. [ ] Network alerting / top talkers (#21)
+7. [x] Network alerting / top talkers (#21)
 8. [ ] Per-container domain + TLS, phase 2 — the live proxy engine
    (shared-listener SNI dispatch, `ReverseProxy` routing from the stored
    mappings, local-host projects only, off by default), see the "Reverse

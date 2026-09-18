@@ -33,11 +33,13 @@ own slice; the rest are grouped as **Other**.
 > usage ÷ total RAM. Remote hosts work the same, over the Docker API.
 
 **Network · all containers** is the host-wide RX/TX rate right now, with a short
-rolling trend beside it. It is deliberately *not* a pie or a top-talkers list: a
-pie claims "parts of a whole", and the only whole available is whatever happens to
-be moving — so one container at 100% of 2 KB/s would look exactly like one at 100%
-of 800 MB/s. A live ranking is no better, because throughput is bursty enough to
-reorder itself on every poll. Per-container series live on the
+rolling trend beside it. It is deliberately *not* a pie or a per-container
+ranking: a pie claims "parts of a whole", and the only whole available is
+whatever happens to be moving — so one container at 100% of 2 KB/s would look
+exactly like one at 100% of 800 MB/s. A *live* ranking is no better either,
+because throughput is bursty enough to reorder itself on every poll — which is
+why per-container ranking lives in its own **Top talkers** panel instead (below),
+sourced differently. Per-container series live on the
 [container detail](containers.md#network).
 
 Summed across running containers, so **container-to-container traffic counts
@@ -46,6 +48,26 @@ twice** — once as one side's TX and once as the other's RX.
 All three panels re-sample on Docker lifecycle events and on a slow poll, updating
 in place; a transient error keeps the last good numbers rather than blanking the
 section.
+
+## Top talkers
+A small ranked list of the busiest containers by network throughput, next to
+**Resource usage**. Unlike the network summary above, this is not a live
+snapshot: ranking containers by a point-in-time poll sample is unreadable
+(throughput is bursty enough to reorder itself every 8–15 seconds), so this
+ranks by the **average rate over a stored window** instead — 5 minutes by
+default here, refetched every 15 seconds.
+
+"View all →" opens the full **Top talkers** page (also reachable from the
+sidebar's Network group), with a bigger table, a window selector (5 min / 15
+min / 1 hour) and a metric selector (total, received, sent). Both share the
+same limitation as the rest of the app's network reporting: a container
+attached to more than one Docker network has its traffic summed across all of
+its interfaces, since Docker's own stats API does not say which interface
+belongs to which network.
+
+A container needs at least two samples inside the chosen window to show up at
+all — a container that just started, or a window shorter than the metrics poll
+interval, shows "not enough history yet" rather than a misleading zero.
 
 ## Open ports
 A host-wide map of every **published port** across the running containers.

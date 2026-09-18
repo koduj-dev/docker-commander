@@ -14,6 +14,7 @@ import { Templates } from "./pages/Templates";
 import { Images } from "./pages/Images";
 import { Volumes } from "./pages/Volumes";
 import { Networks } from "./pages/Networks";
+import { NetworkTopTalkers } from "./pages/NetworkTopTalkers";
 import { Topology } from "./pages/Topology";
 import { Logs } from "./pages/Logs";
 import { Events } from "./pages/Events";
@@ -62,6 +63,7 @@ export default function App() {
         <Route path="/images" element={<Images />} />
         <Route path="/volumes" element={<Volumes />} />
         <Route path="/networks" element={<Networks />} />
+        <Route path="/network/top-talkers" element={<NetworkTopTalkers />} />
         <Route path="/topology" element={<Topology />} />
         <Route path="/logs" element={<Logs />} />
         <Route path="/events" element={<Events />} />
