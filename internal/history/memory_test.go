@@ -63,3 +63,57 @@ func TestMemoryStoreKeepsRecentlySeenContainers(t *testing.T) {
 		t.Error("a container sampled a minute ago is not stale")
 	}
 }
+
+func TestMemoryStoreQueryAll(t *testing.T) {
+	m := newMemoryStore(time.Hour)
+	ctx := context.Background()
+	now := time.Now()
+
+	if err := m.Record(ctx, []Sample{{ContainerID: "a", HostID: 1, Time: now, NetRx: 100}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Record(ctx, []Sample{{ContainerID: "b", HostID: 1, Time: now, NetRx: 200}}); err != nil {
+		t.Fatal(err)
+	}
+	// c never reports — must be absent from the result, not an empty slice.
+
+	out, err := m.QueryAll(ctx, MetricNetRx, now.Add(-time.Minute), []string{"a", "b", "c"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("expected exactly the 2 ids with data, got %d: %+v", len(out), out)
+	}
+	if _, ok := out["c"]; ok {
+		t.Error("a container with no points must be absent, not an empty slice")
+	}
+	if len(out["a"]) != 1 || out["a"][0].V != 100 {
+		t.Errorf("a's series wrong: %+v", out["a"])
+	}
+	if len(out["b"]) != 1 || out["b"][0].V != 200 {
+		t.Errorf("b's series wrong: %+v", out["b"])
+	}
+
+	// An id present in the store but requested outside the window must not leak in.
+	old, err := m.QueryAll(ctx, MetricNetRx, now.Add(time.Minute), []string{"a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(old) != 0 {
+		t.Errorf("a future 'since' should return nothing, got %+v", old)
+	}
+
+	// QueryAll must never return an id that wasn't in containerIDs, even if
+	// the store holds data for it — this is the whole reason it takes an
+	// explicit list instead of "everything".
+	only := map[string]bool{"a": true}
+	out2, err := m.QueryAll(ctx, MetricNetRx, now.Add(-time.Minute), []string{"a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id := range out2 {
+		if !only[id] {
+			t.Errorf("QueryAll returned id %q that was not requested", id)
+		}
+	}
+}

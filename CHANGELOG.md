@@ -7,6 +7,17 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Network alert rules + Top talkers.** Two new ways to act on the network
+  telemetry that already shipped: an existing **resource** rule can now
+  threshold on network RX/TX rate (bytes/s, same live figure the dashboard
+  shows), and a new **network** rule type fires when dropped packets or
+  interface errors *increase* by at least a chosen amount within a window —
+  never on their absolute value, since a drops counter that has sat at a high
+  total since a bad afternoon last month is not an incident. Separately, a new
+  **Top talkers** dashboard widget (plus a full page under the sidebar's
+  Network group) ranks running containers by throughput — averaged over a
+  **stored window** (5 min / 15 min / 1 hour), never a point-in-time poll
+  sample, which reorders itself every poll and is unreadable.
 - **Domain mappings (phase 1 of "Per-container domain + TLS").** A project
   can now record that a domain (e.g. `app.example.com`)
   should route to one of its compose services' ports — manage them from the

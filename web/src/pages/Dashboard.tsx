@@ -7,6 +7,7 @@ import { bytes } from "../lib/format";
 import { PageHeader } from "../layout/Shell";
 import { StatCard, Spinner } from "../components/ui";
 import { ResourceBreakdown } from "../components/ResourceBreakdown";
+import { TopTalkers } from "../components/TopTalkers";
 import { OpenPorts } from "../components/OpenPorts";
 import { ContainerTable } from "./Containers";
 import { useDockerEventTick } from "../lib/dockerEvents";
@@ -61,6 +62,8 @@ export function Dashboard() {
         )}
 
         <ResourceBreakdown tick={tick} />
+
+        <TopTalkers tick={tick} />
 
         <OpenPorts tick={tick} />
 

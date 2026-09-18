@@ -25,9 +25,10 @@ Create or edit a rule (rules are fully editable, not just create/delete):
 | Type       | Fires when… |
 |------------|-------------|
 | `state`    | a container emits a lifecycle event (die, kill, oom, stop, unhealthy) |
-| `resource` | CPU% or MEM% crosses a threshold for *N* seconds |
+| `resource` | CPU%, MEM%, or network RX/TX rate crosses a threshold for *N* seconds |
 | `log`      | a log line matches a substring or regex |
 | `restart`  | a container restarts too often within a window (crash loop) |
+| `network`  | dropped packets or interface errors *increase* by at least *N* within a window |
 
 Each rule has a **target** (container-name substring; blank/`*` = all), a
 **severity**, a **re-notify interval** (the *cooldown* field — how long a
@@ -59,9 +60,10 @@ Two consequences worth knowing, because they are the point:
 - **A condition that is still true says nothing.** Silence between `firing` and
   `resolved` means "unchanged", not "not checked".
 
-`state`, `log` and `restart` rules stay **edge-triggered**: a container that died
-or a log line that matched has no later moment at which it stops being true, so
-those still use the plain cooldown and never resolve.
+`state`, `log`, `restart` and `network` rules stay **edge-triggered**: a
+container that died, a log line that matched, or a counter that grew within a
+window has no later moment at which it stops being true, so those still use
+the plain cooldown and never resolve.
 
 ## The feed
 
@@ -230,6 +232,22 @@ This trips people up, so the rule editor now asks explicitly:
 Existing rules keep the *of one core* meaning, so nothing changes underneath a
 rule you already wrote. Alert messages now state their basis and carry absolute
 values — `MEM 3.0 GB / 5.0 GB (61.9% of limit) > 5%` rather than `MEM 61.9% > 5%`.
+
+## What the network rules measure
+
+Two different rule shapes, for two different questions:
+
+- **`resource` rule, RX/TX rate metric** — a plain absolute-value threshold,
+  same as CPU/MEM: "is the current rate above/below *N* MB/s for *N* seconds."
+  It reads the same live per-poll rate the dashboard shows. Entered in MB/s in
+  the rule editor, stored as bytes/s.
+- **`network` rule, drops/errors metric** — fires on the **increase** within a
+  window, never the counter's absolute value: "did dropped packets / interface
+  errors grow by at least *N* within the last *N* seconds." A container whose
+  drops have sat at a high total since a bad afternoon last month is not an
+  incident and must not fire; one that is actively losing packets right now
+  should. Dropped packets and interface errors are each counted **RX+TX
+  combined**, matching how they are already reported elsewhere in the app.
 
 > **Host reachability is watched automatically** — no rule needed. When a host's
 > Docker daemon goes **unreachable** you get a *critical* `host` alert, and a

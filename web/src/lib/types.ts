@@ -784,7 +784,7 @@ export interface Webhook {
   createdAt: string;
 }
 
-export type AlertType = "state" | "resource" | "log" | "restart";
+export type AlertType = "state" | "resource" | "log" | "restart" | "network";
 export type Severity = "info" | "warning" | "critical";
 
 export interface AlertRule {
@@ -801,6 +801,24 @@ export interface AlertRule {
   emails?: string[] | null;
   cooldownSec: number;
   createdAt: string;
+}
+
+// A container's rank in a "top talkers" window — an averaged rate over the
+// window, NOT a point-in-time poll sample (see api.topTalkers).
+export interface TopTalker {
+  id: string;
+  name: string;
+  hostId: number;
+  hostName: string;
+  rxRate: number; // bytes/s, averaged over the window
+  txRate: number; // bytes/s, averaged over the window
+  rate: number; // bytes/s for the metric the request ranked by (rx, tx, or rx+tx for "total")
+}
+
+export interface TopTalkers {
+  window: string;
+  metric: string;
+  containers: TopTalker[];
 }
 
 export interface ParseRule {

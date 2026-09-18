@@ -63,6 +63,7 @@ import type {
   SystemInfo,
   VolumeSummary,
   TopResult,
+  TopTalkers,
   Topology,
   User,
   Webhook,
@@ -858,6 +859,11 @@ export const api = {
   system: () => req<SystemInfo>("GET", `/api/system${hostParam()}`),
   statsOverview: () => req<ResourceOverview>("GET", `/api/stats/overview${hostParam()}`),
   hostPorts: () => req<HostPortProbe[]>("GET", `/api/stats/ports${hostParam()}`),
+  // Ranks containers by network throughput averaged over a STORED window
+  // (never a point-in-time sample — see docs/alerts.md's "top talkers" note
+  // for why). metric is "total" | "netrx" | "nettx".
+  topTalkers: (window: string, metric: string, limit?: number) =>
+    req<TopTalkers>("GET", `/api/stats/top-talkers?window=${window}&metric=${metric}${limit ? `&limit=${limit}` : ""}${hostParam("&")}`),
   // hostSystem fetches engine/host info for a specific host (not the active one).
   hostSystem: (id: number) => req<SystemInfo>("GET", `/api/system?host=${id}`),
   audit: (limit = 50, before?: number) =>

@@ -75,6 +75,39 @@ func (s *redisStore) Query(ctx context.Context, containerID, metric string, sinc
 	if err != nil {
 		return nil, err
 	}
+	return parseMembers(members), nil
+}
+
+// QueryAll pipelines one ZRangeByScore per container id — still one round
+// trip to Redis regardless of how many ids are asked for.
+func (s *redisStore) QueryAll(ctx context.Context, metric string, since time.Time, containerIDs []string) (map[string][]Point, error) {
+	if len(containerIDs) == 0 {
+		return map[string][]Point{}, nil
+	}
+	zrange := &redis.ZRangeBy{Min: strconv.FormatInt(since.UnixMilli(), 10), Max: "+inf"}
+	pipe := s.rdb.Pipeline()
+	cmds := make(map[string]*redis.StringSliceCmd, len(containerIDs))
+	for _, cid := range containerIDs {
+		cmds[cid] = pipe.ZRangeByScore(ctx, key(cid, metric), zrange)
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+	out := make(map[string][]Point, len(containerIDs))
+	for cid, cmd := range cmds {
+		members, err := cmd.Result()
+		if err != nil || len(members) == 0 {
+			continue
+		}
+		out[cid] = parseMembers(members)
+	}
+	return out, nil
+}
+
+// parseMembers decodes a sorted set's "<ts>:<value>" members into Points,
+// silently dropping anything malformed (there is no valid state that
+// produces one — Record is the only writer).
+func parseMembers(members []string) []Point {
 	out := make([]Point, 0, len(members))
 	for _, m := range members {
 		sep := strings.IndexByte(m, ':')
@@ -88,7 +121,7 @@ func (s *redisStore) Query(ctx context.Context, containerID, metric string, sinc
 		}
 		out = append(out, Point{T: t, V: v})
 	}
-	return out, nil
+	return out
 }
 
 func (s *redisStore) Close() error { return s.rdb.Close() }

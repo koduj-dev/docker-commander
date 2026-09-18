@@ -43,6 +43,7 @@ level filters, regex search and structured parsing.
 - Live **CPU / memory graphs** over WebSockets and **historical charts** (Redis or in-memory).
 - **Dashboard** that updates in near real time (Docker events stream): host facts, disk usage, a **resource breakdown** (each container's share of host CPU/memory plus host-wide **network throughput**), and a **port scan** that fingerprints what's actually listening.
 - **Network telemetry** — per-container **RX/TX rate** (derived, so a counter reset on recreate reads as a gap rather than a spike), totals, **packets / dropped / errors** and the per-interface breakdown, plus **endpoint totals** on a network's detail — labelled for what they are, since Docker reports no per-network counters.
+- **Top talkers** — containers ranked by network throughput **averaged over a stored window** (5 min / 15 min / 1 hour), never a point-in-time poll sample, which reorders itself every poll and is unreadable. A small preview lives on the dashboard; the full ranked table is its own page.
 - **Logs** — per-container tail, plus a global **aggregated** view with level detection, **regex search** and saved **parsing rules** that turn lines into structured columns.
 - Live **events** feed, container **diff** / **top**, **disk usage**, and raw JSON **inspect** for any object.
 - **Networks & topology** — an interactive containers ↔ networks graph (force-directed, pan / zoom / fullscreen, **search**, **filter by compose stack**) with a compact **list view** (state, image, stack, ports, networks).
@@ -66,7 +67,7 @@ level filters, regex search and structured parsing.
 - Manage **local**, **TCP(+TLS)** and **SSH** daemons; SSH **host keys are verified** (known_hosts / trust-on-first-use). Every view rebinds to the selected host, and the alert engine watches **all** hosts. A per-host **detail** panel shows the hardware / OS / engine, and a host can be **disabled** to take it out of monitoring (e.g. an offline laptop).
 
 **Alerting & integrations**
-- Rules on **state**, **resource thresholds**, **log patterns** and **restart/crash-loops** — editable, with severity & cooldown.
+- Rules on **state**, **resource thresholds** (CPU, memory, and network RX/TX rate), **log patterns**, **restart/crash-loops**, and a dedicated **network** rule that fires on dropped packets/interface errors *increasing* within a window — never their absolute value — editable, with severity & cooldown.
 - Threshold alerts are **conditions with a lifetime** (`firing` → `escalated`/`eased` → `resolved`), one per container + metric, so overlapping rules produce one incident instead of one each — and the feed is server-side **paged, filtered and sorted**, with **who acknowledged** it and every **delivery attempt** recorded against it.
 - Notify via **webhooks**, **email (SMTP, per-host routing)**, an in-app feed, and a **Prometheus `/metrics`** exporter. Rules **import/export** as a portable JSON bundle. A transient failure (timeout, `429`/`5xx`, an SMTP hiccup) is **retried automatically** — bounded, exponential backoff, and only for failures worth retrying; a `4xx` or missing config never is.
 - **Maintenance windows** suppress alert delivery — not observation — for planned work: scope by host, compose project/container, rule and/or severity, one-off or weekly-**recurring**, with a required reason/author, audited. A successful **deploy auto-opens a short window** for that project (configurable grace period, disableable).
@@ -397,8 +398,8 @@ that project.
 ## 🧪 How it's tested
 
 You're pointing this at real Docker daemons, so the fast tests are the floor, not
-the ceiling. Alongside **~940 Go unit tests** and **~240 frontend tests**, the repo
-carries **148 adversarial "pentest" cases** that assert attacks are *rejected* (token
+the ceiling. Alongside **~1020 Go unit tests** and **~280 frontend tests**, the repo
+carries **150 adversarial "pentest" cases** that assert attacks are *rejected* (token
 forgery, OAuth replay, CSRF, IDOR, per-host scope bypass, privilege escalation,
 path traversal), an integration tier against a **real Docker daemon** (plus
 throwaway Redis / OpenLDAP / SMTP), and an end-to-end tier that deploys to
