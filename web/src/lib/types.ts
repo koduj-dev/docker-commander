@@ -105,6 +105,18 @@ export interface UpdateStatus {
   error?: string;
   /** True when the in-app one-tap "Update & restart" is offered (admin + allowed + restartable). */
   selfUpdate?: boolean;
+  selfUpdatePolicy: SelfUpdatePolicy;
+  lastAutoUpdate?: LastAutoUpdate;
+}
+
+export interface SelfUpdatePolicy {
+  enabled: boolean;
+  granularity: "patch" | "minor" | "major";
+}
+
+export interface LastAutoUpdate {
+  version: string;
+  appliedAt: string;
 }
 
 export interface LdapGroupMapping {

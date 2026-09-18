@@ -160,9 +160,10 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/ldap", s.handleGetLDAP)
 			r.Put("/ldap", s.handleSetLDAP)
 			r.Post("/ldap/test", s.handleTestLDAP)
-			r.Get("/update", s.handleUpdateStatus)     // admin-only (section "__admin")
-			r.Post("/update", s.handleApplyUpdate)     // admin-only: download + verify + swap
-			r.Post("/update/restart", s.handleRestart) // admin-only: re-exec the new binary
+			r.Get("/update", s.handleUpdateStatus)               // admin-only (section "__admin")
+			r.Post("/update", s.handleApplyUpdate)               // admin-only: download + verify + swap
+			r.Post("/update/restart", s.handleRestart)           // admin-only: re-exec the new binary
+			r.Put("/update/policy", s.handleSetSelfUpdatePolicy) // admin-only: auto-apply opt-in
 			r.Get("/policy-rules", s.handleGetPolicyRules)
 			r.Put("/policy-rules", s.handleSetPolicyRules)
 

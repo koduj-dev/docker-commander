@@ -236,6 +236,14 @@ values — `MEM 3.0 GB / 5.0 GB (61.9% of limit) > 5%` rather than `MEM 61.9% > 
 > *recover* (*info*) when it comes back. See
 > [Hosts → Reachability monitoring](hosts.md#reachability-monitoring).
 
+> **A newer image at the registry is also watched automatically** — no rule
+> needed. Every project's running services are checked on a schedule against
+> what the registry now reports for their compose-declared tag (the same
+> check the deploy preview already does on demand); a newly-observed digest
+> raises an *info* `image_update` alert once, not again on every later poll
+> while it remains unapplied. This is detection only — nothing here deploys
+> anything. See [Projects](projects.md).
+
 ### Import / export
 **Export** downloads every rule as a portable JSON bundle (`alert-rules.json`)
 you can keep in version control or move to another instance. **Import** reads such

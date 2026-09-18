@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"testing"
+	"time"
 
 	"github.com/koduj-dev/docker-commander/internal/crypto"
 )
@@ -217,6 +218,29 @@ func TestAccessSettings(t *testing.T) {
 	_ = s.SetLocalhostNo2FA(ctx, true)
 	if on, _ := s.LocalhostNo2FA(ctx); !on {
 		t.Error("localhost-2FA should be on")
+	}
+
+	if pol, _ := s.SelfUpdatePolicy(ctx); pol.Enabled || pol.Granularity != "minor" {
+		t.Errorf("self-update auto-apply should default to off with granularity=minor, got %+v", pol)
+	}
+	if err := s.SetSelfUpdatePolicy(ctx, SelfUpdatePolicy{Enabled: true, Granularity: "minor"}); err != nil {
+		t.Fatal(err)
+	}
+	pol, _ := s.SelfUpdatePolicy(ctx)
+	if !pol.Enabled || pol.Granularity != "minor" {
+		t.Errorf("self-update policy round trip: %+v", pol)
+	}
+
+	if last, _ := s.LastAutoUpdate(ctx); last != nil {
+		t.Error("no auto-update recorded by default")
+	}
+	applied := time.Now().UTC().Truncate(time.Second)
+	if err := s.SetLastAutoUpdate(ctx, LastAutoUpdate{Version: "1.8.0", AppliedAt: applied}); err != nil {
+		t.Fatal(err)
+	}
+	last, _ := s.LastAutoUpdate(ctx)
+	if last == nil || last.Version != "1.8.0" || !last.AppliedAt.Equal(applied) {
+		t.Errorf("last auto-update round trip: %+v", last)
 	}
 }
 

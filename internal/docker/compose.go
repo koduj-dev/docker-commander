@@ -161,6 +161,26 @@ func ComposeProfilesEnv(ctx context.Context, dir, slug string, env []string) ([]
 	return profiles, nil
 }
 
+// ComposeProfilesEnvFiles is ComposeProfilesEnv with an explicit `-f` file
+// list, for a project whose compose file isn't the default-discovered name
+// (see ComposeConfigJSONFiles, which already takes files for the same
+// reason) — without it, a non-default filename makes the auto-discovery
+// this otherwise relies on either fail outright or resolve profiles from the
+// wrong file.
+func ComposeProfilesEnvFiles(ctx context.Context, dir, slug string, env, files []string) ([]string, error) {
+	out, err := runComposeFiles(ctx, dir, slug, env, files, "config", "--profiles")
+	if err != nil {
+		return nil, err
+	}
+	var profiles []string
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			profiles = append(profiles, line)
+		}
+	}
+	return profiles, nil
+}
+
 // ComposeConfig validates the project's compose file via
 // `docker compose config --quiet` — the same parser used to deploy, so YAML
 // anchors/aliases, merge keys (`<<`), `${VAR}` interpolation and

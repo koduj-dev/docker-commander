@@ -27,6 +27,36 @@ All notable changes to Docker Commander are documented here. The format follows
   and images. Editing a mapping's service/port from the **Domains** panel is
   supported (the domain itself is immutable — delete and recreate to
   repoint a hostname).
+- **Controlled image updates — detection + notification (phase 1 of the
+  feature; auto-apply is a later phase).** Every project's running services
+  are now checked on a schedule (every 6 hours) against what the registry
+  currently reports for their compose-declared tag — the same digest-drift
+  check the deploy preview already does on demand, reused here instead of
+  re-derived. A newly-observed digest raises an *info* `image_update` alert
+  once; the same still-unresolved drift found again on a later poll is never
+  renotified, but a digest that moves again (or reverts) is. Detection and
+  notification only — nothing here applies an update; that, along with
+  per-image ignore controls and a minimum-age/cooldown gate, is later work.
+- **Self-update auto-apply policy.** Self-update already shipped (banner +
+  one-tap + `--self-upgrade`, SHA-256-verified atomic replace) — this adds an
+  opt-in to apply a newer release automatically, on the same 6-hour cadence
+  as the existing update check, instead of waiting for an admin to click
+  **Update & restart**. Off by default; when enabled, a granularity choice
+  (patch only, patch+minor, or everything including major) caps how far it's
+  allowed to jump — the WordPress-style default once enabled is patch+minor,
+  not "auto-apply everything". The ceiling is checked against the exact
+  release resolved at the moment of install, not an earlier cached status, so
+  a release published between two checks can never slip past it. Serialises
+  against a concurrent manual apply through the same lock the one-tap button
+  already uses, so the two can never race. Every automatic apply is recorded
+  in the audit log (as `update.apply`, same as a manual one, with the detail
+  noting it was automatic and which policy triggered it), and every admin
+  sees a one-time "you're now on vX.Y.Z — applied automatically" notice at
+  next login until they dismiss it. Configurable from **Settings →
+  Security**, which explains and disables the control when the update check
+  or self-update itself is unavailable (`DC_UPDATE_CHECK=0`,
+  `DC_SELF_UPDATE=0`, or a platform that can't restart itself) rather than
+  silently accepting a policy that could never run.
 - **Project secrets.** A GitHub-Actions-secrets-style store for a project: name
   a value once (`DB_PASSWORD`, `API_TOKEN`…) and reference it from the compose
   file with plain `${NAME}` interpolation instead of inlining it. The value is
@@ -224,6 +254,10 @@ All notable changes to Docker Commander are documented here. The format follows
 - **The login form now works with password managers.** The username, password
   and 2FA code fields had no `name`/`autocomplete` attributes, so a password
   manager had no reliable way to recognise or fill them.
+## [1.6.5] — 2026-09-18
+
+### Changed
+- Routine Go, npm and GitHub Actions dependency updates (minor/patch only).
 
 ## [1.6.4] — 2026-09-11
 
@@ -2209,6 +2243,7 @@ Initial release: a single CGO-free Go binary with an embedded React UI.
   per-section permissions / read-only, feature flags, audit log, optional LDAP;
   secrets encrypted at rest.
 
+[1.6.5]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.5
 [1.6.4]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.4
 [1.6.3]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.3
 [1.6.2]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.2

@@ -134,3 +134,51 @@ func TestComposeConfigJSONFiles_NeutralizesInheritedComposeProfiles(t *testing.T
 		t.Fatalf("a process-inherited COMPOSE_PROFILES must not activate a profile the caller didn't select, got %v", names)
 	}
 }
+
+// TestComposeProfilesEnvFiles_NonDefaultFilename is the P2 fix's real-CLI
+// proof: a project stored under a non-default-discovered compose filename
+// (e.g. "stack.yml", no "compose.yml" present) makes plain ComposeProfilesEnv
+// (no -f) fail outright, since it has nothing to auto-discover — silently
+// dropping every profile-gated service downstream (the image-update poller
+// used to fall back to "no profiles" in that case). ComposeProfilesEnvFiles,
+// given the same explicit file the rest of the resolve already uses, must
+// still list the profile.
+func TestComposeProfilesEnvFiles_NonDefaultFilename(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs the docker compose CLI; skipped under -short")
+	}
+	ctx := context.Background()
+	if !composeProbe(ctx, "docker") {
+		t.Skip("docker compose CLI not available")
+	}
+	dir := t.TempDir()
+	compose := `services:
+  web:
+    image: alpine:latest
+  danger:
+    image: alpine:latest
+    profiles: ["danger"]
+`
+	if err := os.WriteFile(filepath.Join(dir, "stack.yml"), []byte(compose), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const slug = "profile-nondefault-filename"
+
+	if _, err := ComposeProfilesEnv(ctx, dir, slug, nil); err == nil {
+		t.Fatal("expected ComposeProfilesEnv to fail with no compose.yml to auto-discover")
+	}
+
+	profiles, err := ComposeProfilesEnvFiles(ctx, dir, slug, nil, []string{"stack.yml"})
+	if err != nil {
+		t.Fatalf("ComposeProfilesEnvFiles with the explicit file: %v", err)
+	}
+	found := false
+	for _, p := range profiles {
+		if p == "danger" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected the \"danger\" profile to be listed, got %v", profiles)
+	}
+}

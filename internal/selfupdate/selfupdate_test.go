@@ -340,3 +340,52 @@ func TestApplyRejectsUnverifiableRelease(t *testing.T) {
 		t.Errorf("exe overwritten by unverifiable release: %q", got)
 	}
 }
+
+// ApplyChecked must evaluate allowed against the release THIS call resolves,
+// never a value a caller determined earlier — a caller enforcing a policy
+// (e.g. a granularity ceiling) against a stale/cached status and then calling
+// plain Apply would let whatever is latest at install time through unchecked.
+func TestApplyCheckedRefusesUnauthorizedReleaseWithoutDownloading(t *testing.T) {
+	downloaded := false
+	asset := platformAsset()
+	var base string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if filepath.Base(r.URL.Path) == "download" {
+			downloaded = true
+			_, _ = w.Write([]byte("SHOULD NEVER BE FETCHED"))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"tag_name": "v2.0.0", "assets": []map[string]any{
+				{"name": asset, "browser_download_url": base + "/download", "digest": "sha256:deadbeef"},
+			},
+		})
+	}))
+	defer srv.Close()
+	base = srv.URL
+	prevBase := apiBaseURL
+	apiBaseURL = srv.URL
+	defer func() { apiBaseURL = prevBase }()
+	exe := fakeExe(t, []byte("ORIGINAL"))
+
+	// Simulates a caller that gated on an earlier "1.9.10 is available" status
+	// (patch bump, allowed) while the server now actually resolves 2.0.0 (a
+	// major bump) — the predicate sees the REAL tag, not the stale one, and
+	// must refuse it.
+	var sawTag string
+	allowed := func(tag string) bool { sawTag = tag; return tag == "1.9.10" }
+
+	_, err := ApplyChecked(context.Background(), "1.9.9", allowed)
+	if !errors.Is(err, ErrPolicyRefused) {
+		t.Fatalf("err = %v, want ErrPolicyRefused", err)
+	}
+	if sawTag != "v2.0.0" {
+		t.Errorf("allowed() was called with %q, want the actually-resolved tag v2.0.0", sawTag)
+	}
+	if downloaded {
+		t.Error("a policy-refused release must never be downloaded")
+	}
+	if got, _ := os.ReadFile(exe); string(got) != "ORIGINAL" {
+		t.Errorf("exe overwritten despite policy refusal: %q", got)
+	}
+}

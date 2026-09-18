@@ -123,6 +123,9 @@ func (s *Store) DeleteProject(ctx context.Context, id int64) error {
 	if err := s.deleteDomainMappings(ctx, id); err != nil {
 		return err
 	}
+	if err := s.deleteProjectImageUpdateState(ctx, id); err != nil {
+		return err
+	}
 	_, err := s.db.ExecContext(ctx, `DELETE FROM projects WHERE id = ?`, id)
 	return err
 }

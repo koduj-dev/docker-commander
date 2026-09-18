@@ -637,6 +637,20 @@ CREATE TABLE IF NOT EXISTS domain_mappings (
 	updated_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_domain_mappings_project ON domain_mappings(project_id);
+
+-- Dedup state for the image-update poller (see internal/api's
+-- StartImageUpdatePollLoop): the digest we last notified about for one
+-- project's service, so a poll that finds the same still-unresolved drift
+-- again never sends a second notification, but a digest that moves again
+-- (or reverts to what's running) does. Not a history/audit table — one row
+-- per (project, service), overwritten in place.
+CREATE TABLE IF NOT EXISTS project_image_update_state (
+	project_id           INTEGER NOT NULL,
+	service              TEXT NOT NULL,
+	last_notified_digest TEXT NOT NULL DEFAULT '',
+	updated_at           TEXT NOT NULL,
+	PRIMARY KEY (project_id, service)
+);
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err

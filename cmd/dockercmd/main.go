@@ -540,6 +540,12 @@ func runServer(shutdownCtx context.Context) error {
 		})
 	}
 
+	// Apply a newer release automatically once an admin opts in (off by default).
+	go srv.StartSelfUpdatePolicyLoop(shutdownCtx)
+
+	// Check every project's running services for a newer image at the registry.
+	go srv.StartImageUpdatePollLoop(shutdownCtx)
+
 	httpServer := newHTTPServer(cfg.Addr, srv.Handler())
 	tlsEnabled := cfg.TLSEnabled()
 	acmeMode := len(cfg.ACMEDomains) > 0
