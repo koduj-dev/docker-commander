@@ -234,6 +234,10 @@ All notable changes to Docker Commander are documented here. The format follows
 - **The login form now works with password managers.** The username, password
   and 2FA code fields had no `name`/`autocomplete` attributes, so a password
   manager had no reliable way to recognise or fill them.
+## [1.6.5] — 2026-09-18
+
+### Changed
+- Routine Go, npm and GitHub Actions dependency updates (minor/patch only).
 
 ## [1.6.4] — 2026-09-11
 
@@ -2219,6 +2223,7 @@ Initial release: a single CGO-free Go binary with an embedded React UI.
   per-section permissions / read-only, feature flags, audit log, optional LDAP;
   secrets encrypted at rest.
 
+[1.6.5]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.5
 [1.6.4]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.4
 [1.6.3]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.3
 [1.6.2]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.2
