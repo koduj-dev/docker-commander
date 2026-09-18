@@ -74,6 +74,17 @@ type ContainerStat struct {
 	// meaningful rate yet, and inventing one would be worse than showing none.
 	NetRxRate float64 // bytes/s
 	NetTxRate float64 // bytes/s
+	// Sampled is true only when this poll's SampleStats call for the
+	// container actually succeeded. A container stays in the snapshot (it's
+	// still running, per ListContainers) even when the stats call itself
+	// times out or errors — every numeric field above is then just its zero
+	// value, not a real reading. Without this flag that zero looked exactly
+	// like a legitimate counter reset to recordHistory/applyNetRates, so a
+	// single transient stats timeout on a busy container could read as "lost
+	// everything, then gained it all back" the moment sampling recovered —
+	// exactly the kind of spike the network rule type and Top Talkers are
+	// supposed to tell apart from a real incident.
+	Sampled bool
 }
 
 // metric returns the value a rule's metric names, and whether it is available.
@@ -260,6 +271,7 @@ func (m *Monitor) pollStats(ctx context.Context) {
 				sctx, cancel := context.WithTimeout(ctx, 4*time.Second)
 				defer cancel()
 				if s, err := m.docker.SampleStats(sctx, cs.HostID, cs.ID); err == nil {
+					cs.Sampled = true
 					cs.CPUPercent = s.CPUPercent
 					cs.CPUCores = s.CPUCores
 					cs.MemBytes = s.MemUsage
@@ -297,20 +309,26 @@ func (m *Monitor) pollStats(ctx context.Context) {
 
 // applyNetRates fills in per-container throughput from the previous poll.
 //
-// Split out so the three cases that matter can be tested without a daemon: a
-// normal delta, a counter reset (the container was recreated, so the counter
-// restarted and the subtraction would go negative), and a container seen for the
+// Split out so the cases that matter can be tested without a daemon: a normal
+// delta, a counter reset (the container was recreated, so the counter
+// restarted and the subtraction would go negative), a container seen for the
 // first time — which has no rate at all, and whose cumulative total would
-// otherwise be reported as one, making every new container look like the busiest
-// thing on the host.
+// otherwise be reported as one, making every new container look like the
+// busiest thing on the host — and a failed sample on either side, which reads
+// as all-zero counters and must not be diffed as if it were a real reading (a
+// transient stats timeout would otherwise look exactly like a counter reset
+// immediately followed by regaining everything at once).
 func applyNetRates(next, prev map[string]ContainerStat, elapsed float64) {
 	if elapsed <= 0 {
 		return
 	}
 	for id, cs := range next {
+		if !cs.Sampled {
+			continue // this poll's counters for it are not real data
+		}
 		p, ok := prev[id]
-		if !ok {
-			continue
+		if !ok || !p.Sampled {
+			continue // no reliable baseline to diff against
 		}
 		if cs.NetRx >= p.NetRx {
 			cs.NetRxRate = float64(cs.NetRx-p.NetRx) / elapsed
@@ -323,6 +341,14 @@ func applyNetRates(next, prev map[string]ContainerStat, elapsed float64) {
 }
 
 // recordHistory persists the running containers' samples for charting.
+//
+// A container whose stats call failed this poll (Sampled false) is skipped
+// entirely rather than recorded with all-zero counters — the network rule
+// type and Top Talkers both derive an INCREASE from consecutive history
+// points, and a real value dipping to zero for one point and recovering the
+// next would otherwise look exactly like the traffic/drops the dip itself
+// was hiding, firing a false alert or inflating a ranking off nothing more
+// than a transient Docker API timeout.
 func (m *Monitor) recordHistory(ctx context.Context, snap map[string]ContainerStat) {
 	if m.history == nil {
 		return
@@ -330,7 +356,7 @@ func (m *Monitor) recordHistory(ctx context.Context, snap map[string]ContainerSt
 	now := time.Now()
 	samples := make([]history.Sample, 0, len(snap))
 	for _, cs := range snap {
-		if cs.State != "running" {
+		if cs.State != "running" || !cs.Sampled {
 			continue
 		}
 		samples = append(samples, history.Sample{
@@ -487,6 +513,13 @@ func (m *Monitor) evalResourceRules(ctx context.Context, snap map[string]Contain
 	}
 }
 
+// netRuleWindow identifies one (metric, window) combination network rules
+// can share — the unit evalNetworkRules batches its history reads by.
+type netRuleWindow struct {
+	metric    string
+	windowSec int
+}
+
 // evalNetworkRules fires "network" rules — packet drops/errors that grew by
 // at least Threshold within the last WindowSec. Unlike evalResourceRules,
 // this is NOT a condition with a lifetime: an "increase over a window" has
@@ -495,6 +528,14 @@ func (m *Monitor) evalResourceRules(ctx context.Context, snap map[string]Contain
 // ease or resolve. It fires edge-triggered through m.fire, exactly like the
 // "restart" rule type's crash-loop detection, just polled instead of
 // event-driven, since there's no single Docker event a packet drop maps to.
+//
+// History reads are batched via QueryAll, one per distinct (metric, window)
+// combination across ALL running containers, not one Query per rule ×
+// container. A naive per-pair loop is O(rules × containers) synchronous
+// round trips every 15s poll — with Redis history that is thousands of
+// sequential round trips on a host with many rules and containers, all on
+// the same goroutine that also has to finish before the next stats poll,
+// history recording, and resource-rule evaluation can run.
 func (m *Monitor) evalNetworkRules(ctx context.Context, snap map[string]ContainerStat) {
 	if m.history == nil {
 		return // no history store configured, nothing to query a window from
@@ -504,6 +545,15 @@ func (m *Monitor) evalNetworkRules(ctx context.Context, snap map[string]Containe
 		return
 	}
 	now := time.Now()
+
+	ids := make([]string, 0, len(snap))
+	for _, cs := range snap {
+		if cs.State == "running" {
+			ids = append(ids, cs.ID)
+		}
+	}
+
+	series := make(map[netRuleWindow]map[string][]history.Point)
 	for _, r := range rules {
 		if !r.Enabled || r.Type != "network" {
 			continue
@@ -516,16 +566,20 @@ func (m *Monitor) evalNetworkRules(ctx context.Context, snap map[string]Containe
 		if cfg.Metric == "neterrors" {
 			metric = history.MetricNetErrors
 		}
-		since := now.Add(-time.Duration(cfg.WindowSec) * time.Second)
+		key := netRuleWindow{metric: metric, windowSec: cfg.WindowSec}
+		if _, cached := series[key]; !cached {
+			pts, err := m.history.QueryAll(ctx, metric, now.Add(-time.Duration(cfg.WindowSec)*time.Second), ids)
+			if err != nil {
+				continue
+			}
+			series[key] = pts
+		}
+		byContainer := series[key]
 		for _, cs := range snap {
 			if cs.State != "running" || !matchTarget(r.Target, cs.Name) {
 				continue
 			}
-			pts, err := m.history.Query(ctx, cs.ID, metric, since)
-			if err != nil {
-				continue
-			}
-			inc, ok := history.Increase(pts)
+			inc, ok := history.Increase(byContainer[cs.ID])
 			if !ok || inc < cfg.Threshold {
 				continue
 			}

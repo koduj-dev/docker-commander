@@ -161,6 +161,102 @@ func TestNetworkRuleUsesCooldownNotStateLifecycle(t *testing.T) {
 	}
 }
 
+// TestRecordHistorySkipsAFailedSample is the end-to-end regression for the
+// P1 this PR's own review caught: a container whose SampleStats call failed
+// this poll must never be recorded into history as an all-zero reading — the
+// network rule type and Top Talkers both derive an INCREASE from consecutive
+// history points, and a real value dipping to zero for one point (then
+// recovering) would otherwise look exactly like the traffic/drops the dip
+// itself was hiding.
+func TestRecordHistorySkipsAFailedSample(t *testing.T) {
+	m, _, hist, ctx := newNetworkAlertMonitor(t)
+	cs := netContainer()
+	cs.Sampled = true
+	cs.NetDrops = 500
+
+	m.recordHistory(ctx, snapOf(cs))
+
+	failed := cs
+	failed.Sampled = false
+	failed.NetDrops = 0 // what a failed SampleStats call actually leaves behind
+	m.recordHistory(ctx, snapOf(failed))
+
+	pts, err := hist.Query(ctx, cs.ID, history.MetricNetDrops, time.Now().Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pts) != 1 {
+		t.Fatalf("expected exactly the one real sample recorded, the failed poll must be skipped, got %d points: %+v", len(pts), pts)
+	}
+	if pts[0].V != 500 {
+		t.Errorf("the recorded point should be the real value, got %v", pts[0].V)
+	}
+}
+
+// queryCountingStore wraps a real history.Store and counts calls, so a test
+// can assert evalNetworkRules batches its reads instead of issuing one Query
+// per (rule, container) pair.
+type queryCountingStore struct {
+	history.Store
+	queryCalls    int
+	queryAllCalls int
+}
+
+func (s *queryCountingStore) Query(ctx context.Context, containerID, metric string, since time.Time) ([]history.Point, error) {
+	s.queryCalls++
+	return s.Store.Query(ctx, containerID, metric, since)
+}
+
+func (s *queryCountingStore) QueryAll(ctx context.Context, metric string, since time.Time, containerIDs []string) (map[string][]history.Point, error) {
+	s.queryAllCalls++
+	return s.Store.QueryAll(ctx, metric, since, containerIDs)
+}
+
+// TestNetworkRulesBatchHistoryReads is the regression for the P2 this PR's
+// own review caught: with N containers and M network rules sharing one
+// (metric, window), the naive shape issued N×M sequential Query calls every
+// 15s poll — with Redis history that is thousands of round trips on a busy
+// host, all on the goroutine that has to finish before the next stats poll
+// can run. It must instead be a small, container-count-independent number of
+// batched QueryAll calls, and Query itself must never be used here at all.
+func TestNetworkRulesBatchHistoryReads(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	spy := &queryCountingStore{Store: history.Open(ctx, history.Config{})}
+	t.Cleanup(func() { _ = spy.Close() })
+	m := New(st, nil, spy)
+
+	// Two rules sharing the same (metric, window) — must still be ONE
+	// QueryAll call between them, not one per rule.
+	addNetworkRule(t, st, ctx, "netdrops", 5, 300)
+	addNetworkRule(t, st, ctx, "netdrops", 50, 300)
+
+	const containers = 25
+	snap := make(map[string]ContainerStat, containers)
+	for i := 0; i < containers; i++ {
+		id := sprintf("c%d", i)
+		snap[id] = ContainerStat{HostID: 0, HostName: "local", ID: id, Name: id, State: "running"}
+		spy.Record(ctx, []history.Sample{
+			{ContainerID: id, Time: time.Now().Add(-250 * time.Second), NetDrops: 0},
+			{ContainerID: id, Time: time.Now().Add(-10 * time.Second), NetDrops: 10},
+		})
+	}
+
+	m.evalNetworkRules(ctx, snap)
+
+	if spy.queryCalls != 0 {
+		t.Errorf("evalNetworkRules must never call the per-container Query, got %d calls", spy.queryCalls)
+	}
+	if spy.queryAllCalls != 1 {
+		t.Errorf("two rules sharing one (metric, window) should batch into 1 QueryAll call, got %d (with %d containers, a per-pair loop would have made %d Query calls)",
+			spy.queryAllCalls, containers, containers*2)
+	}
+}
+
 // TestNetworkThroughputRuleUsesLiveRate: netrx_rate/nettx_rate resource
 // rules read the same live per-poll rate the dashboard shows — a plain
 // absolute-threshold rule, no history query involved.

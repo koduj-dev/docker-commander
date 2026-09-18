@@ -31,14 +31,20 @@ export function NetworkTopTalkers() {
   useEffect(() => {
     setTalkers(null);
     setError("");
+    // Guards against an in-flight request for the PREVIOUS window/metric
+    // resolving after a newer one already landed — without this, switching
+    // selectors quickly enough could let the stale response overwrite the
+    // fresh one, showing e.g. "Last hour" selected while the table still
+    // holds the 5-minute ranking until the next poll quietly corrects it.
+    let cancelled = false;
     const load = () =>
       api
         .topTalkers(window, metric, 50)
-        .then((d) => setTalkers(d.containers ?? []))
-        .catch((e) => setError(e instanceof Error ? e.message : "could not rank containers"));
+        .then((d) => { if (!cancelled) setTalkers(d.containers ?? []); })
+        .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : "could not rank containers"); });
     load();
     const t = setInterval(load, 15000);
-    return () => clearInterval(t);
+    return () => { cancelled = true; clearInterval(t); };
   }, [window, metric]);
 
   return (

@@ -124,13 +124,13 @@ func TestMonitorMonitoredHostsFallback(t *testing.T) {
 // first time (no previous sample) and a counter reset after a recreate.
 func TestNetRatesFromConsecutivePolls(t *testing.T) {
 	prev := map[string]ContainerStat{
-		"a": {ID: "a", NetRx: 1000, NetTx: 500},
-		"b": {ID: "b", NetRx: 9000, NetTx: 9000},
+		"a": {ID: "a", NetRx: 1000, NetTx: 500, Sampled: true},
+		"b": {ID: "b", NetRx: 9000, NetTx: 9000, Sampled: true},
 	}
 	next := map[string]ContainerStat{
-		"a": {ID: "a", NetRx: 3000, NetTx: 1500}, // +2000 / +1000
-		"b": {ID: "b", NetRx: 10, NetTx: 20},     // recreated: counter restarted
-		"c": {ID: "c", NetRx: 5000, NetTx: 5000}, // seen for the first time
+		"a": {ID: "a", NetRx: 3000, NetTx: 1500, Sampled: true}, // +2000 / +1000
+		"b": {ID: "b", NetRx: 10, NetTx: 20, Sampled: true},     // recreated: counter restarted
+		"c": {ID: "c", NetRx: 5000, NetTx: 5000, Sampled: true}, // seen for the first time
 	}
 
 	applyNetRates(next, prev, 2.0) // two seconds between polls
@@ -154,11 +154,37 @@ func TestNetRatesFromConsecutivePolls(t *testing.T) {
 }
 
 func TestNetRatesIgnoreNonPositiveElapsed(t *testing.T) {
-	prev := map[string]ContainerStat{"a": {ID: "a", NetRx: 100}}
-	next := map[string]ContainerStat{"a": {ID: "a", NetRx: 200}}
+	prev := map[string]ContainerStat{"a": {ID: "a", NetRx: 100, Sampled: true}}
+	next := map[string]ContainerStat{"a": {ID: "a", NetRx: 200, Sampled: true}}
 	applyNetRates(next, prev, 0) // clock skew or a duplicate poll
 	if next["a"].NetRxRate != 0 {
 		t.Error("a zero interval must not produce a rate (it would be a division by zero)")
+	}
+}
+
+// TestNetRatesIgnoreAFailedSample is the regression for the bug a transient
+// Docker stats timeout could otherwise cause: a container that keeps
+// reporting "running" but whose SampleStats call failed reads as all-zero
+// counters, which must never be diffed as if it were real data — either as
+// the current poll (it isn't a real reading) or as the baseline for the next
+// one (there is nothing reliable to diff the recovery against).
+func TestNetRatesIgnoreAFailedSample(t *testing.T) {
+	// The current poll's sample failed: Sampled stays false, counters are
+	// zero-valued, but the previous poll had real traffic.
+	prev := map[string]ContainerStat{"a": {ID: "a", NetRx: 500, Sampled: true}}
+	failed := map[string]ContainerStat{"a": {ID: "a", NetRx: 0, Sampled: false}}
+	applyNetRates(failed, prev, 2.0)
+	if got := failed["a"].NetRxRate; got != 0 {
+		t.Errorf("a failed current sample must not produce a rate, got %v", got)
+	}
+
+	// The RECOVERY poll: this poll succeeded with the real (unchanged) value,
+	// but the previous poll was the failed (zero) one. Diffing against that
+	// zero baseline would read as a 500-byte spike that never happened.
+	recovered := map[string]ContainerStat{"a": {ID: "a", NetRx: 500, Sampled: true}}
+	applyNetRates(recovered, failed, 2.0)
+	if got := recovered["a"].NetRxRate; got != 0 {
+		t.Errorf("recovering after a failed sample must not manufacture a rate from the zeroed baseline, got %v", got)
 	}
 }
 

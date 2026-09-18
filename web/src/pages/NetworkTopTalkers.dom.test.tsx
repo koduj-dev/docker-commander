@@ -80,6 +80,34 @@ describe("NetworkTopTalkers page", () => {
     expect(api.topTalkers).toHaveBeenCalledWith("5m", "netrx", 50);
   });
 
+  it("ignores a stale response that resolves after a newer selector change", async () => {
+    // Regression for a race the PR's own review caught: an in-flight
+    // request for a PREVIOUS window can resolve after a newer one already
+    // landed, and must not be allowed to overwrite it.
+    let resolveStale!: (v: TopTalkersResponse) => void;
+    let resolveFresh!: (v: TopTalkersResponse) => void;
+    vi.mocked(api.topTalkers)
+      .mockImplementationOnce(() => new Promise((res) => { resolveStale = res; }))
+      .mockImplementationOnce(() => new Promise((res) => { resolveFresh = res; }));
+
+    // First selector change: an in-flight, not-yet-resolved request for "1h".
+    await act(async () => setSelect(selectorFor("Last hour"), "1h"));
+    // Second selector change before the first resolves: its effect cleanup
+    // must mark the "1h" request stale.
+    await act(async () => setSelect(selectorFor("Last 15"), "15m"));
+
+    // Resolve the NEWER ("15m") request first, then the stale ("1h") one.
+    await act(async () => {
+      resolveFresh({ window: "15m", metric: "total", containers: [{ id: "new", name: "fresh-container", hostId: 0, hostName: "local", rxRate: 2, txRate: 2, rate: 2 }] });
+    });
+    await act(async () => {
+      resolveStale({ window: "1h", metric: "total", containers: [{ id: "old", name: "stale-container", hostId: 0, hostName: "local", rxRate: 1, txRate: 1, rate: 1 }] });
+    });
+
+    expect(container.textContent).toContain("fresh-container");
+    expect(container.textContent).not.toContain("stale-container");
+  });
+
   it("shows an empty state instead of a blank table when nothing has enough history", async () => {
     vi.mocked(api.topTalkers).mockResolvedValue({ window: "5m", metric: "total", containers: [] });
     await act(async () => setSelect(selectorFor("Last hour"), "1h")); // force a re-fetch
