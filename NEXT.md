@@ -299,24 +299,35 @@ publishing a per-network number that looks authoritative and is wrong.
   own cert cache directory) rather than two listeners fighting over the
   port.
 
-  **Shipped so far (config only, no live proxy):** a project can record
-  domain → service:port mappings (**Domains** panel on a project's card) —
-  validated (real FQDN, globally unique, doesn't collide with DC's own
-  admin domain, target service must exist in the compose file when the
-  `docker compose` CLI is available), audited, RBAC via the project's own
-  section grant. **Still open, in order:** (1) the actual proxy engine —
-  the shared-listener SNI dispatch above, `ReverseProxy` routing sourced
-  from the stored mappings, local-host projects only at first (dial
-  `127.0.0.1:<port>`), gated off by default behind its own opt-in flag since
-  it opens a second public attack surface; (2) remote-host reachability —
-  `store.Host` has no field today for "where this host's published ports
-  are reachable from," only its Docker daemon connection string, which
-  isn't the same address for an `ssh`-kind host; (3) polish — cert-expiry/
-  status display, HTTP→HTTPS redirect convenience, an optional http-01
-  fallback. Also open: whether `tlsMode` ever needs a `"none"` value (an
-  external terminator in front of DC's proxy) — the column already reserves
-  the value, nothing yet implements it — and mappings are Projects-only
-  (CLI-discovered Stacks are out of scope here, same as revisions).
+  **Shipped so far:** phase 1 — a project can record domain → service:port
+  mappings (**Domains** panel on a project's card), validated (real FQDN,
+  globally unique, doesn't collide with DC's own admin domain, target
+  service must exist in the compose file when the `docker compose` CLI is
+  available), audited, RBAC via the project's own section grant. Phase 2 —
+  **the actual proxy engine**: the shared-listener SNI dispatch above is
+  live, gated off by default behind its own opt-in flag
+  (`DC_PROXY_ENABLED`/`-proxy-enabled`) and only active when DC's own admin
+  domain is also in ACME mode. `ReverseProxy` routing is sourced from the
+  stored mappings, resolved to a container's actual **live, Docker-reported
+  port** (never the stored `targetPort` treated as a dial address directly —
+  it's only ever a matching key), **local-host projects only** (a
+  remote-host project's mapping is recorded but never served or issued a
+  certificate). A request whose TLS SNI disagrees with its HTTP Host is
+  rejected outright, and anything that's neither the admin domain nor a
+  currently-live local mapping gets a plain 404 rather than ever falling
+  through to the admin UI — a domain's ACME certificate can outlive the
+  mapping/project state it was issued under, so that fallback has to be
+  safe on its own, not just "correct at issuance time."
+
+  **Still open:** (1) remote-host reachability — `store.Host` has no field
+  today for "where this host's published ports are reachable from," only
+  its Docker daemon connection string, which isn't the same address for an
+  `ssh`-kind host; (2) polish — cert-expiry/status display, HTTP→HTTPS
+  redirect convenience, an optional http-01 fallback. Also open: whether
+  `tlsMode` ever needs a `"none"` value (an external terminator in front of
+  DC's proxy) — the column already reserves the value, nothing yet
+  implements it — and mappings are Projects-only (CLI-discovered Stacks are
+  out of scope here, same as revisions).
 
 ### Multi-instance federation
 
@@ -509,12 +520,13 @@ was already in flight when the call was made.
    self-update auto-apply policy (#19), same poll/policy/audit/notify shape,
    one applied to workloads and the other to DC's own binary
 6. [x] Per-container domain + TLS / embedded reverse proxy (#13; phase 1,
-   config only, shipped — live proxy engine still open, see below)
+   config only, shipped — live proxy engine shipped in item 8 below)
 7. [x] Network alerting / top talkers (#21)
-8. [ ] Per-container domain + TLS, phase 2 — the live proxy engine
+8. [x] Per-container domain + TLS, phase 2 — the live proxy engine
    (shared-listener SNI dispatch, `ReverseProxy` routing from the stored
-   mappings, local-host projects only, off by default), see the "Reverse
-   proxy and ingress" detail entry above for the full still-open list
+   mappings, local-host projects only, off by default); remote-host
+   reachability and polish still open, see the "Reverse proxy and ingress"
+   detail entry above
 
 **Not yet ordered**, full ranked candidate list (original numbering kept as-is —
 this is everything not pulled into a bundle above, in descending priority, no

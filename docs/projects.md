@@ -200,13 +200,35 @@ delete one — there is no separate secrets-specific permission.
 
 ## Domains
 
-**Not yet a live feature.** The "Domains" panel (the globe icon on a
-project's card) records that a domain should route to one of the project's
-services — `app.example.com` → service `web`, port `8080` — for an embedded
-reverse proxy planned in a future release. Right now this only stores that
-intent: nothing listens on the domain, and saving a mapping has no effect on
-traffic. It exists so the config can be prepared ahead of the proxy itself
-shipping.
+The "Domains" panel (the globe icon on a project's card) records that a
+domain should route to one of the project's services — `app.example.com` →
+service `web`, port `8080`.
+
+**Whether that mapping actually routes traffic depends on the embedded
+reverse proxy**, which is opt-in and has real limits:
+
+- **Off by default.** An admin enables it with `DC_PROXY_ENABLED=1`
+  (`-proxy-enabled`) — it's a second public-facing surface distinct from the
+  admin UI/API, so it's a conscious choice, not a default.
+- **Requires ACME mode already active for Docker Commander's own admin
+  domain** (`-acme-domains`/`DC_ACME_DOMAINS`). The proxy shares that same
+  listener, SNI-dispatched between the admin UI and every mapped domain — it
+  does not open a second port, and does not work with a static
+  `-tls-cert`/`-tls-key` pair or no TLS at all. If the proxy is enabled
+  without ACME mode, the server logs that clearly and starts normally
+  otherwise — the admin UI is never affected.
+- **Local-host projects only.** A mapping for a project targeting a remote
+  host (see [Deploying to a remote host](#deploying-to-a-remote-host) below)
+  is recorded exactly the same as any other, but the proxy will never serve
+  it or request a certificate for it — remote-host reachability is a later
+  phase. A domain whose project has no live, running match for its mapped
+  service+port (stopped, redeployed without that service, or a `TargetPort`
+  nothing actually publishes) gets a clean `502` rather than serving stale
+  or unrelated content.
+
+See [Deployment](deployment.md) for the full flag reference. Without the
+proxy enabled, this panel behaves exactly as it always has: it only stores
+intent, and saving a mapping has no effect on traffic.
 
 A domain must be a real, fully-qualified hostname — no wildcards, no bare
 hostnames, no IP addresses — and can only ever be mapped once across the

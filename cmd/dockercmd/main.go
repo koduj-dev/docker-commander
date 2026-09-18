@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/crypto/acme/autocert"
 	"golang.org/x/term"
 
 	"github.com/koduj-dev/docker-commander/internal/acme"
@@ -35,6 +36,7 @@ import (
 	"github.com/koduj-dev/docker-commander/internal/docker"
 	"github.com/koduj-dev/docker-commander/internal/history"
 	"github.com/koduj-dev/docker-commander/internal/monitor"
+	"github.com/koduj-dev/docker-commander/internal/proxy"
 	"github.com/koduj-dev/docker-commander/internal/selfupdate"
 	"github.com/koduj-dev/docker-commander/internal/service"
 	"github.com/koduj-dev/docker-commander/internal/store"
@@ -546,16 +548,29 @@ func runServer(shutdownCtx context.Context) error {
 	// Check every project's running services for a newer image at the registry.
 	go srv.StartImageUpdatePollLoop(shutdownCtx)
 
-	httpServer := newHTTPServer(cfg.Addr, srv.Handler())
+	handler := srv.Handler()
+	var tlsConfig *tls.Config
 	tlsEnabled := cfg.TLSEnabled()
 	acmeMode := len(cfg.ACMEDomains) > 0
+	var mgr *autocert.Manager
 	if acmeMode {
-		mgr := acme.NewManager(cfg.ACMEDomains, cfg.ACMEEmail, cfg.ACMECacheDir, cfg.ACMEDirectoryURL)
-		httpServer.TLSConfig = mgr.TLSConfig()
-		httpServer.TLSConfig.MinVersion = tls.VersionTLS12
+		mgr = acme.NewManager(cfg.ACMEDomains, cfg.ACMEEmail, cfg.ACMECacheDir, cfg.ACMEDirectoryURL)
+		tlsConfig = &tls.Config{GetCertificate: mgr.GetCertificate, MinVersion: tls.VersionTLS12}
 	} else if tlsEnabled {
-		httpServer.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	}
+	// The embedded per-container reverse proxy (domain_mappings, phase 2):
+	// off by default, and only reachable at all when DC's own admin domain is
+	// ALSO in ACME mode — the shared-listener design this builds on assumes
+	// DC's own admin TLS already exists via autocert on this same listener.
+	if cfg.ProxyEnabled && acmeMode {
+		px := proxy.New(st, dm, proxy.Config{ACMEEmail: cfg.ACMEEmail, CacheDir: cfg.ProxyACMECacheDir, DirectoryURL: cfg.ACMEDirectoryURL})
+		tlsConfig.GetCertificate = proxy.CombinedGetCertificate(mgr, px.ACMEManager(), cfg.ACMEDomains)
+		handler = proxy.CombinedHandler(handler, cfg.ACMEDomains, px)
+	}
+	// (logStartup below reports the resolved on/off/no-op state.)
+	httpServer := newHTTPServer(cfg.Addr, handler)
+	httpServer.TLSConfig = tlsConfig
 
 	go func() {
 		select {
@@ -577,9 +592,10 @@ func runServer(shutdownCtx context.Context) error {
 	logStartup(cfg)
 	serve := httpServer.ListenAndServe
 	if acmeMode {
-		// Empty paths: httpServer.TLSConfig.GetCertificate (set above, via
-		// mgr.TLSConfig()) supplies certificates dynamically instead of a
-		// static file pair.
+		// Empty paths: httpServer.TLSConfig.GetCertificate (set above —
+		// mgr.GetCertificate directly, or proxy.CombinedGetCertificate
+		// wrapping it when the proxy is also enabled) supplies certificates
+		// dynamically instead of a static file pair.
 		serve = func() error { return httpServer.ListenAndServeTLS("", "") }
 	} else if tlsEnabled {
 		// Cert/key paths are passed to ServeTLS; the http.Server reads them.
@@ -729,6 +745,13 @@ func logStartup(cfg config.Config) {
 		log.Printf("MCP server: ENABLED at %s://%s/mcp — auth: %s", scheme, cfg.Addr, oauth)
 	} else {
 		log.Printf("MCP server: disabled (set DC_MCP_ENABLED=1 to enable)")
+	}
+	if cfg.ProxyEnabled && len(cfg.ACMEDomains) > 0 {
+		log.Printf("embedded reverse proxy: ENABLED for local-host projects' domain_mappings (cert cache: %s)", cfg.ProxyACMECacheDir)
+	} else if cfg.ProxyEnabled {
+		log.Printf("embedded reverse proxy: requested but NOT started (requires ACME mode — set -acme-domains/DC_ACME_DOMAINS)")
+	} else {
+		log.Printf("embedded reverse proxy: disabled (set DC_PROXY_ENABLED=1 to enable)")
 	}
 	if cfg.Dev {
 		log.Printf("dev mode: serving API only; run the Vite dev server for the UI")

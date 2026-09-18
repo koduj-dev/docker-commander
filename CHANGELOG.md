@@ -7,6 +7,23 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Embedded per-container reverse proxy (phase 2 of "Per-container domain +
+  TLS").** Domain mappings (phase 1) now actually route traffic: opt-in
+  (`DC_PROXY_ENABLED`, off by default — it's a second public-facing surface
+  distinct from the admin UI/API), and only active when Docker Commander's
+  own admin domain is already in ACME mode. The proxy shares that **same**
+  listener, dispatched by SNI/Host — the admin domain goes to the existing
+  UI/API, every mapped domain gets its own ACME certificate (cached
+  separately from the admin one) and is reverse-proxied to the actual
+  running container. **Local-host projects only** in this phase — a mapping
+  for a remote-host project is recorded exactly as before but never served,
+  and a mapping with no live, matching backend gets a clean `502`. Every
+  resolved backend comes from Docker's own live port data for the actual
+  matching container, never from the stored config directly, and a request
+  whose TLS SNI disagrees with its HTTP Host is rejected outright rather
+  than risk the two independent dispatch points (certificate selection vs.
+  request routing) disagreeing. Remote-host reachability and polish
+  (cert-expiry UI, HTTP→HTTPS redirect) remain open for a later phase.
 - **Network alert rules + Top talkers.** Two new ways to act on the network
   telemetry that already shipped: an existing **resource** rule can now
   threshold on network RX/TX rate (bytes/s, same live figure the dashboard
