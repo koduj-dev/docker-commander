@@ -16,11 +16,12 @@ import (
 // precisely because they expect a reverse proxy in front of them to set
 // them honestly.
 func TestNewReverseProxyStripsForgedForwardingHeaders(t *testing.T) {
-	var gotXFF, gotXFHost, gotXFProto string
+	var gotXFF, gotXFHost, gotXFProto, gotXRealIP string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotXFF = r.Header.Get("X-Forwarded-For")
 		gotXFHost = r.Header.Get("X-Forwarded-Host")
 		gotXFProto = r.Header.Get("X-Forwarded-Proto")
+		gotXRealIP = r.Header.Get("X-Real-IP")
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer backend.Close()
@@ -29,10 +30,14 @@ func TestNewReverseProxyStripsForgedForwardingHeaders(t *testing.T) {
 
 	r := httptest.NewRequest("GET", "http://app.example.com/", nil)
 	r.RemoteAddr = "203.0.113.9:54321" // the REAL peer
-	// A malicious/forged client trying to spoof its own origin.
+	// A malicious/forged client trying to spoof its own origin. X-Real-IP is
+	// NOT part of the X-Forwarded-* family Go's Rewrite path strips
+	// automatically — it needs its own explicit handling (see
+	// newReverseProxy), which is exactly what this case pins.
 	r.Header.Set("X-Forwarded-For", "127.0.0.1")
 	r.Header.Set("X-Forwarded-Host", "internal-admin.example.com")
 	r.Header.Set("X-Forwarded-Proto", "https")
+	r.Header.Set("X-Real-IP", "127.0.0.1")
 	w := httptest.NewRecorder()
 
 	rp.ServeHTTP(w, r)
@@ -45,6 +50,10 @@ func TestNewReverseProxyStripsForgedForwardingHeaders(t *testing.T) {
 	}
 	if gotXFProto != "http" {
 		t.Errorf("X-Forwarded-Proto = %q, want http (the real inbound scheme — r.TLS is nil here), not the client-forged https", gotXFProto)
+	}
+	if gotXRealIP != "203.0.113.9" {
+		t.Errorf("X-Real-IP = %q, want the real peer 203.0.113.9 (client-forged value must never survive) — "+
+			"a stock chi middleware.RealIP prefers this header over X-Forwarded-For", gotXRealIP)
 	}
 }
 

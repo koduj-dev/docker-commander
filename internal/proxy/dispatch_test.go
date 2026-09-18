@@ -87,6 +87,31 @@ func TestCombinedHandlerAdminDomainMatchIsCaseInsensitive(t *testing.T) {
 	})
 }
 
+// TestCombinedHandlerAdminDomainMatchHandlesIDNA is the regression for a P2
+// a code review caught before merge: plain strings.ToLower matches ASCII
+// casing but not IDNA equivalence. autocert.Manager itself canonicalizes via
+// idna.Lookup.ToASCII (which ALSO folds case, but goes further — Unicode to
+// Punycode). An admin domain configured as literal Unicode
+// ("bücher.example") must still match the Punycode A-label
+// ("xn--bcher-kva.example") a real client's TLS/HTTP stack actually sends
+// on the wire — the two are the same hostname, and the admin manager
+// already accepted exactly this equivalence before this dispatch wrapper
+// was introduced.
+func TestCombinedHandlerAdminDomainMatchHandlesIDNA(t *testing.T) {
+	p := newDispatchTestProxy(t, "", true)
+	h := CombinedHandler(stubHandler("admin"), []string{"bücher.example"}, p)
+
+	r := httptest.NewRequest("GET", "https://xn--bcher-kva.example/", nil)
+	r.Host = "xn--bcher-kva.example"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Body.String() != "admin" {
+		t.Errorf("body = %q (code %d), want the admin handler's response for the Punycode wire form of a Unicode-configured domain",
+			w.Body.String(), w.Code)
+	}
+}
+
 func TestCombinedGetCertificateAdminDomainMatchIsCaseInsensitive(t *testing.T) {
 	admin := &fakeCertGetter{cert: &tls.Certificate{}}
 	proxyMgr := &fakeCertGetter{cert: &tls.Certificate{}}

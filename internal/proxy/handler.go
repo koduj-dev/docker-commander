@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -46,12 +47,24 @@ func (p *Proxy) TryServeHTTP(w http.ResponseWriter, r *http.Request) bool {
 // (a common pattern for a service that expects to sit behind a reverse
 // proxy) would otherwise let any public client lie about its own IP, host,
 // or scheme — exactly the trust boundary this proxy exists to enforce.
+//
+// X-Real-IP gets the same treatment, by hand: it's the one other
+// single-client-IP header still in common use (nginx's own original
+// convention, and what a stock chi middleware.RealIP prefers over
+// X-Forwarded-For) but, unlike the X-Forwarded-* family, Go's Rewrite path
+// does NOT strip it automatically — a client-sent value would otherwise
+// reach the backend completely unexamined.
 func newReverseProxy(backendAddr string) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(&url.URL{Scheme: "http", Host: backendAddr})
 			pr.Out.Host = pr.In.Host // preserve the mapped domain, not 127.0.0.1:<port>
 			pr.SetXForwarded()
+			if clientIP, _, err := net.SplitHostPort(pr.In.RemoteAddr); err == nil {
+				pr.Out.Header.Set("X-Real-IP", clientIP)
+			} else {
+				pr.Out.Header.Del("X-Real-IP")
+			}
 		},
 	}
 }

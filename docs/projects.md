@@ -225,6 +225,17 @@ reverse proxy**, which is opt-in and has real limits:
   service+port (stopped, redeployed without that service, or a `TargetPort`
   nothing actually publishes) gets a clean `502` rather than serving stale
   or unrelated content.
+- **Assumes Docker Commander shares a network namespace with the Docker
+  daemon it manages.** The proxy dials a container's *published host port*
+  directly — correct when Docker Commander runs on bare metal/a VM next to
+  the daemon it's managing (the common case), but **not** when Docker
+  Commander itself runs containerized per [Option D](../README.md#option-d--docker)
+  *without* `--network host`: a container's published port lives in the
+  *host's* network namespace, which Docker Commander's own container can't
+  reach via `127.0.0.1`. If the "local" daemon is explicitly remote (a
+  `DOCKER_HOST=tcp://…` pointed elsewhere), the proxy detects that and
+  refuses cleanly rather than guessing; the containerized-but-same-machine
+  case isn't detectable the same way and isn't handled yet — a later phase.
 
 See [Deployment](deployment.md) for the full flag reference. Without the
 proxy enabled, this panel behaves exactly as it always has: it only stores

@@ -323,11 +323,17 @@ publishing a per-network number that looks authoritative and is wrong.
   today for "where this host's published ports are reachable from," only
   its Docker daemon connection string, which isn't the same address for an
   `ssh`-kind host; (2) polish — cert-expiry/status display, HTTP→HTTPS
-  redirect convenience, an optional http-01 fallback. Also open: whether
-  `tlsMode` ever needs a `"none"` value (an external terminator in front of
-  DC's proxy) — the column already reserves the value, nothing yet
-  implements it — and mappings are Projects-only (CLI-discovered Stacks are
-  out of scope here, same as revisions).
+  redirect convenience, an optional http-01 fallback; (3) the proxy assumes
+  Docker Commander shares a network namespace with the daemon it manages —
+  it dials a container's published *host* port directly, so a
+  `DOCKER_HOST=tcp://…` pointed elsewhere is detected and refused cleanly,
+  but DC running containerized on the *same* machine as the daemon (see
+  [Option D](../README.md#option-d--docker)) without `--network host` isn't
+  detectable the same way and isn't handled yet (see `docs/projects.md`).
+  Also open: whether `tlsMode` ever needs a `"none"` value (an external
+  terminator in front of DC's proxy) — the column already reserves the
+  value, nothing yet implements it — and mappings are Projects-only
+  (CLI-discovered Stacks are out of scope here, same as revisions).
 
 ### Multi-instance federation
 

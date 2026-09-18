@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -68,6 +69,23 @@ func (p *Proxy) resolveBackend(ctx context.Context, m store.DomainMapping) (back
 	// not lean on having already been screened once upstream.
 	if proj.HostID != 0 {
 		return backend{}, fmt.Errorf("proxy: project %d is not local (hostID=%d)", proj.ID, proj.HostID)
+	}
+	// A Host row of Kind "local" doesn't guarantee "the same machine (or
+	// network namespace) this process runs in" — it honors DOCKER_HOST
+	// (internal/docker's buildClient uses client.FromEnv), which an
+	// operator can point at a remote tcp:// daemon while still leaving
+	// HostID at 0. dialing 127.0.0.1/a bind IP reported by THAT daemon
+	// would then target this process's own loopback, not the daemon's —
+	// refuse rather than guess. A unix/npipe socket is the one case this
+	// phase can trust (same daemon host as far as the API is concerned);
+	// see NEXT.md for the still-open containerized-Docker-Commander case,
+	// where the socket is local but the network namespace may not be.
+	cli, err := p.docker.Client(ctx, 0)
+	if err != nil {
+		return backend{}, fmt.Errorf("proxy: local docker client: %w", err)
+	}
+	if host := cli.DaemonHost(); !strings.HasPrefix(host, "unix://") && !strings.HasPrefix(host, "npipe://") {
+		return backend{}, fmt.Errorf("proxy: local daemon is not a local socket (%s) — refusing to guess a dial address", host)
 	}
 	stacks, err := p.docker.ListStacks(ctx, 0) // hostID<=0 resolves the local daemon
 	if err != nil {
@@ -134,7 +152,24 @@ type backendResult struct {
 	err error
 }
 
+// resolveTimeout bounds a coalesced resolution (see resolveBackendCached) —
+// it must never run forever just because it's no longer tied to any single
+// waiter's request lifetime.
+const resolveTimeout = 10 * time.Second
+
 // resolveBackendCached is resolveBackend, fronted by the TTL cache above.
+//
+// The coalesced flight (see backendCache's own doc comment for why it's
+// coalesced at all) runs under an INDEPENDENT, bounded context — never any
+// one waiter's r.Context(). Using a waiter's context would mean the first
+// caller to arrive disconnecting (net/http cancels its context on
+// disconnect) cancels the lookup for every OTHER request sharing that
+// flight too, and would store that cancellation error as the domain's
+// shared cache entry — turning one impatient/disconnecting client into a
+// TTL-long outage for every subsequent request to that domain. Each waiter
+// still honors ITS OWN context via the select below: if ITS request is
+// canceled, it stops waiting immediately without affecting the flight or
+// any other waiter.
 func (p *Proxy) resolveBackendCached(ctx context.Context, m store.DomainMapping) (backend, error) {
 	p.cache.mu.Lock()
 	if c, ok := p.cache.m[m.Domain]; ok && time.Now().Before(c.expires) {
@@ -143,8 +178,20 @@ func (p *Proxy) resolveBackendCached(ctx context.Context, m store.DomainMapping)
 	}
 	p.cache.mu.Unlock()
 
-	v, _, _ := p.cache.group.Do(m.Domain, func() (any, error) {
-		b, err := p.resolveFn(ctx, m)
+	ch := p.cache.group.DoChan(m.Domain, func() (any, error) {
+		// Re-check: a caller delayed between the miss above and actually
+		// entering this flight may find another flight already populated
+		// the cache (its own singleflight key had already been released).
+		p.cache.mu.Lock()
+		if c, ok := p.cache.m[m.Domain]; ok && time.Now().Before(c.expires) {
+			p.cache.mu.Unlock()
+			return backendResult{b: c.b, err: c.err}, nil
+		}
+		p.cache.mu.Unlock()
+
+		rctx, cancel := context.WithTimeout(context.Background(), resolveTimeout)
+		defer cancel()
+		b, err := p.resolveFn(rctx, m)
 		p.cache.mu.Lock()
 		// expires is computed from NOW — after resolution completes — not
 		// from when the miss was first observed. A ListStacks call taking
@@ -155,6 +202,12 @@ func (p *Proxy) resolveBackendCached(ctx context.Context, m store.DomainMapping)
 		p.cache.mu.Unlock()
 		return backendResult{b: b, err: err}, nil
 	})
-	r := v.(backendResult)
-	return r.b, r.err
+
+	select {
+	case res := <-ch:
+		r := res.Val.(backendResult)
+		return r.b, r.err
+	case <-ctx.Done():
+		return backend{}, ctx.Err()
+	}
 }
