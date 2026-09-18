@@ -151,18 +151,6 @@ networks/restart/resources/healthcheck differences, with a per-change
   3's richer per-project policy might reshape anyway; it runs whenever the
   `docker compose` CLI is available, same as the on-demand preview already
   does today, just on a schedule instead of only when a human opens it.
-- **Self-update auto-apply policy.** Self-update (banner + one-tap +
-  `--self-upgrade`, SHA-256-verified atomic replace) already ships, but only
-  as something an admin triggers by hand. The same poll/policy/audit/notify
-  shape as **Controlled image updates** above, applied to DC's own binary
-  instead of a workload: an admin opts in and picks a granularity (major /
-  minor / patch — patch-and-minor-only is the common WordPress-style
-  default, not "auto-apply everything"), the existing update check already
-  running server-side applies the release automatically when it matches,
-  the event lands in the audit log the same way a manual `update.apply`
-  does today, and the next admin to log in sees a "you're now on vX.Y.Z —
-  applied automatically on <date>" notice rather than discovering it
-  silently. Off by default, same spirit as the image-update opt-in.
 
 ### GitOps and Compose sources
 
@@ -515,10 +503,12 @@ doesn't retry). Project secrets pushed to #4, unchanged in scope.
 2. [x] Maintenance windows / silences (#6)
 3. [x] Alert delivery retry (#12)
 4. [x] Project secrets (#10)
-5. [ ] Controlled image updates (#11) — together with self-update auto-apply
-   policy (#19), same poll/policy/audit/notify shape, one applied to
-   workloads and the other to DC's own binary
-6. [ ] Per-container domain + TLS / embedded reverse proxy (#13)
+5. [x] Controlled image updates (#11; detection + notification shipped,
+   auto-apply/policy/cooldown/prune still open, see below) — together with
+   self-update auto-apply policy (#19), same poll/policy/audit/notify shape,
+   one applied to workloads and the other to DC's own binary
+6. [x] Per-container domain + TLS / embedded reverse proxy (#13; phase 1,
+   config only, shipped — live proxy engine still open, see below)
 7. [ ] Network alerting / top talkers (#21)
 
 **Not yet ordered**, full ranked candidate list (original numbering kept as-is —
