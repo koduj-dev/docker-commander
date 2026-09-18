@@ -549,16 +549,13 @@ func runServer(shutdownCtx context.Context) error {
 	go srv.StartImageUpdatePollLoop(shutdownCtx)
 
 	handler := srv.Handler()
-	var tlsConfig *tls.Config
 	tlsEnabled := cfg.TLSEnabled()
 	acmeMode := len(cfg.ACMEDomains) > 0
 	var mgr *autocert.Manager
 	if acmeMode {
 		mgr = acme.NewManager(cfg.ACMEDomains, cfg.ACMEEmail, cfg.ACMECacheDir, cfg.ACMEDirectoryURL)
-		tlsConfig = &tls.Config{GetCertificate: mgr.GetCertificate, MinVersion: tls.VersionTLS12}
-	} else if tlsEnabled {
-		tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	}
+	tlsConfig := buildTLSConfig(mgr, tlsEnabled)
 	// The embedded per-container reverse proxy (domain_mappings, phase 2):
 	// off by default, and only reachable at all when DC's own admin domain is
 	// ALSO in ACME mode — the shared-listener design this builds on assumes
@@ -654,6 +651,34 @@ func loadOrCreateSecret(ctx context.Context, st *store.Store, key string) ([]byt
 		return nil, err
 	}
 	return buf, nil
+}
+
+// buildTLSConfig assembles the *tls.Config httpServer will serve with, for
+// every TLS mode: ACME (mgr non-nil), static cert/key (tlsEnabled, mgr nil),
+// or plain HTTP (neither, returns nil).
+//
+// Split out from runServer so the ACME branch's own load-bearing property —
+// mgr.TLSConfig() (NOT a hand-built tls.Config{GetCertificate: mgr.GetCertificate})
+// — has a regression test that doesn't require standing up the whole server.
+// mgr.TLSConfig() also sets NextProtos to ["h2", "http/1.1", acme.ALPNProto];
+// dropping that (as a hand-built config with only GetCertificate set would)
+// silently breaks tls-alpn-01, this app's only ACME challenge path (see
+// internal/acme's doc comment) — GetCertificate's own doc says as much:
+// "If GetCertificate is used directly, instead of via Manager.TLSConfig,
+// package users will also have to add acme.ALPNProto to NextProtos." Only
+// .GetCertificate itself is ever swapped afterward (for the embedded
+// reverse proxy's combined dispatcher, see runServer) — NextProtos is
+// always left exactly as autocert set it.
+func buildTLSConfig(mgr *autocert.Manager, tlsEnabled bool) *tls.Config {
+	if mgr != nil {
+		tlsConfig := mgr.TLSConfig()
+		tlsConfig.MinVersion = tls.VersionTLS12
+		return tlsConfig
+	}
+	if tlsEnabled {
+		return &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	return nil
 }
 
 // newHTTPServer builds the public listener.

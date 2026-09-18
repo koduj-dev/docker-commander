@@ -52,6 +52,55 @@ func TestCombinedHandlerRoutesAdminDomainToAdminHandler(t *testing.T) {
 	}
 }
 
+// TestCombinedHandlerAdminDomainMatchIsCaseInsensitive is the regression
+// for a P2 a code review caught before merge: DNS names are case
+// insensitive, but the dispatch's admin-domain set used to do a plain exact
+// string match. An operator configuring DC_ACME_DOMAINS with any uppercase
+// letter — nothing stops that — would misroute perfectly ordinary lowercase
+// admin traffic to the proxy branch, which then refuses it for the wrong
+// reason (casing, not eligibility). Covers both directions: mixed-case
+// config against a lowercase request, and mixed-case SNI+Host together
+// (which must still pass the SNI/Host equality guard AND match the set).
+func TestCombinedHandlerAdminDomainMatchIsCaseInsensitive(t *testing.T) {
+	p := newDispatchTestProxy(t, "", true)
+	h := CombinedHandler(stubHandler("admin"), []string{"Admin.Example.com"}, p)
+
+	t.Run("mixed-case config, lowercase request", func(t *testing.T) {
+		r := httptest.NewRequest("GET", "https://admin.example.com/", nil)
+		r.Host = "admin.example.com"
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Body.String() != "admin" {
+			t.Errorf("body = %q (code %d), want the admin handler's response", w.Body.String(), w.Code)
+		}
+	})
+
+	t.Run("mixed-case SNI and Host together", func(t *testing.T) {
+		r := httptest.NewRequest("GET", "https://ADMIN.EXAMPLE.COM/", nil)
+		r.Host = "ADMIN.EXAMPLE.COM"
+		r.TLS = &tls.ConnectionState{ServerName: "ADMIN.EXAMPLE.COM"}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Body.String() != "admin" {
+			t.Errorf("body = %q (code %d), want the admin handler's response", w.Body.String(), w.Code)
+		}
+	})
+}
+
+func TestCombinedGetCertificateAdminDomainMatchIsCaseInsensitive(t *testing.T) {
+	admin := &fakeCertGetter{cert: &tls.Certificate{}}
+	proxyMgr := &fakeCertGetter{cert: &tls.Certificate{}}
+	get := CombinedGetCertificate(admin, proxyMgr, []string{"Admin.Example.com"})
+
+	if _, err := get(&tls.ClientHelloInfo{ServerName: "admin.example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if !admin.called || proxyMgr.called {
+		t.Errorf("a lowercase SNI should still match a mixed-case configured admin domain, got admin.called=%v proxyMgr.called=%v",
+			admin.called, proxyMgr.called)
+	}
+}
+
 func TestCombinedHandlerFallsBackTo404NotAdmin(t *testing.T) {
 	// The mutation-worthy case: a mapping that either never existed or was
 	// deleted must 404, NEVER silently serve the admin handler — a test that

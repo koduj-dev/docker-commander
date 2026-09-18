@@ -48,6 +48,11 @@ type Proxy struct {
 	docker *docker.Manager
 	mgr    *autocert.Manager
 	cache  *backendCache
+	// resolveFn is resolveBackend by default (see New) — a field rather than
+	// a direct call so backend_test.go can substitute a counting/blocking
+	// stub to test resolveBackendCached's coalescing without a real Docker
+	// daemon.
+	resolveFn func(context.Context, store.DomainMapping) (backend, error)
 }
 
 // New builds a Proxy and its own autocert.Manager (HostPolicy wired to this
@@ -60,6 +65,7 @@ func New(st *store.Store, dm *docker.Manager, cfg Config) *Proxy {
 		docker: dm,
 		cache:  newBackendCache(5 * time.Second),
 	}
+	p.resolveFn = p.resolveBackend
 	p.mgr = &autocert.Manager{
 		Prompt:     autocert.AcceptTOS,
 		Cache:      autocert.DirCache(cfg.CacheDir),

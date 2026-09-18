@@ -31,7 +31,27 @@ func (p *Proxy) TryServeHTTP(w http.ResponseWriter, r *http.Request) bool {
 		http.Error(w, "backend unavailable", http.StatusBadGateway)
 		return true
 	}
-	rp := httputil.NewSingleHostReverseProxy(&url.URL{Scheme: "http", Host: b.addr})
-	rp.ServeHTTP(w, r)
+	newReverseProxy(b.addr).ServeHTTP(w, r)
 	return true
+}
+
+// newReverseProxy builds the ReverseProxy for one resolved backend address.
+//
+// Uses Rewrite (not the deprecated NewSingleHostReverseProxy/Director shape)
+// so a public client can never spoof X-Forwarded-For/-Host/-Proto: those
+// headers are stripped from the outbound request before Rewrite runs
+// (documented behavior of Rewrite, unlike Director, which preserves them),
+// and SetXForwarded below sets them from the REAL inbound connection instead
+// of trusting whatever the client sent. A backend that trusts these headers
+// (a common pattern for a service that expects to sit behind a reverse
+// proxy) would otherwise let any public client lie about its own IP, host,
+// or scheme — exactly the trust boundary this proxy exists to enforce.
+func newReverseProxy(backendAddr string) *httputil.ReverseProxy {
+	return &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetURL(&url.URL{Scheme: "http", Host: backendAddr})
+			pr.Out.Host = pr.In.Host // preserve the mapped domain, not 127.0.0.1:<port>
+			pr.SetXForwarded()
+		},
+	}
 }

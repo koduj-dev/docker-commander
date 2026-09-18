@@ -18,10 +18,19 @@ func hostOnly(host string) string {
 	return host
 }
 
+// toSet builds a lookup set of configured admin domains, lowercased — DNS
+// names are case-insensitive, and autocert.Manager itself canonicalizes a
+// ClientHelloInfo.ServerName (via IDNA ToASCII, which also folds case)
+// before ever calling a HostPolicy. Without matching that here, an admin
+// domain configured with any uppercase letter (nothing stops an operator
+// from typing DC_ACME_DOMAINS=Admin.Example.com) would never match a
+// perfectly ordinary lowercase SNI/Host, misrouting real admin traffic to
+// the proxy branch — which then correctly refuses it, but for the wrong
+// reason: casing, not eligibility.
 func toSet(domains []string) map[string]bool {
 	set := make(map[string]bool, len(domains))
 	for _, d := range domains {
-		set[d] = true
+		set[strings.ToLower(strings.TrimSpace(d))] = true
 	}
 	return set
 }
@@ -34,7 +43,7 @@ func toSet(domains []string) map[string]bool {
 func CombinedGetCertificate(adminMgr, proxyMgr tlsCertGetter, adminDomains []string) func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 	admin := toSet(adminDomains)
 	return func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-		if admin[hello.ServerName] {
+		if admin[strings.ToLower(hello.ServerName)] {
 			return adminMgr.GetCertificate(hello)
 		}
 		return proxyMgr.GetCertificate(hello)
@@ -56,7 +65,7 @@ type tlsCertGetter interface {
 func CombinedHandler(adminHandler http.Handler, adminDomains []string, p *Proxy) http.Handler {
 	admin := toSet(adminDomains)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		host := hostOnly(r.Host)
+		host := strings.ToLower(hostOnly(r.Host))
 
 		// Defense in depth against SNI/Host decorrelation: GetCertificate
 		// picks a certificate by TLS SNI (ClientHelloInfo.ServerName); this
