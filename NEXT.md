@@ -499,6 +499,12 @@ that already shipped, are smaller/related work, and were judged worth doing
 together (a silence is, among other things, a reason a delivery legitimately
 doesn't retry). Project secrets pushed to #4, unchanged in scope.
 
+**Reordered 2026-09-18**: item 8 added — after shipping domain mappings
+phase 1 (config only), Filip decided the live proxy engine (phase 2) should
+land in 1.7.0 too rather than ship the release with a "Domains" panel that
+visibly does nothing yet. Sequenced after top talkers, not before, since it
+was already in flight when the call was made.
+
 1. [x] Per-session MCP token revocation (#20)
 2. [x] Maintenance windows / silences (#6)
 3. [x] Alert delivery retry (#12)
@@ -510,6 +516,10 @@ doesn't retry). Project secrets pushed to #4, unchanged in scope.
 6. [x] Per-container domain + TLS / embedded reverse proxy (#13; phase 1,
    config only, shipped — live proxy engine still open, see below)
 7. [ ] Network alerting / top talkers (#21)
+8. [ ] Per-container domain + TLS, phase 2 — the live proxy engine
+   (shared-listener SNI dispatch, `ReverseProxy` routing from the stored
+   mappings, local-host projects only, off by default), see the "Reverse
+   proxy and ingress" detail entry above for the full still-open list
 
 **Not yet ordered**, full ranked candidate list (original numbering kept as-is —
 this is everything not pulled into a bundle above, in descending priority, no
