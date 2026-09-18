@@ -186,6 +186,17 @@ type recoveryProjectSecret struct {
 	Value string `json:"value,omitempty"`
 }
 
+// recoveryDomainMapping is one project's domain -> service:port mapping (see
+// NEXT.md's "Per-container domain + TLS"). Unlike secrets there is no
+// sensitive value here, so it's always exported in full regardless of the
+// includeSecrets choice.
+type recoveryDomainMapping struct {
+	Domain     string `json:"domain"`
+	Service    string `json:"service"`
+	TargetPort int    `json:"targetPort"`
+	TLSMode    string `json:"tlsMode"`
+}
+
 // recoveryProjectMeta is one project's metadata; its files live in the
 // bundle's zip under "projects/<Slug>/...".
 type recoveryProjectMeta struct {
@@ -197,6 +208,7 @@ type recoveryProjectMeta struct {
 	LastDeployedProfiles []string                `json:"lastDeployedProfiles,omitempty"`
 	Images               []recoveryProjectImage  `json:"images,omitempty"`
 	Secrets              []recoveryProjectSecret `json:"secrets,omitempty"`
+	DomainMappings       []recoveryDomainMapping `json:"domainMappings,omitempty"`
 }
 
 // recoveryAlertRule is an exported alert rule plus its per-rule email

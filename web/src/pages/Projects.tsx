@@ -4,11 +4,11 @@ import clsx from "clsx";
 import {
   FolderGit2, Plus, Rocket, Square, Trash2, X, FilePlus, FolderPlus, Upload, Loader2,
   ExternalLink, Save, FileText, FileBox, Folder, Terminal, Pencil, ChevronRight, Download, Search, CheckCircle2, AlertCircle, AlertTriangle, Eye, Boxes,
-  LayoutTemplate, Puzzle, KeyRound, Anchor, Server, GitCompare, History, RotateCcw, Lock,
+  LayoutTemplate, Puzzle, KeyRound, Anchor, Server, GitCompare, History, RotateCcw, Lock, Globe,
 } from "lucide-react";
 import { bytes as fmtBytes } from "../lib/format";
 import { api, ApiError } from "../lib/api";
-import type { Project, ProjectFile, Stack, ComposeModel, ComposeService, ProjectTemplateMeta, ServiceBlockMeta, ComposeFragmentMeta, TemplateRef, TemplateVariable, Host, DeployPreview, ServiceChange, ProjectRevision, ProjectSecret, BackupJob } from "../lib/types";
+import type { Project, ProjectFile, Stack, ComposeModel, ComposeService, ProjectTemplateMeta, ServiceBlockMeta, ComposeFragmentMeta, TemplateRef, TemplateVariable, Host, DeployPreview, ServiceChange, ProjectRevision, ProjectSecret, DomainMapping, BackupJob } from "../lib/types";
 import type { ServerCheck } from "../components/CodeEditor";
 import { buildTree, TreeItem } from "../components/FileTree";
 import { PageHeader } from "../layout/Shell";
@@ -582,6 +582,192 @@ export function ProjectSecretsModal({ project, onClose }: { project: Project; on
   );
 }
 
+// ProjectDomainsModal manages a project's domain -> service:port mappings
+// (see NEXT.md's "Per-container domain + TLS"). Phase 1 only stores intent —
+// there is no reverse proxy yet to actually route these domains, which the
+// modal says up front so it isn't mistaken for a live feature.
+export function ProjectDomainsModal({ project, onClose }: { project: Project; onClose: () => void }) {
+  const [mappings, setMappings] = useState<DomainMapping[] | null>(null);
+  const [services, setServices] = useState<string[]>([]);
+  const [newDomain, setNewDomain] = useState("");
+  const [newService, setNewService] = useState("");
+  const [newPort, setNewPort] = useState("");
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const [editingID, setEditingID] = useState<number | null>(null);
+  const [editService, setEditService] = useState("");
+  const [editPort, setEditPort] = useState("");
+  const dialogs = useDialogs();
+
+  const load = useCallback(() => {
+    api.listDomainMappings(project.id).then(setMappings).catch(() => setMappings([]));
+  }, [project.id]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    api.listDomainMappingServices(project.id).then((res) => {
+      const names = res.services ?? [];
+      setServices(names);
+      setNewService((cur) => cur || names[0] || "");
+    }).catch(() => {});
+  }, [project.id]);
+
+  const create = async (e: FormEvent) => {
+    e.preventDefault();
+    const port = Number(newPort);
+    if (!newDomain.trim() || !newService || !port) return;
+    setBusy("create");
+    setErr("");
+    try {
+      await api.createDomainMapping(project.id, { domain: newDomain.trim(), service: newService, targetPort: port, tlsMode: "acme" });
+      setNewDomain("");
+      setNewPort("");
+      load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "failed to create domain mapping");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const startEdit = (m: DomainMapping) => {
+    setEditingID(m.id);
+    setEditService(m.service);
+    setEditPort(String(m.targetPort));
+    setErr("");
+  };
+
+  const saveEdit = async (m: DomainMapping) => {
+    const port = Number(editPort);
+    if (!editService || !port) return;
+    setBusy(`edit-${m.id}`);
+    setErr("");
+    try {
+      await api.updateDomainMapping(project.id, m.id, { domain: m.domain, service: editService, targetPort: port, tlsMode: "acme" });
+      setEditingID(null);
+      load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "failed to update domain mapping");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const remove = async (m: DomainMapping) => {
+    if (!(await dialogs.confirm({
+      title: `Delete domain "${m.domain}"?`,
+      message: "This only removes the stored mapping — there is no live proxy yet for it to affect.",
+      danger: true, confirmLabel: "Delete",
+    }))) return;
+    setBusy(`delete-${m.id}`);
+    try {
+      await api.deleteDomainMapping(project.id, m.id);
+      load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "failed to delete domain mapping");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
+      <div className="card w-full max-w-2xl flex flex-col max-h-[88vh]" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2 p-4 border-b border-border">
+          <Globe className="h-4 w-4 text-accent" />
+          <span className="font-medium">Domains</span>
+          <span className="text-xs text-muted font-mono">{project.name}</span>
+          <button className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-4 space-y-3 overflow-y-auto">
+          <p className="text-xs text-muted flex items-start gap-2">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-warn" />
+            <span>
+              Not yet active: this records which domain should route to which service, for the embedded
+              reverse proxy planned in a future release. Nothing listens on these domains yet.
+            </span>
+          </p>
+          {err && (
+            <div className="text-sm text-danger flex items-center gap-2"><AlertCircle className="h-4 w-4 shrink-0" /> {err}</div>
+          )}
+          {mappings === null ? (
+            <div className="flex items-center gap-2 text-sm text-muted"><Spinner /> Loading…</div>
+          ) : mappings.length === 0 ? (
+            <div className="text-sm text-muted">No domains yet.</div>
+          ) : (
+            <div className="space-y-2">
+              {mappings.map((m) => (
+                <div key={m.id} className="card p-3 flex items-start gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-mono text-sm">{m.domain}</div>
+                    {editingID === m.id ? (
+                      <form
+                        className="mt-2 flex items-end gap-2"
+                        onSubmit={(e) => { e.preventDefault(); saveEdit(m); }}
+                      >
+                        <select className="input text-xs" value={editService} onChange={(e) => setEditService(e.target.value)}>
+                          {services.length === 0 && <option value={editService}>{editService}</option>}
+                          {services.map((s) => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                        <input
+                          type="number" min={1} max={65535} className="input w-24 text-xs" placeholder="port"
+                          value={editPort} onChange={(e) => setEditPort(e.target.value)}
+                        />
+                        <button type="submit" className="btn-primary px-2 py-1 text-xs disabled:opacity-40" disabled={!editService || !editPort || busy === `edit-${m.id}`}>
+                          {busy === `edit-${m.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                        </button>
+                        <button type="button" className="btn-ghost px-2 py-1 text-xs" onClick={() => setEditingID(null)}>Cancel</button>
+                      </form>
+                    ) : (
+                      <div className="text-xs text-muted">{m.service}:{m.targetPort} · Let&apos;s Encrypt (automatic)</div>
+                    )}
+                  </div>
+                  <div className="shrink-0 flex items-center gap-1">
+                    <button className="btn-ghost px-2 py-1" title="Edit" onClick={() => startEdit(m)}>
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                    <button
+                      className="btn-ghost px-2 py-1 text-danger disabled:opacity-40" title="Delete"
+                      disabled={busy === `delete-${m.id}`} onClick={() => remove(m)}
+                    >
+                      {busy === `delete-${m.id}` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <form className="flex items-end gap-2 p-4 border-t border-border" onSubmit={create}>
+          <div className="flex-1">
+            <label className="label">Domain</label>
+            <input
+              className="input w-full text-sm font-mono" placeholder="app.example.com"
+              value={newDomain} onChange={(e) => setNewDomain(e.target.value)}
+            />
+          </div>
+          <div className="flex-1">
+            <label className="label">Service</label>
+            <select className="input w-full text-sm" value={newService} onChange={(e) => setNewService(e.target.value)}>
+              {services.length === 0 && <option value="">no services found</option>}
+              {services.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div className="w-28">
+            <label className="label">Port</label>
+            <input
+              type="number" min={1} max={65535} className="input w-full text-sm" placeholder="8080"
+              value={newPort} onChange={(e) => setNewPort(e.target.value)}
+            />
+          </div>
+          <button type="submit" className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40" disabled={!newDomain.trim() || !newService || !newPort || busy === "create"}>
+            {busy === "create" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Add
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // isDockerfile reports whether a file is a Dockerfile (Dockerfile, Dockerfile.*,
 // *.dockerfile) — these can live in subdirectories, unlike compose files.
 function isDockerfile(name: string): boolean {
@@ -608,6 +794,7 @@ export function Projects() {
   const [editing, setEditing] = useState<Project | null>(null);
   const [editMeta, setEditMeta] = useState<Project | null>(null);
   const [secretsFor, setSecretsFor] = useState<Project | null>(null);
+  const [domainsFor, setDomainsFor] = useState<Project | null>(null);
   const [hosts, setHosts] = useState<Host[]>([]);
   const [output, setOutput] = useState<Output | null>(null);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
@@ -765,6 +952,7 @@ export function Projects() {
                         <button className="btn-ghost px-2 py-1" title="Edit files" onClick={() => setEditing(p)}><FileText className="h-4 w-4" /></button>
                         <button className="btn-ghost px-2 py-1" title="Settings (name, host)" onClick={() => setEditMeta(p)}><Pencil className="h-4 w-4" /></button>
                         <button className="btn-ghost px-2 py-1" title="Secrets" onClick={() => setSecretsFor(p)}><Lock className="h-4 w-4" /></button>
+                        <button className="btn-ghost px-2 py-1" title="Domains" onClick={() => setDomainsFor(p)}><Globe className="h-4 w-4" /></button>
                         {st.deployed ? (
                           <>
                             <button className="btn-ghost px-2 py-1 text-accent disabled:opacity-40" title="Redeploy (docker compose up -d)" disabled={!composeAvailable} onClick={() => runCompose(p, "deploy")}><Rocket className="h-4 w-4" /></button>
@@ -811,6 +999,7 @@ export function Projects() {
       {showNew && <NewProjectModal hosts={hosts} onClose={() => setShowNew(false)} onCreated={onCreated} />}
       {editMeta && <EditProjectModal project={editMeta} hosts={hosts} deployed={projectState(stackBySlug.get(editMeta.slug)).deployed} onClose={() => setEditMeta(null)} onSaved={() => { setEditMeta(null); load(); }} />}
       {secretsFor && <ProjectSecretsModal project={secretsFor} onClose={() => setSecretsFor(null)} />}
+      {domainsFor && <ProjectDomainsModal project={domainsFor} onClose={() => setDomainsFor(null)} />}
 
       {editing && (
         <ProjectEditor

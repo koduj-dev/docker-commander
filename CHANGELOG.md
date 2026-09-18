@@ -7,6 +7,26 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Domain mappings (phase 1 of "Per-container domain + TLS").** A project
+  can now record that a domain (e.g. `app.example.com`)
+  should route to one of its compose services' ports — manage them from the
+  new **Domains** button on a project's card. This release only stores that
+  intent: there is no reverse proxy yet, so nothing actually routes traffic
+  for a saved mapping. A domain must be a real FQDN (no wildcards, no IP
+  literals), is unique across every project (two projects can't fight over
+  the same public hostname), can't collide with Docker Commander's own
+  configured admin domain(s), and — when the `docker compose` CLI is
+  available — must name a service that actually exists in the project's
+  current compose file, resolved with every Compose profile enabled so a
+  service gated behind one is still mappable. A domain is matched
+  case-insensitively for uniqueness (`App.Example.com` and `app.example.com`
+  are the same hostname) and internationalized domains using punycode
+  (`xn--…`) are accepted. RBAC reuses the project's own "projects" section
+  grants, the same as project secrets and drift ignores. A project's domain
+  mappings are included in the portable recovery bundle, same as its secrets
+  and images. Editing a mapping's service/port from the **Domains** panel is
+  supported (the domain itself is immutable — delete and recreate to
+  repoint a hostname).
 - **Controlled image updates — detection + notification (phase 1 of the
   feature; auto-apply is a later phase).** Every project's running services
   are now checked on a schedule (every 6 hours) against what the registry

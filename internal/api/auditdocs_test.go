@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -134,6 +135,28 @@ func TestDocumentedAuditActionsStillExist(t *testing.T) {
 	if len(stale) > 0 {
 		sort.Strings(stale)
 		t.Errorf("docs/audit.md documents action(s) the code never writes: %s", strings.Join(stale, ", "))
+	}
+}
+
+// docs/audit.md states its own count in prose ("All **N** of them") — a
+// number nothing enforced, so it silently drifted (a prior PR's review found
+// it several actions stale). The membership tests above already prove every
+// action is exactly the documented set; this proves the PRINTED NUMBER
+// agrees with that same set, so it can never drift again without the build
+// saying so.
+func TestAuditDocCountMatchesReality(t *testing.T) {
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "audit.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`All \*\*(\d+)\*\* of them`).FindStringSubmatch(string(doc))
+	if m == nil {
+		t.Fatal(`docs/audit.md no longer contains the expected "All **N** of them" sentence — update this test's regex to match its new wording`)
+	}
+	stated := m[1]
+	actual := len(auditActionsInSource(t))
+	if stated != strconv.Itoa(actual) {
+		t.Errorf(`docs/audit.md says "All **%s** of them", but the source currently audits %d distinct actions. Update the number in docs/audit.md to %d.`, stated, actual, actual)
 	}
 }
 

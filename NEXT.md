@@ -291,17 +291,49 @@ publishing a per-network number that looks authoritative and is wrong.
 
 ### Reverse proxy and ingress
 
-- **Per-container domain + TLS.** An optional embedded reverse proxy
-  (Go-native, e.g. Caddy-as-a-library — no new external process) that maps a
-  domain to a container's host port with automatic Let's Encrypt issuance,
-  so a deployed stack doesn't need a hand-rolled Traefik/nginx-proxy-manager
-  sitting next to it. This is the single most-cited draw pulling people from
-  Portainer/Dockge-class tools toward Coolify/CapRover, and it's asked for
-  directly against Dockge too
+- **Per-container domain + TLS.** An optional embedded reverse proxy that
+  maps a domain to a container's host port with automatic Let's Encrypt
+  issuance, so a deployed stack doesn't need a hand-rolled
+  Traefik/nginx-proxy-manager sitting next to it. This is the single
+  most-cited draw pulling people from Portainer/Dockge-class tools toward
+  Coolify/CapRover, and it's asked for directly against Dockge too
   ([discussion #292](https://github.com/louislam/dockge/discussions/292),
   [#553](https://github.com/louislam/dockge/issues/553)). DC already does
   ACME/native HTTPS for *itself*; this is the same capability, scoped
   per-deployed-container instead of per-DC-instance.
+
+  **Architecture decision:** built on `golang.org/x/crypto/acme/autocert`
+  (already a dependency, used for DC's own admin TLS) plus stdlib
+  `net/http/httputil.ReverseProxy`, **not** Caddy-as-a-library as originally
+  floated here. Pulling in Caddy (even just its certmagic sub-library) would
+  be a large new dependency tree for capability autocert already provides —
+  the same shape of regret already logged below for the rejected in-process
+  Compose engine. The one real design wrinkle: DC's own admin TLS and the
+  per-container proxy both want port 443; the plan is one shared listener
+  with an SNI-dispatching `GetCertificate`/handler (DC's own configured
+  admin domain(s) routes to DC's own chi mux + autocert manager, everything
+  else to the proxy's own autocert manager + `ReverseProxy`, each with its
+  own cert cache directory) rather than two listeners fighting over the
+  port.
+
+  **Shipped so far (config only, no live proxy):** a project can record
+  domain → service:port mappings (**Domains** panel on a project's card) —
+  validated (real FQDN, globally unique, doesn't collide with DC's own
+  admin domain, target service must exist in the compose file when the
+  `docker compose` CLI is available), audited, RBAC via the project's own
+  section grant. **Still open, in order:** (1) the actual proxy engine —
+  the shared-listener SNI dispatch above, `ReverseProxy` routing sourced
+  from the stored mappings, local-host projects only at first (dial
+  `127.0.0.1:<port>`), gated off by default behind its own opt-in flag since
+  it opens a second public attack surface; (2) remote-host reachability —
+  `store.Host` has no field today for "where this host's published ports
+  are reachable from," only its Docker daemon connection string, which
+  isn't the same address for an `ssh`-kind host; (3) polish — cert-expiry/
+  status display, HTTP→HTTPS redirect convenience, an optional http-01
+  fallback. Also open: whether `tlsMode` ever needs a `"none"` value (an
+  external terminator in front of DC's proxy) — the column already reserves
+  the value, nothing yet implements it — and mappings are Projects-only
+  (CLI-discovered Stacks are out of scope here, same as revisions).
 
 ### Multi-instance federation
 

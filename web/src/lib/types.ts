@@ -613,6 +613,28 @@ export interface ProjectSecret {
   updatedAt: string;
 }
 
+// DomainMapping mirrors internal/store/domain_mappings.go (see NEXT.md's
+// "Per-container domain + TLS"). This is intent only — nothing proxies
+// traffic for it until the (not-yet-built) reverse proxy engine ships.
+export interface DomainMapping {
+  id: number;
+  projectId: number;
+  domain: string;
+  service: string;
+  targetPort: number;
+  tlsMode: "acme";
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DomainMappingInput {
+  domain: string;
+  service: string;
+  targetPort: number;
+  tlsMode: "acme";
+}
+
 export interface ProjectFile {
   name: string;
   size: number;
