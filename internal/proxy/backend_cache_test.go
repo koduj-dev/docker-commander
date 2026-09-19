@@ -205,3 +205,107 @@ func TestResolveBackendCachedWaiterCancellationDoesNotAffectOthers(t *testing.T)
 		t.Fatal("the flight never completed for the healthy waiter")
 	}
 }
+
+// TestResolveBackendCachedIsKeyedByMappingIdentityNotDomain is the regression
+// for a P1 the third code review caught: the cache (and its singleflight
+// group) was keyed by domain alone, so deleting a mapping and recreating the
+// same globally-unique domain for ANOTHER project inside one TTL window handed
+// the new mapping the previous project's cached backend — public traffic for
+// project B reaching project A's container under B's valid hostname and cert.
+func TestResolveBackendCachedIsKeyedByMappingIdentityNotDomain(t *testing.T) {
+	p := &Proxy{cache: newBackendCache(time.Minute)}
+	var calls atomic.Int32
+	p.resolveFn = func(ctx context.Context, m store.DomainMapping) (backend, error) {
+		calls.Add(1)
+		return backend{addr: "project-" + string(rune('0'+m.ProjectID))}, nil
+	}
+	a := store.DomainMapping{ID: 1, ProjectID: 1, Domain: "app.example.com", Service: "web", TargetPort: 80}
+	b := store.DomainMapping{ID: 2, ProjectID: 2, Domain: "app.example.com", Service: "web", TargetPort: 80}
+
+	got, _ := p.resolveBackendCached(context.Background(), a)
+	if got.addr != "project-1" {
+		t.Fatalf("mapping A resolved to %q", got.addr)
+	}
+	got, _ = p.resolveBackendCached(context.Background(), b)
+	if got.addr != "project-2" {
+		t.Errorf("mapping B (same domain, different project) got %q — the previous project's cached backend leaked across mappings", got.addr)
+	}
+	// Same mapping again is still a hit: the fix must not disable the cache.
+	if _, _ = p.resolveBackendCached(context.Background(), a); calls.Load() != 2 {
+		t.Errorf("resolveFn ran %d times, want 2 (A once, B once; the repeat of A is a cache hit)", calls.Load())
+	}
+
+	// Repointing the SAME row (same ID/project, new service or port; every
+	// edit bumps UpdatedAt) must miss as well.
+	repointed := a
+	repointed.TargetPort = 8080
+	repointed.UpdatedAt = time.Now()
+	p.resolveBackendCached(context.Background(), repointed)
+	if calls.Load() != 3 {
+		t.Errorf("a repointed mapping reused the stale entry (resolveFn calls = %d, want 3)", calls.Load())
+	}
+}
+
+// The singleflight key must carry the same identity: an in-flight lookup for
+// mapping A must not be joined by a request for mapping B on the same domain.
+func TestResolveBackendCachedDoesNotJoinAnotherMappingsFlight(t *testing.T) {
+	p := &Proxy{cache: newBackendCache(time.Minute)}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	p.resolveFn = func(ctx context.Context, m store.DomainMapping) (backend, error) {
+		if m.ProjectID == 1 {
+			close(entered)
+			<-release
+		}
+		return backend{addr: "project-" + string(rune('0'+m.ProjectID))}, nil
+	}
+	a := store.DomainMapping{ID: 1, ProjectID: 1, Domain: "app.example.com", Service: "web", TargetPort: 80}
+	b := store.DomainMapping{ID: 2, ProjectID: 2, Domain: "app.example.com", Service: "web", TargetPort: 80}
+
+	aDone := make(chan backend, 1)
+	go func() {
+		got, _ := p.resolveBackendCached(context.Background(), a)
+		aDone <- got
+	}()
+	<-entered // A's flight is genuinely in progress
+
+	bDone := make(chan backend, 1)
+	go func() {
+		got, _ := p.resolveBackendCached(context.Background(), b)
+		bDone <- got
+	}()
+	select {
+	case got := <-bDone:
+		if got.addr != "project-2" {
+			t.Errorf("mapping B got %q while A's flight was in progress, want its own result", got.addr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("mapping B blocked on (or joined) mapping A's flight")
+	}
+	close(release)
+	if got := <-aDone; got.addr != "project-1" {
+		t.Errorf("mapping A got %q", got.addr)
+	}
+}
+
+// Expired entries must actually be removed (P3): with identity-scoped keys a
+// superseded mapping's entry is never looked up again, so without a sweep the
+// map grows by one key per distinct mapping that ever received a request.
+func TestBackendCacheDropsExpiredEntries(t *testing.T) {
+	p := &Proxy{cache: newBackendCache(20 * time.Millisecond)}
+	p.resolveFn = func(ctx context.Context, m store.DomainMapping) (backend, error) {
+		return backend{addr: "127.0.0.1:9"}, nil
+	}
+	for i := int64(1); i <= 50; i++ {
+		p.resolveBackendCached(context.Background(), store.DomainMapping{ID: i, ProjectID: i, Domain: "churn.example.com", Service: "web", TargetPort: 80})
+	}
+	time.Sleep(60 * time.Millisecond) // everything above has expired
+	p.resolveBackendCached(context.Background(), store.DomainMapping{ID: 999, ProjectID: 999, Domain: "live.example.com", Service: "web", TargetPort: 80})
+
+	p.cache.mu.Lock()
+	n := len(p.cache.m)
+	p.cache.mu.Unlock()
+	if n != 1 {
+		t.Errorf("cache holds %d entries, want 1 — expired entries were never removed", n)
+	}
+}

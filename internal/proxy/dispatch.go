@@ -20,7 +20,8 @@ func hostOnly(host string) string {
 	return host
 }
 
-// canonicalHost normalizes a hostname the SAME way autocert.Manager does
+// CanonicalHost (exported so the API's admin-domain collision check compares
+// names exactly the way dispatch does) normalizes a hostname the SAME way autocert.Manager does
 // internally, via idna.Lookup.ToASCII — not just strings.ToLower. DNS names
 // are case-insensitive (ToASCII folds that too), and this app's ACME config
 // accepts Unicode hostnames, which a client's TLS/HTTP layer virtually
@@ -31,7 +32,7 @@ func hostOnly(host string) string {
 // can't parse falls back to a plain lowercase trim: it will then simply
 // fail to match anything (deny-by-default), never panic or match the wrong
 // thing.
-func canonicalHost(s string) string {
+func CanonicalHost(s string) string {
 	if ascii, err := idna.Lookup.ToASCII(s); err == nil {
 		return ascii
 	}
@@ -39,7 +40,7 @@ func canonicalHost(s string) string {
 }
 
 // toSet builds a lookup set of configured admin domains, canonicalized via
-// canonicalHost — see its doc comment for why plain lowercasing isn't
+// CanonicalHost — see its doc comment for why plain lowercasing isn't
 // enough. Without this, an admin domain configured with any uppercase
 // letter or Unicode character (nothing stops an operator from typing
 // DC_ACME_DOMAINS=Admin.Example.com or a real Unicode hostname) would never
@@ -49,7 +50,7 @@ func canonicalHost(s string) string {
 func toSet(domains []string) map[string]bool {
 	set := make(map[string]bool, len(domains))
 	for _, d := range domains {
-		set[canonicalHost(d)] = true
+		set[CanonicalHost(d)] = true
 	}
 	return set
 }
@@ -62,7 +63,7 @@ func toSet(domains []string) map[string]bool {
 func CombinedGetCertificate(adminMgr, proxyMgr tlsCertGetter, adminDomains []string) func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 	admin := toSet(adminDomains)
 	return func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-		if admin[canonicalHost(hello.ServerName)] {
+		if admin[CanonicalHost(hello.ServerName)] {
 			return adminMgr.GetCertificate(hello)
 		}
 		return proxyMgr.GetCertificate(hello)
@@ -84,7 +85,7 @@ type tlsCertGetter interface {
 func CombinedHandler(adminHandler http.Handler, adminDomains []string, p *Proxy) http.Handler {
 	admin := toSet(adminDomains)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		host := canonicalHost(hostOnly(r.Host))
+		host := CanonicalHost(hostOnly(r.Host))
 
 		// Defense in depth against SNI/Host decorrelation: GetCertificate
 		// picks a certificate by TLS SNI (ClientHelloInfo.ServerName); this
@@ -98,7 +99,7 @@ func CombinedHandler(adminHandler http.Handler, adminDomains []string, p *Proxy)
 		// only ever runs against the SNI used AT ISSUANCE time, never
 		// against a later request's Host header. Reject outright rather
 		// than let the two disagree.
-		if r.TLS != nil && r.TLS.ServerName != "" && !strings.EqualFold(r.TLS.ServerName, host) {
+		if r.TLS != nil && r.TLS.ServerName != "" && CanonicalHost(r.TLS.ServerName) != host {
 			http.Error(w, "misdirected request", http.StatusMisdirectedRequest)
 			return
 		}

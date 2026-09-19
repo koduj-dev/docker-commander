@@ -112,6 +112,35 @@ func TestCombinedHandlerAdminDomainMatchHandlesIDNA(t *testing.T) {
 	}
 }
 
+// The SNI/Host consistency check must canonicalize BOTH sides (P2, third
+// review): autocert accepts Unicode SNI "bücher.example" and canonicalizes it,
+// so a client presenting it with the equivalent Punycode Host denotes ONE name
+// and must not be rejected as a mismatch. A genuinely different Host still is.
+func TestCombinedHandlerSNIHostCheckIsIDNAAware(t *testing.T) {
+	p := newDispatchTestProxy(t, "", true)
+	h := CombinedHandler(stubHandler("admin"), []string{"bücher.example"}, p)
+
+	for _, tc := range []struct {
+		name, sni, host string
+		wantCode        int
+	}{
+		{"unicode SNI, punycode Host", "bücher.example", "xn--bcher-kva.example", 200},
+		{"punycode SNI, unicode Host", "xn--bcher-kva.example", "bücher.example", 200},
+		{"different name still rejected", "bücher.example", "other.example", http.StatusMisdirectedRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest("GET", "https://x/", nil)
+			r.Host = tc.host
+			r.TLS = &tls.ConnectionState{ServerName: tc.sni}
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != tc.wantCode {
+				t.Errorf("code = %d, want %d", w.Code, tc.wantCode)
+			}
+		})
+	}
+}
+
 func TestCombinedGetCertificateAdminDomainMatchIsCaseInsensitive(t *testing.T) {
 	admin := &fakeCertGetter{cert: &tls.Certificate{}}
 	proxyMgr := &fakeCertGetter{cert: &tls.Certificate{}}

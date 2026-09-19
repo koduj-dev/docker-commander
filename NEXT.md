@@ -328,7 +328,7 @@ publishing a per-network number that looks authoritative and is wrong.
   it dials a container's published *host* port directly, so a
   `DOCKER_HOST=tcp://…` pointed elsewhere is detected and refused cleanly,
   but DC running containerized on the *same* machine as the daemon (see
-  [Option D](../README.md#option-d--docker)) without `--network host` isn't
+  [Option D](README.md#option-d--docker)) without `--network host` isn't
   detectable the same way and isn't handled yet (see `docs/projects.md`).
   Also open: whether `tlsMode` ever needs a `"none"` value (an external
   terminator in front of DC's proxy) — the column already reserves the

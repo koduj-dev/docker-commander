@@ -38,9 +38,9 @@ All notable changes to Docker Commander are documented here. The format follows
 - **Domain mappings (phase 1 of "Per-container domain + TLS").** A project
   can now record that a domain (e.g. `app.example.com`)
   should route to one of its compose services' ports — manage them from the
-  new **Domains** button on a project's card. This release only stores that
-  intent: there is no reverse proxy yet, so nothing actually routes traffic
-  for a saved mapping. A domain must be a real FQDN (no wildcards, no IP
+  new **Domains** button on a project's card. Phase 1 is the storage and UI
+  (the embedded reverse proxy above is what makes a saved mapping live). A
+  domain must be a real FQDN (no wildcards, no IP
   literals), is unique across every project (two projects can't fight over
   the same public hostname), can't collide with Docker Commander's own
   configured admin domain(s), and — when the `docker compose` CLI is

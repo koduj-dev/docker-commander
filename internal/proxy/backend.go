@@ -124,11 +124,20 @@ func (p *Proxy) resolveBackend(ctx context.Context, m store.DomainMapping) (back
 // (ordinary traffic, or deliberately) would otherwise fan out into one
 // Docker API call PER concurrent request every time the TTL lapses, which
 // defeats the point of caching at all and can overload the daemon.
+//
+// Entries (and flights) are keyed by the mapping's full routing identity —
+// see cacheKey — never by domain alone: a domain can be deleted and recreated
+// for a DIFFERENT project (or repointed) inside one TTL window, and a
+// domain-only key would then hand the new mapping the previous project's
+// backend. Because a changed identity yields a new key rather than
+// overwriting the old one, expired entries are swept (see storeLocked) so the
+// map stays bounded by the mappings live within roughly one TTL.
 type backendCache struct {
-	mu    sync.Mutex
-	ttl   time.Duration
-	m     map[string]cachedBackend
-	group singleflight.Group
+	mu        sync.Mutex
+	ttl       time.Duration
+	m         map[string]cachedBackend
+	nextSweep time.Time
+	group     singleflight.Group
 }
 
 type cachedBackend struct {
@@ -139,6 +148,44 @@ type cachedBackend struct {
 
 func newBackendCache(ttl time.Duration) *backendCache {
 	return &backendCache{ttl: ttl, m: make(map[string]cachedBackend)}
+}
+
+// cacheKey identifies a mapping's routing inputs. The mapping ID alone would
+// already distinguish delete+recreate, but the remaining fields (and
+// UpdatedAt, which every edit bumps) make a repoint of the same row miss
+// too, so no field that feeds resolveBackend can be stale under a shared key.
+func cacheKey(m store.DomainMapping) string {
+	return fmt.Sprintf("%s|%d|%d|%s|%d|%d", m.Domain, m.ID, m.ProjectID, m.Service, m.TargetPort, m.UpdatedAt.UnixNano())
+}
+
+// lookupLocked returns a live entry, deleting an expired one so it can't
+// linger. Caller holds c.mu.
+func (c *backendCache) lookupLocked(key string, now time.Time) (cachedBackend, bool) {
+	e, ok := c.m[key]
+	if !ok {
+		return cachedBackend{}, false
+	}
+	if !now.Before(e.expires) {
+		delete(c.m, key)
+		return cachedBackend{}, false
+	}
+	return e, true
+}
+
+// storeLocked records an entry and, at most once per TTL, sweeps every
+// expired one — entries under superseded keys are never looked up again, so
+// lookup-time deletion alone wouldn't reclaim them. Caller holds c.mu.
+func (c *backendCache) storeLocked(key string, e cachedBackend, now time.Time) {
+	c.m[key] = e
+	if now.Before(c.nextSweep) {
+		return
+	}
+	for k, v := range c.m {
+		if !now.Before(v.expires) {
+			delete(c.m, k)
+		}
+	}
+	c.nextSweep = now.Add(c.ttl)
 }
 
 // backendResult bundles resolveBackend's two return values so they travel
@@ -171,19 +218,20 @@ const resolveTimeout = 10 * time.Second
 // canceled, it stops waiting immediately without affecting the flight or
 // any other waiter.
 func (p *Proxy) resolveBackendCached(ctx context.Context, m store.DomainMapping) (backend, error) {
+	key := cacheKey(m)
 	p.cache.mu.Lock()
-	if c, ok := p.cache.m[m.Domain]; ok && time.Now().Before(c.expires) {
+	if c, ok := p.cache.lookupLocked(key, time.Now()); ok {
 		p.cache.mu.Unlock()
 		return c.b, c.err
 	}
 	p.cache.mu.Unlock()
 
-	ch := p.cache.group.DoChan(m.Domain, func() (any, error) {
+	ch := p.cache.group.DoChan(key, func() (any, error) {
 		// Re-check: a caller delayed between the miss above and actually
 		// entering this flight may find another flight already populated
 		// the cache (its own singleflight key had already been released).
 		p.cache.mu.Lock()
-		if c, ok := p.cache.m[m.Domain]; ok && time.Now().Before(c.expires) {
+		if c, ok := p.cache.lookupLocked(key, time.Now()); ok {
 			p.cache.mu.Unlock()
 			return backendResult{b: c.b, err: c.err}, nil
 		}
@@ -198,7 +246,8 @@ func (p *Proxy) resolveBackendCached(ctx context.Context, m store.DomainMapping)
 		// close to (or longer than) the TTL would otherwise store an
 		// already-expired entry, forcing the very next request to redo the
 		// same work the cache exists to avoid.
-		p.cache.m[m.Domain] = cachedBackend{b: b, err: err, expires: time.Now().Add(p.cache.ttl)}
+		now := time.Now()
+		p.cache.storeLocked(key, cachedBackend{b: b, err: err, expires: now.Add(p.cache.ttl)}, now)
 		p.cache.mu.Unlock()
 		return backendResult{b: b, err: err}, nil
 	})
