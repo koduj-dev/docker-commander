@@ -21,6 +21,8 @@ list. Key ones:
 | `DC_ADDR` | (unset) | legacy full `host:port`; overrides `DC_HOST`/`DC_PORT` if set |
 | `DC_TLS_CERT` / `DC_TLS_KEY` | (off) | PEM cert + key paths; set both to serve **HTTPS** directly |
 | `DC_ACME_DOMAINS` | (off) | comma-separated public hostname(s): serve **HTTPS** via automatic ACME/Let's Encrypt certificates instead of a static pair — see [HTTPS](#https) |
+| `DC_PROXY_ENABLED` | (off) | enable the embedded **per-container reverse proxy** for `domain_mappings` (local-host projects only; requires `DC_ACME_DOMAINS`) — see [Projects → Domains](projects.md#domains) |
+| `DC_PROXY_ACME_CACHE_DIR` | `<data-dir>/proxy-acme` | cache dir for the proxy's own ACME certificate/account state, kept separate from `DC_ACME_CACHE_DIR` |
 | `DC_MCP_ENABLED` | (off) | enable the remote **MCP** server for AI tools (off by default; serve behind HTTPS) — see [MCP](mcp.md) |
 | `DC_MCP_PUBLIC_URL` | (unset) | externally reachable base URL (`https://host`) — required for the MCP **OAuth** flow (bearer tokens work without it) |
 | `DC_DATA_DIR` | OS config dir | SQLite DB + signing/encryption keys |
@@ -325,6 +327,18 @@ Pebble's responses don't work with this server's certificate-obtaining code
 path regardless (see [docs/gotchas.md](gotchas.md)). Pebble is only used by
 this project's own test suite, at a lower protocol level than the running
 server uses.
+
+**Embedded per-container reverse proxy (opt-in, on top of A2).** With ACME
+mode active as above, `DC_PROXY_ENABLED=1` additionally routes public
+traffic for a project's [domain mappings](projects.md#domains) to that
+project's actual running container — on the **same** listener/port as the
+admin UI, dispatched by SNI, not a second port. Off by default (it's a
+second public-facing surface distinct from the admin UI/API) and local-host
+projects only in this phase. Its own certificates are cached separately
+under `DC_PROXY_ACME_CACHE_DIR` (default `<data-dir>/proxy-acme`) so a
+compromise of one cache can't expose the other manager's account key.
+Enabling it without ACME mode active logs a clear message and changes
+nothing else — the admin UI keeps working exactly as before.
 
 **B — reverse proxy (recommended for anything non-trivial).**
 Bind to loopback and terminate TLS at nginx/Caddy. WebSockets must be allowed

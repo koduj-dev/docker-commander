@@ -85,6 +85,23 @@ type Config struct {
 	// needs it set.
 	MCPPublicURL string
 
+	// ProxyEnabled turns on the embedded per-container reverse proxy: routing
+	// public traffic for a project's domain_mappings entries to that
+	// project's actual running container, over the SAME shared listener as
+	// DC's own admin UI (SNI-dispatched). Off by default — this opens a
+	// second public attack surface distinct from DC's own admin UI/API, so
+	// it must be a conscious opt-in. Only takes effect when ACME mode is
+	// also active for DC's own admin domain(s) (len(ACMEDomains) > 0); if
+	// ProxyEnabled is true without ACME mode, startup logs a clear no-op
+	// message rather than failing. Local-host projects only in this phase —
+	// see NEXT.md's "Reverse proxy and ingress".
+	ProxyEnabled bool
+	// ProxyACMECacheDir persists the proxy's OWN obtained certificates and
+	// ACME account state, kept in a directory separate from ACMECacheDir (DC's
+	// own admin-domain cache) — a compromise of one manager's cache must not
+	// expose the other's account key. Defaults to <data-dir>/proxy-acme.
+	ProxyACMECacheDir string
+
 	// Version is the build version string, set by main (not from flags/env).
 	Version string
 	// ConfigFile is the config file that was loaded, or "" if none.
@@ -178,6 +195,8 @@ func Load() (Config, error) {
 	flag.StringVar(&c.ACMEDirectoryURL, "acme-directory-url", lookup("DC_ACME_DIRECTORY_URL"), "override the ACME directory URL (default: Let's Encrypt production) — e.g. its staging directory; NOT a local Pebble instance, which this server cannot obtain a certificate through (see docs/gotchas.md)")
 	flag.BoolVar(&c.MCPEnabled, "mcp-enabled", lookup("DC_MCP_ENABLED") == "1", "enable the remote MCP server + OAuth endpoints (off by default; requires HTTPS)")
 	flag.StringVar(&c.MCPPublicURL, "mcp-public-url", lookup("DC_MCP_PUBLIC_URL"), "externally reachable base URL (https://host[:port]) for MCP OAuth audience/metadata")
+	flag.BoolVar(&c.ProxyEnabled, "proxy-enabled", lookup("DC_PROXY_ENABLED") == "1", "enable the embedded per-container reverse proxy for domain_mappings (off by default; requires ACME mode for DC's own admin domain)")
+	flag.StringVar(&c.ProxyACMECacheDir, "proxy-acme-cache-dir", lookup("DC_PROXY_ACME_CACHE_DIR"), "directory to cache the proxy's own ACME certificate/account state (default: <data-dir>/proxy-acme)")
 	flag.StringVar(&c.RedisAddr, "redis-addr", lookup("DC_REDIS_ADDR"), "Redis address (host:port) for metrics history; empty = in-memory")
 	flag.StringVar(&c.RedisPassword, "redis-password", lookup("DC_REDIS_PASSWORD"), "Redis password")
 	retention := flag.Duration("metrics-retention", envDuration("DC_METRICS_RETENTION", 6*time.Hour), "how long to keep metric history")
@@ -240,6 +259,9 @@ func Load() (Config, error) {
 		if c.ACMECacheDir == "" {
 			c.ACMECacheDir = filepath.Join(c.DataDir, "acme")
 		}
+	}
+	if c.ProxyACMECacheDir == "" {
+		c.ProxyACMECacheDir = filepath.Join(c.DataDir, "proxy-acme")
 	}
 
 	if err := os.MkdirAll(c.DataDir, 0o700); err != nil {

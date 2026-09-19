@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/koduj-dev/docker-commander/internal/docker"
+	"github.com/koduj-dev/docker-commander/internal/proxy"
 	"github.com/koduj-dev/docker-commander/internal/store"
 )
 
@@ -219,7 +220,10 @@ func (s *Server) validateDomainMapping(r *http.Request, p *store.Project, b doma
 		return "domain must be a valid FQDN (e.g. app.example.com); wildcards and IP literals aren't accepted", false
 	}
 	for _, own := range s.cfg.ACMEDomains {
-		if strings.EqualFold(own, b.Domain) {
+		// Same canonicalization dispatch uses (IDNA → ASCII, case-folded): a
+		// Unicode-configured admin domain and its Punycode spelling are ONE
+		// hostname, and a mapping for either would be permanently shadowed.
+		if proxy.CanonicalHost(own) == proxy.CanonicalHost(b.Domain) {
 			return "this domain is already Docker Commander's own admin hostname", false
 		}
 	}

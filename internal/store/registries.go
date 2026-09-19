@@ -89,10 +89,18 @@ func (s *Store) AuthForHost(ctx context.Context, host string) (*RegistryAuth, er
 }
 
 // scanAuth decrypts a credential row.
+//
+// row.Scan is called unconditionally, before anything else — a *sql.Row
+// from QueryRowContext only releases its underlying connection back to the
+// pool once Scan runs (database/sql's own documented behavior). The cipher
+// check used to come first and return early on a nil cipher, which left
+// that connection permanently checked out: with the store's connection
+// pool capped at one (SetMaxOpenConns(1)), a single call here with no
+// cipher configured deadlocked every later query against this *Store, not
+// just this one. It also masked the far more common ErrNotFound case (no
+// registry configured at all) behind a misleading "cipher not configured"
+// error, since the row was never even inspected.
 func (s *Store) scanAuth(row *sql.Row) (*RegistryAuth, error) {
-	if s.cipher == nil {
-		return nil, errors.New("store: cipher not configured")
-	}
 	var a RegistryAuth
 	var enc string
 	err := row.Scan(&a.Address, &a.Username, &enc)
@@ -103,6 +111,9 @@ func (s *Store) scanAuth(row *sql.Row) (*RegistryAuth, error) {
 		return nil, err
 	}
 	if enc != "" {
+		if s.cipher == nil {
+			return nil, errors.New("store: cipher not configured")
+		}
 		pw, err := s.cipher.Decrypt(enc)
 		if err != nil {
 			return nil, err
