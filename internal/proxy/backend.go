@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -80,14 +81,26 @@ func (p *Proxy) resolveBackend(ctx context.Context, m store.DomainMapping) (back
 	// phase can trust (same daemon host as far as the API is concerned);
 	// see NEXT.md for the still-open containerized-Docker-Commander case,
 	// where the socket is local but the network namespace may not be.
-	cli, err := p.docker.Client(ctx, 0)
+	//
+	// The local host is resolved to its OWN id here instead of passing 0 to
+	// the Manager: hostID<=0 means "the local host, or — if that row is gone
+	// — whichever host happens to be first" (Manager.defaultHostID), and the
+	// host API lets an admin delete the local row. A local project would then
+	// be resolved against a remote daemon, breaking this phase's local-only
+	// boundary; the DaemonHost check below would usually still catch it, but
+	// that is a side effect, not the boundary. Fail closed instead.
+	localID, err := p.localHostID(ctx)
+	if err != nil {
+		return backend{}, err
+	}
+	cli, err := p.docker.Client(ctx, localID)
 	if err != nil {
 		return backend{}, fmt.Errorf("proxy: local docker client: %w", err)
 	}
 	if host := cli.DaemonHost(); !strings.HasPrefix(host, "unix://") && !strings.HasPrefix(host, "npipe://") {
 		return backend{}, fmt.Errorf("proxy: local daemon is not a local socket (%s) — refusing to guess a dial address", host)
 	}
-	stacks, err := p.docker.ListStacks(ctx, 0) // hostID<=0 resolves the local daemon
+	stacks, err := p.docker.ListStacks(ctx, localID)
 	if err != nil {
 		return backend{}, fmt.Errorf("proxy: listing local stacks: %w", err)
 	}
@@ -107,6 +120,22 @@ func (p *Proxy) resolveBackend(ctx context.Context, m store.DomainMapping) (back
 		}
 	}
 	return backend{}, fmt.Errorf("proxy: no running container for service %q publishing TCP port %d in project %q", m.Service, m.TargetPort, proj.Slug)
+}
+
+// localHostID returns the id of the store's Kind=="local" host row, or an
+// error when there is none. Unlike Manager's own hostID<=0 shorthand it never
+// substitutes another host.
+func (p *Proxy) localHostID(ctx context.Context) (int64, error) {
+	hosts, err := p.store.ListHosts(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("proxy: listing hosts: %w", err)
+	}
+	for _, h := range hosts {
+		if h.Kind == "local" {
+			return h.ID, nil
+		}
+	}
+	return 0, errors.New("proxy: no local host configured — refusing to fall back to another host")
 }
 
 // backendCache holds the most recently resolved backend per domain for a

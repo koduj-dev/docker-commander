@@ -533,3 +533,57 @@ func TestDefaultDataDir(t *testing.T) {
 		t.Error("defaultDataDir should never be empty")
 	}
 }
+
+// The embedded reverse proxy's own settings: off unless DC_PROXY_ENABLED=1,
+// and its ACME state defaults to a directory SEPARATE from the admin one — a
+// shared directory would let the two autocert managers overwrite each
+// other's account key and certificates.
+func loadProxyConfig(t *testing.T, env map[string]string, args ...string) Config {
+	t.Helper()
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	t.Cleanup(func() { os.Args, flag.CommandLine = oldArgs, oldFS })
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = append([]string{"dockercmd"}, args...)
+	for k, v := range env {
+		t.Setenv(k, v)
+	}
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	return c
+}
+
+func TestLoadProxyDisabledByDefault(t *testing.T) {
+	dir := t.TempDir()
+	c := loadProxyConfig(t, map[string]string{"DC_DATA_DIR": dir})
+	if c.ProxyEnabled {
+		t.Error("the proxy is a second public-facing surface and must be off by default")
+	}
+	if want := filepath.Join(dir, "proxy-acme"); c.ProxyACMECacheDir != want {
+		t.Errorf("ProxyACMECacheDir = %q, want the default %q", c.ProxyACMECacheDir, want)
+	}
+	if c.ProxyACMECacheDir == filepath.Join(dir, "acme") {
+		t.Error("the proxy's ACME state must never default to the admin ACME directory")
+	}
+}
+
+func TestLoadProxyEnabledFromEnvAndFlag(t *testing.T) {
+	// Only "1" enables it — the same convention as DC_MCP_ENABLED.
+	if c := loadProxyConfig(t, map[string]string{"DC_DATA_DIR": t.TempDir(), "DC_PROXY_ENABLED": "1"}); !c.ProxyEnabled {
+		t.Error("DC_PROXY_ENABLED=1 should enable the proxy")
+	}
+	if c := loadProxyConfig(t, map[string]string{"DC_DATA_DIR": t.TempDir(), "DC_PROXY_ENABLED": "true"}); c.ProxyEnabled {
+		t.Error(`DC_PROXY_ENABLED=true is not "1" and must not enable the proxy`)
+	}
+	if c := loadProxyConfig(t, map[string]string{"DC_DATA_DIR": t.TempDir()}, "-proxy-enabled"); !c.ProxyEnabled {
+		t.Error("-proxy-enabled should enable the proxy")
+	}
+}
+
+func TestLoadProxyACMECacheDirOverride(t *testing.T) {
+	c := loadProxyConfig(t, map[string]string{"DC_DATA_DIR": t.TempDir(), "DC_PROXY_ACME_CACHE_DIR": "/var/lib/dockercmd/proxy-cache"})
+	if c.ProxyACMECacheDir != "/var/lib/dockercmd/proxy-cache" {
+		t.Errorf("ProxyACMECacheDir = %q, want the explicit override preserved", c.ProxyACMECacheDir)
+	}
+}

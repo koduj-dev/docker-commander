@@ -571,6 +571,13 @@ func (s *Server) applyRecoveryBundle(ctx context.Context, m *recoveryManifest, z
 		// a real conflict, not something to silently drop — same "skip with a
 		// warning" treatment collisions get everywhere else in this import.
 		for _, dm := range pm.DomainMappings {
+			// The API refuses any tlsMode but "acme"; a bundle is not the API,
+			// so hold it to the same rule here rather than store a mode the
+			// rest of the app never expects (the reserved "none", or junk).
+			if !validDomainTLSModes[dm.TLSMode] {
+				warnings = append(warnings, fmt.Sprintf("project %q: domain %q has unsupported tlsMode %q, skipped", pm.Slug, dm.Domain, dm.TLSMode))
+				continue
+			}
 			_, derr := s.store.CreateDomainMapping(ctx, id, dm.Domain, dm.Service, dm.TargetPort, dm.TLSMode, createdBy)
 			if errors.Is(derr, store.ErrDuplicate) {
 				warnings = append(warnings, fmt.Sprintf("project %q: domain %q is already mapped on this instance, skipped", pm.Slug, dm.Domain))

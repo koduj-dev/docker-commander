@@ -82,14 +82,25 @@ func New(st *store.Store, dm *docker.Manager, cfg Config) *Proxy {
 // dispatch.CombinedGetCertificate to delegate to.
 func (p *Proxy) ACMEManager() *autocert.Manager { return p.mgr }
 
-// eligibleMapping resolves domain to a DomainMapping whose project is
-// eligible for this phase (exists, and is local — HostID == 0). Returns
-// (mapping, project, true) only when both checks pass; every caller in this
-// package (HostPolicy, the backend resolver, the HTTP handler) goes through
-// this single function so the eligibility rule can't drift between them.
+// tlsModeACME is the only TLS mode this phase serves. The store also allows
+// the reserved value "none" (plain HTTP, not implemented), and a row can
+// carry it without going through the API's validation — a recovery bundle is
+// imported straight into the store — so eligibility has to refuse it here
+// rather than assume every stored row was API-validated.
+const tlsModeACME = "acme"
+
+// eligibleMapping resolves domain to a DomainMapping that is eligible for
+// this phase: served with ACME TLS, and owned by an existing local project
+// (HostID == 0). Returns (mapping, project, true) only when every check
+// passes; every caller in this package (HostPolicy, the backend resolver, the
+// HTTP handler) goes through this single function so the eligibility rule
+// can't drift between them.
 func (p *Proxy) eligibleMapping(ctx context.Context, domain string) (store.DomainMapping, store.Project, bool) {
 	m, err := p.store.DomainMappingByDomain(ctx, domain)
 	if err != nil {
+		return store.DomainMapping{}, store.Project{}, false
+	}
+	if m.TLSMode != tlsModeACME {
 		return store.DomainMapping{}, store.Project{}, false
 	}
 	proj, err := p.store.ProjectByID(ctx, m.ProjectID)

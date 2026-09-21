@@ -103,3 +103,28 @@ func TestHostPolicyRejectsAnOrphanedMapping(t *testing.T) {
 		t.Error("a mapping whose project doesn't exist must be refused, not just left to the cascade")
 	}
 }
+
+// PENTEST: the store accepts any tlsMode (only the API validates it), and a
+// recovery bundle is imported straight into the store — so a row can carry
+// the reserved "none" or an arbitrary string. Neither may be issued a
+// certificate: this phase serves ACME only. The acme control (see
+// TestHostPolicyAcceptsALocalMapping) shares the same project shape, so the
+// only variable here is the mode.
+func TestHostPolicyRejectsANonACMETLSMode(t *testing.T) {
+	for _, mode := range []string{"none", "bogus", ""} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			st, ctx := newTestStore(t)
+			p := newTestProxy(t, st)
+			pid, err := st.CreateProject(ctx, &store.Project{Name: "App", Slug: "app", HostID: 0, CreatedBy: "admin"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := st.CreateDomainMapping(ctx, pid, "app.example.com", "web", 8080, mode, "admin"); err != nil {
+				t.Fatal(err)
+			}
+			if err := p.HostPolicy(ctx, "app.example.com"); err == nil {
+				t.Errorf("tlsMode %q must not be issued a certificate", mode)
+			}
+		})
+	}
+}
