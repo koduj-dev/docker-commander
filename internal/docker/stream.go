@@ -9,8 +9,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 )
 
 // ErrUnknownAction is returned by ContainerAction for unsupported actions.
@@ -23,7 +24,7 @@ func (m *Manager) StreamStats(ctx context.Context, hostID int64, id string, emit
 	if err != nil {
 		return err
 	}
-	resp, err := cli.ContainerStats(ctx, id, true)
+	resp, err := cli.ContainerStats(ctx, id, client.ContainerStatsOptions{Stream: true})
 	if err != nil {
 		return err
 	}
@@ -54,7 +55,7 @@ func (m *Manager) SampleStats(ctx context.Context, hostID int64, id string) (Sta
 	if err != nil {
 		return StatsSample{}, err
 	}
-	resp, err := cli.ContainerStats(ctx, id, false)
+	resp, err := cli.ContainerStats(ctx, id, client.ContainerStatsOptions{Stream: false})
 	if err != nil {
 		return StatsSample{}, err
 	}
@@ -153,7 +154,7 @@ func (m *Manager) StreamLogs(ctx context.Context, hostID int64, id string, follo
 	if tail == "" {
 		tail = "200"
 	}
-	reader, err := cli.ContainerLogs(ctx, id, container.LogsOptions{
+	reader, err := cli.ContainerLogs(ctx, id, client.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Follow:     follow,

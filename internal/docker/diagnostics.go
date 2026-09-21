@@ -8,7 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 )
 
 // logDriverCheckMaxContainers bounds how many running containers
@@ -117,7 +118,8 @@ func (m *Manager) checkLogDriverRotation(ctx context.Context, hostID int64, cont
 	}
 	logConfigs := make(map[string]container.LogConfig, len(running))
 	for _, c := range running {
-		inspect, err := cli.ContainerInspect(ctx, c.ID)
+		res, err := cli.ContainerInspect(ctx, c.ID, client.ContainerInspectOptions{})
+		inspect := res.Container
 		if err != nil || inspect.HostConfig == nil {
 			continue // a container that vanished mid-scan just isn't counted
 		}

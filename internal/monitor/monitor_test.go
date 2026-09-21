@@ -6,12 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-
 	"github.com/koduj-dev/docker-commander/internal/crypto"
 	"github.com/koduj-dev/docker-commander/internal/docker"
 	"github.com/koduj-dev/docker-commander/internal/history"
 	"github.com/koduj-dev/docker-commander/internal/store"
+	"github.com/moby/moby/client"
 )
 
 func newMonitor(t *testing.T) (*Monitor, *docker.Manager, *store.Store, context.Context) {
@@ -53,7 +52,7 @@ func startContainer(ctx context.Context, t *testing.T, dm *docker.Manager, name 
 	}
 	t.Cleanup(func() {
 		if cli, err := dm.Client(ctx, 0); err == nil {
-			_ = cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true})
+			_, _ = cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true})
 		}
 	})
 	return id

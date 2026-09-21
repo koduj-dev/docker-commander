@@ -5,11 +5,13 @@ import (
 	"crypto/rand"
 	"fmt"
 	"net"
+	"net/netip"
 	"testing"
 	"time"
 
-	dockersdk "github.com/docker/docker/api/types/container"
-	"github.com/docker/go-connections/nat"
+	dockersdk "github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 
 	"github.com/koduj-dev/docker-commander/internal/crypto"
 	"github.com/koduj-dev/docker-commander/internal/docker"
@@ -66,13 +68,18 @@ func startLabeledContainer(ctx context.Context, t *testing.T, m *docker.Manager,
 	if err != nil {
 		t.Fatal(err)
 	}
-	port, err := nat.NewPort("tcp", fmt.Sprintf("%d", containerPort))
+	port, err := network.ParsePort(fmt.Sprintf("%d/tcp", containerPort))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = cli.ContainerRemove(ctx, name, dockersdk.RemoveOptions{Force: true}) // best-effort, name may be free already
-	created, err := cli.ContainerCreate(ctx,
-		&dockersdk.Config{
+	// hostIP is a plain string in the test signature; the SDK wants a netip.Addr.
+	bindIP, err := netip.ParseAddr(hostIP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = cli.ContainerRemove(ctx, name, client.ContainerRemoveOptions{Force: true}) // best-effort, name may be free already
+	created, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config: &dockersdk.Config{
 			Image: testImage,
 			// A real listener on the mapped port (busybox httpd applet), so a dial to the
 			// published port reaches something. `sleep` would leave the port
@@ -80,19 +87,20 @@ func startLabeledContainer(ctx context.Context, t *testing.T, m *docker.Manager,
 			// a daemon running without one.
 			Cmd:          []string{"busybox", "httpd", "-f", "-p", fmt.Sprintf("%d", containerPort), "-h", "/tmp"},
 			Labels:       map[string]string{"com.docker.compose.project": project, "com.docker.compose.service": service},
-			ExposedPorts: nat.PortSet{port: struct{}{}},
+			ExposedPorts: network.PortSet{port: struct{}{}},
 		},
-		&dockersdk.HostConfig{PortBindings: nat.PortMap{port: []nat.PortBinding{{HostIP: hostIP, HostPort: "0"}}}},
-		nil, nil, name)
+		HostConfig: &dockersdk.HostConfig{PortBindings: network.PortMap{port: []network.PortBinding{{HostIP: bindIP, HostPort: "0"}}}},
+		Name:       name,
+	})
 	if err != nil {
 		t.Fatalf("create %s: %v", name, err)
 	}
 	// Registered BEFORE the start: a container that was created but failed to
 	// start must still be removed, or it lingers and poisons later runs.
 	t.Cleanup(func() {
-		_ = cli.ContainerRemove(context.Background(), created.ID, dockersdk.RemoveOptions{Force: true})
+		_, _ = cli.ContainerRemove(context.Background(), created.ID, client.ContainerRemoveOptions{Force: true})
 	})
-	if err := cli.ContainerStart(ctx, created.ID, dockersdk.StartOptions{}); err != nil {
+	if _, err := cli.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start %s: %v", name, err)
 	}
 	return created.ID
@@ -160,7 +168,7 @@ func TestResolveBackendErrorsCleanlyForAStoppedContainer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cli.ContainerStop(ctx, id, dockersdk.StopOptions{}); err != nil {
+	if _, err := cli.ContainerStop(ctx, id, client.ContainerStopOptions{}); err != nil {
 		t.Fatal(err)
 	}
 

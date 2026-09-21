@@ -6,7 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 )
 
 // createLabeled starts an alpine container with the given Compose labels via
@@ -18,13 +19,15 @@ func createLabeled(ctx context.Context, t *testing.T, m *Manager, name string, l
 		t.Fatal(err)
 	}
 	freeName(ctx, m, name)
-	created, err := cli.ContainerCreate(ctx,
-		&container.Config{Image: testImage, Cmd: []string{"sleep", "300"}, Labels: labels},
-		&container.HostConfig{}, nil, nil, name)
+	created, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config:     &container.Config{Image: testImage, Cmd: []string{"sleep", "300"}, Labels: labels},
+		HostConfig: &container.HostConfig{},
+		Name:       name,
+	})
 	if err != nil {
 		t.Fatalf("create %s: %v", name, err)
 	}
-	if err := cli.ContainerStart(ctx, created.ID, container.StartOptions{}); err != nil {
+	if _, err := cli.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start %s: %v", name, err)
 	}
 	t.Cleanup(func() { rmContainer(ctx, t, m, created.ID) })
@@ -216,8 +219,8 @@ func TestLiveServiceSpec_RealContainer(t *testing.T) {
 
 	const name = "dctest_livespec"
 	freeName(ctx, m, name)
-	created, err := cli.ContainerCreate(ctx,
-		&container.Config{
+	created, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config: &container.Config{
 			Image: testImage,
 			Cmd:   []string{"sleep", "300"},
 			Env:   []string{"FOO=bar"},
@@ -228,14 +231,16 @@ func TestLiveServiceSpec_RealContainer(t *testing.T) {
 				Retries:  3,
 			},
 		},
-		&container.HostConfig{
+		HostConfig: &container.HostConfig{
 			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			Resources:     container.Resources{NanoCPUs: 500_000_000, Memory: 256 << 20},
-		}, nil, nil, name)
+		},
+		Name: name,
+	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if err := cli.ContainerStart(ctx, created.ID, container.StartOptions{}); err != nil {
+	if _, err := cli.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	t.Cleanup(func() { rmContainer(ctx, t, m, created.ID) })

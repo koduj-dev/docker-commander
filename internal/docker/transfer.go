@@ -7,8 +7,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/pkg/jsonmessage"
+	"github.com/moby/moby/api/types/jsonstream"
+	"github.com/moby/moby/client"
 )
 
 // SaveImage streams one or more images as a tar archive (docker save format).
@@ -27,7 +27,7 @@ func (m *Manager) ExportContainer(ctx context.Context, hostID int64, id string) 
 	if err != nil {
 		return nil, err
 	}
-	return cli.ContainerExport(ctx, id)
+	return cli.ContainerExport(ctx, id, client.ContainerExportOptions{})
 }
 
 // LoadImage loads images from a tar archive (docker save format) and returns
@@ -41,8 +41,8 @@ func (m *Manager) LoadImage(ctx context.Context, hostID int64, tar io.Reader) (s
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
-	return collectStream(resp.Body), nil
+	defer resp.Close()
+	return collectStream(resp), nil
 }
 
 // ImportImage creates an image from a filesystem tarball (docker import),
@@ -52,7 +52,7 @@ func (m *Manager) ImportImage(ctx context.Context, hostID int64, tarball io.Read
 	if err != nil {
 		return "", err
 	}
-	rc, err := cli.ImageImport(ctx, image.ImportSource{Source: tarball, SourceName: "-"}, ref, image.ImportOptions{})
+	rc, err := cli.ImageImport(ctx, client.ImageImportSource{Source: tarball, SourceName: "-"}, ref, client.ImageImportOptions{})
 	if err != nil {
 		return "", err
 	}
@@ -66,7 +66,7 @@ func collectStream(r io.Reader) string {
 	var b strings.Builder
 	dec := json.NewDecoder(r)
 	for {
-		var jm jsonmessage.JSONMessage
+		var jm jsonstream.Message
 		if err := dec.Decode(&jm); err != nil {
 			if errors.Is(err, io.EOF) {
 				break

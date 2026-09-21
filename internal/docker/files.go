@@ -13,9 +13,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 )
 
 // maxExtractBytes caps the buffered .zip upload (it needs random access) and the
@@ -77,13 +77,13 @@ type FileEntry struct {
 // expose directly (listing, deleting). Requires the command to exist in the
 // image (e.g. busybox/coreutils `ls`, `rm`).
 func execCapture(ctx context.Context, cli *client.Client, id string, cmd []string) (string, string, int, error) {
-	created, err := cli.ContainerExecCreate(ctx, id, container.ExecOptions{
+	created, err := cli.ExecCreate(ctx, id, client.ExecCreateOptions{
 		Cmd: cmd, AttachStdout: true, AttachStderr: true,
 	})
 	if err != nil {
 		return "", "", 0, err
 	}
-	att, err := cli.ContainerExecAttach(ctx, created.ID, container.ExecAttachOptions{})
+	att, err := cli.ExecAttach(ctx, created.ID, client.ExecAttachOptions{})
 	if err != nil {
 		return "", "", 0, err
 	}
@@ -93,7 +93,7 @@ func execCapture(ctx context.Context, cli *client.Client, id string, cmd []strin
 	if _, err := stdcopy.StdCopy(&stdout, &stderr, att.Reader); err != nil {
 		return "", "", 0, err
 	}
-	insp, err := cli.ContainerExecInspect(ctx, created.ID)
+	insp, err := cli.ExecInspect(ctx, created.ID, client.ExecInspectOptions{})
 	if err != nil {
 		return stdout.String(), stderr.String(), 0, err
 	}
@@ -174,7 +174,11 @@ func (m *Manager) CopyFrom(ctx context.Context, hostID int64, id, path string) (
 	if err != nil {
 		return nil, container.PathStat{}, err
 	}
-	return cli.CopyFromContainer(ctx, id, path)
+	res, err := cli.CopyFromContainer(ctx, id, client.CopyFromContainerOptions{SourcePath: path})
+	if err != nil {
+		return nil, container.PathStat{}, err
+	}
+	return res.Content, res.Stat, nil
 }
 
 // CopyTo writes a TAR archive into the container at destDir.
@@ -183,7 +187,7 @@ func (m *Manager) CopyTo(ctx context.Context, hostID int64, id, destDir string, 
 	if err != nil {
 		return err
 	}
-	return cli.CopyToContainer(ctx, id, destDir, content, container.CopyToContainerOptions{})
+	return copyToContainer(ctx, cli, id, destDir, content)
 }
 
 // MakeDir creates a directory inside the container (mkdir -p).
@@ -217,7 +221,7 @@ func (m *Manager) UploadExtract(ctx context.Context, hostID int64, id, destDir, 
 	lower := strings.ToLower(filename)
 	switch {
 	case strings.HasSuffix(lower, ".tar"):
-		return cli.CopyToContainer(ctx, id, destDir, cappedReader(body), container.CopyToContainerOptions{})
+		return copyToContainer(ctx, cli, id, destDir, cappedReader(body))
 
 	case strings.HasSuffix(lower, ".tar.gz"), strings.HasSuffix(lower, ".tgz"):
 		gz, err := gzip.NewReader(body)
@@ -231,7 +235,7 @@ func (m *Manager) UploadExtract(ctx context.Context, hostID int64, id, destDir, 
 		// where it fills the disk out from under every other container on it.
 		// The zip branch has always been capped this way; this one wasn't, while
 		// the comment on maxExtractBytes claimed both were.
-		return cli.CopyToContainer(ctx, id, destDir, cappedReader(gz), container.CopyToContainerOptions{})
+		return copyToContainer(ctx, cli, id, destDir, cappedReader(gz))
 
 	case strings.HasSuffix(lower, ".zip"):
 		data, err := io.ReadAll(io.LimitReader(body, maxExtractBytes))
@@ -294,7 +298,7 @@ func (m *Manager) UploadExtract(ctx context.Context, hostID int64, id, destDir, 
 			}
 			pw.CloseWithError(tw.Close())
 		}()
-		return cli.CopyToContainer(ctx, id, destDir, pr, container.CopyToContainerOptions{})
+		return copyToContainer(ctx, cli, id, destDir, pr)
 
 	default:
 		return fmt.Errorf("unsupported archive (use .zip, .tar, .tar.gz or .tgz)")
@@ -319,4 +323,10 @@ func (m *Manager) DeletePath(ctx context.Context, hostID int64, id, path string)
 		return fmt.Errorf("%s", msg)
 	}
 	return nil
+}
+
+// copyToContainer writes a TAR stream into the container at destDir.
+func copyToContainer(ctx context.Context, cli *client.Client, id, destDir string, content io.Reader) error {
+	_, err := cli.CopyToContainer(ctx, id, client.CopyToContainerOptions{DestinationPath: destDir, Content: content})
+	return err
 }

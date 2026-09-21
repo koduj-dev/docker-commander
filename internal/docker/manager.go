@@ -12,7 +12,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/koduj-dev/docker-commander/internal/store"
@@ -154,7 +154,8 @@ func (m *Manager) Close() {
 
 // buildClient constructs a Docker client appropriate for the host kind.
 func buildClient(h *store.Host) (*client.Client, error) {
-	opts := []client.Opt{client.WithAPIVersionNegotiation()}
+	// API-version negotiation is the SDK's default, so no option for it.
+	var opts []client.Opt
 
 	switch h.Kind {
 	case "local", "":
@@ -185,7 +186,7 @@ func buildClient(h *store.Host) (*client.Client, error) {
 		return nil, fmt.Errorf("unknown host kind %q", h.Kind)
 	}
 
-	return client.NewClientWithOpts(opts...)
+	return client.New(opts...)
 }
 
 // tlsHTTPClient builds an *http.Client trusting the host CA and presenting the

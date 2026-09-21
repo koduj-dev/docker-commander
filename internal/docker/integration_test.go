@@ -10,10 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
-
 	"github.com/koduj-dev/docker-commander/internal/store"
+	"github.com/moby/moby/client"
 )
 
 // newManager builds a Manager backed by an in-memory store with a local host,
@@ -90,7 +88,7 @@ func rmContainer(ctx context.Context, t *testing.T, m *Manager, id string) {
 	if err != nil {
 		return
 	}
-	_ = cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true})
+	_, _ = cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true})
 }
 
 // freeName force-removes any container already holding a fixed test name.
@@ -105,7 +103,7 @@ func freeName(ctx context.Context, m *Manager, name string) {
 	if err != nil {
 		return
 	}
-	_ = cli.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
+	_, _ = cli.ContainerRemove(ctx, name, client.ContainerRemoveOptions{Force: true})
 }
 
 func startTestContainer(ctx context.Context, t *testing.T, m *Manager, name string) string {
@@ -352,11 +350,11 @@ func TestIntegrationNetworkRemove(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := cli.NetworkCreate(ctx, "dctest_net", network.CreateOptions{})
+	resp, err := cli.NetworkCreate(ctx, "dctest_net", client.NetworkCreateOptions{})
 	if err != nil {
 		t.Fatalf("NetworkCreate: %v", err)
 	}
-	t.Cleanup(func() { _ = cli.NetworkRemove(ctx, resp.ID) })
+	t.Cleanup(func() { _, _ = cli.NetworkRemove(ctx, resp.ID, client.NetworkRemoveOptions{}) })
 	if err := m.RemoveNetwork(ctx, 0, resp.ID); err != nil {
 		t.Errorf("RemoveNetwork: %v", err)
 	}
@@ -377,7 +375,7 @@ func TestIntegrationNetworkLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateNetwork: %v", err)
 	}
-	t.Cleanup(func() { _ = cli.NetworkRemove(ctx, id) })
+	t.Cleanup(func() { _, _ = cli.NetworkRemove(ctx, id, client.NetworkRemoveOptions{}) })
 
 	cid := startTestContainer(ctx, t, m, "dctest_netlife_c")
 	if err := m.ConnectNetwork(ctx, 0, id, cid); err != nil {

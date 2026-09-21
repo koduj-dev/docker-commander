@@ -267,6 +267,15 @@ All notable changes to Docker Commander are documented here. The format follows
   config is only resolved for evaluation once at least one rule is enabled.
 
 ### Changed
+- **Docker SDK moved from `github.com/docker/docker` to `github.com/moby/moby/client`
+  (+ `moby/moby/api`).** The old Go module is frozen at 28.5.2 and will never
+  receive another fix, so every future daemon CVE would keep flagging this
+  project even though only the client half of it was ever imported. The new
+  modules are the maintained line. No feature change, but worth knowing: the
+  minimum supported Engine API is now **1.40** (Engine 19.03; the nightly matrix
+  only ever covered Engine 24–29), and a malformed network **subnet** or
+  **gateway** is now rejected by Docker Commander itself with a message naming
+  the field, instead of by the daemon.
 - **The Docker version compatibility matrix now also covers Engine 29** (nightly
   `compat.yml`, plus a pinned `29.7.2` patch job), following its GA. Docs updated
   to match ("Tested Engine majors", tier 6 in `docs/testing.md`).

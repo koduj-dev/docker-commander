@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/registry"
+	"github.com/moby/moby/client"
 )
 
 // Image-name autocomplete sources: a Docker Hub repository search proxied through
@@ -50,12 +50,12 @@ func (m *Manager) SearchImages(ctx context.Context, hostID int64, term string, l
 	if limit <= 0 || limit > 50 {
 		limit = 25
 	}
-	res, err := cli.ImageSearch(ctx, term, registry.SearchOptions{Limit: limit})
+	res, err := cli.ImageSearch(ctx, term, client.ImageSearchOptions{Limit: limit})
 	if err != nil {
 		return nil, err
 	}
-	out := make([]ImageSearchResult, 0, len(res))
-	for _, r := range res {
+	out := make([]ImageSearchResult, 0, len(res.Items))
+	for _, r := range res.Items {
 		out = append(out, ImageSearchResult{
 			Name: r.Name, Description: r.Description, Stars: r.StarCount, Official: r.IsOfficial,
 		})

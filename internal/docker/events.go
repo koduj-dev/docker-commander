@@ -5,8 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/docker/docker/api/types/events"
-	"github.com/docker/docker/api/types/filters"
+	"github.com/moby/moby/client"
 )
 
 // Event is a simplified container lifecycle event for the monitor/alert engine.
@@ -32,8 +31,9 @@ func (m *Manager) WatchEvents(ctx context.Context, hostID int64, fn func(Event))
 	if err != nil {
 		return err
 	}
-	f := filters.NewArgs(filters.Arg("type", "container"))
-	msgs, errs := cli.Events(ctx, events.ListOptions{Filters: f})
+	f := make(client.Filters).Add("type", "container")
+	ev := cli.Events(ctx, client.EventsListOptions{Filters: f})
+	msgs, errs := ev.Messages, ev.Err
 	for {
 		select {
 		case <-ctx.Done():

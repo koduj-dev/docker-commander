@@ -2,9 +2,11 @@ package docker
 
 import (
 	"context"
+	"fmt"
+	"net/netip"
 
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/network"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 )
 
 // NetworkCreateRequest holds the user-supplied options for a new network.
@@ -28,14 +30,32 @@ func (m *Manager) CreateNetwork(ctx context.Context, hostID int64, req NetworkCr
 	if driver == "" {
 		driver = "bridge"
 	}
-	opts := network.CreateOptions{
+	opts := client.NetworkCreateOptions{
 		Driver:     driver,
 		Internal:   req.Internal,
 		Attachable: req.Attachable,
 		Labels:     req.Labels,
 	}
 	if req.Subnet != "" || req.Gateway != "" {
-		opts.IPAM = &network.IPAM{Config: []network.IPAMConfig{{Subnet: req.Subnet, Gateway: req.Gateway}}}
+		// The SDK now carries these as typed values, so a malformed one is
+		// rejected here with a message naming the field, instead of by the
+		// daemon after a round trip.
+		var cfg network.IPAMConfig
+		if req.Subnet != "" {
+			p, err := netip.ParsePrefix(req.Subnet)
+			if err != nil {
+				return "", fmt.Errorf("invalid subnet %q: %w", req.Subnet, err)
+			}
+			cfg.Subnet = p
+		}
+		if req.Gateway != "" {
+			a, err := netip.ParseAddr(req.Gateway)
+			if err != nil {
+				return "", fmt.Errorf("invalid gateway %q: %w", req.Gateway, err)
+			}
+			cfg.Gateway = a
+		}
+		opts.IPAM = &network.IPAM{Config: []network.IPAMConfig{cfg}}
 	}
 	resp, err := cli.NetworkCreate(ctx, req.Name, opts)
 	if err != nil {
@@ -50,7 +70,8 @@ func (m *Manager) ConnectNetwork(ctx context.Context, hostID int64, netID, conta
 	if err != nil {
 		return err
 	}
-	return cli.NetworkConnect(ctx, netID, containerID, nil)
+	_, err = cli.NetworkConnect(ctx, netID, client.NetworkConnectOptions{Container: containerID})
+	return err
 }
 
 // DisconnectNetwork detaches a container from a network (force allows removing a
@@ -60,7 +81,8 @@ func (m *Manager) DisconnectNetwork(ctx context.Context, hostID int64, netID, co
 	if err != nil {
 		return err
 	}
-	return cli.NetworkDisconnect(ctx, netID, containerID, force)
+	_, err = cli.NetworkDisconnect(ctx, netID, client.NetworkDisconnectOptions{Container: containerID, Force: force})
+	return err
 }
 
 // PruneNetworks removes all unused user-defined networks and returns the names
@@ -70,9 +92,9 @@ func (m *Manager) PruneNetworks(ctx context.Context, hostID int64) ([]string, er
 	if err != nil {
 		return nil, err
 	}
-	rep, err := cli.NetworksPrune(ctx, filters.NewArgs())
+	res, err := cli.NetworkPrune(ctx, client.NetworkPruneOptions{})
 	if err != nil {
 		return nil, err
 	}
-	return rep.NetworksDeleted, nil
+	return res.Report.NetworksDeleted, nil
 }

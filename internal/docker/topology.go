@@ -4,8 +4,7 @@ import (
 	"context"
 	"sort"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
+	"github.com/moby/moby/client"
 )
 
 // Topology is a graph view of how containers attach to networks, consumed by
@@ -50,10 +49,11 @@ func (m *Manager) Topology(ctx context.Context, hostID int64) (*Topology, error)
 		return nil, err
 	}
 
-	rawContainers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
+	list, err := cli.ContainerList(ctx, client.ContainerListOptions{All: true})
 	if err != nil {
 		return nil, err
 	}
+	rawContainers := list.Items
 	top := &Topology{}
 	// Build links from each container's own network settings rather than from
 	// the network's endpoint list: a network only reports *active* endpoints,
@@ -65,7 +65,7 @@ func (m *Manager) Topology(ctx context.Context, hostID int64) (*Topology, error)
 			if p.PublicPort == 0 {
 				continue // only host-published ports are interesting here
 			}
-			ports = append(ports, PortMapping{IP: p.IP, PrivatePort: p.PrivatePort, PublicPort: p.PublicPort, Type: p.Type})
+			ports = append(ports, PortMapping{IP: addrString(p.IP), PrivatePort: p.PrivatePort, PublicPort: p.PublicPort, Type: p.Type})
 		}
 		top.Containers = append(top.Containers, TopoContainer{
 			ID: c.ID, Name: cleanName(c.Names), Image: c.Image, State: string(c.State),
@@ -79,27 +79,28 @@ func (m *Manager) Topology(ctx context.Context, hostID int64) (*Topology, error)
 				continue
 			}
 			top.Links = append(top.Links, TopoLink{
-				ContainerID: c.ID, NetworkID: ep.NetworkID, IPAddress: ep.IPAddress,
+				ContainerID: c.ID, NetworkID: ep.NetworkID, IPAddress: addrString(ep.IPAddress),
 			})
 		}
 	}
 
-	nets, err := cli.NetworkList(ctx, network.ListOptions{})
+	netList, err := cli.NetworkList(ctx, client.NetworkListOptions{})
 	if err != nil {
 		return nil, err
 	}
-	for _, n := range nets {
-		full, err := cli.NetworkInspect(ctx, n.ID, network.InspectOptions{})
+	for _, n := range netList.Items {
+		res, err := cli.NetworkInspect(ctx, n.ID, client.NetworkInspectOptions{})
 		if err != nil {
 			continue
 		}
+		full := res.Network
 		tn := TopoNetwork{
 			ID: full.ID, Name: full.Name, Driver: full.Driver,
 			Scope: full.Scope, Internal: full.Internal,
 		}
 		for _, cfg := range full.IPAM.Config {
-			if cfg.Subnet != "" {
-				tn.Subnets = append(tn.Subnets, cfg.Subnet)
+			if cfg.Subnet.IsValid() {
+				tn.Subnets = append(tn.Subnets, cfg.Subnet.String())
 			}
 		}
 		top.Networks = append(top.Networks, tn)

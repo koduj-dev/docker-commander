@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/koduj-dev/docker-commander/internal/store"
+	"github.com/moby/moby/client"
 )
 
 // TestRemoteBindDeployEndToEnd is the full round trip the unit and smoke tests
@@ -175,10 +176,11 @@ func TestRemoteBindDeployEndToEnd(t *testing.T) {
 		t.Fatalf("the deployed container isn't on the remote daemon:\n%s", out)
 	}
 
-	insp, err := cli.ContainerInspect(ctx, cid)
+	inspRes, err := cli.ContainerInspect(ctx, cid, client.ContainerInspectOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
+	insp := inspRes.Container
 	// The whole point: nothing may still be a bind mount, or the remote daemon
 	// would have invented an empty path for it.
 	for _, mnt := range insp.Mounts {

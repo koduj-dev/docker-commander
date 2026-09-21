@@ -3,26 +3,30 @@ package docker
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"strings"
 	"sync"
 	"testing"
-
-	"github.com/docker/docker/pkg/stdcopy"
 )
 
 // muxed builds a Docker-style multiplexed stream from stdout and stderr payloads.
 func muxed(t *testing.T, stdout, stderr string) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
+	// The SDK no longer ships the daemon-side writer, so frame by hand: an
+	// 8-byte header (stream id, three zero bytes, big-endian payload length)
+	// followed by the payload. Stream ids: 1 = stdout, 2 = stderr.
+	frame := func(stream byte, payload string) {
+		hdr := [8]byte{stream}
+		binary.BigEndian.PutUint32(hdr[4:], uint32(len(payload)))
+		buf.Write(hdr[:])
+		buf.WriteString(payload)
+	}
 	if stdout != "" {
-		if _, err := stdcopy.NewStdWriter(&buf, stdcopy.Stdout).Write([]byte(stdout)); err != nil {
-			t.Fatal(err)
-		}
+		frame(1, stdout)
 	}
 	if stderr != "" {
-		if _, err := stdcopy.NewStdWriter(&buf, stdcopy.Stderr).Write([]byte(stderr)); err != nil {
-			t.Fatal(err)
-		}
+		frame(2, stderr)
 	}
 	return &buf
 }
