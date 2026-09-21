@@ -119,9 +119,9 @@ what is hoped for.
 | **Compose** | the `docker compose` plugin, v2 or newer (legacy `docker-compose` v1 is not supported); a handful of recent v2 releases are pinned and tested nightly (see the workflow runs) |
 | **Client SDK** | pinned in `go.mod`, negotiated **down** to the daemon at connect time |
 
-The SDK calls `WithAPIVersionNegotiation()`, so a newer client speaks whatever the
-daemon understands — you do not need to match versions. Below API 1.43 the app is
-neither tested nor claimed to work.
+The SDK negotiates the API version on its own (it does so by default), so a newer
+client speaks whatever the daemon understands — you do not need to match versions.
+Below API 1.43 the app is neither tested nor claimed to work.
 
 These numbers are **measured, not remembered**: the
 [compatibility workflow](.github/workflows/compat.yml) runs the app's whole Docker

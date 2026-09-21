@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"strings"
@@ -595,4 +596,96 @@ func makeTar(t *testing.T, name string, data []byte) *bytes.Buffer {
 	}
 	tw.Close()
 	return &buf
+}
+
+// InspectRaw promises the daemon's own JSON, field for field — not a re-marshal
+// of an SDK struct — so each kind must return a real document naming the very
+// object that was asked for. "The call did not error" (all the per-kind checks
+// above assert) would pass for an empty body or another object's JSON.
+func TestIntegrationInspectRawReturnsTheDaemonsDocument(t *testing.T) {
+	m, ctx := newManager(t)
+	ensureImage(ctx, t, m)
+
+	cid := startTestContainer(ctx, t, m, "dctest_rawinspect")
+	const vol = "dctest_rawinspect_vol"
+	if _, err := m.CreateVolume(ctx, 0, vol, "local", nil); err != nil {
+		t.Fatalf("CreateVolume: %v", err)
+	}
+	t.Cleanup(func() { _ = m.RemoveVolume(ctx, 0, vol, true) })
+	cli, err := m.Client(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const netName = "dctest_rawinspect_net"
+	netID, err := m.CreateNetwork(ctx, 0, NetworkCreateRequest{Name: netName, Driver: "bridge"})
+	if err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+	t.Cleanup(func() { _, _ = cli.NetworkRemove(ctx, netID, client.NetworkRemoveOptions{}) })
+
+	for _, tc := range []struct {
+		kind, ref, field, want string
+	}{
+		{"container", cid, "Id", cid},
+		{"image", testImage, "Id", ""}, // any sha256:… id; see below
+		{"volume", vol, "Name", vol},
+		{"network", netID, "Name", netName},
+	} {
+		raw, err := m.InspectRaw(ctx, 0, tc.kind, tc.ref)
+		if err != nil {
+			t.Errorf("InspectRaw %s: %v", tc.kind, err)
+			continue
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Errorf("InspectRaw %s is not a JSON object (%v): %.120s", tc.kind, err, raw)
+			continue
+		}
+		got, _ := doc[tc.field].(string)
+		switch {
+		case tc.want != "" && got != tc.want:
+			t.Errorf("InspectRaw %s: %s = %q, want %q", tc.kind, tc.field, got, tc.want)
+		case tc.want == "" && !strings.HasPrefix(got, "sha256:"):
+			t.Errorf("InspectRaw %s: %s = %q, want an image id", tc.kind, tc.field, got)
+		}
+	}
+
+	// The container document must carry fields the SDK struct would have
+	// dropped or renamed — proof it is the daemon's bytes.
+	raw, _ := m.InspectRaw(ctx, 0, "container", cid)
+	if !strings.Contains(string(raw), `"HostConfig"`) || !strings.Contains(string(raw), `"NetworkSettings"`) {
+		t.Errorf("container inspect JSON is missing HostConfig/NetworkSettings: %.200s", raw)
+	}
+}
+
+// DiskUsage asks the daemon for each category explicitly (the SDK no longer
+// assumes all four), then sums per-object sizes itself. The existing
+// "SystemAndLists" check only asserts there is no error, which an all-zero
+// result — every flag forgotten — would also satisfy.
+func TestIntegrationDiskUsageCountsWhatExists(t *testing.T) {
+	m, ctx := newManager(t)
+	ensureImage(ctx, t, m)
+	startTestContainer(ctx, t, m, "dctest_diskusage")
+	const vol = "dctest_diskusage_vol"
+	if _, err := m.CreateVolume(ctx, 0, vol, "local", nil); err != nil {
+		t.Fatalf("CreateVolume: %v", err)
+	}
+	t.Cleanup(func() { _ = m.RemoveVolume(ctx, 0, vol, true) })
+
+	du, err := m.DiskUsage(ctx, 0)
+	if err != nil {
+		t.Fatalf("DiskUsage: %v", err)
+	}
+	if du.Images.Count < 1 || du.Images.Size <= 0 {
+		t.Errorf("images: alpine is present, got count=%d size=%d", du.Images.Count, du.Images.Size)
+	}
+	if du.LayersSize <= 0 {
+		t.Errorf("LayersSize = %d, want > 0 with an image present", du.LayersSize)
+	}
+	if du.Containers.Count < 1 {
+		t.Errorf("containers: one is running, got count=%d", du.Containers.Count)
+	}
+	if du.Volumes.Count < 1 {
+		t.Errorf("volumes: one was just created, got count=%d", du.Volumes.Count)
+	}
 }
