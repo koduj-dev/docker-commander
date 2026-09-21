@@ -13,8 +13,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/volume"
+	"github.com/moby/moby/client"
 )
 
 // A remote daemon can't see the paths a locally-stored project bind-mounts, so a
@@ -242,7 +241,7 @@ func (m *Manager) SeedProjectBinds(ctx context.Context, hostID int64, projectDir
 	}
 	for _, b := range binds {
 		name := SeedVolumeName(slug, b.Rel)
-		if _, err := cli.VolumeCreate(ctx, volume.CreateOptions{
+		if _, err := cli.VolumeCreate(ctx, client.VolumeCreateOptions{
 			Name: name,
 			Labels: map[string]string{
 				seedVolLabel: slug,
@@ -277,14 +276,14 @@ func (m *Manager) ListSeedVolumes(ctx context.Context, hostID int64, slug string
 	if err != nil {
 		return nil, err
 	}
-	list, err := cli.VolumeList(ctx, volume.ListOptions{
-		Filters: filters.NewArgs(filters.Arg("label", seedVolLabel+"="+slug)),
+	list, err := cli.VolumeList(ctx, client.VolumeListOptions{
+		Filters: make(client.Filters).Add("label", seedVolLabel+"="+slug),
 	})
 	if err != nil {
 		return nil, err
 	}
-	names := make([]string, 0, len(list.Volumes))
-	for _, v := range list.Volumes {
+	names := make([]string, 0, len(list.Items))
+	for _, v := range list.Items {
 		names = append(names, v.Name)
 	}
 	sort.Strings(names)
@@ -309,7 +308,7 @@ func (m *Manager) RemoveSeedVolumes(ctx context.Context, hostID int64, slug stri
 	for _, name := range names {
 		// Drop any lingering browser helper first, or the volume reads as in-use.
 		m.CloseVolumeBrowser(ctx, hostID, name)
-		if rerr := cli.VolumeRemove(ctx, name, true); rerr != nil {
+		if _, rerr := cli.VolumeRemove(ctx, name, client.VolumeRemoveOptions{Force: true}); rerr != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", name, rerr))
 			continue
 		}

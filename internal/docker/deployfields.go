@@ -10,7 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/mount"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/client"
 )
 
 // The rest of what a deploy would change, beyond "which service, which
@@ -283,10 +284,11 @@ func (m *Manager) LiveServiceSpec(ctx context.Context, hostID int64, containerID
 	if err != nil {
 		return ServiceSpec{}, err
 	}
-	c, err := cli.ContainerInspect(ctx, containerID)
+	res, err := cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		return ServiceSpec{}, err
 	}
+	c := res.Container
 	s := ServiceSpec{Detailed: true}
 	if c.Config != nil {
 		if len(c.Config.Env) > 0 {
@@ -312,12 +314,12 @@ func (m *Manager) LiveServiceSpec(ctx context.Context, hostID int64, containerID
 			s.MemoryLimit = c.HostConfig.Memory
 		}
 		for portProto, bindings := range c.HostConfig.PortBindings {
-			target := portProto.Int()
+			target := int(portProto.Num())
 			if target == 0 {
 				continue
 			}
 			for _, b := range bindings {
-				s.Ports = append(s.Ports, ServicePort{Target: target, Published: b.HostPort, Protocol: portProto.Proto()})
+				s.Ports = append(s.Ports, ServicePort{Target: target, Published: b.HostPort, Protocol: string(portProto.Proto())})
 			}
 		}
 	}

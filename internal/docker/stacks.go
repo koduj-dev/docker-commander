@@ -9,9 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/network"
+	"github.com/moby/moby/client"
 
 	"github.com/koduj-dev/docker-commander/internal/store"
 )
@@ -173,18 +171,18 @@ func (m *Manager) StackAction(ctx context.Context, hostID int64, project, action
 
 	case "remove":
 		for _, id := range ids {
-			if err := cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true}); err != nil {
+			if _, err := cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true}); err != nil {
 				return err
 			}
 		}
 		// Remove the project's Compose networks (best-effort; an external or
 		// still-referenced network is left alone). Named volumes are kept.
-		nets, err := cli.NetworkList(ctx, network.ListOptions{
-			Filters: filters.NewArgs(filters.Arg("label", labelComposeProject+"="+project)),
+		nets, err := cli.NetworkList(ctx, client.NetworkListOptions{
+			Filters: make(client.Filters).Add("label", labelComposeProject+"="+project),
 		})
 		if err == nil {
-			for _, n := range nets {
-				_ = cli.NetworkRemove(ctx, n.ID)
+			for _, n := range nets.Items {
+				_, _ = cli.NetworkRemove(ctx, n.ID, client.NetworkRemoveOptions{})
 			}
 		}
 		return nil

@@ -7,10 +7,8 @@ import (
 	"testing"
 	"time"
 
-	dockertypes "github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-
 	"github.com/coder/websocket"
+	"github.com/moby/moby/client"
 
 	"github.com/koduj-dev/docker-commander/internal/docker"
 )
@@ -168,7 +166,7 @@ func TestAPIBulkPullImagesUnknownContainerRefusesWholeRequest(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		if cli, err := a.dm.Client(ctx, 0); err == nil {
-			_ = cli.ContainerRemove(ctx, id, dockertypes.RemoveOptions{Force: true})
+			_, _ = cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true})
 		}
 	})
 
@@ -216,7 +214,7 @@ func TestAPIBulkPullImagesDedupesSharedImage(t *testing.T) {
 		}
 		t.Cleanup(func() {
 			if cli, err := a.dm.Client(ctx, 0); err == nil {
-				_ = cli.ContainerRemove(ctx, id, dockertypes.RemoveOptions{Force: true})
+				_, _ = cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true})
 			}
 		})
 		return id
@@ -284,7 +282,7 @@ func TestAPIBulkPullImagesDedupesUntaggedSpelling(t *testing.T) {
 		}
 		t.Cleanup(func() {
 			if cli, err := a.dm.Client(ctx, 0); err == nil {
-				_ = cli.ContainerRemove(ctx, id, dockertypes.RemoveOptions{Force: true})
+				_, _ = cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true})
 			}
 		})
 		return id
@@ -333,9 +331,9 @@ func TestAPIBulkPullImagesUntaggedImageGetsAFriendlyError(t *testing.T) {
 		t.Skipf("cannot create container: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = cli.ContainerRemove(ctx, id, dockertypes.RemoveOptions{Force: true})
+		_, _ = cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true})
 	})
-	if _, err := cli.ImageRemove(ctx, targetImage, image.RemoveOptions{Force: true}); err != nil {
+	if _, err := cli.ImageRemove(ctx, targetImage, client.ImageRemoveOptions{Force: true}); err != nil {
 		t.Skipf("cannot untag %s: %v", targetImage, err)
 	}
 
@@ -393,7 +391,7 @@ func TestAPIBulkPullImagesStopsOnDisconnect(t *testing.T) {
 		}
 		t.Cleanup(func() {
 			if cli, err := a.dm.Client(ctx, 0); err == nil {
-				_ = cli.ContainerRemove(ctx, id, dockertypes.RemoveOptions{Force: true})
+				_, _ = cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true})
 			}
 		})
 		return id

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/events"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/events"
 
 	"github.com/koduj-dev/docker-commander/internal/store"
 )

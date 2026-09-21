@@ -3,7 +3,7 @@ package docker
 import (
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
 )
 
 // computeSample turns a raw Docker stats frame into the flat sample the app and

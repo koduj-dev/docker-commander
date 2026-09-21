@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,10 +10,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/events"
-	"github.com/docker/docker/api/types/network"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/events"
+	"github.com/moby/moby/client"
 )
 
 // DiffEntry is one filesystem change in a container relative to its image.
@@ -72,23 +72,20 @@ func (m *Manager) InspectRaw(ctx context.Context, hostID int64, kind, id string)
 	}
 	switch kind {
 	case "container":
-		_, raw, err := cli.ContainerInspectWithRaw(ctx, id, false)
-		return raw, err
+		res, err := cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
+		return res.Raw, err
 	case "image":
-		_, raw, err := cli.ImageInspectWithRaw(ctx, id)
-		return raw, err
+		var raw bytes.Buffer
+		if _, err := cli.ImageInspect(ctx, id, client.ImageInspectWithRawResponse(&raw)); err != nil {
+			return nil, err
+		}
+		return json.RawMessage(raw.Bytes()), nil
 	case "network":
-		n, err := cli.NetworkInspect(ctx, id, network.InspectOptions{})
-		if err != nil {
-			return nil, err
-		}
-		return json.Marshal(n)
+		res, err := cli.NetworkInspect(ctx, id, client.NetworkInspectOptions{})
+		return res.Raw, err
 	case "volume":
-		v, err := cli.VolumeInspect(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		return json.Marshal(v)
+		res, err := cli.VolumeInspect(ctx, id, client.VolumeInspectOptions{})
+		return res.Raw, err
 	default:
 		return nil, fmt.Errorf("unknown inspect kind %q", kind)
 	}
@@ -100,10 +97,11 @@ func (m *Manager) ContainerDiff(ctx context.Context, hostID int64, id string) ([
 	if err != nil {
 		return nil, err
 	}
-	changes, err := cli.ContainerDiff(ctx, id)
+	res, err := cli.ContainerDiff(ctx, id, client.ContainerDiffOptions{})
 	if err != nil {
 		return nil, err
 	}
+	changes := res.Changes
 	out := make([]DiffEntry, 0, len(changes))
 	for _, c := range changes {
 		out = append(out, DiffEntry{Kind: changeKind(c.Kind), Path: c.Path})
@@ -131,7 +129,7 @@ func (m *Manager) ContainerTop(ctx context.Context, hostID int64, id string) (*T
 	if err != nil {
 		return nil, err
 	}
-	t, err := cli.ContainerTop(ctx, id, nil)
+	t, err := cli.ContainerTop(ctx, id, client.ContainerTopOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -144,10 +142,11 @@ func (m *Manager) ImageHistory(ctx context.Context, hostID int64, ref string) ([
 	if err != nil {
 		return nil, err
 	}
-	hist, err := cli.ImageHistory(ctx, ref)
+	res, err := cli.ImageHistory(ctx, ref)
 	if err != nil {
 		return nil, err
 	}
+	hist := res.Items
 	out := make([]HistoryEntry, 0, len(hist))
 	for _, h := range hist {
 		out = append(out, HistoryEntry{
@@ -164,32 +163,36 @@ func (m *Manager) DiskUsage(ctx context.Context, hostID int64) (*DiskUsage, erro
 	if err != nil {
 		return nil, err
 	}
-	du, err := cli.DiskUsage(ctx, types.DiskUsageOptions{})
+	// Verbose: the per-object Items are what the sizes below are summed from
+	// (the daemon's own per-category totals count shared layers differently).
+	du, err := cli.DiskUsage(ctx, client.DiskUsageOptions{
+		Containers: true, Images: true, Volumes: true, BuildCache: true, Verbose: true,
+	})
 	if err != nil {
 		return nil, err
 	}
-	out := &DiskUsage{LayersSize: du.LayersSize}
-	out.Images.Count = len(du.Images)
-	for _, im := range du.Images {
+	// Images.TotalSize is what the legacy API called LayersSize (see the SDK's
+	// own legacy-response conversion).
+	out := &DiskUsage{LayersSize: du.Images.TotalSize}
+	out.Images.Count = len(du.Images.Items)
+	for _, im := range du.Images.Items {
 		if im.Size > 0 {
 			out.Images.Size += im.Size
 		}
 	}
-	out.Containers.Count = len(du.Containers)
-	for _, c := range du.Containers {
+	out.Containers.Count = len(du.Containers.Items)
+	for _, c := range du.Containers.Items {
 		out.Containers.Size += c.SizeRw
 	}
-	out.Volumes.Count = len(du.Volumes)
-	for _, v := range du.Volumes {
-		if v != nil && v.UsageData != nil && v.UsageData.Size > 0 {
+	out.Volumes.Count = len(du.Volumes.Items)
+	for _, v := range du.Volumes.Items {
+		if v.UsageData != nil && v.UsageData.Size > 0 {
 			out.Volumes.Size += v.UsageData.Size
 		}
 	}
-	out.BuildCache.Count = len(du.BuildCache)
-	for _, bc := range du.BuildCache {
-		if bc != nil {
-			out.BuildCache.Size += bc.Size
-		}
+	out.BuildCache.Count = len(du.BuildCache.Items)
+	for _, bc := range du.BuildCache.Items {
+		out.BuildCache.Size += bc.Size
 	}
 	return out, nil
 }
@@ -202,7 +205,8 @@ func (m *Manager) StreamEvents(ctx context.Context, hostID int64, onEvent func(E
 	if err != nil {
 		return err
 	}
-	msgs, errs := cli.Events(ctx, events.ListOptions{})
+	ev := cli.Events(ctx, client.EventsListOptions{})
+	msgs, errs := ev.Messages, ev.Err
 	for {
 		select {
 		case <-ctx.Done():
@@ -230,10 +234,11 @@ func (m *Manager) RecentEvents(ctx context.Context, hostID int64, since time.Dur
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	now := time.Now()
-	msgs, errs := cli.Events(ctx, events.ListOptions{
+	ev := cli.Events(ctx, client.EventsListOptions{
 		Since: strconv.FormatInt(now.Add(-since).Unix(), 10),
 		Until: strconv.FormatInt(now.Unix(), 10),
 	})
+	msgs, errs := ev.Messages, ev.Err
 	out := []EventMsg{}
 	for {
 		select {

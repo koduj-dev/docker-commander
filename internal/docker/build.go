@@ -6,8 +6,8 @@ import (
 	"errors"
 	"io"
 
-	"github.com/docker/docker/api/types/build"
-	"github.com/docker/docker/pkg/jsonmessage"
+	"github.com/moby/moby/api/types/jsonstream"
+	"github.com/moby/moby/client"
 )
 
 // BuildMessage is one line of build output forwarded to the UI. Build streams
@@ -44,7 +44,7 @@ func (m *Manager) BuildImage(ctx context.Context, hostID int64, buildContext io.
 		dockerfile = "Dockerfile"
 	}
 
-	resp, err := cli.ImageBuild(ctx, buildContext, build.ImageBuildOptions{
+	resp, err := cli.ImageBuild(ctx, buildContext, client.ImageBuildOptions{
 		Tags:       opts.Tags,
 		Dockerfile: dockerfile,
 		NoCache:    opts.NoCache,
@@ -58,7 +58,7 @@ func (m *Manager) BuildImage(ctx context.Context, hostID int64, buildContext io.
 
 	dec := json.NewDecoder(resp.Body)
 	for {
-		var jm jsonmessage.JSONMessage
+		var jm jsonstream.Message
 		if err := dec.Decode(&jm); err != nil {
 			if errors.Is(err, io.EOF) {
 				return nil

@@ -7,9 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/docker/docker/api/types/network"
-
 	"github.com/koduj-dev/docker-commander/internal/store"
+	"github.com/moby/moby/client"
 )
 
 // diskWarnFreePct and diskFailFreePct are fixed v1 thresholds — not yet
@@ -143,7 +142,8 @@ func (m *Manager) checkMTUMismatch(ctx context.Context, hostID int64, nets []Net
 
 	var details []string
 	for _, n := range nets {
-		full, err := cli.NetworkInspect(ctx, n.ID, network.InspectOptions{})
+		res, err := cli.NetworkInspect(ctx, n.ID, client.NetworkInspectOptions{})
+		full := res.Network
 		if err != nil || full.Driver != "bridge" {
 			continue
 		}

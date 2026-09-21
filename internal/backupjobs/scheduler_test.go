@@ -6,9 +6,8 @@ import (
 	"testing"
 	"time"
 
-	dockerclient "github.com/docker/docker/client"
-
-	"github.com/docker/docker/api/types/volume"
+	"github.com/moby/moby/client"
+	dockerclient "github.com/moby/moby/client"
 
 	"github.com/koduj-dev/docker-commander/internal/crypto"
 	"github.com/koduj-dev/docker-commander/internal/docker"
@@ -16,25 +15,27 @@ import (
 )
 
 func createTestVolume(ctx context.Context, cli *dockerclient.Client) (string, error) {
-	v, err := cli.VolumeCreate(ctx, volume.CreateOptions{})
+	vRes, err := cli.VolumeCreate(ctx, client.VolumeCreateOptions{})
 	if err != nil {
 		return "", err
 	}
+	v := vRes.Volume
 	return v.Name, nil
 }
 
 func createLabeledVolume(ctx context.Context, cli *dockerclient.Client, project string) (string, error) {
-	v, err := cli.VolumeCreate(ctx, volume.CreateOptions{
+	res, err := cli.VolumeCreate(ctx, client.VolumeCreateOptions{
 		Labels: map[string]string{"com.docker.compose.project": project},
 	})
 	if err != nil {
 		return "", err
 	}
-	return v.Name, nil
+	return res.Volume.Name, nil
 }
 
 func removeTestVolume(cli *dockerclient.Client, name string) error {
-	return cli.VolumeRemove(context.Background(), name, true)
+	_, err := cli.VolumeRemove(context.Background(), name, client.VolumeRemoveOptions{Force: true})
+	return err
 }
 
 func newTestStore(t *testing.T) (*store.Store, context.Context) {

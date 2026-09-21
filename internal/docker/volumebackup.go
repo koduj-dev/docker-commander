@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/client"
+
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
 )
 
 // Volume backup jobs are a trigger-and-status wrapper around a user-supplied
@@ -38,14 +38,14 @@ func (m *Manager) ProjectVolumeNames(ctx context.Context, hostID int64, project 
 	if err != nil {
 		return nil, err
 	}
-	list, err := cli.VolumeList(ctx, volume.ListOptions{
-		Filters: filters.NewArgs(filters.Arg("label", labelComposeProject+"="+project)),
+	list, err := cli.VolumeList(ctx, client.VolumeListOptions{
+		Filters: make(client.Filters).Add("label", labelComposeProject+"="+project),
 	})
 	if err != nil {
 		return nil, err
 	}
-	names := make([]string, 0, len(list.Volumes))
-	for _, v := range list.Volumes {
+	names := make([]string, 0, len(list.Items))
+	for _, v := range list.Items {
 		names = append(names, v.Name)
 	}
 	return names, nil
@@ -95,14 +95,15 @@ func (m *Manager) RunBackupJob(ctx context.Context, hostID int64, image, command
 		mountList = append(mountList, mount.Mount{Type: mount.TypeVolume, Source: volName, Target: target})
 	}
 
-	resp, err := cli.ContainerCreate(cctx,
-		&container.Config{
+	resp, err := cli.ContainerCreate(cctx, client.ContainerCreateOptions{
+		Config: &container.Config{
 			Image:  image,
 			Cmd:    []string{"sh", "-c", command},
 			Env:    envList,
 			Labels: map[string]string{backupJobLabel: "1"},
 		},
-		&container.HostConfig{Mounts: mountList}, nil, nil, "")
+		HostConfig: &container.HostConfig{Mounts: mountList},
+	})
 	if err != nil {
 		return "", 0, fmt.Errorf("create helper: %w", err)
 	}
@@ -111,14 +112,15 @@ func (m *Manager) RunBackupJob(ctx context.Context, hostID int64, image, command
 	defer func() {
 		rctx, rcancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer rcancel()
-		_ = cli.ContainerRemove(rctx, resp.ID, container.RemoveOptions{Force: true})
+		_, _ = cli.ContainerRemove(rctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 	}()
 
-	if err := cli.ContainerStart(cctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := cli.ContainerStart(cctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		return "", 0, fmt.Errorf("start helper: %w", err)
 	}
 
-	statusCh, errCh := cli.ContainerWait(cctx, resp.ID, container.WaitConditionNotRunning)
+	wait := cli.ContainerWait(cctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	statusCh, errCh := wait.Result, wait.Error
 	select {
 	case werr := <-errCh:
 		if werr != nil {
@@ -131,7 +133,7 @@ func (m *Manager) RunBackupJob(ctx context.Context, hostID int64, image, command
 		exitCode = int(status.StatusCode)
 	}
 
-	logs, err := cli.ContainerLogs(cctx, resp.ID, container.LogsOptions{ShowStdout: true, ShowStderr: true})
+	logs, err := cli.ContainerLogs(cctx, resp.ID, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true})
 	if err != nil {
 		return "", exitCode, fmt.Errorf("read output: %w", err)
 	}

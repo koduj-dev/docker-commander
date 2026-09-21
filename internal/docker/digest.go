@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/koduj-dev/docker-commander/internal/store"
+	"github.com/moby/moby/client"
 )
 
 // Resolving what a mutable image tag currently points to on its registry,
@@ -143,11 +144,11 @@ func (m *Manager) RunningImageDigest(ctx context.Context, hostID int64, containe
 	if err != nil {
 		return "", err
 	}
-	c, err := cli.ContainerInspect(ctx, containerID)
+	c, err := cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		return "", err
 	}
-	img, _, err := cli.ImageInspectWithRaw(ctx, c.Image)
+	img, err := cli.ImageInspect(ctx, c.Container.Image)
 	if err != nil {
 		return "", nil // image since removed/pruned — not worth surfacing as an error here
 	}

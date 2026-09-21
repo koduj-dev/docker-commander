@@ -6,8 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/volume"
+	"github.com/moby/moby/client"
 )
 
 // A job that writes a marker file into /data and exits 0 is captured as ok.
@@ -19,11 +18,14 @@ func TestRunBackupJob_SuccessCapturesOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vol, err := cli.VolumeCreate(ctx, volume.CreateOptions{})
+	volRes, err := cli.VolumeCreate(ctx, client.VolumeCreateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = cli.VolumeRemove(context.Background(), vol.Name, true) })
+	vol := volRes.Volume
+	t.Cleanup(func() {
+		_, _ = cli.VolumeRemove(context.Background(), vol.Name, client.VolumeRemoveOptions{Force: true})
+	})
 
 	output, exitCode, err := m.RunBackupJob(ctx, 0, testImage, "echo backed-up > /data/marker.txt && cat /data/marker.txt",
 		nil, map[string]string{vol.Name: "/data"}, time.Minute)
@@ -47,11 +49,14 @@ func TestRunBackupJob_FailureCapturesExitCodeAndOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vol, err := cli.VolumeCreate(ctx, volume.CreateOptions{})
+	volRes, err := cli.VolumeCreate(ctx, client.VolumeCreateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = cli.VolumeRemove(context.Background(), vol.Name, true) })
+	vol := volRes.Volume
+	t.Cleanup(func() {
+		_, _ = cli.VolumeRemove(context.Background(), vol.Name, client.VolumeRemoveOptions{Force: true})
+	})
 
 	output, exitCode, err := m.RunBackupJob(ctx, 0, testImage, "echo oops-failing && exit 3",
 		nil, map[string]string{vol.Name: "/data"}, time.Minute)
@@ -75,11 +80,14 @@ func TestRunBackupJob_EnvPassedThrough(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vol, err := cli.VolumeCreate(ctx, volume.CreateOptions{})
+	volRes, err := cli.VolumeCreate(ctx, client.VolumeCreateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = cli.VolumeRemove(context.Background(), vol.Name, true) })
+	vol := volRes.Volume
+	t.Cleanup(func() {
+		_, _ = cli.VolumeRemove(context.Background(), vol.Name, client.VolumeRemoveOptions{Force: true})
+	})
 
 	output, exitCode, err := m.RunBackupJob(ctx, 0, testImage, "echo $SECRET_VALUE",
 		map[string]string{"SECRET_VALUE": "hunter2"}, map[string]string{vol.Name: "/data"}, time.Minute)
@@ -100,23 +108,27 @@ func TestRunBackupJob_RemovesHelperContainer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vol, err := cli.VolumeCreate(ctx, volume.CreateOptions{})
+	volRes, err := cli.VolumeCreate(ctx, client.VolumeCreateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = cli.VolumeRemove(context.Background(), vol.Name, true) })
+	vol := volRes.Volume
+	t.Cleanup(func() {
+		_, _ = cli.VolumeRemove(context.Background(), vol.Name, client.VolumeRemoveOptions{Force: true})
+	})
 
-	before, err := cli.ContainerList(ctx, container.ListOptions{All: true})
+	beforeRes, err := cli.ContainerList(ctx, client.ContainerListOptions{All: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := m.RunBackupJob(ctx, 0, testImage, "exit 1", nil, map[string]string{vol.Name: "/data"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	after, err := cli.ContainerList(ctx, container.ListOptions{All: true})
+	afterRes, err := cli.ContainerList(ctx, client.ContainerListOptions{All: true})
 	if err != nil {
 		t.Fatal(err)
 	}
+	before, after := beforeRes.Items, afterRes.Items
 	if len(after) != len(before) {
 		t.Errorf("expected no leftover helper container: before=%d after=%d", len(before), len(after))
 	}
@@ -136,11 +148,14 @@ func TestRunBackupJob_TimeoutBoundsTheWholeCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vol, err := cli.VolumeCreate(ctx, volume.CreateOptions{})
+	volRes, err := cli.VolumeCreate(ctx, client.VolumeCreateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = cli.VolumeRemove(context.Background(), vol.Name, true) })
+	vol := volRes.Volume
+	t.Cleanup(func() {
+		_, _ = cli.VolumeRemove(context.Background(), vol.Name, client.VolumeRemoveOptions{Force: true})
+	})
 
 	const timeout = 2 * time.Second
 	start := time.Now()
@@ -167,27 +182,36 @@ func TestProjectVolumeNames_ScopedToLabel(t *testing.T) {
 		t.Fatal(err)
 	}
 	const project = "dc-backupjob-test-project"
-	mine, err := cli.VolumeCreate(ctx, volume.CreateOptions{
+	mineRes, err := cli.VolumeCreate(ctx, client.VolumeCreateOptions{
 		Labels: map[string]string{labelComposeProject: project},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = cli.VolumeRemove(context.Background(), mine.Name, true) })
+	mine := mineRes.Volume
+	t.Cleanup(func() {
+		_, _ = cli.VolumeRemove(context.Background(), mine.Name, client.VolumeRemoveOptions{Force: true})
+	})
 
-	other, err := cli.VolumeCreate(ctx, volume.CreateOptions{
+	otherRes, err := cli.VolumeCreate(ctx, client.VolumeCreateOptions{
 		Labels: map[string]string{labelComposeProject: "dc-backupjob-test-other"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = cli.VolumeRemove(context.Background(), other.Name, true) })
+	other := otherRes.Volume
+	t.Cleanup(func() {
+		_, _ = cli.VolumeRemove(context.Background(), other.Name, client.VolumeRemoveOptions{Force: true})
+	})
 
-	unlabeled, err := cli.VolumeCreate(ctx, volume.CreateOptions{})
+	unlabeledRes, err := cli.VolumeCreate(ctx, client.VolumeCreateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = cli.VolumeRemove(context.Background(), unlabeled.Name, true) })
+	unlabeled := unlabeledRes.Volume
+	t.Cleanup(func() {
+		_, _ = cli.VolumeRemove(context.Background(), unlabeled.Name, client.VolumeRemoveOptions{Force: true})
+	})
 
 	names, err := m.ProjectVolumeNames(ctx, 0, project)
 	if err != nil {

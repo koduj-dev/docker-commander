@@ -10,13 +10,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/docker/docker/api/types/volume"
-
 	"github.com/koduj-dev/docker-commander/internal/auth"
 	"github.com/koduj-dev/docker-commander/internal/config"
 	"github.com/koduj-dev/docker-commander/internal/crypto"
 	"github.com/koduj-dev/docker-commander/internal/docker"
 	"github.com/koduj-dev/docker-commander/internal/store"
+	"github.com/moby/moby/client"
 )
 
 // newBackupJobsServer builds a Server with a cipher (needed for env
@@ -249,10 +248,12 @@ func TestBackupJobs_RunNowAndListRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cli.VolumeCreate(context.Background(), volume.CreateOptions{Name: "dc-backupjobs-apitest-vol"}); err != nil {
+	if _, err := cli.VolumeCreate(context.Background(), client.VolumeCreateOptions{Name: "dc-backupjobs-apitest-vol"}); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = cli.VolumeRemove(context.Background(), "dc-backupjobs-apitest-vol", true) })
+	t.Cleanup(func() {
+		_, _ = cli.VolumeRemove(context.Background(), "dc-backupjobs-apitest-vol", client.VolumeRemoveOptions{Force: true})
+	})
 
 	idStr := strconv.FormatInt(id, 10)
 	r := httptest.NewRequest("POST", "/api/backup-jobs/"+idStr+"/run", nil).WithContext(ctxAsNamed(admin, "alice", "admin"))

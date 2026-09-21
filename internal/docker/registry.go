@@ -9,9 +9,9 @@ import (
 	"io"
 	"strings"
 
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/registry"
-	"github.com/docker/docker/pkg/jsonmessage"
+	"github.com/moby/moby/api/types/jsonstream"
+	"github.com/moby/moby/api/types/registry"
+	"github.com/moby/moby/client"
 
 	"github.com/koduj-dev/docker-commander/internal/store"
 )
@@ -71,7 +71,8 @@ func (m *Manager) TagImage(ctx context.Context, hostID int64, source, target str
 	if err != nil {
 		return err
 	}
-	return cli.ImageTag(ctx, source, target)
+	_, err = cli.ImageTag(ctx, client.ImageTagOptions{Source: source, Target: target})
+	return err
 }
 
 // PushImage pushes a reference to its registry, streaming progress like a pull.
@@ -92,7 +93,7 @@ func (m *Manager) PushImage(ctx context.Context, hostID int64, ref string, onPro
 		return err
 	}
 
-	rc, err := cli.ImagePush(ctx, ref, image.PushOptions{RegistryAuth: enc})
+	rc, err := cli.ImagePush(ctx, ref, client.ImagePushOptions{RegistryAuth: enc})
 	if err != nil {
 		return err
 	}
@@ -106,7 +107,7 @@ func (m *Manager) RegistryLogin(ctx context.Context, hostID int64, a store.Regis
 	if err != nil {
 		return err
 	}
-	_, err = cli.RegistryLogin(ctx, registry.AuthConfig{
+	_, err = cli.RegistryLogin(ctx, client.RegistryLoginOptions{
 		Username:      a.Username,
 		Password:      a.Password,
 		ServerAddress: a.Address,
@@ -119,7 +120,7 @@ func (m *Manager) RegistryLogin(ctx context.Context, hostID int64, a store.Regis
 func streamJSONProgress(rc io.Reader, onProgress func(PullProgress)) error {
 	dec := json.NewDecoder(rc)
 	for {
-		var jm jsonmessage.JSONMessage
+		var jm jsonstream.Message
 		if err := dec.Decode(&jm); err != nil {
 			if errors.Is(err, io.EOF) {
 				return nil

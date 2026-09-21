@@ -14,8 +14,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
+	"github.com/moby/moby/client"
 	"github.com/pquerna/otp/totp"
 
 	"github.com/koduj-dev/docker-commander/internal/auth"
@@ -250,7 +249,7 @@ func TestAPIContainerDetailHandlers(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		if cli, err := a.dm.Client(ctx, 0); err == nil {
-			_ = cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true})
+			_, _ = cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true})
 		}
 	})
 
@@ -304,7 +303,7 @@ func TestAPIStatsAndProbe(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		if cli, err := a.dm.Client(ctx, 0); err == nil {
-			_ = cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true})
+			_, _ = cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true})
 		}
 	})
 
@@ -368,7 +367,7 @@ func TestAPIDockerBackedWrites(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		if cli, err := a.dm.Client(ctx, 0); err == nil {
-			_ = cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true})
+			_, _ = cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true})
 		}
 	})
 
@@ -471,7 +470,7 @@ func TestAPIDockerBackedWrites(t *testing.T) {
 
 	// remove a network created out-of-band
 	if cli, err := a.dm.Client(ctx, 0); err == nil {
-		if nw, err := cli.NetworkCreate(ctx, "dctest_apinet", network.CreateOptions{}); err == nil {
+		if nw, err := cli.NetworkCreate(ctx, "dctest_apinet", client.NetworkCreateOptions{}); err == nil {
 			if code, _ := a.do("DELETE", "/api/networks/"+nw.ID, nil); code != 200 {
 				t.Errorf("remove network → %d", code)
 			}
@@ -496,7 +495,7 @@ func TestAPIWebSockets(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		if cli, err := a.dm.Client(ctx, 0); err == nil {
-			_ = cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true})
+			_, _ = cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true})
 		}
 	})
 

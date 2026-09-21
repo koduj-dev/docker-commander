@@ -7,11 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/client"
 )
 
 // Named volumes have no path reachable through the Docker API, so to browse one
@@ -34,40 +32,41 @@ func (m *Manager) volumeHelper(ctx context.Context, hostID int64, volume string)
 	}
 	reapVolumeHelpers(ctx, cli, true) // best-effort: drop helpers older than the TTL
 
-	existing, err := cli.ContainerList(ctx, container.ListOptions{
+	existing, err := cli.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
-		Filters: filters.NewArgs(filters.Arg("label", volfsLabel+"="+volume)),
+		Filters: make(client.Filters).Add("label", volfsLabel+"="+volume),
 	})
 	if err != nil {
 		return "", err
 	}
-	for _, c := range existing {
+	for _, c := range existing.Items {
 		if c.State == "running" {
 			return c.ID, nil
 		}
-		if err := cli.ContainerStart(ctx, c.ID, container.StartOptions{}); err == nil {
+		if _, err := cli.ContainerStart(ctx, c.ID, client.ContainerStartOptions{}); err == nil {
 			return c.ID, nil
 		}
-		_ = cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true})
+		_, _ = cli.ContainerRemove(ctx, c.ID, client.ContainerRemoveOptions{Force: true})
 	}
 
 	if err := ensureHelperImage(ctx, cli, volfsImage); err != nil {
 		return "", err
 	}
-	resp, err := cli.ContainerCreate(ctx,
-		&container.Config{
+	resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config: &container.Config{
 			Image:  volfsImage,
 			Cmd:    []string{"sleep", "2147483647"},
 			Labels: map[string]string{volfsLabel: volume},
 		},
-		&container.HostConfig{
+		HostConfig: &container.HostConfig{
 			Mounts: []mount.Mount{{Type: mount.TypeVolume, Source: volume, Target: volfsMount}},
-		}, nil, nil, "")
+		},
+	})
 	if err != nil {
 		return "", err
 	}
-	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		_ = cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	if _, err := cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
+		_, _ = cli.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 		return "", err
 	}
 	return resp.ID, nil
@@ -75,10 +74,10 @@ func (m *Manager) volumeHelper(ctx context.Context, hostID int64, volume string)
 
 // ensureHelperImage pulls ref if it isn't present locally.
 func ensureHelperImage(ctx context.Context, cli *client.Client, ref string) error {
-	if _, _, err := cli.ImageInspectWithRaw(ctx, ref); err == nil {
+	if _, err := cli.ImageInspect(ctx, ref); err == nil {
 		return nil
 	}
-	rc, err := cli.ImagePull(ctx, ref, image.PullOptions{})
+	rc, err := cli.ImagePull(ctx, ref, client.ImagePullOptions{})
 	if err != nil {
 		return err
 	}
@@ -91,19 +90,19 @@ func ensureHelperImage(ctx context.Context, cli *client.Client, ref string) erro
 // removes only those older than the TTL (lazy cleanup); otherwise all of them
 // (used at startup to clear orphans from a previous run).
 func reapVolumeHelpers(ctx context.Context, cli *client.Client, onlyOld bool) {
-	list, err := cli.ContainerList(ctx, container.ListOptions{
+	list, err := cli.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
-		Filters: filters.NewArgs(filters.Arg("label", volfsLabel)),
+		Filters: make(client.Filters).Add("label", volfsLabel),
 	})
 	if err != nil {
 		return
 	}
 	cutoff := time.Now().Add(-volfsTTL).Unix()
-	for _, c := range list {
+	for _, c := range list.Items {
 		if onlyOld && c.Created > cutoff {
 			continue
 		}
-		_ = cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true})
+		_, _ = cli.ContainerRemove(ctx, c.ID, client.ContainerRemoveOptions{Force: true})
 	}
 }
 
@@ -178,15 +177,15 @@ func (m *Manager) CloseVolumeBrowser(ctx context.Context, hostID int64, volume s
 	if err != nil {
 		return
 	}
-	list, err := cli.ContainerList(ctx, container.ListOptions{
+	list, err := cli.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
-		Filters: filters.NewArgs(filters.Arg("label", volfsLabel+"="+volume)),
+		Filters: make(client.Filters).Add("label", volfsLabel+"="+volume),
 	})
 	if err != nil {
 		return
 	}
-	for _, c := range list {
-		_ = cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true})
+	for _, c := range list.Items {
+		_, _ = cli.ContainerRemove(ctx, c.ID, client.ContainerRemoveOptions{Force: true})
 	}
 }
 
