@@ -608,6 +608,7 @@ func TestIntegrationInspectRawReturnsTheDaemonsDocument(t *testing.T) {
 
 	cid := startTestContainer(ctx, t, m, "dctest_rawinspect")
 	const vol = "dctest_rawinspect_vol"
+	_ = m.RemoveVolume(ctx, 0, vol, true) // leftover from a killed run (t.Cleanup never ran)
 	if _, err := m.CreateVolume(ctx, 0, vol, "local", nil); err != nil {
 		t.Fatalf("CreateVolume: %v", err)
 	}
@@ -617,6 +618,7 @@ func TestIntegrationInspectRawReturnsTheDaemonsDocument(t *testing.T) {
 		t.Fatal(err)
 	}
 	const netName = "dctest_rawinspect_net"
+	_, _ = cli.NetworkRemove(ctx, netName, client.NetworkRemoveOptions{}) // same: stale from a killed run
 	netID, err := m.CreateNetwork(ctx, 0, NetworkCreateRequest{Name: netName, Driver: "bridge"})
 	if err != nil {
 		t.Fatalf("CreateNetwork: %v", err)
@@ -667,6 +669,7 @@ func TestIntegrationDiskUsageCountsWhatExists(t *testing.T) {
 	ensureImage(ctx, t, m)
 	startTestContainer(ctx, t, m, "dctest_diskusage")
 	const vol = "dctest_diskusage_vol"
+	_ = m.RemoveVolume(ctx, 0, vol, true) // leftover from a killed run (t.Cleanup never ran)
 	if _, err := m.CreateVolume(ctx, 0, vol, "local", nil); err != nil {
 		t.Fatalf("CreateVolume: %v", err)
 	}
