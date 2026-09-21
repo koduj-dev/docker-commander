@@ -167,6 +167,14 @@ Enable the remote MCP server + OAuth endpoints (off by default; requires HTTPS).
 .BI \-mcp-public-url " url"
 Externally reachable base URL (https://host[:port]) for the MCP OAuth flow.
 .TP
+.B \-proxy-enabled
+Enable the embedded per-container reverse proxy for domain_mappings (off by
+default; requires ACME mode for DC's own admin domain).
+.TP
+.BI \-proxy-acme-cache-dir " path"
+Directory to cache the proxy's own ACME certificate/account state (default:
+.IR <data-dir>/proxy-acme ).
+.TP
 .BI \-redis-addr " host:port"
 Redis address for metric history (empty = in-memory ring buffer).
 .TP

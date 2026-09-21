@@ -226,6 +226,20 @@ func TestDomainMappingHandlers_RejectsOwnACMEDomain(t *testing.T) {
 	}
 }
 
+// The collision check must canonicalize like dispatch does (P2, third review):
+// a Unicode-configured admin domain and its Punycode spelling are one
+// hostname, so a mapping for the Punycode form would be permanently shadowed.
+func TestDomainMappingHandlers_RejectsOwnACMEDomainInPunycodeForm(t *testing.T) {
+	srv, pid := newProjectServer(t)
+	srv.cfg.ACMEDomains = []string{"bücher.example"}
+	body := validDomainBody()
+	body["domain"] = "xn--bcher-kva.example"
+	w := callDomainHandler(srv, "POST", pid, "", 1, "admin", body)
+	if w.Code != 400 {
+		t.Errorf("status = %d, want 400: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestDomainMappingHandlers_RBAC(t *testing.T) {
 	srv, pid := newProjectServer(t)
 	ctx := context.Background()

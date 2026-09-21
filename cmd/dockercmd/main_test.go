@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"go/ast"
@@ -12,6 +13,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/acme"
+	"golang.org/x/crypto/acme/autocert"
 
 	"github.com/koduj-dev/docker-commander/internal/config"
 	"github.com/koduj-dev/docker-commander/internal/store"
@@ -233,6 +237,58 @@ func TestHTTPServerHasReadTimeouts(t *testing.T) {
 	// would cut them off. Asserted so that adding one is a decision, not a reflex.
 	if srv.WriteTimeout != 0 {
 		t.Errorf("WriteTimeout is set (%s); this would break WebSocket streams", srv.WriteTimeout)
+	}
+}
+
+// TestBuildTLSConfigPreservesACMEALPNProtocol is the regression for a P1 a
+// code review caught before merge: buildTLSConfig used to construct a
+// hand-rolled tls.Config{GetCertificate: mgr.GetCertificate} instead of
+// starting from mgr.TLSConfig(), silently dropping NextProtos — which
+// tls-alpn-01 (this app's only ACME challenge path) requires, per
+// GetCertificate's own doc comment. That would have broken ACME issuance
+// and renewal for every existing install using -acme-domains, not just the
+// new embedded proxy feature.
+func TestBuildTLSConfigPreservesACMEALPNProtocol(t *testing.T) {
+	mgr := &autocert.Manager{
+		Prompt:     autocert.AcceptTOS,
+		Cache:      autocert.DirCache(t.TempDir()),
+		HostPolicy: autocert.HostWhitelist("admin.example.com"),
+	}
+	tlsConfig := buildTLSConfig(mgr, false)
+	if tlsConfig == nil {
+		t.Fatal("ACME mode must produce a non-nil tls.Config")
+	}
+	found := false
+	for _, p := range tlsConfig.NextProtos {
+		if p == acme.ALPNProto {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("NextProtos = %v, must include %q or tls-alpn-01 (this app's only ACME challenge path) cannot complete",
+			tlsConfig.NextProtos, acme.ALPNProto)
+	}
+	if tlsConfig.GetCertificate == nil {
+		t.Error("GetCertificate must be set in ACME mode")
+	}
+	if tlsConfig.MinVersion != tls.VersionTLS12 {
+		t.Errorf("MinVersion = %v, want TLS 1.2", tlsConfig.MinVersion)
+	}
+}
+
+func TestBuildTLSConfigStaticCertMode(t *testing.T) {
+	tlsConfig := buildTLSConfig(nil, true)
+	if tlsConfig == nil {
+		t.Fatal("static cert/key mode must produce a non-nil tls.Config")
+	}
+	if tlsConfig.MinVersion != tls.VersionTLS12 {
+		t.Errorf("MinVersion = %v, want TLS 1.2", tlsConfig.MinVersion)
+	}
+}
+
+func TestBuildTLSConfigPlainHTTP(t *testing.T) {
+	if tlsConfig := buildTLSConfig(nil, false); tlsConfig != nil {
+		t.Errorf("plain HTTP mode must produce a nil tls.Config, got %+v", tlsConfig)
 	}
 }
 
