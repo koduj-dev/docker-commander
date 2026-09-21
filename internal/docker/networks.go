@@ -36,32 +36,42 @@ func (m *Manager) CreateNetwork(ctx context.Context, hostID int64, req NetworkCr
 		Attachable: req.Attachable,
 		Labels:     req.Labels,
 	}
-	if req.Subnet != "" || req.Gateway != "" {
-		// The SDK now carries these as typed values, so a malformed one is
-		// rejected here with a message naming the field, instead of by the
-		// daemon after a round trip.
-		var cfg network.IPAMConfig
-		if req.Subnet != "" {
-			p, err := netip.ParsePrefix(req.Subnet)
-			if err != nil {
-				return "", fmt.Errorf("invalid subnet %q: %w", req.Subnet, err)
-			}
-			cfg.Subnet = p
-		}
-		if req.Gateway != "" {
-			a, err := netip.ParseAddr(req.Gateway)
-			if err != nil {
-				return "", fmt.Errorf("invalid gateway %q: %w", req.Gateway, err)
-			}
-			cfg.Gateway = a
-		}
-		opts.IPAM = &network.IPAM{Config: []network.IPAMConfig{cfg}}
+	ipam, err := ipamFor(req.Subnet, req.Gateway)
+	if err != nil {
+		return "", err
 	}
+	opts.IPAM = ipam
 	resp, err := cli.NetworkCreate(ctx, req.Name, opts)
 	if err != nil {
 		return "", err
 	}
 	return resp.ID, nil
+}
+
+// ipamFor builds the IPAM block for a create request, or nil when the caller
+// asked for neither a subnet nor a gateway (the daemon then picks both). The
+// SDK carries them as typed values, so a malformed one is rejected here with a
+// message naming the field, instead of by the daemon after a round trip.
+func ipamFor(subnet, gateway string) (*network.IPAM, error) {
+	if subnet == "" && gateway == "" {
+		return nil, nil
+	}
+	var cfg network.IPAMConfig
+	if subnet != "" {
+		p, err := netip.ParsePrefix(subnet)
+		if err != nil {
+			return nil, fmt.Errorf("invalid subnet %q: %w", subnet, err)
+		}
+		cfg.Subnet = p
+	}
+	if gateway != "" {
+		a, err := netip.ParseAddr(gateway)
+		if err != nil {
+			return nil, fmt.Errorf("invalid gateway %q: %w", gateway, err)
+		}
+		cfg.Gateway = a
+	}
+	return &network.IPAM{Config: []network.IPAMConfig{cfg}}, nil
 }
 
 // ConnectNetwork attaches a container to a network.
