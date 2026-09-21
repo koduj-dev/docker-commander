@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
@@ -258,5 +259,78 @@ func TestCombinedGetCertificateDelegatesBySNI(t *testing.T) {
 	}
 	if admin.called || !proxyMgr.called {
 		t.Errorf("non-admin SNI should delegate to proxyMgr only, got admin.called=%v proxyMgr.called=%v", admin.called, proxyMgr.called)
+	}
+}
+
+// The same eligibility rule at the routing layer: a mapping whose tlsMode this
+// phase does not serve must 404 — never 502 (which would say "known proxy
+// target, just down") and never the admin handler.
+func TestCombinedHandlerDoesNotRouteANonACMEMapping(t *testing.T) {
+	st, ctx := newTestStore(t)
+	pid, err := st.CreateProject(ctx, &store.Project{Name: "App", Slug: "app", HostID: 0, CreatedBy: "admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateDomainMapping(ctx, pid, "plain.example.com", "web", 9999, "none", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	p := newTestProxy(t, st)
+	h := CombinedHandler(stubHandler("admin"), []string{"admin.example.com"}, p)
+
+	r := httptest.NewRequest("GET", "https://plain.example.com/", nil)
+	r.Host = "plain.example.com"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("code = %d, want 404 for a mapping this phase does not serve", w.Code)
+	}
+	if w.Body.String() == "admin" {
+		t.Fatal("must never fall through to the admin handler")
+	}
+}
+
+// The happy path end to end — dispatch → eligibility → (cached) backend
+// resolution → ReverseProxy → a real backend — which the tests above only
+// reach as far as a 502. Only the Docker lookup is stubbed (resolveFn, the
+// seam backend_test.go also uses); everything a regression in request
+// forwarding could break is real: the target URL, path and query, the
+// preserved Host, and the response body and status coming back.
+func TestCombinedHandlerForwardsAMappedRequestToTheBackend(t *testing.T) {
+	var gotPath, gotQuery, gotHost, gotXFF string
+	backendSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotQuery, gotHost, gotXFF = r.URL.Path, r.URL.RawQuery, r.Host, r.Header.Get("X-Forwarded-For")
+		w.Header().Set("X-Backend", "yes")
+		w.WriteHeader(http.StatusTeapot)
+		_, _ = w.Write([]byte("hello from the container"))
+	}))
+	defer backendSrv.Close()
+
+	p := newDispatchTestProxy(t, "app.example.com", true)
+	p.resolveFn = func(context.Context, store.DomainMapping) (backend, error) {
+		return backend{addr: backendSrv.Listener.Addr().String()}, nil
+	}
+	h := CombinedHandler(stubHandler("admin"), []string{"admin.example.com"}, p)
+
+	r := httptest.NewRequest("GET", "https://app.example.com/deep/path?x=1&y=two", nil)
+	r.Host = "app.example.com"
+	r.RemoteAddr = "203.0.113.7:4444"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code != http.StatusTeapot || w.Body.String() != "hello from the container" {
+		t.Fatalf("response = %d %q, want the backend's own 418 and body", w.Code, w.Body.String())
+	}
+	if w.Header().Get("X-Backend") != "yes" {
+		t.Error("backend response headers must come back through the proxy")
+	}
+	if gotPath != "/deep/path" || gotQuery != "x=1&y=two" {
+		t.Errorf("backend saw %q ? %q, want the original path and query", gotPath, gotQuery)
+	}
+	if gotHost != "app.example.com" {
+		t.Errorf("backend saw Host %q, want the mapped domain preserved", gotHost)
+	}
+	if gotXFF != "203.0.113.7" {
+		t.Errorf("backend saw X-Forwarded-For %q, want the real peer 203.0.113.7", gotXFF)
 	}
 }

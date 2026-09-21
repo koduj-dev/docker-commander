@@ -260,7 +260,10 @@ repoint a hostname elsewhere.
 
 RBAC follows the project's own "projects" section grants, same as secrets
 above. A project's domain mappings travel with it in the portable recovery
-bundle, the same as its secrets and images.
+bundle, the same as its secrets and images. On import a mapping is held to
+the same rule as one created in the UI: only the `acme` TLS mode exists in
+this phase, so a bundle row carrying any other value is skipped with a
+warning rather than restored.
 
 ## Deploying to a remote host
 A project can target the **local daemon** (default) or any **remote host** you've

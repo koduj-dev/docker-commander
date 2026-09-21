@@ -72,6 +72,84 @@ func TestRecoveryDomainMappings_RoundTrip(t *testing.T) {
 	}
 }
 
+// PENTEST: the API only ever stores tlsMode "acme", but a bundle is imported
+// straight into the store — a tampered (or hand-edited) one carrying the
+// reserved "none" or an arbitrary string must not land as a live mapping.
+// The valid mapping in the same bundle proves the guard rejects the bad row,
+// not every row.
+func TestRecoveryDomainMappings_UnsupportedTLSModeIsSkipped(t *testing.T) {
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	srv, admin := newRecoveryServer(t)
+	ctx := context.Background()
+	pid, err := srv.store.CreateProject(ctx, &store.Project{Name: "shop", Slug: "dctest-recovery-domain-tls", ComposeFile: "compose.yml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := srv.projectRoot(pid)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	compose := "services:\n  web:\n    image: " + deployTestImage + "\n"
+	if err := os.WriteFile(filepath.Join(root, "compose.yml"), []byte(compose), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The store itself accepts any tlsMode — that is precisely the gap.
+	if _, err := srv.store.CreateDomainMapping(ctx, pid, "good.example.com", "web", 8080, "acme", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.store.CreateDomainMapping(ctx, pid, "plain.example.com", "web", 8081, "none", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.store.CreateDomainMapping(ctx, pid, "junk.example.com", "web", 8082, "bogus", "admin"); err != nil {
+		t.Fatal(err)
+	}
+
+	w := exportRecoveryRequest(srv, admin, `{}`, "correct horse battery staple")
+	if w.Code != http.StatusOK {
+		t.Fatalf("export status = %d: %s", w.Code, w.Body.String())
+	}
+
+	dst, dstAdmin := newRecoveryServer(t)
+	iw := importRecoveryRequest(dst, dstAdmin, w.Body.Bytes(), "correct horse battery staple", "")
+	if iw.Code != http.StatusOK {
+		t.Fatalf("import status = %d: %s", iw.Code, iw.Body.String())
+	}
+	var resp struct {
+		Summary  importSummary `json:"summary"`
+		Warnings []string      `json:"warnings"`
+	}
+	if err := json.Unmarshal(iw.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Summary.ProjectsCreated != 1 {
+		t.Fatalf("the project itself must still import, got %+v warnings=%v", resp.Summary, resp.Warnings)
+	}
+	projects, err := dst.store.ListProjects(ctx)
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("project not imported: %v %+v", err, projects)
+	}
+	mappings, err := dst.store.ListDomainMappings(ctx, projects[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mappings) != 1 || mappings[0].Domain != "good.example.com" || mappings[0].TLSMode != "acme" {
+		t.Fatalf("only the acme mapping may be restored, got %+v", mappings)
+	}
+	for _, domain := range []string{"plain.example.com", "junk.example.com"} {
+		found := false
+		for _, w := range resp.Warnings {
+			if strings.Contains(w, domain) && strings.Contains(w, "unsupported tlsMode") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected a skip warning naming %s, got %v", domain, resp.Warnings)
+		}
+	}
+}
+
 // TestRecoveryDomainMappings_CollisionWarnsRatherThanFails: a domain already
 // claimed on the destination (here: by an earlier project in the SAME
 // import) must be skipped with an explicit warning, not silently dropped

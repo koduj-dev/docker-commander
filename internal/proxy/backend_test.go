@@ -73,8 +73,12 @@ func startLabeledContainer(ctx context.Context, t *testing.T, m *docker.Manager,
 	_ = cli.ContainerRemove(ctx, name, dockersdk.RemoveOptions{Force: true}) // best-effort, name may be free already
 	created, err := cli.ContainerCreate(ctx,
 		&dockersdk.Config{
-			Image:        testImage,
-			Cmd:          []string{"sleep", "300"},
+			Image: testImage,
+			// A real listener on the mapped port (busybox httpd applet), so a dial to the
+			// published port reaches something. `sleep` would leave the port
+			// answered only by Docker's userland proxy — and refused outright on
+			// a daemon running without one.
+			Cmd:          []string{"busybox", "httpd", "-f", "-p", fmt.Sprintf("%d", containerPort), "-h", "/tmp"},
 			Labels:       map[string]string{"com.docker.compose.project": project, "com.docker.compose.service": service},
 			ExposedPorts: nat.PortSet{port: struct{}{}},
 		},
@@ -83,13 +87,34 @@ func startLabeledContainer(ctx context.Context, t *testing.T, m *docker.Manager,
 	if err != nil {
 		t.Fatalf("create %s: %v", name, err)
 	}
-	if err := cli.ContainerStart(ctx, created.ID, dockersdk.StartOptions{}); err != nil {
-		t.Fatalf("start %s: %v", name, err)
-	}
+	// Registered BEFORE the start: a container that was created but failed to
+	// start must still be removed, or it lingers and poisons later runs.
 	t.Cleanup(func() {
 		_ = cli.ContainerRemove(context.Background(), created.ID, dockersdk.RemoveOptions{Force: true})
 	})
+	if err := cli.ContainerStart(ctx, created.ID, dockersdk.StartOptions{}); err != nil {
+		t.Fatalf("start %s: %v", name, err)
+	}
 	return created.ID
+}
+
+// dialEventually dials addr until it connects or the deadline passes: the
+// container's listener starts a moment after ContainerStart returns, and on a
+// daemon without a userland proxy a dial before that is refused.
+func dialEventually(ctx context.Context, t *testing.T, addr string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		conn, err := (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", addr)
+		if err == nil {
+			conn.Close()
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("resolved backend %q is not dialable: %v", addr, err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func newLocalProject(t *testing.T, st *store.Store, ctx context.Context, slug string) int64 {
@@ -123,11 +148,7 @@ func TestResolveBackendFindsTheRealPublishedPort(t *testing.T) {
 	// published host port, not the container-internal one (8080 itself is
 	// never the right answer here: Docker assigned a different, dynamic
 	// host port via HostPort "0").
-	conn, err := (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", b.addr)
-	if err != nil {
-		t.Fatalf("resolved backend %q is not dialable: %v", b.addr, err)
-	}
-	conn.Close()
+	dialEventually(ctx, t, b.addr)
 }
 
 func TestResolveBackendErrorsCleanlyForAStoppedContainer(t *testing.T) {
@@ -214,11 +235,7 @@ func TestResolveBackendUsesTheExactPublishedBindIP(t *testing.T) {
 	if host != "127.0.0.2" {
 		t.Errorf("resolved host = %q, want the exact published bind IP 127.0.0.2 (not a hardcoded 127.0.0.1)", host)
 	}
-	conn, err := (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", b.addr)
-	if err != nil {
-		t.Fatalf("resolved backend %q is not dialable: %v", b.addr, err)
-	}
-	conn.Close()
+	dialEventually(ctx, t, b.addr)
 }
 
 func TestResolveBackendErrorsCleanlyForAnUnpublishedPort(t *testing.T) {
