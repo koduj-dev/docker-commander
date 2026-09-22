@@ -414,6 +414,28 @@ the security property alone, independent of the NAT-traversal convenience.
   `ServiceSpec` (name+image only) to also read networks/volumes/depends_on/ports.
   Scope v1 to a single static file, best-effort — full multi-file/`extends`/
   `profiles` resolution is more compose surface than a visualizer needs.
+- **Top talkers polish.** Two separate gaps, filed together since they're the
+  same feature: the dashboard widget renders as a plain unstyled table (no
+  design pass, looks out of place next to the rest of the dashboard); the
+  full Top Talkers page has no filtering/pagination/limit at all — a host
+  with a few hundred containers renders every one of them in one unbounded
+  list.
+- **Troubleshooting page: collapsible sections + KPI summary.** The page's
+  layout itself is fine, but every check section renders fully expanded
+  always, so the page is a long scroll even when everything is green. Make
+  each section collapsible (collapsed by default, or auto-expanded only when
+  it has a warning/error), and add a small KPI strip at the top ("3 of 7 OK")
+  so the overall health is visible without reading anything.
+- **Recovery bundle: Export/Import as tabs.** Currently two separate blocks
+  stacked on one page; move them into tabs (see the `dc-web-ui` skill's
+  tab-usage guidance) to match how other multi-mode pages in the app are
+  organized.
+- **Project editor: quick link to the project's secrets.** There is currently
+  no way to open the secrets editor from within the project editor itself —
+  editing a project's secrets means closing the editor, navigating to the
+  secrets management surface, then coming back. An icon/button in the editor
+  that opens the secrets modal directly (matching this app's established
+  modal-launch pattern) would remove that round trip.
 ---
 
 ## 📦 Backlog
