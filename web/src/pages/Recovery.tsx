@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import type { Host, CompatibilityReport, RecoveryManifestSummary, RecoveryImportSummary } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { useDialogs } from "../components/Dialog";
+import { Tabs } from "../components/Tabs";
 
 // Portable recovery bundle: export everything the app knows (projects, hosts,
 // registries, alert rules, image digests, and — opt-in — instance settings)
@@ -22,17 +23,28 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+type Tab = "export" | "import";
+
 export function Recovery() {
   const dialogs = useDialogs();
+  const [tab, setTab] = useState<Tab>("export");
   const [hosts, setHosts] = useState<Host[]>([]);
   useEffect(() => { api.hosts().then(setHosts).catch(() => {}); }, []);
 
   return (
     <>
       <PageHeader title="Recovery bundle" />
-      <div className="p-6 grid gap-6 max-w-3xl">
-        <ExportPanel />
-        <ImportPanel hosts={hosts} dialogs={dialogs} />
+      <div className="p-6 space-y-4 max-w-3xl">
+        <Tabs
+          active={tab}
+          onChange={setTab}
+          tabs={[
+            { key: "export", label: "Export", icon: <Download className="h-4 w-4" /> },
+            { key: "import", label: "Import", icon: <Upload className="h-4 w-4" /> },
+          ]}
+        />
+        {tab === "export" && <ExportPanel />}
+        {tab === "import" && <ImportPanel hosts={hosts} dialogs={dialogs} />}
       </div>
     </>
   );
@@ -56,7 +68,6 @@ function ExportPanel() {
 
   return (
     <section className="card p-5">
-      <h2 className="text-sm font-semibold mb-1">Export</h2>
       <p className="text-sm text-muted mb-4">
         Every project&apos;s files, host and registry definitions, alert rules and image digests — no volume data.
       </p>
@@ -140,7 +151,6 @@ function ImportPanel({ hosts, dialogs }: { hosts: Host[]; dialogs: ReturnType<ty
 
   return (
     <section className="card p-5">
-      <h2 className="text-sm font-semibold mb-1">Import</h2>
       <p className="text-sm text-muted mb-4">
         Check compatibility against a target host before importing anything.
       </p>
