@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/koduj-dev/docker-commander/internal/history"
@@ -120,14 +121,20 @@ type topTalkerMeta struct {
 // metric's rate averaged over that window. Split out from the handler so the
 // ranking/skip logic can be tested directly against a real in-memory
 // history.Store, without a live Monitor/Docker daemon behind it.
-func rankTopTalkers(ctx context.Context, hist history.Store, ids []string, metaByID map[string]topTalkerMeta, since time.Time, metric string, limit int) ([]topTalker, error) {
+//
+// Returns the ranked-and-limited slice AND the total number of containers
+// that had enough history to rank at all (i.e. len(out) before the limit
+// cut), so a caller with more matches than fit in one response can still
+// show "N of TOTAL" instead of silently rendering a truncated list as if it
+// were everything.
+func rankTopTalkers(ctx context.Context, hist history.Store, ids []string, metaByID map[string]topTalkerMeta, since time.Time, metric string, limit int) (ranked []topTalker, total int, err error) {
 	rx, err := hist.QueryAll(ctx, history.MetricNetRx, since, ids)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	tx, err := hist.QueryAll(ctx, history.MetricNetTx, since, ids)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	out := make([]topTalker, 0, len(ids))
@@ -150,10 +157,11 @@ func rankTopTalkers(ctx context.Context, hist history.Store, ids []string, metaB
 		out = append(out, t)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Rate > out[j].Rate })
+	total = len(out)
 	if len(out) > limit {
 		out = out[:limit]
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // handleTopTalkers ranks running containers by network throughput AVERAGED
@@ -162,10 +170,13 @@ func rankTopTalkers(ctx context.Context, hist history.Store, ids []string, metaB
 // docs/alerts.md and ResourceBreakdown.tsx's comment on why the live
 // dashboard snapshot deliberately doesn't attempt this ranking.
 // Query params: window ("5m"|"15m"|"1h", default "5m"), metric
-// ("total"|"netrx"|"nettx", default "total"), limit (1-50, default 8).
+// ("total"|"netrx"|"nettx", default "total"), limit (1-50, default 8), q
+// (optional case-insensitive substring match on container name, applied
+// BEFORE ranking/limit — the only way to find a specific container that
+// isn't itself in the top `limit` by throughput).
 func (s *Server) handleTopTalkers(w http.ResponseWriter, r *http.Request) {
 	if s.history == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"window": "", "metric": "", "containers": []topTalker{}})
+		writeJSON(w, http.StatusOK, map[string]any{"window": "", "metric": "", "containers": []topTalker{}, "total": 0})
 		return
 	}
 	hostID, err := s.resolveHostID(r)
@@ -202,6 +213,8 @@ func (s *Server) handleTopTalkers(w http.ResponseWriter, r *http.Request) {
 		limit = 50
 	}
 
+	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+
 	hid, _ := s.docker.ResolveHostID(r.Context(), hostID)
 	metaByID := make(map[string]topTalkerMeta)
 	ids := make([]string, 0)
@@ -209,14 +222,17 @@ func (s *Server) handleTopTalkers(w http.ResponseWriter, r *http.Request) {
 		if cs.HostID != hid || cs.State != "running" {
 			continue
 		}
+		if q != "" && !strings.Contains(strings.ToLower(cs.Name), q) {
+			continue
+		}
 		ids = append(ids, cs.ID)
 		metaByID[cs.ID] = topTalkerMeta{name: cs.Name, hostName: cs.HostName, hostID: cs.HostID}
 	}
 
-	out, err := rankTopTalkers(r.Context(), s.history, ids, metaByID, time.Now().Add(-win), metric, limit)
+	out, total, err := rankTopTalkers(r.Context(), s.history, ids, metaByID, time.Now().Add(-win), metric, limit)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "history query failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"window": windowName, "metric": metric, "containers": out})
+	writeJSON(w, http.StatusOK, map[string]any{"window": windowName, "metric": metric, "containers": out, "total": total})
 }
