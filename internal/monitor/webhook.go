@@ -54,14 +54,28 @@ func (d *dispatcher) record(ctx context.Context, eventID int64, target string, o
 	}
 }
 
+// dispatch's send and the two bookkeeping calls after it each get their OWN
+// context (deliveryRetryWebhookTimeout for the send, deliveryRetryDBTimeout
+// for each store call) — mirroring retryOne in delivery_retry.go, and for the
+// same reason: sharing one budget across all three meant a slow-but-not-hung
+// endpoint could consume most of it in attempt()'s own client.Timeout,
+// leaving record()/enqueueRetry() racing real DB latency against an
+// almost-expired context and silently losing the delivery record or the
+// retry enqueue.
 func (d *dispatcher) dispatch(webhookID int64, ev *store.AlertEvent) {
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-		defer cancel()
-		ok, status, target, detail, retriable := d.attempt(ctx, webhookID, ev)
-		d.record(ctx, ev.ID, target, ok, status, detail)
+		sendCtx, sendCancel := context.WithTimeout(context.Background(), deliveryRetryWebhookTimeout)
+		ok, status, target, detail, retriable := d.attempt(sendCtx, webhookID, ev)
+		sendCancel()
+
+		recordCtx, recordCancel := context.WithTimeout(context.Background(), deliveryRetryDBTimeout)
+		d.record(recordCtx, ev.ID, target, ok, status, detail)
+		recordCancel()
+
 		if !ok && retriable {
-			d.enqueueRetry(ctx, ev.ID, webhookID, detail)
+			enqueueCtx, enqueueCancel := context.WithTimeout(context.Background(), deliveryRetryDBTimeout)
+			d.enqueueRetry(enqueueCtx, ev.ID, webhookID, detail)
+			enqueueCancel()
 		}
 	}()
 }

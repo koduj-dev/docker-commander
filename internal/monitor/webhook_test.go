@@ -76,6 +76,65 @@ func TestDispatchPostsToWebhook(t *testing.T) {
 	}
 }
 
+// TestDispatch_RecordSurvivesSendContextExpiring is the regression test for
+// dispatch() sharing one context across the send and its bookkeeping. The
+// test endpoint sleeps past deliveryRetryWebhookTimeout (attempt()'s own send
+// budget), with the client's own http.Client.Timeout set even longer so the
+// SEND's context — not the client's timeout — is what cuts the request off.
+// Under the old shared-context code, record() would reuse that same
+// already-expired context and RecordAlertDelivery would fail immediately
+// against it, so no delivery row would ever appear. After the fix, record()
+// gets its own fresh context and the row appears despite the send having
+// timed out.
+func TestDispatch_RecordSurvivesSendContextExpiring(t *testing.T) {
+	if testing.Short() {
+		t.Skip("sleeps past the send timeout; skipped under -short")
+	}
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	key := make([]byte, 32)
+	_, _ = rand.Read(key)
+	c, _ := crypto.New(key)
+	st.SetCipher(c)
+	ctx := context.Background()
+
+	recv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(deliveryRetryWebhookTimeout + 2*time.Second)
+	}))
+	defer recv.Close()
+
+	whID, err := st.CreateWebhook(ctx, &store.Webhook{Name: "wh", URL: recv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventID, err := st.InsertAlertEvent(ctx, &store.AlertEvent{RuleName: "r", ContainerName: "web", Message: "boom"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Bypass newDispatcher's 10s client.Timeout — it must be longer than
+	// deliveryRetryWebhookTimeout so the SEND CONTEXT is what cuts the
+	// request off, not the http.Client's own timeout.
+	d := &dispatcher{store: st, client: &http.Client{Timeout: deliveryRetryWebhookTimeout + 10*time.Second}}
+	d.dispatch(whID, &store.AlertEvent{ID: eventID, RuleName: "r", ContainerName: "web", Message: "boom"})
+
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		deliveries, err := st.AlertDeliveriesFor(ctx, []int64{eventID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(deliveries[eventID]) > 0 {
+			return // record() wrote the outcome despite the send's own context having expired
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatal("no delivery was recorded within the deadline — record() likely reused the send's already-expired context")
+}
+
 // TestRedactURLKeepsSecretsOutOfDeliveryRecords.
 //
 // net/http wraps transport failures in *url.Error, whose message embeds the full
