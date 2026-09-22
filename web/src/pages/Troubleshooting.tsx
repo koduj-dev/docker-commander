@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Loader2, MinusCircle, RefreshCw, Stethoscope, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Loader2, MinusCircle, RefreshCw, Stethoscope, XCircle } from "lucide-react";
 import { api } from "../lib/api";
 import type { CheckResult, CheckStatus, DiagnosticsReport } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
-import { EmptyState, Spinner } from "../components/ui";
+import { EmptyState, Spinner, StatCard } from "../components/ui";
 
 const statusBadge: Record<CheckStatus, string> = {
   ok: "bg-ok/15 text-ok",
@@ -26,17 +26,42 @@ const statusLabel: Record<CheckStatus, string> = {
   skipped: "Skipped",
 };
 
-function summarize(checks: CheckResult[]): string {
+function countByStatus(checks: CheckResult[]): Record<CheckStatus, number> {
   const counts: Record<CheckStatus, number> = { ok: 0, warn: 0, fail: 0, skipped: 0 };
   for (const c of checks) counts[c.status]++;
-  return `${counts.ok} OK · ${counts.warn} warning${counts.warn === 1 ? "" : "s"} · ${counts.fail} failed · ${counts.skipped} skipped`;
+  return counts;
 }
 
+// KPIStrip is the "3 of 7 OK" at-a-glance summary the page opens with, so the
+// overall health is visible without reading a single check — the counts
+// themselves link nowhere, this is a summary, not a filter.
+function KPIStrip({ checks }: { checks: CheckResult[] }) {
+  const counts = countByStatus(checks);
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <StatCard icon={<CheckCircle2 className="h-5 w-5 text-ok" />} label="OK" value={`${counts.ok} of ${checks.length}`} />
+      <StatCard icon={<AlertTriangle className="h-5 w-5 text-warn" />} label="Warnings" value={counts.warn} />
+      <StatCard icon={<XCircle className="h-5 w-5 text-danger" />} label="Failed" value={counts.fail} />
+      <StatCard icon={<MinusCircle className="h-5 w-5 text-muted" />} label="Skipped" value={counts.skipped} />
+    </div>
+  );
+}
+
+// A check whose status needs attention (warn/fail) opens with its details
+// already visible; an OK/skipped one collapses them by default — with dozens
+// of checks on a healthy host, always-expanded details are most of why this
+// page used to be a long scroll even when nothing was wrong.
 function CheckRow({ check }: { check: CheckResult }) {
   const Icon = statusIcon[check.status];
+  const hasDetails = !!check.details && check.details.length > 0;
+  const [open, setOpen] = useState(check.status === "warn" || check.status === "fail");
+  const Chevron = open ? ChevronDown : ChevronRight;
   return (
     <div className="card p-3">
-      <div className="flex items-start gap-3">
+      <div
+        className={`flex items-start gap-3 ${hasDetails ? "cursor-pointer" : ""}`}
+        onClick={hasDetails ? () => setOpen((o) => !o) : undefined}
+      >
         <Icon className={`h-4 w-4 mt-0.5 shrink-0 ${statusBadge[check.status].split(" ")[1]}`} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -46,15 +71,16 @@ function CheckRow({ check }: { check: CheckResult }) {
             </span>
           </div>
           <div className="text-sm text-muted mt-0.5">{check.message}</div>
-          {check.details && check.details.length > 0 && (
-            <ul className="mt-2 space-y-0.5 text-xs font-mono text-muted list-disc list-inside">
-              {check.details.map((d, i) => (
-                <li key={i}>{d}</li>
-              ))}
-            </ul>
-          )}
         </div>
+        {hasDetails && <Chevron className="h-4 w-4 text-muted shrink-0 mt-0.5" />}
       </div>
+      {hasDetails && open && (
+        <ul className="mt-2 ml-7 space-y-0.5 text-xs font-mono text-muted list-disc list-inside">
+          {check.details!.map((d, i) => (
+            <li key={i}>{d}</li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -102,7 +128,7 @@ export function Troubleshooting() {
           />
         ) : report ? (
           <>
-            <div className="text-sm text-muted">{summarize(report.checks)}</div>
+            <KPIStrip checks={report.checks} />
             <div className="space-y-2">
               {report.checks.map((c) => (
                 <CheckRow key={c.id} check={c} />
