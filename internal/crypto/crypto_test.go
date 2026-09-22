@@ -1,7 +1,10 @@
 package crypto
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"testing"
 )
@@ -114,6 +117,32 @@ func TestFingerprintDoesNotLeakPlaintext(t *testing.T) {
 		fp := c.Fingerprint(pt)
 		if strings.Contains(fp, pt) {
 			t.Errorf("Fingerprint(%q) = %q contains the plaintext", pt, fp)
+		}
+	}
+}
+
+// TestFingerprintKeyIsNotTheRawAESKey guards key separation: Fingerprint's
+// HMAC must use a subkey derived from the AES key, never the raw key
+// itself, so a weakness in one primitive's use of the key can't bleed into
+// the other. A raw-key HMAC of an empty message is directly computable here
+// and must NOT equal any real fingerprint output.
+func TestFingerprintKeyIsNotTheRawAESKey(t *testing.T) {
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i)
+	}
+	c, err := New(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawKeyHMAC := func(plain string) string {
+		mac := hmac.New(sha256.New, key)
+		mac.Write([]byte(plain))
+		return hex.EncodeToString(mac.Sum(nil))
+	}
+	for _, v := range []string{"", "a", "secret"} {
+		if got, raw := c.Fingerprint(v), rawKeyHMAC(v); got == raw {
+			t.Errorf("Fingerprint(%q) used the raw AES key directly as its HMAC key: got %q", v, got)
 		}
 	}
 }
