@@ -1677,6 +1677,7 @@ function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, on
   const [summary, setSummary] = useState<ComposeModel | null>(null);
   const [deployPreview, setDeployPreview] = useState<DeployPreview | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [showSecrets, setShowSecrets] = useState(false);
   const [saveTpl, setSaveTpl] = useState(false);
   const valSeq = useRef(0);
   const dialogs = useDialogs();
@@ -1911,6 +1912,7 @@ function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, on
           </div>
           <div className="flex items-center gap-1 ml-auto">
             <button className="btn-ghost px-2 h-8" title="Save as preset" onClick={() => setSaveTpl(true)}><LayoutTemplate className="h-4 w-4" /></button>
+            <button className="btn-ghost px-2 h-8" title="Secrets" onClick={() => setShowSecrets(true)}><Lock className="h-4 w-4" /></button>
             <a className="btn-ghost px-2 h-8" title="Download project as .zip" href={api.projectDownloadUrl(project.id)}><Download className="h-4 w-4" /></a>
             <button className="btn-ghost px-3 h-8 text-sm disabled:opacity-40" disabled={!composeAvailable || busy === "preview"} onClick={showPreview} title="See what a deploy would change before running it">
               {busy === "preview" ? <Loader2 className="h-4 w-4 animate-spin" /> : <GitCompare className="h-4 w-4" />} Preview
@@ -2068,6 +2070,7 @@ function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, on
         />
       )}
       {saveTpl && <SaveAsTemplateModal projectId={project.id} onClose={() => setSaveTpl(false)} onSaved={() => setSaveTpl(false)} />}
+      {showSecrets && <ProjectSecretsModal project={project} onClose={() => setShowSecrets(false)} />}
     </div>
   );
 }
