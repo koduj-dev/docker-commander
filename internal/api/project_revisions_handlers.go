@@ -440,7 +440,7 @@ func (s *Server) handleRestoreRevision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	env, files, note, cleanup, seed, err := s.projectDeployEnv(r.Context(), p, staging)
+	env, files, note, cleanup, seed, err := s.projectDeployEnv(r.Context(), p, staging, rev.Profiles)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

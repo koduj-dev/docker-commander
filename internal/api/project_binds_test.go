@@ -112,7 +112,7 @@ func TestProjectDeployEnv_LocalIsUntouched(t *testing.T) {
 	srv := &Server{cfg: config.Config{}, store: st}
 
 	p := &store.Project{ID: 1, Slug: "demo", ComposeFile: "compose.yml", HostID: 0}
-	env, files, note, cleanup, seed, err := srv.projectDeployEnv(context.Background(), p, t.TempDir())
+	env, files, note, cleanup, seed, err := srv.projectDeployEnv(context.Background(), p, t.TempDir(), nil)
 	if err != nil {
 		t.Fatalf("local deploy should not error: %v", err)
 	}
@@ -192,6 +192,61 @@ services:
 	}
 }
 
+// TestProjectDeployEnv_ProfileGatedBindClassifiedWhenProfileActive is the
+// regression test for the Copilot-reported finding that bind classification
+// for a remote deploy always resolved compose config with profiles=nil,
+// regardless of what the caller was actually about to deploy/restore with.
+// A service gated behind an active profile is invisible to Compose's own
+// zero-profile `config` resolution, so its bind mount went unclassified —
+// neither internal (seeded) nor external (subject to the opt-in refusal) —
+// whenever the profile enabling it was the one actually being activated.
+func TestProjectDeployEnv_ProfileGatedBindClassifiedWhenProfileActive(t *testing.T) {
+	ctx := context.Background()
+	if !docker.ComposeAvailable(ctx) {
+		t.Skip("the `docker compose` CLI is required to resolve the project config")
+	}
+	srv, pid := remoteProjectServer(t, `
+services:
+  web:
+    image: nginx:alpine
+  worker:
+    image: nginx:alpine
+    profiles: ["extra"]
+    volumes:
+      - ./data:/data
+`)
+	p, err := srv.store.ProjectByID(ctx, pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := srv.projectRoot(pid)
+
+	// Without "extra" active, the profiled service (and its bind) doesn't
+	// exist as far as Compose config resolution is concerned — nothing to
+	// classify, nothing to seed.
+	_, _, _, cleanup, seed, err := srv.projectDeployEnv(ctx, p, dir, nil)
+	if err != nil {
+		t.Fatalf("deploy env (no profile): %v", err)
+	}
+	cleanup()
+	if seed != nil {
+		t.Error("no active service has a bind without the profile — seed should be nil")
+	}
+
+	// With "extra" active, the profiled service's internal bind must be
+	// classified and staged for seeding — this is exactly what regressed:
+	// passing profiles=nil unconditionally made this always nil, even when
+	// the caller was about to deploy with "extra" active.
+	_, _, _, cleanup2, seed2, err := srv.projectDeployEnv(ctx, p, dir, []string{"extra"})
+	if err != nil {
+		t.Fatalf("deploy env (extra profile): %v", err)
+	}
+	cleanup2()
+	if seed2 == nil {
+		t.Error("the profiled service's internal bind must be classified and seeded when its profile is active")
+	}
+}
+
 // A project pointing at a host row that no longer exists must fail with a
 // message that tells the user how to fix it, not a bare store error.
 func TestProjectDeployEnv_MissingHost(t *testing.T) {
@@ -203,7 +258,7 @@ func TestProjectDeployEnv_MissingHost(t *testing.T) {
 	srv := &Server{cfg: config.Config{}, store: st}
 
 	p := &store.Project{ID: 1, Slug: "demo", ComposeFile: "compose.yml", HostID: 4242}
-	_, _, _, cleanup, _, err := srv.projectDeployEnv(context.Background(), p, t.TempDir())
+	_, _, _, cleanup, _, err := srv.projectDeployEnv(context.Background(), p, t.TempDir(), nil)
 	cleanup() // must be safe even on the error path
 	if err == nil {
 		t.Fatal("a project whose target host is gone should not deploy")
@@ -235,7 +290,7 @@ func TestProjectDeployEnv_DisabledHostRefused(t *testing.T) {
 	srv := &Server{cfg: config.Config{}, store: st}
 
 	p := &store.Project{ID: 1, Slug: "demo", ComposeFile: "compose.yml", HostID: id}
-	_, _, _, cleanup, _, err := srv.projectDeployEnv(ctx, p, t.TempDir())
+	_, _, _, cleanup, _, err := srv.projectDeployEnv(ctx, p, t.TempDir(), nil)
 	cleanup()
 	if err == nil {
 		t.Fatal("a disabled host should not be deployed to")

@@ -2,6 +2,7 @@ package docker
 
 import (
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -114,21 +115,30 @@ func EvaluatePolicy(configJSON []byte, modes map[PolicyRuleID]PolicyMode) ([]Pol
 	return out, nil
 }
 
-// dockerSocketCandidatePaths are the default locations dockerd listens on
-// (rootful default, and its /run alias; rootless sockets live under
-// /run/user/<uid>/docker.sock, which the "/run" ancestor check below already
-// covers regardless of uid).
+// dockerSocketCandidatePaths are the default ROOTFUL locations dockerd
+// listens on (the default, and its /run alias).
 var dockerSocketCandidatePaths = []string{
 	"/var/run/docker.sock",
 	"/run/docker.sock",
 }
 
+// rootlessRuntimeDirRE matches a user's XDG runtime directory in its default
+// location — "/run/user/<uid>" or "/var/run/user/<uid>" (or that directory's
+// own parent, "/run/user", which is an ancestor of every uid's) — where
+// rootless dockerd's default socket lives, at "<dir>/docker.sock". This is a
+// SEPARATE tree from dockerSocketCandidatePaths above: a rootless socket's
+// directory is never itself an ancestor of either literal rootful path, so a
+// bind of e.g. "/run/user/1000" would otherwise go completely unrecognised
+// by the ancestor check below.
+var rootlessRuntimeDirRE = regexp.MustCompile(`^/(?:var/)?run/user(?:/[0-9]+)?$`)
+
 // mountsDockerSocket reports whether a bind mount exposes a working
 // docker.sock inside the container — either because source/target names the
-// socket file directly, or because source is "/" or an ANCESTOR directory of
-// a well-known socket location (e.g. "/var/run", "/run"), which hands the
-// container the socket just as surely as mounting the file itself, but
-// doesn't match on a bare suffix check of the mount's own strings.
+// socket file directly, or because source is "/", an ANCESTOR directory of a
+// well-known rootful socket location (e.g. "/var/run", "/run"), or a user's
+// XDG runtime directory (rootless), any of which hands the container the
+// socket just as surely as mounting the file itself, but doesn't match on a
+// bare suffix check of the mount's own strings.
 func mountsDockerSocket(source, target string) bool {
 	source = path.Clean(source)
 	target = path.Clean(target)
@@ -136,6 +146,9 @@ func mountsDockerSocket(source, target string) bool {
 		return true
 	}
 	if source == "/" {
+		return true
+	}
+	if rootlessRuntimeDirRE.MatchString(source) {
 		return true
 	}
 	for _, candidate := range dockerSocketCandidatePaths {

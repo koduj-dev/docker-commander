@@ -86,6 +86,14 @@ func TestEvaluatePolicy_DockerSocketMount_ParentDirectoryBypass(t *testing.T) {
 		{"run-self", "/run", "/run"},
 		{"run-trailing-slash", "/run/", "/host-run"},
 		{"root", "/", "/host"},
+		// Rootless dockerd's default socket lives at
+		// /run/user/<uid>/docker.sock — a SEPARATE tree from the rootful
+		// candidates above, so it needs its own ancestor coverage: neither
+		// "/run/user/1000" nor its parent "/run/user" is an ancestor of
+		// "/run/docker.sock" or "/var/run/docker.sock".
+		{"rootless-uid-dir", "/run/user/1000", "/run/user/1000"},
+		{"rootless-uid-dir-var-run", "/var/run/user/1000", "/host-run"},
+		{"rootless-user-dir-all-uids", "/run/user", "/host-run"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -111,6 +119,23 @@ func TestEvaluatePolicy_DockerSocketMount_UnrelatedDeepPathIsFine(t *testing.T) 
 	v, _ := EvaluatePolicy([]byte(cfg), allModes(ModeBlock))
 	if hasViolation(v, RuleDockerSocket, "web") {
 		t.Errorf("a bind of an unrelated directory under /var/run must not trigger docker_socket_mount, got %+v", v)
+	}
+}
+
+// A path that merely starts with the same characters as the rootless runtime
+// dir pattern (but isn't it) must not false-positive.
+func TestEvaluatePolicy_DockerSocketMount_RootlessLookalikeIsFine(t *testing.T) {
+	cases := []string{"/run/user-data", "/run/username", "/run/user/1000/app-data"}
+	for _, source := range cases {
+		t.Run(source, func(t *testing.T) {
+			cfg := `{"services":{"web":{"image":"nginx:1.27","volumes":[
+				{"type":"bind","source":"` + source + `","target":"/x"}
+			]}}}`
+			v, _ := EvaluatePolicy([]byte(cfg), allModes(ModeBlock))
+			if hasViolation(v, RuleDockerSocket, "web") {
+				t.Errorf("bind of %q must not trigger docker_socket_mount, got %+v", source, v)
+			}
+		})
 	}
 }
 

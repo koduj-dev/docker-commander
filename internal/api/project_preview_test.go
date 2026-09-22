@@ -127,6 +127,52 @@ func TestHandlePreviewProject_ProfileServiceNotFalselyRemoved(t *testing.T) {
 	}
 }
 
+// TestHandlePreviewProject_InactiveProfileServiceNotFalselyAdded is the
+// mirror regression test for the Copilot-reported over-correction: resolving
+// preview with EVERY profile the compose file declares (instead of the
+// profiles the project's last deploy actually used) made a declared but
+// currently-inactive profiled service falsely report as "added", even though
+// the next matching deploy — which reuses LastDeployedProfiles — would not
+// create it.
+func TestHandlePreviewProject_InactiveProfileServiceNotFalselyAdded(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs the docker compose CLI and a daemon; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	const slug = "dctest-preview-inactive-profile"
+	compose := "services:\n  web:\n    image: " + deployTestImage + "\n    command: [\"sleep\", \"300\"]\n" +
+		"  worker:\n    image: " + deployTestImage + "\n    command: [\"sleep\", \"300\"]\n    profiles: [\"extra\"]\n"
+	srv, _, pid, admin := deployTestServer(t, slug, compose)
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = docker.ComposeDown(bg, srv.projectRoot(pid), slug, nil)
+		freeDeployStack(slug)
+	})
+
+	// Deploy WITHOUT "extra" — "worker" was never created.
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+
+	w := previewRequest(srv, pid, admin, "admin")
+	if w.Code != 200 {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var prev mcp.ProjectPreview
+	if err := json.Unmarshal(w.Body.Bytes(), &prev); err != nil {
+		t.Fatalf("decode: %v (%s)", err, w.Body.String())
+	}
+	if !prev.Valid {
+		t.Fatalf("expected a valid preview, got error: %s", prev.Error)
+	}
+	for _, c := range prev.Changes {
+		if c.Service == "worker" {
+			t.Errorf("service %q under an inactive profile was falsely reported as %q: %+v", c.Service, c.Kind, prev.Changes)
+		}
+	}
+}
+
 // PENTEST/RBAC: preview is read-only (a GET, no mutation), so a user whose
 // grant on "projects" is read-only must still be able to call it — unlike
 // deploy/validate/resolve, which are POSTs and require write. If this ever

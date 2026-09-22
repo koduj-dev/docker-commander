@@ -60,6 +60,10 @@ func (s *Server) mcpDeployProject(ctx context.Context, id int64, profiles []stri
 		return "", err
 	}
 	dir := s.projectRoot(p.ID)
+	// Normalized before projectDeployEnv, NOT after — bind classification
+	// below must resolve against exactly the profiles this deploy activates,
+	// same as evaluateDeployPolicy does a few lines down.
+	profiles = docker.NormalizeProfiles(profiles)
 	// projectDeployEnv, NOT projectComposeEnv — the same resolver the web UI's
 	// deploy uses. For a local project the two are identical, but for a remote
 	// host only this one ships the project's bind-mount sources to the target and
@@ -67,7 +71,7 @@ func (s *Server) mcpDeployProject(ctx context.Context, id int64, profiles []stri
 	// folder unless the project is explicitly opted in. Deploying through MCP with
 	// the weaker resolver would have quietly produced a different deployment than
 	// the same button in the UI, and skipped that refusal.
-	env, files, note, cleanup, seed, err := s.projectDeployEnv(ctx, p, dir)
+	env, files, note, cleanup, seed, err := s.projectDeployEnv(ctx, p, dir, profiles)
 	if err != nil {
 		return "", err
 	}
@@ -78,7 +82,6 @@ func (s *Server) mcpDeployProject(ctx context.Context, id int64, profiles []stri
 	// returns an error below — so a refused deploy is not silent, even though
 	// it isn't broken out into its own policy_block/policy_warn_ack action
 	// the way the REST audit trail is.
-	profiles = docker.NormalizeProfiles(profiles)
 	blocked, warned, perr := s.evaluateDeployPolicy(ctx, p.Slug, dir, profiles, env, files)
 	if perr != nil {
 		return "", fmt.Errorf("policy check failed, refusing to deploy for safety: %w", perr)
@@ -154,21 +157,20 @@ func (s *Server) mcpPreviewProject(ctx context.Context, id int64) (mcp.ProjectPr
 	if serr != nil {
 		return out, serr
 	}
-	// Resolve with EVERY profile the compose file declares, not none — Compose
-	// silently omits a service gated behind an inactive profile from a
-	// zero-profile `compose config`, which would otherwise make this preview
-	// (shared by the REST /projects/{id}/preview endpoint) report any
-	// profile-using service as falsely "removed". domain_handlers.go's
-	// resolvedComposeServices and image_update_poller.go's
-	// buildProjectImagePreviewChecked already do this for the same reason.
-	profiles, perr := docker.ComposeProfilesEnv(ctx, dir, p.Slug, masked)
-	if perr != nil {
-		// No profiles to enumerate is not fatal on its own — a compose file
-		// with none declared, or a transient CLI hiccup — fall through and
-		// resolve with the default (no-profile) set rather than failing outright.
-		profiles = nil
-	}
-	cfgJSON, err := docker.ComposeConfigJSONFiles(ctx, dir, p.Slug, profiles, masked, nil)
+	// Resolve with the profiles the project's LAST successful deploy actually
+	// used — NOT none (Compose silently omits a service gated behind an
+	// inactive profile from a zero-profile `compose config`, which would
+	// otherwise make a running profiled service falsely report as
+	// "removed"), and NOT every profile the compose file declares either: a
+	// preview compares "what's running" against "what a redeploy would
+	// produce", and a redeploy through this same path reuses
+	// LastDeployedProfiles — enabling every declared profile instead would
+	// make preview report a currently-inactive profiled service as falsely
+	// "added". (domain_handlers.go's resolvedComposeServices and
+	// image_update_poller.go's buildProjectImagePreviewChecked DO want every
+	// profile — they're listing possible services, not previewing a specific
+	// redeploy — so this deliberately doesn't reuse either of those.)
+	cfgJSON, err := docker.ComposeConfigJSONFiles(ctx, dir, p.Slug, p.LastDeployedProfiles, masked, nil)
 	if err != nil {
 		// An invalid compose file is the single most useful thing a preview can
 		// report, so it comes back as a result rather than an error.

@@ -875,7 +875,7 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 	body.Profiles = docker.NormalizeProfiles(body.Profiles)
 	build := body.Build == nil || *body.Build
 	dir := s.projectRoot(p.ID)
-	env, files, note, cleanup, seed, err := s.projectDeployEnv(r.Context(), p, dir)
+	env, files, note, cleanup, seed, err := s.projectDeployEnv(r.Context(), p, dir, body.Profiles)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -1500,8 +1500,16 @@ func (s *Server) projectHost(ctx context.Context, p *store.Project) (*store.Host
 // The project's secrets are appended as real, decrypted "NAME=value" env
 // last — this is the one path that must receive the real value, since it's
 // what an actual deploy runs with.
-func (s *Server) projectDeployEnv(ctx context.Context, p *store.Project, dir string) (env, files []string, note string, cleanup func(), seed func(context.Context) error, err error) {
-	env, files, note, cleanup, seed, err = s.projectDeployEnvBase(ctx, p, dir)
+//
+// profiles is the set the CALLER is about to deploy/restore with — it must
+// be used to resolve bind classification below, not nil/none: Compose omits
+// a service gated behind an inactive profile from a zero-profile `compose
+// config`, so a bind mount on a profiled service would otherwise go
+// unclassified (neither internal nor external) whenever that profile is the
+// one actually being activated, silently skipping both the seed/override
+// step AND the external-bind opt-in refusal for that service's mount.
+func (s *Server) projectDeployEnv(ctx context.Context, p *store.Project, dir string, profiles []string) (env, files []string, note string, cleanup func(), seed func(context.Context) error, err error) {
+	env, files, note, cleanup, seed, err = s.projectDeployEnvBase(ctx, p, dir, profiles)
 	if err != nil {
 		return env, files, note, cleanup, seed, err
 	}
@@ -1514,7 +1522,7 @@ func (s *Server) projectDeployEnv(ctx context.Context, p *store.Project, dir str
 	return env, files, note, cleanup, seed, nil
 }
 
-func (s *Server) projectDeployEnvBase(ctx context.Context, p *store.Project, dir string) (env, files []string, note string, cleanup func(), seed func(context.Context) error, err error) {
+func (s *Server) projectDeployEnvBase(ctx context.Context, p *store.Project, dir string, profiles []string) (env, files []string, note string, cleanup func(), seed func(context.Context) error, err error) {
 	noop := func() {}
 	h, err := s.projectHost(ctx, p)
 	if err != nil {
@@ -1532,7 +1540,7 @@ func (s *Server) projectDeployEnvBase(ctx context.Context, p *store.Project, dir
 	if err != nil {
 		return nil, nil, "", noop, nil, err
 	}
-	cfgJSON, err := docker.ComposeConfigJSONFiles(ctx, dir, p.Slug, nil, preflightMasked, nil)
+	cfgJSON, err := docker.ComposeConfigJSONFiles(ctx, dir, p.Slug, profiles, preflightMasked, nil)
 	if err != nil {
 		return nil, nil, "", noop, nil, fmt.Errorf("cannot validate the compose file for remote deploy: %v", err)
 	}
