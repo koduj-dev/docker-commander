@@ -152,23 +152,32 @@ func (m *Manager) RunningImageDigest(ctx context.Context, hostID int64, containe
 	if err != nil {
 		return "", nil // image since removed/pruned — not worth surfacing as an error here
 	}
-	if len(img.RepoDigests) == 1 {
-		if at := strings.LastIndexByte(img.RepoDigests[0], '@'); at >= 0 {
-			return img.RepoDigests[0][at+1:], nil
-		}
-	}
 	repo, ok := repoPathForRef(ref, registryHost(ref))
 	if !ok {
 		return "", nil
 	}
-	for _, rd := range img.RepoDigests {
+	return matchRepoDigest(img.RepoDigests, repo), nil
+}
+
+// matchRepoDigest returns the digest from repoDigests (each formatted
+// "repo@sha256:...", as Docker's ImageInspect reports them) whose repository
+// matches repo, or "" if none does.
+//
+// Deliberately NO fast path for len(repoDigests) == 1: even a single entry
+// must still be checked against repo, not returned unconditionally. A
+// locally re-tagged image — or one sharing a base layer's digest with an
+// unrelated image — can carry exactly one RepoDigest from a repository that
+// ISN'T repo, and handing that back regardless produces a persistent false
+// digest-drift instead of correctly reporting "no digest for this ref".
+func matchRepoDigest(repoDigests []string, repo string) string {
+	for _, rd := range repoDigests {
 		at := strings.LastIndexByte(rd, '@')
 		if at < 0 {
 			continue
 		}
 		if strings.HasSuffix(strings.ToLower(rd[:at]), "/"+repo) || strings.EqualFold(rd[:at], repo) {
-			return rd[at+1:], nil
+			return rd[at+1:]
 		}
 	}
-	return "", nil
+	return ""
 }
