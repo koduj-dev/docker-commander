@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"path"
 	"sort"
 	"strings"
 )
@@ -93,7 +94,7 @@ func EvaluatePolicy(configJSON []byte, modes map[PolicyRuleID]PolicyMode) ([]Pol
 			add(RuleHostPID, name, "uses the host's PID namespace")
 		}
 		for _, v := range svc.Volumes {
-			if v.Type == "bind" && (strings.HasSuffix(v.Source, "docker.sock") || strings.HasSuffix(v.Target, "docker.sock")) {
+			if v.Type == "bind" && mountsDockerSocket(v.Source, v.Target) {
 				add(RuleDockerSocket, name, "mounts the Docker socket")
 				break
 			}
@@ -111,6 +112,38 @@ func EvaluatePolicy(configJSON []byte, modes map[PolicyRuleID]PolicyMode) ([]Pol
 		}
 	}
 	return out, nil
+}
+
+// dockerSocketCandidatePaths are the default locations dockerd listens on
+// (rootful default, and its /run alias; rootless sockets live under
+// /run/user/<uid>/docker.sock, which the "/run" ancestor check below already
+// covers regardless of uid).
+var dockerSocketCandidatePaths = []string{
+	"/var/run/docker.sock",
+	"/run/docker.sock",
+}
+
+// mountsDockerSocket reports whether a bind mount exposes a working
+// docker.sock inside the container — either because source/target names the
+// socket file directly, or because source is "/" or an ANCESTOR directory of
+// a well-known socket location (e.g. "/var/run", "/run"), which hands the
+// container the socket just as surely as mounting the file itself, but
+// doesn't match on a bare suffix check of the mount's own strings.
+func mountsDockerSocket(source, target string) bool {
+	source = path.Clean(source)
+	target = path.Clean(target)
+	if strings.HasSuffix(source, "docker.sock") || strings.HasSuffix(target, "docker.sock") {
+		return true
+	}
+	if source == "/" {
+		return true
+	}
+	for _, candidate := range dockerSocketCandidatePaths {
+		if source == candidate || strings.HasPrefix(candidate, source+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // isLatestTag reports whether ref is unpinned: no digest, and either no tag

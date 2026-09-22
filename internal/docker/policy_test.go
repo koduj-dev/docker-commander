@@ -69,6 +69,51 @@ func TestEvaluatePolicy_DockerSocketMount_OrdinaryBindVolumeIsFine(t *testing.T)
 	}
 }
 
+// TestEvaluatePolicy_DockerSocketMount_ParentDirectoryBypass guards against a
+// regression of a real bypass: a bare suffix check on source/target only
+// catches a bind that names docker.sock directly. Binding an ANCESTOR
+// directory of the socket (e.g. host /var/run into the container) hands the
+// container a working docker.sock just the same, without either path string
+// ending in "docker.sock".
+func TestEvaluatePolicy_DockerSocketMount_ParentDirectoryBypass(t *testing.T) {
+	cases := []struct {
+		name   string
+		source string
+		target string
+	}{
+		{"var-run-self", "/var/run", "/var/run"},
+		{"var-run-renamed-target", "/var/run", "/host-run"},
+		{"run-self", "/run", "/run"},
+		{"run-trailing-slash", "/run/", "/host-run"},
+		{"root", "/", "/host"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := `{"services":{"web":{"image":"nginx:1.27","volumes":[
+				{"type":"bind","source":"` + tc.source + `","target":"` + tc.target + `"}
+			]}}}`
+			v, _ := EvaluatePolicy([]byte(cfg), allModes(ModeBlock))
+			if !hasViolation(v, RuleDockerSocket, "web") {
+				t.Errorf("bind of %q (ancestor of docker.sock) must trigger docker_socket_mount, got %+v", tc.source, v)
+			}
+		})
+	}
+}
+
+// TestEvaluatePolicy_DockerSocketMount_UnrelatedDeepPathIsFine ensures the
+// ancestor check doesn't over-fire: a bind of some unrelated directory that
+// merely shares a path segment with a docker.sock location must not trip the
+// rule.
+func TestEvaluatePolicy_DockerSocketMount_UnrelatedDeepPathIsFine(t *testing.T) {
+	cfg := `{"services":{"web":{"image":"nginx:1.27","volumes":[
+		{"type":"bind","source":"/var/run/secrets/app","target":"/secrets"}
+	]}}}`
+	v, _ := EvaluatePolicy([]byte(cfg), allModes(ModeBlock))
+	if hasViolation(v, RuleDockerSocket, "web") {
+		t.Errorf("a bind of an unrelated directory under /var/run must not trigger docker_socket_mount, got %+v", v)
+	}
+}
+
 func TestEvaluatePolicy_LatestTagVariants(t *testing.T) {
 	cases := []struct {
 		image      string

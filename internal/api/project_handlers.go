@@ -865,7 +865,7 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 	body.Profiles = docker.NormalizeProfiles(body.Profiles)
 	build := body.Build == nil || *body.Build
 	dir := s.projectRoot(p.ID)
-	env, files, note, cleanup, err := s.projectDeployEnv(r.Context(), p, dir)
+	env, files, note, cleanup, seed, err := s.projectDeployEnv(r.Context(), p, dir)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -874,6 +874,14 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 	if resp, refused := s.policyCheckOrRefuse(r, p, dir, body.Profiles, env, files, body.ConfirmPolicyWarnings, policyKindDeploy); refused {
 		writeJSON(w, http.StatusOK, resp)
 		return
+	}
+	// Only after policy has passed does any remote-side write happen — see
+	// the seed doc comment on projectDeployEnv.
+	if seed != nil {
+		if err := seed(r.Context()); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	upFn := docker.ComposeUpFiles
 	if body.Pull {
@@ -1467,34 +1475,44 @@ func (s *Server) projectHost(ctx context.Context, p *store.Project) (*store.Host
 // a seeded named volume on that host and repointed by a generated override; binds
 // pointing outside the project folder are refused rather than mounted blind on
 // the remote. Returns the extra `-f` files (empty for a local deploy), a note to
-// show the user, and a cleanup that must always be called.
+// show the user, a cleanup that must always be called, and a seed function.
+//
+// seed performs the one mutating, remote-side step (copying the project's bind
+// sources into their seeded volumes) and is deliberately NOT invoked here — it
+// is nil when there is nothing to seed (local deploy, or a remote deploy with
+// no internal binds). Every caller MUST run its policy check against the env
+// and files this returns and only invoke seed() after that check passes: the
+// resolved env/files (and the override file's content) never depend on
+// seed() having run, so a policy-blocked deploy/restore never mutates the
+// remote host at all — see the callers in project_handlers.go,
+// project_revisions_handlers.go and mcp_projects.go.
 //
 // The project's secrets are appended as real, decrypted "NAME=value" env
 // last — this is the one path that must receive the real value, since it's
 // what an actual deploy runs with.
-func (s *Server) projectDeployEnv(ctx context.Context, p *store.Project, dir string) (env, files []string, note string, cleanup func(), err error) {
-	env, files, note, cleanup, err = s.projectDeployEnvBase(ctx, p, dir)
+func (s *Server) projectDeployEnv(ctx context.Context, p *store.Project, dir string) (env, files []string, note string, cleanup func(), seed func(context.Context) error, err error) {
+	env, files, note, cleanup, seed, err = s.projectDeployEnvBase(ctx, p, dir)
 	if err != nil {
-		return env, files, note, cleanup, err
+		return env, files, note, cleanup, seed, err
 	}
 	real, _, _, serr := s.projectSecretEnvs(ctx, p.ID)
 	if serr != nil {
 		cleanup()
-		return nil, nil, "", func() {}, serr
+		return nil, nil, "", func() {}, nil, serr
 	}
 	env = append(env, real...)
-	return env, files, note, cleanup, nil
+	return env, files, note, cleanup, seed, nil
 }
 
-func (s *Server) projectDeployEnvBase(ctx context.Context, p *store.Project, dir string) (env, files []string, note string, cleanup func(), err error) {
+func (s *Server) projectDeployEnvBase(ctx context.Context, p *store.Project, dir string) (env, files []string, note string, cleanup func(), seed func(context.Context) error, err error) {
 	noop := func() {}
 	h, err := s.projectHost(ctx, p)
 	if err != nil {
-		return nil, nil, "", noop, err
+		return nil, nil, "", noop, nil, err
 	}
 	if h == nil || h.Kind == "" || h.Kind == "local" {
 		env, cleanup, err = s.projectComposeEnv(ctx, p, dir)
-		return env, nil, "", cleanup, err
+		return env, nil, "", cleanup, nil, err
 	}
 	// Fail closed: without a resolved config we can't prove which paths this
 	// project would mount on the remote host, so don't deploy at all. Only
@@ -1502,45 +1520,45 @@ func (s *Server) projectDeployEnvBase(ctx context.Context, p *store.Project, dir
 	// it doesn't need a real secret value, just successful interpolation.
 	_, preflightMasked, _, err := s.projectSecretEnvs(ctx, p.ID)
 	if err != nil {
-		return nil, nil, "", noop, err
+		return nil, nil, "", noop, nil, err
 	}
 	cfgJSON, err := docker.ComposeConfigJSONFiles(ctx, dir, p.Slug, nil, preflightMasked, nil)
 	if err != nil {
-		return nil, nil, "", noop, fmt.Errorf("cannot validate the compose file for remote deploy: %v", err)
+		return nil, nil, "", noop, nil, fmt.Errorf("cannot validate the compose file for remote deploy: %v", err)
 	}
 	internal, external, err := docker.ClassifyProjectBinds(cfgJSON, dir)
 	if err != nil {
-		return nil, nil, "", noop, fmt.Errorf("cannot inspect the project's bind mounts: %v", err)
+		return nil, nil, "", noop, nil, fmt.Errorf("cannot inspect the project's bind mounts: %v", err)
 	}
 	// Binds from outside the project folder address paths on the remote host, so
 	// they're refused unless the project was explicitly opted in (which needs the
 	// "hosts" permission). Opted in, they're passed through untouched — we can't
 	// ship what we can't see — and the note tells the user exactly which ones.
 	if len(external) > 0 && !p.AllowRemoteHostPaths {
-		return nil, nil, "", noop, fmt.Errorf("remote deploy to %q refuses bind mounts from outside the project folder, because they would mount paths on the remote host: %s — enable \"allow host paths\" in the project's settings if that is intended", h.Name, joinBinds(external))
+		return nil, nil, "", noop, nil, fmt.Errorf("remote deploy to %q refuses bind mounts from outside the project folder, because they would mount paths on the remote host: %s — enable \"allow host paths\" in the project's settings if that is intended", h.Name, joinBinds(external))
 	}
 	if env, cleanup, err = docker.ComposeHostEnv(h); err != nil {
-		return nil, nil, "", noop, err
+		return nil, nil, "", noop, nil, err
 	}
 	if len(internal) == 0 {
 		// Nothing to ship, but any passed-through host paths still need saying.
-		return env, nil, remoteBindNote(nil, external), cleanup, nil
+		return env, nil, remoteBindNote(nil, external), cleanup, nil, nil
 	}
-	if err = s.docker.SeedProjectBinds(ctx, p.HostID, dir, p.Slug, internal); err != nil {
-		cleanup()
-		return nil, nil, "", noop, fmt.Errorf("copying the project files to %q failed: %v", h.Name, err)
-	}
+	// BindOverrideJSON only needs the bind CLASSIFICATION (source/target/slug),
+	// never the seeded volume's actual content, so it — and everything the
+	// policy check resolves from it — can be computed before any remote
+	// write happens.
 	ov, err := docker.BindOverrideJSON(p.Slug, internal)
 	if err != nil {
 		cleanup()
-		return nil, nil, "", noop, err
+		return nil, nil, "", noop, nil, err
 	}
 	// Keep the override outside the project folder so it never shows up in the
 	// user's file tree or a .zip export.
 	f, err := os.CreateTemp("", "dc-bind-override-*.json")
 	if err != nil {
 		cleanup()
-		return nil, nil, "", noop, err
+		return nil, nil, "", noop, nil, err
 	}
 	path := f.Name()
 	_, werr := f.Write(ov)
@@ -1551,11 +1569,18 @@ func (s *Server) projectDeployEnvBase(ctx context.Context, p *store.Project, dir
 	if werr != nil {
 		_ = os.Remove(path)
 		cleanup()
-		return nil, nil, "", noop, werr
+		return nil, nil, "", noop, nil, werr
 	}
 	tlsCleanup := cleanup
 	cleanup = func() { _ = os.Remove(path); tlsCleanup() }
-	return env, []string{p.ComposeFile, path}, remoteBindNote(internal, external), cleanup, nil
+	hostID, slug, seedDir, binds := p.HostID, p.Slug, dir, internal
+	seed = func(seedCtx context.Context) error {
+		if err := s.docker.SeedProjectBinds(seedCtx, hostID, seedDir, slug, binds); err != nil {
+			return fmt.Errorf("copying the project files to %q failed: %v", h.Name, err)
+		}
+		return nil
+	}
+	return env, []string{p.ComposeFile, path}, remoteBindNote(internal, external), cleanup, seed, nil
 }
 
 // joinBinds renders binds for a user-facing error message.

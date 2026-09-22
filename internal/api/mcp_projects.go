@@ -67,7 +67,7 @@ func (s *Server) mcpDeployProject(ctx context.Context, id int64, profiles []stri
 	// folder unless the project is explicitly opted in. Deploying through MCP with
 	// the weaker resolver would have quietly produced a different deployment than
 	// the same button in the UI, and skipped that refusal.
-	env, files, note, cleanup, err := s.projectDeployEnv(ctx, p, dir)
+	env, files, note, cleanup, seed, err := s.projectDeployEnv(ctx, p, dir)
 	if err != nil {
 		return "", err
 	}
@@ -88,6 +88,13 @@ func (s *Server) mcpDeployProject(ctx context.Context, id int64, profiles []stri
 	}
 	if len(warned) > 0 && !confirmPolicyWarnings {
 		return "", fmt.Errorf("policy warnings require confirmation (retry with confirm_policy_warnings=true): %s", policyViolationSummary(warned))
+	}
+	// Only after policy has passed does any remote-side write happen — see
+	// the seed doc comment on projectDeployEnv.
+	if seed != nil {
+		if err := seed(ctx); err != nil {
+			return "", err
+		}
 	}
 
 	// Rebuild, matching the web UI. Not a widening of the MCP surface: `up`

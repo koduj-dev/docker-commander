@@ -440,7 +440,7 @@ func (s *Server) handleRestoreRevision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	env, files, note, cleanup, err := s.projectDeployEnv(r.Context(), p, staging)
+	env, files, note, cleanup, seed, err := s.projectDeployEnv(r.Context(), p, staging)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -477,11 +477,34 @@ func (s *Server) handleRestoreRevision(w http.ResponseWriter, r *http.Request) {
 		files = append(files, pinPath)
 	}
 
-	// MUTATION-TEST-TEMP: policy check moved after swap to prove the
-	// regression test catches the pre-fix ordering bug.
-	// Everything has validated against the staged copy — only now does the
-	// live project directory get touched, via a rename swap with the
-	// previous contents kept as `backup` until the deploy below succeeds.
+	// Policy is evaluated against `staging` — BEFORE anything live is
+	// touched: no remote seeding (seed(), below) and no swap of the local
+	// project directory. staging holds exactly the files that will become
+	// the live project root a few lines down, so this resolves the identical
+	// compose model ComposeUpFiles will actually deploy; only the directory
+	// it's read from differs, not its content. A block-mode violation (or an
+	// un-confirmed warn) must refuse here, with nothing on disk or on any
+	// remote host mutated yet — see the docker_socket_mount bypass and
+	// remote-seed-before-policy-check findings this fixes.
+	if resp, refused := s.policyCheckOrRefuse(r, p, staging, rev.Profiles, env, files, body.ConfirmPolicyWarnings, policyKindRestore); refused {
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
+	// Only now, after policy has passed, does any remote-side write happen —
+	// see the seed doc comment on projectDeployEnv. A rejected restore never
+	// reaches this line, so it never overwrites a live remote-mounted volume.
+	if seed != nil {
+		if err := seed(r.Context()); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+
+	// Everything has validated and, for a remote project, been seeded —
+	// only now does the live project directory get touched, via a rename
+	// swap with the previous contents kept as `backup` until the deploy
+	// below succeeds.
 	_, statErr := os.Stat(root)
 	rootExisted := statErr == nil
 	if rootExisted {
@@ -510,11 +533,6 @@ func (s *Server) handleRestoreRevision(w http.ResponseWriter, r *http.Request) {
 			_ = os.Rename(backup, root)
 		}
 	}()
-
-	if resp, refused := s.policyCheckOrRefuse(r, p, root, rev.Profiles, env, files, body.ConfirmPolicyWarnings, policyKindRestore); refused {
-		writeJSON(w, http.StatusOK, resp)
-		return
-	}
 
 	// Restoring means going back to what ran then — rebuilding a `build:`
 	// service against today's source would silently defeat that, so this
