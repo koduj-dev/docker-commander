@@ -414,12 +414,14 @@ the security property alone, independent of the NAT-traversal convenience.
   `ServiceSpec` (name+image only) to also read networks/volumes/depends_on/ports.
   Scope v1 to a single static file, best-effort — full multi-file/`extends`/
   `profiles` resolution is more compose surface than a visualizer needs.
-- **Top talkers polish.** Two separate gaps, filed together since they're the
-  same feature: the dashboard widget renders as a plain unstyled table (no
-  design pass, looks out of place next to the rest of the dashboard); the
-  full Top Talkers page has no filtering/pagination/limit at all — a host
-  with a few hundred containers renders every one of them in one unbounded
-  list.
+- **Top talkers: filtering + a visible cap.** The dashboard widget and the
+  full Top Talkers page both already use the app's normal card/table
+  styling, and the page already caps the request at 50 (`api.topTalkers`'s
+  `limit` argument) — not unbounded. The actual gap: `TopTalkers` (the
+  response type) carries no total count, so on a host with more than 50
+  active containers the page silently shows only the top 50 with no
+  indication anything was cut off, and there's no way to filter by host or
+  name to find a specific one outside that top 50.
 - **Troubleshooting page: collapsible sections + KPI summary.** The page's
   layout itself is fine, but every check section renders fully expanded
   always, so the page is a long scroll even when everything is green. Make
