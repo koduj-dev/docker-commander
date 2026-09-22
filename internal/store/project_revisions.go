@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -40,15 +41,20 @@ type ProjectRevision struct {
 // CreateRevision numbers rev one past the project's current highest revision
 // (1 for the first ever) and inserts it. Callers set every field except
 // Revision/ID/CreatedAt, which this fills in.
-func (s *Store) CreateRevision(ctx context.Context, rev *ProjectRevision) (int64, error) {
-	var maxRev int
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT COALESCE(MAX(revision), 0) FROM project_revisions WHERE project_id = ?`, rev.ProjectID,
-	).Scan(&maxRev); err != nil {
-		return 0, err
-	}
-	rev.Revision = maxRev + 1
+//
+// The number + insert run inside one transaction — not two unlocked
+// statements — so two concurrent successful deploys of the SAME project
+// can't both read the same max and collide on project_revisions' UNIQUE
+// (project_id, revision) constraint. The store's single-connection pool
+// (see store.go's SetMaxOpenConns(1)) means a second CreateRevision call
+// simply blocks for a free connection until the first transaction commits,
+// rather than racing it. maxRetries is belt-and-braces on top of that: it
+// also protects a caller from ever silently losing a revision row if a
+// collision somehow still occurs (e.g. a future change relaxes the
+// single-connection assumption).
+const createRevisionMaxRetries = 5
 
+func (s *Store) CreateRevision(ctx context.Context, rev *ProjectRevision) (int64, error) {
 	profilesJSON, err := json.Marshal(rev.Profiles)
 	if err != nil {
 		return 0, err
@@ -57,23 +63,64 @@ func (s *Store) CreateRevision(ctx context.Context, rev *ProjectRevision) (int64
 	if err != nil {
 		return 0, err
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	res, err := s.db.ExecContext(ctx, `
+
+	var id int64
+	var createdAt string
+	for attempt := 0; ; attempt++ {
+		id, createdAt, err = s.createRevisionOnce(ctx, rev, string(profilesJSON), string(imagesJSON))
+		if err == nil {
+			break
+		}
+		if !strings.Contains(err.Error(), "UNIQUE") || attempt >= createRevisionMaxRetries {
+			return 0, err
+		}
+		// Another transaction inserted the same revision number between our
+		// SELECT MAX and INSERT (only possible if something outside this
+		// store's own single-connection serialization raced it) — retry with
+		// a freshly read max rather than dropping this revision on the floor.
+	}
+	rev.ID = id
+	rev.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	return id, nil
+}
+
+// createRevisionOnce reads the current max and inserts the next revision
+// number in one transaction, so no other CreateRevision call can observe or
+// act on a max value this transaction is about to make stale.
+func (s *Store) createRevisionOnce(ctx context.Context, rev *ProjectRevision, profilesJSON, imagesJSON string) (id int64, createdAt string, err error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, "", err
+	}
+	defer tx.Rollback() //nolint:errcheck // rolled back unless committed
+
+	var maxRev int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(revision), 0) FROM project_revisions WHERE project_id = ?`, rev.ProjectID,
+	).Scan(&maxRev); err != nil {
+		return 0, "", err
+	}
+	nextRev := maxRev + 1
+
+	createdAt = time.Now().UTC().Format(time.RFC3339)
+	res, err := tx.ExecContext(ctx, `
 		INSERT INTO project_revisions
 			(project_id, revision, host_id, profiles, images, valid, validation_error, output, author, reason, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		rev.ProjectID, rev.Revision, rev.HostID, string(profilesJSON), string(imagesJSON),
-		boolToInt(rev.Valid), rev.ValidationError, rev.Output, rev.Author, rev.Reason, now)
+		rev.ProjectID, nextRev, rev.HostID, profilesJSON, imagesJSON,
+		boolToInt(rev.Valid), rev.ValidationError, rev.Output, rev.Author, rev.Reason, createdAt)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
-	id, err := res.LastInsertId()
+	id, err = res.LastInsertId()
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
-	rev.ID = id
-	rev.CreatedAt, _ = time.Parse(time.RFC3339, now)
-	return id, nil
+	if err := tx.Commit(); err != nil {
+		return 0, "", err
+	}
+	rev.Revision = nextRev
+	return id, createdAt, nil
 }
 
 // ListRevisions returns every revision for a project, newest first.

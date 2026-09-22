@@ -80,6 +80,29 @@ func TestBackupRestoreRoundTrip(t *testing.T) {
 	}
 }
 
+// TestBackupRestoreRoundTrip_ProjectRevisions is the regression test for the
+// finding that dataDirEntries omitted project-revisions: a "complete" backup
+// carried a revision's DB row (which reads valid=true) but not the on-disk
+// zip snapshot it points at, so a restored instance's revision diff/restore
+// would fail at os.ReadFile despite the DB claiming the revision was fine.
+func TestBackupRestoreRoundTrip_ProjectRevisions(t *testing.T) {
+	src := seedDataDir(t)
+	mustWrite(t, filepath.Join(src, "project-revisions", "3", "1.zip"), "PK-ZIP-CONTENT")
+	archive := filepath.Join(t.TempDir(), "b.tar.gz")
+
+	if _, err := Create(src, archive, fakeDB{"SNAPSHOT-DB"}, ""); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	dst := filepath.Join(t.TempDir(), "restored")
+	if err := Restore(archive, dst, "", false); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+
+	if got := read(t, filepath.Join(dst, "project-revisions", "3", "1.zip")); got != "PK-ZIP-CONTENT" {
+		t.Errorf("revision snapshot not restored: %q", got)
+	}
+}
+
 func TestBackupRestoreRoundTrip_Encrypted(t *testing.T) {
 	src := seedDataDir(t)
 	archive := filepath.Join(t.TempDir(), "b.enc")
