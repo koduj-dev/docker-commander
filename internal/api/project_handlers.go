@@ -387,6 +387,16 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "could not remove files: "+err.Error())
 		return
 	}
+	// Revision snapshots (project_revisions.go's zipDir of the whole project
+	// directory, so potentially carrying .env/secrets just like the project
+	// root above) live in a SEPARATE directory that store.DeleteProject's own
+	// doc comment explicitly leaves to the caller — it only removes the DB
+	// rows. Skipping this leaves those files orphaned on disk forever, with
+	// no reachable DB record and outside what a routine backup captures.
+	if err := os.RemoveAll(s.projectRevisionsDir(p.ID)); err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not remove revision snapshots: "+err.Error())
+		return
+	}
 	if err := s.store.DeleteProject(r.Context(), p.ID); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

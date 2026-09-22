@@ -67,6 +67,35 @@ func projectReq(method, target string, id int64, body io.Reader) *http.Request {
 	return r.WithContext(auth.WithClaims(ctx, &auth.Claims{UserID: 1, Role: "admin"}))
 }
 
+// TestDeleteProject_RemovesRevisionSnapshots is the regression test for the
+// finding that deleting a project left its revision ZIP snapshots (each one
+// a full zip of the project directory at deploy time, so potentially
+// carrying .env/secrets) orphaned on disk with no reachable DB record —
+// store.DeleteProject's own doc comment says the CALLER removes them, but no
+// caller did.
+func TestDeleteProject_RemovesRevisionSnapshots(t *testing.T) {
+	srv, id := newProjectServer(t)
+	p, err := srv.store.ProjectByID(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.captureRevision(context.Background(), p, nil, "test output", "test", "tester")
+	revDir := srv.projectRevisionsDir(id)
+	if _, err := os.Stat(revDir); err != nil {
+		t.Fatalf("revision snapshot dir should exist before delete: %v", err)
+	}
+
+	r := projectReq("DELETE", "/api/projects/x", id, nil)
+	w := httptest.NewRecorder()
+	srv.handleDeleteProject(w, r)
+	if w.Code != 200 {
+		t.Fatalf("delete status = %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(revDir); !os.IsNotExist(err) {
+		t.Errorf("revision snapshot dir should be removed after project delete, stat err = %v", err)
+	}
+}
+
 func TestOverlayProject(t *testing.T) {
 	srv, id := newProjectServer(t)
 	root := srv.projectRoot(id)

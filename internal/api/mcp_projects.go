@@ -154,7 +154,21 @@ func (s *Server) mcpPreviewProject(ctx context.Context, id int64) (mcp.ProjectPr
 	if serr != nil {
 		return out, serr
 	}
-	cfgJSON, err := docker.ComposeConfigJSONFiles(ctx, dir, p.Slug, nil, masked, nil)
+	// Resolve with EVERY profile the compose file declares, not none — Compose
+	// silently omits a service gated behind an inactive profile from a
+	// zero-profile `compose config`, which would otherwise make this preview
+	// (shared by the REST /projects/{id}/preview endpoint) report any
+	// profile-using service as falsely "removed". domain_handlers.go's
+	// resolvedComposeServices and image_update_poller.go's
+	// buildProjectImagePreviewChecked already do this for the same reason.
+	profiles, perr := docker.ComposeProfilesEnv(ctx, dir, p.Slug, masked)
+	if perr != nil {
+		// No profiles to enumerate is not fatal on its own — a compose file
+		// with none declared, or a transient CLI hiccup — fall through and
+		// resolve with the default (no-profile) set rather than failing outright.
+		profiles = nil
+	}
+	cfgJSON, err := docker.ComposeConfigJSONFiles(ctx, dir, p.Slug, profiles, masked, nil)
 	if err != nil {
 		// An invalid compose file is the single most useful thing a preview can
 		// report, so it comes back as a result rather than an error.
