@@ -7,7 +7,7 @@ import { Resources } from "./Resources";
 import { api } from "../lib/api";
 import type { ResourceOverview, ResourceUsage } from "../lib/types";
 
-vi.mock("../lib/api", () => ({ api: { statsOverview: vi.fn(), hosts: () => Promise.resolve([]) } }));
+vi.mock("../lib/api", () => ({ api: { statsOverview: vi.fn(), hosts: () => Promise.resolve([]), savePrefs: () => Promise.resolve() } }));
 
 const GB = 1024 ** 3;
 const u = (name: string, cpuPercent: number, memBytes: number): ResourceUsage => ({
@@ -75,9 +75,9 @@ describe("Resources page", () => {
   });
 
   it("filters by name and shows a specific empty state for no match", async () => {
-    await act(async () => typeInto(container.querySelector('input[type="search"]')!, "web"));
+    await act(async () => typeInto(container.querySelector('input.input')!, "web"));
     expect(names()).toEqual(["web"]);
-    await act(async () => typeInto(container.querySelector('input[type="search"]')!, "zzz"));
+    await act(async () => typeInto(container.querySelector('input.input')!, "zzz"));
     expect(container.textContent).toContain("No container matches that name");
   });
 

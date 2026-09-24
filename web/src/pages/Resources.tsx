@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Boxes, Cpu, HardDrive, ArrowDownUp } from "lucide-react";
 import { api } from "../lib/api";
 import type { ResourceOverview } from "../lib/types";
 import { bytes, coresLabel, cpuCores, rate } from "../lib/format";
-import { filterUsage, sortUsage, type UsageSortKey } from "../lib/resources";
+import { sortUsage, type UsageSortKey } from "../lib/resources";
+import { Pager, SearchBar, useListControls } from "../components/ListControls";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner, StatCard } from "../components/ui";
 import { SortHeader } from "../components/ResourceTable";
@@ -25,7 +26,6 @@ export function Resources() {
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [sort, setSort] = useState<UsageSortKey>("mem");
   const [desc, setDesc] = useState(true);
-  const [text, setText] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -51,13 +51,17 @@ export function Resources() {
   const memUsed = containers.reduce((n, c) => n + c.memBytes, 0);
   const rx = containers.reduce((n, c) => n + c.netRxRate, 0);
   const tx = containers.reduce((n, c) => n + c.netTxRate, 0);
-  const rows = sortUsage(filterUsage(containers, text), sort, desc);
+  // Sort first, then let the shared list controls filter + paginate the sorted
+  // rows — the same full-width search bar and pager every other list uses.
+  const sorted = useMemo(() => sortUsage(containers, sort, desc), [containers, sort, desc]);
+  const controls = useListControls(sorted, (c, q) => c.name.toLowerCase().includes(q), { storageKey: "resources" });
+  const rows = controls.pageItems;
 
   return (
     <>
       <PageHeader
         title="Resources"
-        actions={updatedAt && <span className="text-xs text-muted">Updated {updatedAt.toLocaleTimeString()}</span>}
+        actions={updatedAt && <span className="text-xs text-muted">Updated {updatedAt.toLocaleTimeString()} · refreshes every 5 s</span>}
       />
       <div className="p-6 space-y-4">
         {error && <div className="text-sm text-danger">Couldn't read resource usage: {error}</div>}
@@ -72,23 +76,11 @@ export function Resources() {
               <StatCard icon={<ArrowDownUp className="h-5 w-5" />} label="Network" value={`↓ ${rate(rx)}`} sub={`↑ ${rate(tx)}`} />
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
-              <input
-                type="search"
-                className="input w-auto min-w-[14rem]"
-                placeholder="Filter by container name…"
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-              />
-              <span className="text-xs text-muted ml-auto">
-                {rows.length === containers.length ? `${containers.length} containers` : `${rows.length} of ${containers.length} containers`}
-                {" · refreshes every 5 s from the background sampler"}
-              </span>
-            </div>
+            <SearchBar controls={controls} placeholder="Search containers by name…" />
 
             {containers.length === 0 ? (
               <EmptyState title="No running containers" hint="Nothing to sample on this host." />
-            ) : rows.length === 0 ? (
+            ) : controls.filteredCount === 0 ? (
               <EmptyState title="No container matches that name" hint="Try a shorter or different filter." />
             ) : (
               <div className="card overflow-hidden">
@@ -122,6 +114,7 @@ export function Resources() {
                 </table>
               </div>
             )}
+            {containers.length > 0 && <Pager controls={controls} />}
           </>
         )}
       </div>
