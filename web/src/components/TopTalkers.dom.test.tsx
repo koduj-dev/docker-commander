@@ -56,9 +56,19 @@ describe("TopTalkers widget", () => {
   it("renders ranked rows from the API, most active first", async () => {
     vi.mocked(api.topTalkers).mockResolvedValue(response);
     await render();
-    const items = [...container.querySelectorAll("li")].map((li) => li.textContent ?? "");
+    const items = [...container.querySelectorAll("tbody tr")].map((tr) => tr.textContent ?? "");
     expect(items[0]).toContain("busy-proxy");
     expect(items[1]).toContain("quiet-db");
+  });
+
+  it("uses the same table design as Top consumers: a header row and matching row padding", async () => {
+    vi.mocked(api.topTalkers).mockResolvedValue(response);
+    await render();
+    expect([...container.querySelectorAll("thead th")].map((th) => th.textContent)).toEqual(["Container", "Received", "Sent"]);
+    // Row height comes from these classes; ResourceTable uses the same ones, so
+    // the two cards line up when they share a dashboard row.
+    expect(container.querySelector("tbody td")!.className).toContain("py-2");
+    expect(container.querySelector("tbody td")!.className).toContain("px-4");
   });
 
   it("asks for the 5-minute window by default, not a live snapshot", async () => {

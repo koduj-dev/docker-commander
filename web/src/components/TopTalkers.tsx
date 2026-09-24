@@ -30,15 +30,17 @@ export function TopTalkers({ tick = 0 }: { tick?: number }) {
     return () => clearInterval(t);
   }, [tick]);
 
+  // Same table design as ResourceTable ("Top consumers"), which sits beside
+  // this on the dashboard: card, title row, header row, same row height.
   return (
-    <div className="card p-4">
-      <div className="flex items-baseline justify-between mb-2">
+    <div className="card overflow-hidden">
+      <div className="flex items-baseline justify-between px-4 pt-4">
         <div className="text-xs uppercase tracking-wide text-muted">Top talkers · last 5 min</div>
         <Link to="/resources?tab=network" className="text-xs text-accent hover:underline">
           View all →
         </Link>
       </div>
-      {/* Only the loading/error/empty states reserve a box; a ranked list is as
+      {/* Only the loading/error/empty states reserve a box; a ranked table is as
           tall as its rows, so a short list doesn't leave dead space below it. */}
       {error && !talkers ? (
         <div className="h-32 grid place-items-center text-sm text-danger">{error}</div>
@@ -51,15 +53,26 @@ export function TopTalkers({ tick = 0 }: { tick?: number }) {
           Not enough history yet — check back in a few minutes.
         </div>
       ) : (
-        <ul className="divide-y divide-border/50">
-          {talkers.map((t, i) => (
-            <li key={t.id} className="flex items-center gap-2 text-sm py-1.5 first:pt-0 last:pb-0">
-              <span className="text-muted text-xs w-4 shrink-0 text-right">{i + 1}</span>
-              <span className="truncate flex-1" title={t.name}>{t.name}</span>
-              <span className="text-muted shrink-0 font-mono text-xs">{rate(t.rate)}</span>
-            </li>
-          ))}
-        </ul>
+        <table className="w-full text-sm mt-2">
+          <thead className="text-muted text-xs">
+            <tr className="border-b border-border">
+              <th className="text-left font-medium px-4 py-3 uppercase tracking-wide">Container</th>
+              <th className="text-right font-medium px-4 py-3 uppercase tracking-wide">Received</th>
+              <th className="text-right font-medium px-4 py-3 uppercase tracking-wide">Sent</th>
+            </tr>
+          </thead>
+          <tbody>
+            {talkers.map((t) => (
+              <tr key={t.id} className="border-b border-border/50 last:border-0">
+                <td className="px-4 py-2 font-medium w-full max-w-0 truncate">
+                  <Link to={`/containers/${t.id}`} className="hover:underline" title={t.name}>{t.name}</Link>
+                </td>
+                <td className="px-4 py-2 text-right font-mono text-xs whitespace-nowrap">{rate(t.rxRate)}</td>
+                <td className="px-4 py-2 text-right font-mono text-xs whitespace-nowrap">{rate(t.txRate)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
     </div>
   );
