@@ -30,7 +30,10 @@ func TestBuildDiskReport(t *testing.T) {
 		{Name: "remote", Driver: "nfs"}, // no usage data at all
 		{Name: "unmeasured", Driver: "x", UsageData: &volume.UsageData{Size: -1, RefCount: -1}},
 	}
-	du.BuildCache.Items = []build.CacheRecord{{Size: 30, InUse: true}, {Size: 70, InUse: false}}
+	// Aggregates as the client computes them: the Shared record (500) is in the
+	// count but excluded from TotalSize and Reclaimable.
+	du.BuildCache.Items = []build.CacheRecord{{Size: 30, InUse: true}, {Size: 70, InUse: false}, {Size: 500, InUse: false, Shared: true}}
+	du.BuildCache.TotalCount, du.BuildCache.TotalSize, du.BuildCache.Reclaimable = 3, 100, 70
 
 	r := buildDiskReport(du, time.Unix(1000, 0))
 
@@ -53,8 +56,8 @@ func TestBuildDiskReport(t *testing.T) {
 			t.Errorf("volume %q size = %d, want unknown", v.Name, v.Size)
 		}
 	}
-	if r.BuildCache.Count != 2 || r.BuildCache.Size != 100 || r.BuildCache.Reclaimable != 70 {
-		t.Errorf("build cache = %+v", r.BuildCache)
+	if r.BuildCache.Count != 3 || r.BuildCache.Size != 100 || r.BuildCache.Reclaimable != 70 {
+		t.Errorf("build cache = %+v, want the client aggregates (a Shared record must not count as reclaimable)", r.BuildCache)
 	}
 	if r.GeneratedAt != 1000 {
 		t.Errorf("generatedAt = %d", r.GeneratedAt)

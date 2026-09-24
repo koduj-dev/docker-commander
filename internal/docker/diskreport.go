@@ -108,12 +108,14 @@ func buildDiskReport(du client.DiskUsageResult, now time.Time) *DiskReport {
 		}
 		out.Volumes = append(out.Volumes, dv)
 	}
-	for _, bc := range du.BuildCache.Items {
-		out.BuildCache.Count++
-		out.BuildCache.Size += bc.Size
-		if !bc.InUse {
-			out.BuildCache.Reclaimable += bc.Size
-		}
+	// Use the client's aggregates, not a sum over Items: a record marked Shared
+	// is deliberately left out of TotalSize and Reclaimable (its layers are
+	// still referenced elsewhere), so summing every record would overstate both
+	// and promise space a prune won't free.
+	out.BuildCache = DiskBuildCache{
+		Count:       int(du.BuildCache.TotalCount),
+		Size:        du.BuildCache.TotalSize,
+		Reclaimable: du.BuildCache.Reclaimable,
 	}
 	// Ties fall back to name/id so the order is stable between refreshes.
 	sort.SliceStable(out.Images, func(i, j int) bool {
