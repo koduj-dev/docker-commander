@@ -61,6 +61,15 @@ describe("TopTalkers widget", () => {
     expect(items[1]).toContain("quiet-db");
   });
 
+  it("shows each row's rank next to its name", async () => {
+    vi.mocked(api.topTalkers).mockResolvedValue(response);
+    await render();
+    const first = container.querySelectorAll("tbody tr")[0].querySelector("td")!.textContent ?? "";
+    const second = container.querySelectorAll("tbody tr")[1].querySelector("td")!.textContent ?? "";
+    expect(first).toMatch(/^1\s*busy-proxy/);
+    expect(second).toMatch(/^2\s*quiet-db/);
+  });
+
   it("uses the same table design as Top consumers: a header row and matching row padding", async () => {
     vi.mocked(api.topTalkers).mockResolvedValue(response);
     await render();

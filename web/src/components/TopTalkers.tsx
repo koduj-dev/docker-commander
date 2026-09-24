@@ -62,9 +62,12 @@ export function TopTalkers({ tick = 0 }: { tick?: number }) {
             </tr>
           </thead>
           <tbody>
-            {talkers.map((t) => (
+            {talkers.map((t, i) => (
               <tr key={t.id} className="border-b border-border/50 last:border-0">
                 <td className="px-4 py-2 font-medium w-full max-w-0 truncate">
+                  {/* The rank stays visible (this is a ranked list) without a column of its own,
+                      so the table keeps Top consumers' design. */}
+                  <span className="inline-block w-5 mr-2 text-right text-xs font-normal text-muted">{i + 1}</span>
                   <Link to={`/containers/${t.id}`} className="hover:underline" title={t.name}>{t.name}</Link>
                 </td>
                 <td className="px-4 py-2 text-right font-mono text-xs whitespace-nowrap">{rate(t.rxRate)}</td>

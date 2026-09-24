@@ -107,7 +107,17 @@ export function StacksTab({ data }: { data: ResourceOverview }) {
                   <Fragment key={r.name}>
                     <tr className="border-b border-border/50 cursor-pointer hover:bg-panel2/40" onClick={() => toggle(r.name)}>
                       <td className="px-4 py-2.5 font-medium">
-                        <span className="inline-flex items-center gap-1.5"><Chev className="h-3.5 w-3.5 text-muted" />{r.name}</span>
+                        {/* A real button: keyboard-focusable and announces its state. The row's own
+                            click stays as a bigger mouse target, so this one stops the bubble
+                            (otherwise a click would toggle twice). */}
+                        <button
+                          type="button"
+                          aria-expanded={isOpen}
+                          className="inline-flex items-center gap-1.5 text-left"
+                          onClick={(e) => { e.stopPropagation(); toggle(r.name); }}
+                        >
+                          <Chev className="h-3.5 w-3.5 text-muted" />{r.name}
+                        </button>
                       </td>
                       <td className="px-4 py-2.5 whitespace-nowrap text-right text-xs text-muted">{r.running}/{r.total}</td>
                       <td className="px-4 py-2.5 whitespace-nowrap text-right font-mono text-xs">

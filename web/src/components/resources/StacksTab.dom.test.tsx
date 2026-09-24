@@ -67,4 +67,15 @@ describe("StacksTab", () => {
     expect(container.textContent).toContain("shop-db");
     expect(container.textContent).toContain("4.0 GB");
   });
+
+  it("the disclosure is a real button that exposes its state and toggles exactly once", async () => {
+    const btn = () => container.querySelector("tbody button[aria-expanded]") as HTMLElement;
+    expect(btn().getAttribute("aria-expanded")).toBe("false");
+    await act(async () => btn().click());
+    expect(btn().getAttribute("aria-expanded")).toBe("true"); // once, not toggled back by the row's own handler
+    expect(container.textContent).toContain("shop-db");
+    await act(async () => btn().click());
+    expect(btn().getAttribute("aria-expanded")).toBe("false");
+    expect(container.textContent).not.toContain("shop-db");
+  });
 });
