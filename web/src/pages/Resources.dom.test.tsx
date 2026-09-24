@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import { Resources } from "./Resources";
 import { api } from "../lib/api";
+import { clearPrefs } from "../lib/prefs";
 import type { ResourceOverview, ResourceUsage } from "../lib/types";
 
 vi.mock("../lib/api", () => ({
@@ -26,6 +27,7 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(async () => {
+  clearPrefs(); // the list search is remembered across mounts; don't leak it between tests
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.mocked(api.statsOverview).mockResolvedValue(overview);
   vi.mocked(api.topTalkers).mockResolvedValue(emptyTalkers);
@@ -74,6 +76,18 @@ describe("Resources page", () => {
     expect(names()).toEqual(["web", "db"]);
   });
 
+  it("exposes the active sort to assistive tech via aria-sort", async () => {
+    const th = (label: string) => [...container.querySelectorAll("th")].find((t) => t.textContent?.trim() === label) as HTMLElement;
+    expect(th("Memory").getAttribute("aria-sort")).toBe("descending"); // the default
+    expect(th("CPU").getAttribute("aria-sort")).toBeNull();
+    const cpu = th("CPU").querySelector("button") as HTMLElement;
+    await act(async () => cpu.click());
+    expect(th("CPU").getAttribute("aria-sort")).toBe("descending");
+    expect(th("Memory").getAttribute("aria-sort")).toBeNull();
+    await act(async () => cpu.click());
+    expect(th("CPU").getAttribute("aria-sort")).toBe("ascending");
+  });
+
   it("keeps equal rows in a stable (name) order regardless of direction", async () => {
     const rx = [...container.querySelectorAll("th button")].find((b) => b.textContent?.trim() === "Received") as HTMLElement;
     await act(async () => rx.click());
@@ -115,5 +129,22 @@ describe("Resources page", () => {
     root = createRoot(container);
     await act(async () => { root.render(<MemoryRouter initialEntries={["/resources?tab=bogus"]}><Resources /></MemoryRouter>); });
     expect(container.textContent).toContain("Running containers");
+  });
+
+  it("ignores a slow earlier poll that resolves after a newer one", async () => {
+    act(() => root.unmount());
+    vi.useFakeTimers();
+    let resolveSlow!: (v: ResourceOverview) => void;
+    const fresh: ResourceOverview = { ...overview, containers: [u("fresh-one", 1, GB)] };
+    const stale: ResourceOverview = { ...overview, containers: [u("stale-one", 1, GB)] };
+    vi.mocked(api.statsOverview)
+      .mockImplementationOnce(() => new Promise((res) => { resolveSlow = res; })) // initial load: slow
+      .mockResolvedValueOnce(fresh); // the poll five seconds later: fast
+    root = createRoot(container);
+    await act(async () => { root.render(<MemoryRouter><Resources /></MemoryRouter>); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(names()).toEqual(["fresh-one"]);
+    await act(async () => { resolveSlow(stale); await Promise.resolve(); });
+    expect(names()).toEqual(["fresh-one"]); // the late, older response must not win
   });
 });

@@ -17,7 +17,7 @@ export function SortHeader({
   const on = sort === k;
   const Arrow = desc ? ArrowDown : ArrowUp;
   return (
-    <th className={clsx("font-medium px-4 py-3", className)}>
+    <th className={clsx("font-medium px-4 py-3", className)} aria-sort={on ? (desc ? "descending" : "ascending") : undefined}>
       <button type="button" className={clsx("inline-flex items-center gap-1 uppercase tracking-wide", on ? "text-text" : "hover:text-text")} onClick={() => onSort(k)}>
         {label}
         {on && <Arrow className="h-3 w-3" />}

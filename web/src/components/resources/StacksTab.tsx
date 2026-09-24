@@ -49,10 +49,14 @@ export function StacksTab({ data }: { data: ResourceOverview }) {
 
   useEffect(() => {
     let cancelled = false;
-    const load = () =>
-      api.stacks()
-        .then((s) => { if (!cancelled) { setStacks(s ?? []); setError(""); } })
-        .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : "could not list stacks"); });
+    let latest = 0; // only the most recently started poll may apply its result
+    const load = () => {
+      const mine = ++latest;
+      const current = () => !cancelled && mine === latest;
+      return api.stacks()
+        .then((s) => { if (current()) { setStacks(s ?? []); setError(""); } })
+        .catch((e) => { if (current()) setError(e instanceof Error ? e.message : "could not list stacks"); });
+    };
     load();
     const t = setInterval(load, 5000);
     return () => { cancelled = true; clearInterval(t); };

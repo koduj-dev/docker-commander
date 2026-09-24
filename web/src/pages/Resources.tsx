@@ -37,12 +37,19 @@ export function Resources() {
   useEffect(() => {
     if (!live) return;
     let cancelled = false;
-    const load = () =>
-      api
+    // Polls overlap when one is slow; only the most recently STARTED request
+    // may apply its result, so an older response arriving late can't overwrite
+    // a newer snapshot (or its timestamp) with stale numbers.
+    let latest = 0;
+    const load = () => {
+      const mine = ++latest;
+      const current = () => !cancelled && mine === latest;
+      return api
         .statsOverview()
-        .then((d) => { if (!cancelled) { setData(d); setError(""); setUpdatedAt(new Date()); } })
+        .then((d) => { if (current()) { setData(d); setError(""); setUpdatedAt(new Date()); } })
         // A transient failure keeps the last good table instead of blanking it.
-        .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : "could not read resource usage"); });
+        .catch((e) => { if (current()) setError(e instanceof Error ? e.message : "could not read resource usage"); });
+    };
     load();
     const t = setInterval(load, REFRESH_MS);
     return () => { cancelled = true; clearInterval(t); };

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Boxes, Database, Eraser, Layers, Loader2, RefreshCw } from "lucide-react";
 import clsx from "clsx";
@@ -28,12 +28,16 @@ export function DiskTab() {
   const [busy, setBusy] = useState(false);
   const [section, setSection] = useState<Section>("images");
 
+  // A manual Refresh can overlap the automatic read; only the most recently
+  // started request may apply its result (or clear the busy state).
+  const latest = useRef(0);
   const load = useCallback((refresh: boolean) => {
+    const mine = ++latest.current;
     setBusy(true);
     return api.diskReport(refresh)
-      .then((r) => { setReport(r); setError(""); })
-      .catch((e) => setError(e instanceof Error ? e.message : "could not read disk usage"))
-      .finally(() => setBusy(false));
+      .then((r) => { if (mine === latest.current) { setReport(r); setError(""); } })
+      .catch((e) => { if (mine === latest.current) setError(e instanceof Error ? e.message : "could not read disk usage"); })
+      .finally(() => { if (mine === latest.current) setBusy(false); });
   }, []);
 
   useEffect(() => {
