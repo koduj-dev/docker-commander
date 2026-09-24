@@ -1655,7 +1655,7 @@ function NewProjectModal({ hosts, onClose, onCreated }: { hosts: Host[]; onClose
 }
 
 // ProjectEditor is a multi-file editor over the project folder.
-function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, onOutput }: {
+export function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, onOutput }: {
   project: Project; composeAvailable: boolean; deployed: boolean; stack?: Stack; onClose: () => void; onOutput: (o: Output) => void;
 }) {
   const [files, setFiles] = useState<ProjectFile[] | null>(null);

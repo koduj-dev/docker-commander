@@ -100,9 +100,9 @@ export function NetworkTopTalkers() {
           </div>
         ) : talkers.length === 0 ? (
           <EmptyState
-            title={query ? "No container matches that name" : "Not enough history yet"}
+            title={query.trim() ? "No container matches that name" : "Not enough history yet"}
             hint={
-              query
+              query.trim()
                 ? "Try a shorter or different filter."
                 : "Throughput needs at least two samples inside the chosen window — check back in a few minutes, or pick a longer window."
             }

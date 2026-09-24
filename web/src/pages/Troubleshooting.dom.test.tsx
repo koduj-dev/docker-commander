@@ -82,15 +82,30 @@ describe("Troubleshooting collapsible details", () => {
     const card = checkCard("Network overlap");
     expect(card.textContent).not.toContain("br-abc: 172.18.0.0/16");
 
-    const header = card.querySelector(".cursor-pointer") as HTMLElement;
+    const header = card.querySelector("button[aria-expanded]") as HTMLElement;
+    expect(header.getAttribute("aria-expanded")).toBe("false");
     await act(async () => header.click());
 
     expect(card.textContent).toContain("br-abc: 172.18.0.0/16");
+    expect(header.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("a check with no details is never clickable", async () => {
     await render();
     const card = checkCard("Log rotation");
-    expect(card.querySelector(".cursor-pointer")).toBeNull();
+    expect(card.querySelector("button")).toBeNull();
+  });
+
+  it("re-applies the open/closed default when a rerun changes a check's status", async () => {
+    await render();
+    const flipped: DiagnosticsReport = {
+      ...report,
+      checks: report.checks.map((c) => (c.id === "net" ? { ...c, status: "warn" as const } : c)),
+    };
+    expect(checkCard("Network overlap").textContent).not.toContain("br-abc: 172.18.0.0/16");
+    runDiagnostics.mockResolvedValue(flipped);
+    const run = [...container.querySelectorAll("button")].find((b) => b.textContent?.includes("Run diagnostics")) as HTMLElement;
+    await act(async () => run.click());
+    expect(checkCard("Network overlap").textContent).toContain("br-abc: 172.18.0.0/16");
   });
 });

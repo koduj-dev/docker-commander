@@ -51,16 +51,22 @@ function KPIStrip({ checks }: { checks: CheckResult[] }) {
 // already visible; an OK/skipped one collapses them by default — with dozens
 // of checks on a healthy host, always-expanded details are most of why this
 // page used to be a long scroll even when nothing was wrong.
+// CheckRow is keyed by id AND status by the caller: a rerun that flips a check
+// from OK to warn/fail (or back) remounts it, so the open/closed default
+// follows the new status instead of keeping the previous run's.
 function CheckRow({ check }: { check: CheckResult }) {
   const Icon = statusIcon[check.status];
   const hasDetails = !!check.details && check.details.length > 0;
   const [open, setOpen] = useState(check.status === "warn" || check.status === "fail");
   const Chevron = open ? ChevronDown : ChevronRight;
+  const Header = hasDetails ? "button" : "div";
   return (
     <div className="card p-3">
-      <div
-        className={`flex items-start gap-3 ${hasDetails ? "cursor-pointer" : ""}`}
-        onClick={hasDetails ? () => setOpen((o) => !o) : undefined}
+      {/* A real button when there is something to expand, so it is keyboard
+          reachable and announces its state; a plain row otherwise. */}
+      <Header
+        className="flex items-start gap-3 w-full text-left"
+        {...(hasDetails ? { type: "button" as const, onClick: () => setOpen((o) => !o), "aria-expanded": open } : {})}
       >
         <Icon className={`h-4 w-4 mt-0.5 shrink-0 ${statusBadge[check.status].split(" ")[1]}`} />
         <div className="min-w-0 flex-1">
@@ -73,7 +79,7 @@ function CheckRow({ check }: { check: CheckResult }) {
           <div className="text-sm text-muted mt-0.5">{check.message}</div>
         </div>
         {hasDetails && <Chevron className="h-4 w-4 text-muted shrink-0 mt-0.5" />}
-      </div>
+      </Header>
       {hasDetails && open && (
         <ul className="mt-2 ml-7 space-y-0.5 text-xs font-mono text-muted list-disc list-inside">
           {check.details!.map((d, i) => (
@@ -131,7 +137,7 @@ export function Troubleshooting() {
             <KPIStrip checks={report.checks} />
             <div className="space-y-2">
               {report.checks.map((c) => (
-                <CheckRow key={c.id} check={c} />
+                <CheckRow key={`${c.id}:${c.status}`} check={c} />
               ))}
             </div>
           </>

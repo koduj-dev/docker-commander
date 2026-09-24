@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/koduj-dev/docker-commander/internal/history"
+	"github.com/koduj-dev/docker-commander/internal/monitor"
 )
 
 // historyMetrics is the set of metric names the endpoint will serve.
@@ -116,6 +117,27 @@ type topTalkerMeta struct {
 	hostID         int64
 }
 
+// topTalkerCandidates picks the containers worth ranking: running, on host
+// hid, and — when q (already lowercased) is non-empty — whose name contains
+// it. The name filter is applied HERE, before ranking and the result limit,
+// so a container outside the top `limit` by throughput can still be found by
+// name; filtering the ranked page afterwards could never reach it.
+func topTalkerCandidates(snap []monitor.ContainerStat, hid int64, q string) (ids []string, metaByID map[string]topTalkerMeta) {
+	metaByID = make(map[string]topTalkerMeta)
+	ids = make([]string, 0)
+	for _, cs := range snap {
+		if cs.HostID != hid || cs.State != "running" {
+			continue
+		}
+		if q != "" && !strings.Contains(strings.ToLower(cs.Name), q) {
+			continue
+		}
+		ids = append(ids, cs.ID)
+		metaByID[cs.ID] = topTalkerMeta{name: cs.Name, hostName: cs.HostName, hostID: cs.HostID}
+	}
+	return ids, metaByID
+}
+
 // rankTopTalkers is handleTopTalkers' testable core: given a history store,
 // the running containers' ids/meta, and a window, it ranks by the requested
 // metric's rate averaged over that window. Split out from the handler so the
@@ -216,18 +238,7 @@ func (s *Server) handleTopTalkers(w http.ResponseWriter, r *http.Request) {
 	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
 
 	hid, _ := s.docker.ResolveHostID(r.Context(), hostID)
-	metaByID := make(map[string]topTalkerMeta)
-	ids := make([]string, 0)
-	for _, cs := range s.monitor.Snapshot() {
-		if cs.HostID != hid || cs.State != "running" {
-			continue
-		}
-		if q != "" && !strings.Contains(strings.ToLower(cs.Name), q) {
-			continue
-		}
-		ids = append(ids, cs.ID)
-		metaByID[cs.ID] = topTalkerMeta{name: cs.Name, hostName: cs.HostName, hostID: cs.HostID}
-	}
+	ids, metaByID := topTalkerCandidates(s.monitor.Snapshot(), hid, q)
 
 	out, total, err := rankTopTalkers(r.Context(), s.history, ids, metaByID, time.Now().Add(-win), metric, limit)
 	if err != nil {
