@@ -23,6 +23,7 @@ const response: TopTalkersResponse = {
     { id: "c1", name: "busy-proxy", hostId: 0, hostName: "local", rxRate: 4_000_000, txRate: 1_000_000, rate: 5_000_000 },
     { id: "c2", name: "quiet-db", hostId: 0, hostName: "local", rxRate: 1000, txRate: 500, rate: 1500 },
   ],
+  total: 2,
 };
 
 let container: HTMLDivElement;
@@ -74,7 +75,7 @@ describe("TopTalkers widget", () => {
   });
 
   it("says there isn't enough history yet rather than showing an empty table", async () => {
-    vi.mocked(api.topTalkers).mockResolvedValue({ window: "5m", metric: "total", containers: [] });
+    vi.mocked(api.topTalkers).mockResolvedValue({ window: "5m", metric: "total", containers: [], total: 0 });
     await render();
     expect(container.textContent).toContain("Not enough history yet");
   });

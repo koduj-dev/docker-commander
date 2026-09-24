@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/koduj-dev/docker-commander/internal/history"
+	"github.com/koduj-dev/docker-commander/internal/monitor"
 )
 
 // rankTopTalkers is handleTopTalkers' testable core (ranking/skip logic),
@@ -111,6 +113,58 @@ func TestRankTopTalkersRespectsLimit(t *testing.T) {
 	// silently rendering the truncated slice as if it were everything.
 	if total != 4 {
 		t.Errorf("total should count all 4 ranked containers regardless of limit, got %d", total)
+	}
+}
+
+// TestTopTalkersNameFilterAppliesBeforeTheLimit is the key contract of the
+// name filter: with more ranked containers than the limit, a match that ranks
+// below the cut must still be found, because filtering happens before
+// ranking — not on the already-truncated page.
+func TestTopTalkersNameFilterAppliesBeforeTheLimit(t *testing.T) {
+	ctx := context.Background()
+	hist := history.Open(ctx, history.Config{})
+	t.Cleanup(func() { hist.Close() })
+
+	var snap []monitor.ContainerStat
+	for i := 0; i < 60; i++ {
+		id := fmt.Sprintf("c%02d", i)
+		// Busier as i grows; "needle" (i == 0) is the quietest of all 61.
+		seedRate(t, hist, ctx, id, history.MetricNetRx, map[int]float64{10: 0, 0: float64((i + 1) * 1000)})
+		snap = append(snap, monitor.ContainerStat{ID: id, Name: "svc-" + id, State: "running", HostID: 0})
+	}
+	seedRate(t, hist, ctx, "needle", history.MetricNetRx, map[int]float64{10: 0, 0: 10})
+	snap = append(snap,
+		monitor.ContainerStat{ID: "needle", Name: "My-Needle-Cache", State: "running", HostID: 0},
+		monitor.ContainerStat{ID: "stopped", Name: "needle-old", State: "exited", HostID: 0},
+		monitor.ContainerStat{ID: "other", Name: "needle-remote", State: "running", HostID: 7},
+	)
+	since := time.Now().Add(-time.Minute)
+
+	// Unfiltered: the limit cuts the quietest ones — needle is not in the page,
+	// but total still says there are more.
+	ids, meta := topTalkerCandidates(snap, 0, "")
+	out, total, err := rankTopTalkers(ctx, hist, ids, meta, since, history.MetricNetRx, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 50 || total != 61 {
+		t.Fatalf("unfiltered: got %d rows / total %d, want 50 / 61", len(out), total)
+	}
+	for _, r := range out {
+		if r.ID == "needle" {
+			t.Fatal("needle should be below the cut without a filter")
+		}
+	}
+
+	// Filtered (case-insensitively): needle is found, and only it — not the
+	// stopped container, nor the one on another host.
+	ids, meta = topTalkerCandidates(snap, 0, "needle")
+	out, total, err = rankTopTalkers(ctx, hist, ids, meta, since, history.MetricNetRx, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0].ID != "needle" || total != 1 {
+		t.Fatalf("filtered: got %+v total %d, want just needle", out, total)
 	}
 }
 
