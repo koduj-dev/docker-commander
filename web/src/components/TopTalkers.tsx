@@ -34,7 +34,7 @@ export function TopTalkers({ tick = 0 }: { tick?: number }) {
     <div className="card p-4">
       <div className="flex items-baseline justify-between mb-2">
         <div className="text-xs uppercase tracking-wide text-muted">Top talkers · last 5 min</div>
-        <Link to="/network/top-talkers" className="text-xs text-accent hover:underline">
+        <Link to="/resources?tab=network" className="text-xs text-accent hover:underline">
           View all →
         </Link>
       </div>

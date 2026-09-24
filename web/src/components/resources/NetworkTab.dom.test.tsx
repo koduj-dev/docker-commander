@@ -3,11 +3,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
-import { NetworkTopTalkers } from "./NetworkTopTalkers";
-import { api } from "../lib/api";
-import type { TopTalkers as TopTalkersResponse } from "../lib/types";
+import { NetworkTab } from "./NetworkTab";
+import { api } from "../../lib/api";
+import type { TopTalkers as TopTalkersResponse } from "../../lib/types";
 
-vi.mock("../lib/api", () => ({
+vi.mock("../../lib/api", () => ({
   api: { topTalkers: vi.fn(), hosts: () => Promise.resolve([]) },
 }));
 
@@ -32,7 +32,7 @@ beforeEach(async () => {
   await act(async () => {
     root.render(
       <MemoryRouter>
-        <NetworkTopTalkers />
+        <NetworkTab />
       </MemoryRouter>,
     );
   });
@@ -69,7 +69,7 @@ function searchInput(): HTMLInputElement {
   return container.querySelector('input[type="search"]') as HTMLInputElement;
 }
 
-describe("NetworkTopTalkers page", () => {
+describe("NetworkTab page", () => {
   it("loads the default 5-minute / total-metric ranking on mount", () => {
     expect(api.topTalkers).toHaveBeenCalledWith("5m", "total", 50, undefined);
   });

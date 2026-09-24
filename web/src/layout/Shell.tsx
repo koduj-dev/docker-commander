@@ -1,6 +1,6 @@
 import { Link, NavLink, useNavigate, useLocation, useNavigationType } from "react-router-dom";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Activity, Archive, Bell, Blocks, Boxes, ChevronDown, Container, Database, FolderGit2, KeyRound, Layers, LayoutDashboard, LayoutTemplate, Network, Plug, ScrollText, Server, Settings, ShieldCheck, Share2, Stethoscope, Terminal, Users, LogOut, CircleUser, ArrowUpCircle, ExternalLink, X, Loader2, HardDriveDownload, CheckCircle2, TrendingUp, Gauge } from "lucide-react";
+import { Activity, Archive, Bell, Blocks, Boxes, ChevronDown, Container, Database, FolderGit2, KeyRound, Layers, LayoutDashboard, LayoutTemplate, Network, Plug, ScrollText, Server, Settings, ShieldCheck, Share2, Stethoscope, Terminal, Users, LogOut, CircleUser, ArrowUpCircle, ExternalLink, X, Loader2, HardDriveDownload, CheckCircle2, Gauge } from "lucide-react";
 import clsx from "clsx";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../lib/api";
@@ -42,11 +42,6 @@ const navGroups: { title: string; items: NavItem[] }[] = [
     items: [
       { to: "/networks", label: "Networks", icon: Network, section: "networks" },
       { to: "/topology", label: "Topology", icon: Share2, section: "topology" },
-      // section is "dashboard", not "networks" — it's the same RBAC gate the
-      // API's /stats/top-talkers actually enforces (both live under the
-      // "stats" path prefix), so the link's visibility matches what the
-      // backend will allow rather than what the group it's filed under implies.
-      { to: "/network/top-talkers", label: "Top talkers", icon: TrendingUp, section: "dashboard" },
     ],
   },
   {

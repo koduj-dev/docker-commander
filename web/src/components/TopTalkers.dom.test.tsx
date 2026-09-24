@@ -70,7 +70,7 @@ describe("TopTalkers widget", () => {
     vi.mocked(api.topTalkers).mockResolvedValue(response);
     await render();
     const link = container.querySelector("a");
-    expect(link?.getAttribute("href")).toBe("/network/top-talkers");
+    expect(link?.getAttribute("href")).toBe("/resources?tab=network");
   });
 
   it("says there isn't enough history yet rather than showing an empty table", async () => {

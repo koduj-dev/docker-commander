@@ -7,13 +7,19 @@ import { Resources } from "./Resources";
 import { api } from "../lib/api";
 import type { ResourceOverview, ResourceUsage } from "../lib/types";
 
-vi.mock("../lib/api", () => ({ api: { statsOverview: vi.fn(), hosts: () => Promise.resolve([]), savePrefs: () => Promise.resolve() } }));
+vi.mock("../lib/api", () => ({
+  api: {
+    statsOverview: vi.fn(), hosts: () => Promise.resolve([]), savePrefs: () => Promise.resolve(),
+    topTalkers: vi.fn(), stacks: vi.fn(), diskReport: vi.fn(),
+  },
+}));
 
 const GB = 1024 ** 3;
 const u = (name: string, cpuPercent: number, memBytes: number): ResourceUsage => ({
   id: `id-${name}`, name, cpuPercent, memBytes, memPercent: (memBytes / (16 * GB)) * 100, netRxRate: 1000, netTxRate: 500,
 });
 // 8 cores, 16 GB host. db: 25% of host = 2 cores, 4 GB. web: 5% = 0.4 cores, 1 GB.
+const emptyTalkers = { window: "5m", metric: "total", containers: [], total: 0 };
 const overview: ResourceOverview = { cpus: 8, memTotal: 16 * GB, containers: [u("web", 5, GB), u("db", 25, 4 * GB)] };
 
 let container: HTMLDivElement;
@@ -22,6 +28,8 @@ let root: Root;
 beforeEach(async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.mocked(api.statsOverview).mockResolvedValue(overview);
+  vi.mocked(api.topTalkers).mockResolvedValue(emptyTalkers);
+  vi.mocked(api.stacks).mockResolvedValue([]);
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -90,5 +98,22 @@ describe("Resources page", () => {
     expect(api.statsOverview).toHaveBeenCalledTimes(1); // initial load
     await act(async () => { vi.advanceTimersByTime(5000); });
     expect(api.statsOverview).toHaveBeenCalledTimes(2);
+  });
+
+  it("opens the tab named in the URL and stops polling the live snapshot on a non-live tab", async () => {
+    act(() => root.unmount());
+    vi.mocked(api.statsOverview).mockClear();
+    root = createRoot(container);
+    await act(async () => { root.render(<MemoryRouter initialEntries={["/resources?tab=network"]}><Resources /></MemoryRouter>); });
+    expect(api.topTalkers).toHaveBeenCalled();
+    expect(api.statsOverview).not.toHaveBeenCalled();
+    expect(container.querySelector('input[placeholder^="Filter by container name"]')).not.toBeNull();
+  });
+
+  it("falls back to the Containers tab for an unknown ?tab", async () => {
+    act(() => root.unmount());
+    root = createRoot(container);
+    await act(async () => { root.render(<MemoryRouter initialEntries={["/resources?tab=bogus"]}><Resources /></MemoryRouter>); });
+    expect(container.textContent).toContain("Running containers");
   });
 });

@@ -378,6 +378,19 @@ export interface DiskUsage {
   buildCache: UsageCategory;
 }
 
+// Per-object disk report (GET /api/stats/disk). A size of -1 means the daemon
+// did not calculate it — render it as "unknown", never as 0.
+export interface DiskImage { id: string; tags: string[] | null; size: number; unique: number; containers: number }
+export interface DiskContainer { id: string; name: string; project?: string; state: string; sizeRw: number; sizeRoot: number }
+export interface DiskVolume { name: string; driver: string; project?: string; size: number; refCount: number }
+export interface DiskReport {
+  generatedAt: number; // unix seconds
+  images: DiskImage[];
+  containers: DiskContainer[];
+  volumes: DiskVolume[];
+  buildCache: { count: number; size: number; reclaimable: number };
+}
+
 export interface EventMsg {
   time: number;
   type: string;
