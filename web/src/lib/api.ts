@@ -861,9 +861,11 @@ export const api = {
   hostPorts: () => req<HostPortProbe[]>("GET", `/api/stats/ports${hostParam()}`),
   // Ranks containers by network throughput averaged over a STORED window
   // (never a point-in-time sample — see docs/alerts.md's "top talkers" note
-  // for why). metric is "total" | "netrx" | "nettx".
-  topTalkers: (window: string, metric: string, limit?: number) =>
-    req<TopTalkers>("GET", `/api/stats/top-talkers?window=${window}&metric=${metric}${limit ? `&limit=${limit}` : ""}${hostParam("&")}`),
+  // for why). metric is "total" | "netrx" | "nettx". q, if given, filters to
+  // containers whose name contains it (case-insensitive) BEFORE ranking —
+  // the only way to find a container that isn't itself in the top `limit`.
+  topTalkers: (window: string, metric: string, limit?: number, q?: string) =>
+    req<TopTalkers>("GET", `/api/stats/top-talkers?window=${window}&metric=${metric}${limit ? `&limit=${limit}` : ""}${q ? `&q=${encodeURIComponent(q)}` : ""}${hostParam("&")}`),
   // hostSystem fetches engine/host info for a specific host (not the active one).
   hostSystem: (id: number) => req<SystemInfo>("GET", `/api/system?host=${id}`),
   audit: (limit = 50, before?: number) =>

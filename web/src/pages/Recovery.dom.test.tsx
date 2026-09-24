@@ -93,7 +93,24 @@ describe("Recovery import", () => {
     return container.querySelector('input[type="file"]') as HTMLInputElement;
   }
 
+  // Import lives behind its own tab now — every import test needs it active
+  // before the file input (or anything else import-specific) exists at all.
+  async function openImportTab() {
+    const tabBtn = [...container.querySelectorAll("button")].find((b) => b.textContent?.includes("Import"));
+    await act(async () => tabBtn!.click());
+  }
+
+  // The tab bar's "Import" button and the panel's own "Import" submit button
+  // have identical text — byText's exact-match would grab whichever renders
+  // first (the tab). Scope to .btn-primary, which only the submit button has.
+  function importSubmitButton(): HTMLElement {
+    const btns = [...container.querySelectorAll("button.btn-primary")].filter((b) => b.textContent?.trim() === "Import");
+    if (btns.length !== 1) throw new Error(`expected exactly one Import submit button, found ${btns.length}`);
+    return btns[0] as HTMLElement;
+  }
+
   async function selectAFile() {
+    await openImportTab();
     const input = fileInput();
     const file = new File(["zip-bytes"], "backup.dcbundle");
     Object.defineProperty(input, "files", { value: [file], configurable: true });
@@ -103,7 +120,7 @@ describe("Recovery import", () => {
   it("Import is disabled until a compatibility check has run", async () => {
     await render();
     await selectAFile();
-    const importBtn = byText("button", "Import");
+    const importBtn = importSubmitButton();
     expect(importBtn.hasAttribute("disabled")).toBe(true);
   });
 
@@ -118,7 +135,7 @@ describe("Recovery import", () => {
 
     expect(inspectRecoveryBundle).toHaveBeenCalled();
     expect(container.textContent).toContain("nginx:1.27");
-    const importBtn = byText("button", "Import");
+    const importBtn = importSubmitButton();
     expect(importBtn.hasAttribute("disabled")).toBe(false);
   });
 
@@ -134,7 +151,7 @@ describe("Recovery import", () => {
     await render();
     await selectAFile();
     await act(async () => byText("button", "Check compatibility").click());
-    await act(async () => byText("button", "Import").click());
+    await act(async () => importSubmitButton().click());
 
     expect(importRecoveryBundle).not.toHaveBeenCalled();
     expect(container.textContent).toContain("Import recovery bundle?");
@@ -155,7 +172,7 @@ describe("Recovery import", () => {
     await render();
     await selectAFile();
     await act(async () => byText("button", "Check compatibility").click());
-    await act(async () => byText("button", "Import").click());
+    await act(async () => importSubmitButton().click());
 
     const cancel = [...container.querySelectorAll("button")].find((b) => b.textContent === "Cancel");
     await act(async () => cancel!.click());
@@ -176,7 +193,7 @@ describe("Recovery import", () => {
     await selectAFile();
     await act(async () => byText("button", "Check compatibility").click());
 
-    let importBtn = byText("button", "Import");
+    let importBtn = importSubmitButton();
     expect(importBtn.hasAttribute("disabled")).toBe(false);
 
     const select = container.querySelector("select") as HTMLSelectElement;
@@ -186,7 +203,7 @@ describe("Recovery import", () => {
       select.dispatchEvent(new Event("change", { bubbles: true }));
     });
 
-    importBtn = byText("button", "Import");
+    importBtn = importSubmitButton();
     expect(importBtn.hasAttribute("disabled")).toBe(true);
     expect(container.textContent).not.toContain("No compatibility issues found.");
   });

@@ -50,10 +50,11 @@ export function TopTalkers({ tick = 0 }: { tick?: number }) {
             Not enough history yet — check back in a few minutes.
           </div>
         ) : (
-          <ul className="space-y-1.5 overflow-y-auto h-full pr-1">
-            {talkers.map((t) => (
-              <li key={t.id} className="flex items-center justify-between text-sm gap-2">
-                <span className="truncate" title={t.name}>{t.name}</span>
+          <ul className="divide-y divide-border/50 overflow-y-auto h-full pr-1">
+            {talkers.map((t, i) => (
+              <li key={t.id} className="flex items-center gap-2 text-sm py-1.5 first:pt-0 last:pb-0">
+                <span className="text-muted text-xs w-4 shrink-0 text-right">{i + 1}</span>
+                <span className="truncate flex-1" title={t.name}>{t.name}</span>
                 <span className="text-muted shrink-0 font-mono text-xs">{rate(t.rate)}</span>
               </li>
             ))}

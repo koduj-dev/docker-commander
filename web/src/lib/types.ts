@@ -819,6 +819,10 @@ export interface TopTalkers {
   window: string;
   metric: string;
   containers: TopTalker[];
+  // total is how many containers actually ranked (had enough history),
+  // BEFORE the request's limit cut them down to `containers.length` — a
+  // caller compares the two to know whether the list was truncated.
+  total: number;
 }
 
 export interface ParseRule {
