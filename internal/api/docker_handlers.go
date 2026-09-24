@@ -784,6 +784,25 @@ func (s *Server) handleDiskUsage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, du)
 }
 
+// handleDiskReport serves the per-object disk report (images, containers,
+// volumes, build cache) behind the Resources page's Disk tab. It is cached per
+// host because the underlying `system df -v` is expensive; ?refresh=1 asks for
+// a fresh one, subject to a short minimum age (see docker.Manager.DiskReport).
+func (s *Server) handleDiskReport(w http.ResponseWriter, r *http.Request) {
+	hostID, err := s.resolveHostID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no host configured")
+		return
+	}
+	hid, _ := s.docker.ResolveHostID(r.Context(), hostID)
+	rep, err := s.docker.DiskReport(r.Context(), hid, r.URL.Query().Get("refresh") == "1")
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "docker error: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, rep)
+}
+
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	limit := 50
 	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 {
