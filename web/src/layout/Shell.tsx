@@ -1,6 +1,6 @@
 import { Link, NavLink, useNavigate, useLocation, useNavigationType } from "react-router-dom";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Activity, Archive, Bell, Blocks, Boxes, ChevronDown, Container, Database, FolderGit2, KeyRound, Layers, LayoutDashboard, LayoutTemplate, Network, Plug, ScrollText, Server, Settings, ShieldCheck, Share2, Stethoscope, Terminal, Users, LogOut, CircleUser, ArrowUpCircle, ExternalLink, X, Loader2, HardDriveDownload, CheckCircle2, TrendingUp } from "lucide-react";
+import { Activity, Archive, Bell, Blocks, Boxes, ChevronDown, Container, Database, FolderGit2, KeyRound, Layers, LayoutDashboard, LayoutTemplate, Network, Plug, ScrollText, Server, Settings, ShieldCheck, Share2, Stethoscope, Terminal, Users, LogOut, CircleUser, ArrowUpCircle, ExternalLink, X, Loader2, HardDriveDownload, CheckCircle2, TrendingUp, Gauge } from "lucide-react";
 import clsx from "clsx";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../lib/api";
@@ -52,6 +52,8 @@ const navGroups: { title: string; items: NavItem[] }[] = [
   {
     title: "Observability",
     items: [
+      // Same RBAC gate as the dashboard: it reads /stats/overview.
+      { to: "/resources", label: "Resources", icon: Gauge, section: "dashboard" },
       { to: "/logs", label: "Logs", icon: Terminal, section: "logs" },
       { to: "/events", label: "Events", icon: Activity, section: "events" },
       { to: "/alerts", label: "Alerts", icon: Bell, section: "alerts" },

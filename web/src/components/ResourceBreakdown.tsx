@@ -2,10 +2,13 @@ import { useEffect, useState } from "react";
 import { Area, AreaChart, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, YAxis } from "recharts";
 import { api } from "../lib/api";
 import type { ResourceOverview, ResourceUsage } from "../lib/types";
-import { rate } from "../lib/format";
+import { bytes, coresLabel, cpuCores, rate } from "../lib/format";
+import { ResourceTable } from "./ResourceTable";
 import { Spinner } from "./ui";
 
-type Slice = { name: string; value: number };
+// value is the share of the host (0..100) that sizes the slice; abs is the same
+// slice as an absolute figure ("1.2 GB", "0.42 cores") for the tooltip.
+type Slice = { name: string; value: number; abs: string };
 
 // Palette for container slices; "Free"/"Other" get fixed muted colours.
 const PALETTE = ["#2496ed", "#2dd4a7", "#f59e0b", "#a78bfa", "#f472b6", "#34d399", "#60a5fa", "#fb7185"];
@@ -13,15 +16,16 @@ const FREE_COLOR = "#243047";
 const OTHER_COLOR = "#64748b";
 const TOP = 6;
 
-function build(containers: ResourceUsage[], valueOf: (c: ResourceUsage) => number): Slice[] {
+function build(containers: ResourceUsage[], valueOf: (c: ResourceUsage) => number, absOf: (pct: number) => string): Slice[] {
   const items = containers
     .map((c) => ({ name: c.name, value: Math.max(0, valueOf(c)) }))
     .sort((a, b) => b.value - a.value);
-  const slices = items.slice(0, TOP);
+  const slices: Slice[] = items.slice(0, TOP).map((x) => ({ ...x, abs: absOf(x.value) }));
   const restSum = items.slice(TOP).reduce((s, x) => s + x.value, 0);
-  if (restSum > 0.05) slices.push({ name: "Other", value: restSum });
+  if (restSum > 0.05) slices.push({ name: "Other", value: restSum, abs: absOf(restSum) });
   const used = items.reduce((s, x) => s + x.value, 0);
-  slices.push({ name: "Free", value: Math.max(0, 100 - used) });
+  const free = Math.max(0, 100 - used);
+  slices.push({ name: "Free", value: free, abs: absOf(free) });
   return slices;
 }
 
@@ -90,11 +94,20 @@ export function ResourceBreakdown({ tick = 0 }: { tick?: number }) {
     // the container detail and the dashboard shows the host-wide summary.
     const netRx = containers.reduce((sum, c) => sum + c.netRxRate, 0);
     const netTx = containers.reduce((sum, c) => sum + c.netTxRate, 0);
+    // Absolute totals go in the titles: the donut only shows shares, so without
+    // these there is no way to read how much the containers really take.
+    const cpuUsed = containers.reduce((n, c) => n + c.cpuPercent, 0);
+    const memUsed = containers.reduce((n, c) => n + c.memBytes, 0);
+    const cpuTitle = `CPU · ${coresLabel(cpuCores(cpuUsed, data.cpus))} of ${data.cpus} core${data.cpus === 1 ? "" : "s"}`;
+    const memTitle = `Memory · ${bytes(memUsed)} of ${bytes(data.memTotal)}`;
     body = (
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <UsagePie title={`CPU · ${data.cpus} core${data.cpus === 1 ? "" : "s"}`} slices={build(containers, (c) => c.cpuPercent)} />
-        <UsagePie title="Memory" slices={build(containers, (c) => c.memPercent)} />
-        <NetworkSummary window={netWindow} rx={netRx} tx={netTx} />
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <UsagePie title={cpuTitle} slices={build(containers, (c) => c.cpuPercent, (p) => `${coresLabel(cpuCores(p, data.cpus))} cores`)} />
+          <UsagePie title={memTitle} slices={build(containers, (c) => c.memPercent, (p) => bytes((p / 100) * data.memTotal))} />
+          <NetworkSummary window={netWindow} rx={netRx} tx={netTx} />
+        </div>
+        <ResourceTable containers={containers} cpus={data.cpus} />
       </div>
     );
   }
@@ -193,7 +206,11 @@ function UsagePie({ title, slices }: { title: string; slices: Slice[] }) {
               contentStyle={{ background: "#1a2233", border: "1px solid #243047", borderRadius: 8, fontSize: 12 }}
               itemStyle={{ color: "#e5e9f0" }}
               labelStyle={{ color: "#e5e9f0" }}
-              formatter={(v, n) => { const x = Number(v); return [Number.isFinite(x) ? `${x.toFixed(1)} %` : "—", String(n)]; }}
+              formatter={(v, n, item) => {
+                const x = Number(v);
+                const abs = (item?.payload as Slice | undefined)?.abs;
+                return [Number.isFinite(x) ? `${abs ? `${abs} · ` : ""}${x.toFixed(1)} %` : "—", String(n)];
+              }}
             />
             <Legend wrapperStyle={{ fontSize: 11 }} iconSize={8} />
           </PieChart>

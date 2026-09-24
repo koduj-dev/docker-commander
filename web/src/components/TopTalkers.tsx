@@ -38,29 +38,29 @@ export function TopTalkers({ tick = 0 }: { tick?: number }) {
           View all →
         </Link>
       </div>
-      <div className="h-56">
-        {error && !talkers ? (
-          <div className="h-full grid place-items-center text-sm text-danger">{error}</div>
-        ) : !talkers ? (
-          <div className="h-full grid place-items-center">
-            <Spinner />
-          </div>
-        ) : talkers.length === 0 ? (
-          <div className="h-full grid place-items-center text-sm text-muted text-center px-4">
-            Not enough history yet — check back in a few minutes.
-          </div>
-        ) : (
-          <ul className="divide-y divide-border/50 overflow-y-auto h-full pr-1">
-            {talkers.map((t, i) => (
-              <li key={t.id} className="flex items-center gap-2 text-sm py-1.5 first:pt-0 last:pb-0">
-                <span className="text-muted text-xs w-4 shrink-0 text-right">{i + 1}</span>
-                <span className="truncate flex-1" title={t.name}>{t.name}</span>
-                <span className="text-muted shrink-0 font-mono text-xs">{rate(t.rate)}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      {/* Only the loading/error/empty states reserve a box; a ranked list is as
+          tall as its rows, so a short list doesn't leave dead space below it. */}
+      {error && !talkers ? (
+        <div className="h-32 grid place-items-center text-sm text-danger">{error}</div>
+      ) : !talkers ? (
+        <div className="h-32 grid place-items-center">
+          <Spinner />
+        </div>
+      ) : talkers.length === 0 ? (
+        <div className="h-32 grid place-items-center text-sm text-muted text-center px-4">
+          Not enough history yet — check back in a few minutes.
+        </div>
+      ) : (
+        <ul className="divide-y divide-border/50">
+          {talkers.map((t, i) => (
+            <li key={t.id} className="flex items-center gap-2 text-sm py-1.5 first:pt-0 last:pb-0">
+              <span className="text-muted text-xs w-4 shrink-0 text-right">{i + 1}</span>
+              <span className="truncate flex-1" title={t.name}>{t.name}</span>
+              <span className="text-muted shrink-0 font-mono text-xs">{rate(t.rate)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

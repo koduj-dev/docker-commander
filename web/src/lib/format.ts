@@ -74,3 +74,15 @@ export function netRates(samples: { timestamp: number; netRx: number; netTx: num
 export function rate(bytesPerSec: number): string {
   return `${bytes(bytesPerSec)}/s`;
 }
+
+// cpuCores turns a container's share of TOTAL host CPU (0..100, what the
+// stats API reports) into cores' worth of CPU — the number an operator can
+// actually compare against "16 cores", which a bare percentage of the host
+// hides.
+export function cpuCores(percentOfHost: number, hostCpus: number): number {
+  return (percentOfHost / 100) * hostCpus;
+}
+
+export function coresLabel(n: number): string {
+  return n >= 10 ? n.toFixed(1) : n.toFixed(2);
+}
