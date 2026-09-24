@@ -127,6 +127,12 @@ function rowButton(rowText: string, title: string): HTMLButtonElement {
 }
 
 describe("MaintenanceWindows", () => {
+  it("puts New window on the same row as the description, like the Webhooks tab", () => {
+    const btn = [...container.querySelectorAll("button")].find((b) => b.textContent?.includes("New window")) as HTMLElement;
+    const desc = [...container.querySelectorAll("p")].find((p) => p.textContent?.includes("Suppress alert delivery")) as HTMLElement;
+    expect(btn.parentElement).toBe(desc.parentElement);
+  });
+
   it("lists an existing window with its name and reason", async () => {
     expect(container.textContent).toContain("DB upgrade");
     expect(container.textContent).toContain("planned Postgres bump");

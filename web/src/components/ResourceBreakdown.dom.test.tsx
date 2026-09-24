@@ -46,6 +46,18 @@ describe("ResourceBreakdown absolute figures", () => {
     expect(container.textContent).toContain("Top consumers · 10 of 12");
   });
 
+  it("renders the aside beside the consumers table, sharing one row", async () => {
+    act(() => root.unmount());
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<MemoryRouter><ResourceBreakdown aside={<div id="aside-probe">talkers</div>} /></MemoryRouter>);
+    });
+    const aside = container.querySelector("#aside-probe")!;
+    const table = container.querySelector("table")!;
+    expect(aside.parentElement).toBe(table.closest(".card")!.parentElement); // siblings in the same grid
+    expect(aside.parentElement!.className).toContain("lg:grid-cols-2");
+  });
+
   it("links to the full Resources page", () => {
     expect(container.querySelector('a[href="/resources"]')).not.toBeNull();
   });

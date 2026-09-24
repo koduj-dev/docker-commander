@@ -83,6 +83,39 @@ describe("DiskTab", () => {
     expect(api.diskReport).toHaveBeenCalledTimes(2);
   });
 
+  const names = () => [...container.querySelectorAll("tbody tr td:first-child")].map((td) => td.textContent?.trim());
+  const header = (label: string) => [...container.querySelectorAll("th")].find((t) => t.textContent?.trim() === label) as HTMLElement;
+
+  it("highlights the active sort column, and starts on unique size descending", () => {
+    expect(header("Unique").getAttribute("aria-sort")).toBe("descending");
+    expect(header("Size").getAttribute("aria-sort")).toBeNull();
+    expect(header("Unique").querySelector("button")!.className).toContain("text-accent");
+  });
+
+  it("re-sorts by name (A→Z first, then flips), and by used-by count", async () => {
+    await act(async () => (header("Image").querySelector("button") as HTMLElement).click());
+    expect(names()).toEqual(["big:1", "bbbbbbbbbbbb (untagged)"]); // alphabetical: "big:1" < "sha256..."/id
+    expect(header("Image").getAttribute("aria-sort")).toBe("ascending");
+    await act(async () => (header("Image").querySelector("button") as HTMLElement).click());
+    expect(header("Image").getAttribute("aria-sort")).toBe("descending");
+    await act(async () => (header("Used by").querySelector("button") as HTMLElement).click());
+    expect(names()[0]).toContain("untagged"); // 2 containers first
+  });
+
+  it("keeps an unknown size last in either direction", async () => {
+    const unique = () => header("Unique").querySelector("button") as HTMLElement;
+    expect(names()[names().length - 1]).toContain("untagged"); // descending: unknown last
+    await act(async () => unique().click()); // → ascending
+    expect(header("Unique").getAttribute("aria-sort")).toBe("ascending");
+    expect(names()[names().length - 1]).toContain("untagged"); // still last, not first
+  });
+
+  it("puts Refresh in the same row as the section switcher", () => {
+    const refresh = [...container.querySelectorAll("button")].find((b) => b.textContent?.includes("Refresh")) as HTMLElement;
+    const images = [...container.querySelectorAll("button")].find((b) => b.textContent?.includes("Images")) as HTMLElement;
+    expect(refresh.closest(".flex-wrap")).toBe(images.closest(".flex-wrap"));
+  });
+
   it("sizeLabel never turns unknown into zero", () => {
     expect(sizeLabel(-1)).toBe("unknown");
     expect(sizeLabel(0)).toBe("0 B");

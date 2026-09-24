@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import type { CheckResult, CheckStatus, DiagnosticsReport } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner, StatCard } from "../components/ui";
+import { getPref, setPref } from "../lib/prefs";
 
 const statusBadge: Record<CheckStatus, string> = {
   ok: "bg-ok/15 text-ok",
@@ -47,17 +48,32 @@ function KPIStrip({ checks }: { checks: CheckResult[] }) {
   );
 }
 
+// What the user last chose for each check, remembered across reruns and
+// reloads. Stored WITH the status it was chosen under and honoured only while
+// that status is unchanged: collapsing an OK check stays collapsed, but a check
+// that has since flipped to warn/fail reverts to its default (open) so a new
+// problem is never hidden by an old choice.
+type OpenChoice = { open: boolean; status: CheckStatus };
+const OPEN_PREF = "troubleshooting.open";
+
+export function initialOpen(check: CheckResult, choices: Record<string, OpenChoice>): boolean {
+  const c = choices[check.id];
+  return c && c.status === check.status ? c.open : check.status === "warn" || check.status === "fail";
+}
+
 // A check whose status needs attention (warn/fail) opens with its details
 // already visible; an OK/skipped one collapses them by default — with dozens
 // of checks on a healthy host, always-expanded details are most of why this
 // page used to be a long scroll even when nothing was wrong.
-// CheckRow is keyed by id AND status by the caller: a rerun that flips a check
-// from OK to warn/fail (or back) remounts it, so the open/closed default
-// follows the new status instead of keeping the previous run's.
 function CheckRow({ check }: { check: CheckResult }) {
   const Icon = statusIcon[check.status];
   const hasDetails = !!check.details && check.details.length > 0;
-  const [open, setOpen] = useState(check.status === "warn" || check.status === "fail");
+  const [open, setOpen] = useState(() => initialOpen(check, getPref<Record<string, OpenChoice>>(OPEN_PREF, {})));
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    setPref(OPEN_PREF, { ...getPref<Record<string, OpenChoice>>(OPEN_PREF, {}), [check.id]: { open: next, status: check.status } });
+  };
   const Chevron = open ? ChevronDown : ChevronRight;
   const Header = hasDetails ? "button" : "div";
   return (
@@ -66,7 +82,7 @@ function CheckRow({ check }: { check: CheckResult }) {
           reachable and announces its state; a plain row otherwise. */}
       <Header
         className="flex items-start gap-3 w-full text-left"
-        {...(hasDetails ? { type: "button" as const, onClick: () => setOpen((o) => !o), "aria-expanded": open } : {})}
+        {...(hasDetails ? { type: "button" as const, onClick: toggle, "aria-expanded": open } : {})}
       >
         <Icon className={`h-4 w-4 mt-0.5 shrink-0 ${statusBadge[check.status].split(" ")[1]}`} />
         <div className="min-w-0 flex-1">

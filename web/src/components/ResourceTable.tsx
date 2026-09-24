@@ -8,17 +8,23 @@ import { sortUsage, type UsageSortKey } from "../lib/resources";
 
 const LIMIT = 10;
 
-// SortHeader is a clickable column header; it shows the active direction.
-export function SortHeader({
-  label, k, sort, desc, onSort, className,
+// SortHeader is a clickable column header. The active column is highlighted
+// (accent colour + arrow) and exposes its direction via aria-sort.
+export function SortHeader<K extends string>({
+  label, k, sort, desc, onSort, className, title,
 }: {
-  label: string; k: UsageSortKey; sort: UsageSortKey; desc: boolean; onSort: (k: UsageSortKey) => void; className?: string;
+  label: string; k: K; sort: K; desc: boolean; onSort: (k: K) => void; className?: string; title?: string;
 }) {
   const on = sort === k;
   const Arrow = desc ? ArrowDown : ArrowUp;
   return (
     <th className={clsx("font-medium px-4 py-3", className)} aria-sort={on ? (desc ? "descending" : "ascending") : undefined}>
-      <button type="button" className={clsx("inline-flex items-center gap-1 uppercase tracking-wide", on ? "text-text" : "hover:text-text")} onClick={() => onSort(k)}>
+      <button
+        type="button"
+        title={title}
+        className={clsx("inline-flex items-center gap-1 uppercase tracking-wide", on ? "text-accent font-semibold" : "hover:text-text")}
+        onClick={() => onSort(k)}
+      >
         {label}
         {on && <Arrow className="h-3 w-3" />}
       </button>
@@ -57,14 +63,16 @@ export function ResourceTable({ containers, cpus }: { containers: ResourceUsage[
         <tbody>
           {rows.map((c) => (
             <tr key={c.id} className="border-b border-border/50 last:border-0">
-              <td className="px-4 py-2 font-medium">
-                <Link to={`/containers/${c.id}`} className="hover:underline">{c.name}</Link>
+              {/* w-full + max-w-0 lets a long name truncate instead of pushing the numbers off a half-width card. */}
+              <td className="px-4 py-2 font-medium w-full max-w-0 truncate">
+                <Link to={`/containers/${c.id}`} className="hover:underline" title={c.name}>{c.name}</Link>
               </td>
-              <td className="px-4 py-2 text-right font-mono text-xs">
-                {coresLabel(cpuCores(c.cpuPercent, cpus))} <span className="text-muted">cores · {c.cpuPercent.toFixed(1)} %</span>
+              {/* The percentages are the first thing to go when the card is narrow. */}
+              <td className="px-4 py-2 text-right font-mono text-xs whitespace-nowrap">
+                {coresLabel(cpuCores(c.cpuPercent, cpus))} <span className="text-muted">cores<span className="hidden 2xl:inline"> · {c.cpuPercent.toFixed(1)} %</span></span>
               </td>
-              <td className="px-4 py-2 text-right font-mono text-xs">
-                {bytes(c.memBytes)} <span className="text-muted">· {c.memPercent.toFixed(1)} %</span>
+              <td className="px-4 py-2 text-right font-mono text-xs whitespace-nowrap">
+                {bytes(c.memBytes)} <span className="text-muted hidden 2xl:inline">· {c.memPercent.toFixed(1)} %</span>
               </td>
             </tr>
           ))}

@@ -38,7 +38,12 @@ function colorFor(name: string, i: number): string {
 // ResourceBreakdown shows how the running containers divide up the host's CPU
 // and memory as two pie charts. It's a snapshot taken on load (sampling every
 // container is not free, so it doesn't auto-poll).
-export function ResourceBreakdown({ tick = 0 }: { tick?: number }) {
+//
+// aside is rendered NEXT TO the "Top consumers" table (half the width each) once
+// the data is in — the dashboard passes Top talkers there, so the two ranked
+// lists share a row instead of stacking into one long page. Until then (loading,
+// error, nothing running) it just renders on its own.
+export function ResourceBreakdown({ tick = 0, aside }: { tick?: number; aside?: React.ReactNode }) {
   const [data, setData] = useState<ResourceOverview | null>(null);
   const [error, setError] = useState("");
   // A short rolling window of host-wide throughput, so the dashboard can show a
@@ -73,6 +78,7 @@ export function ResourceBreakdown({ tick = 0 }: { tick?: number }) {
   // The section always reserves the chart height so it doesn't jump when the
   // data arrives; errors/empty render in the same space instead of the pies.
   let body: React.ReactNode;
+  let asideShown = false;
   if (error && !data) {
     body = <div className="card p-4 text-sm text-danger">Couldn't sample container resources: {error}</div>;
   } else if (!data) {
@@ -107,9 +113,13 @@ export function ResourceBreakdown({ tick = 0 }: { tick?: number }) {
           <UsagePie title={memTitle} slices={build(containers, (c) => c.memPercent, (p) => bytes((p / 100) * data.memTotal))} />
           <NetworkSummary window={netWindow} rx={netRx} tx={netTx} />
         </div>
-        <ResourceTable containers={containers} cpus={data.cpus} />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+          <ResourceTable containers={containers} cpus={data.cpus} />
+          {aside}
+        </div>
       </div>
     );
+    asideShown = true;
   }
 
   return (
@@ -118,6 +128,7 @@ export function ResourceBreakdown({ tick = 0 }: { tick?: number }) {
         Resource usage <span className="font-normal">· CPU and memory as a share of the host; network as current throughput</span>
       </h2>
       {body}
+      {!asideShown && aside && <div className="mt-4">{aside}</div>}
     </div>
   );
 }

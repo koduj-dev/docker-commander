@@ -5,7 +5,7 @@ import type { TopTalker } from "../lib/types";
 import { rate } from "../lib/format";
 import { Spinner } from "./ui";
 
-const WIDGET_LIMIT = 6;
+const WIDGET_LIMIT = 10; // matches the Top consumers table it sits beside
 
 // TopTalkers is the dashboard's small ranked preview — the full ranked table
 // with a window/metric selector lives on its own page. Ranked over a STORED

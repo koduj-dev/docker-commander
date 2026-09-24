@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Boxes, Database, Eraser, Layers, Loader2, RefreshCw } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../../lib/api";
-import type { DiskReport } from "../../lib/types";
+import type { DiskContainer, DiskImage, DiskReport, DiskVolume } from "../../lib/types";
 import { bytes } from "../../lib/format";
 import { Pager, SearchBar, useListControls } from "../ListControls";
 import { EmptyState, Spinner, StatCard } from "../ui";
+import { SortHeader } from "../ResourceTable";
 
 const AUTO_REFRESH_MS = 60_000;
 
@@ -17,6 +18,32 @@ export const sizeLabel = (n: number) => (n < 0 ? "unknown" : bytes(n));
 const Size = ({ n }: { n: number }) => (n < 0 ? <span className="text-muted">unknown</span> : <>{bytes(n)}</>);
 
 type Section = "images" | "containers" | "volumes";
+
+// Sorting. A size of -1 is "unknown": it always sorts LAST, in either
+// direction — an unmeasured volume is not the smallest one, and it shouldn't
+// float to the top when the list is flipped to ascending either. Ties fall
+// back to the name so the order is stable between refreshes.
+type SortState<K extends string> = { key: K; desc: boolean };
+const cmpNum = (a: number, b: number, desc: boolean) => {
+  if ((a < 0) !== (b < 0)) return a < 0 ? 1 : -1;
+  return desc ? b - a : a - b;
+};
+function sortBy<T, K extends string>(rows: T[], st: SortState<K>, value: (r: T, k: K) => number | string, name: (r: T) => string): T[] {
+  return [...rows].sort((a, b) => {
+    const x = value(a, st.key), y = value(b, st.key);
+    const d = typeof x === "number" && typeof y === "number" ? cmpNum(x, y, st.desc) : String(x).localeCompare(String(y)) * (st.desc ? -1 : 1);
+    return d !== 0 ? d : name(a).localeCompare(name(b));
+  });
+}
+type ImgKey = "name" | "unique" | "size" | "used";
+type CtKey = "name" | "state" | "rw" | "total";
+type VolKey = "name" | "driver" | "size" | "used";
+const imgName = (i: DiskImage) => ((i.tags ?? []).join(", ") || i.id).toLowerCase();
+const imgValue = (i: DiskImage, k: ImgKey) => (k === "name" ? imgName(i) : k === "unique" ? i.unique : k === "size" ? i.size : i.containers);
+const ctValue = (c: DiskContainer, k: CtKey) => (k === "name" ? c.name.toLowerCase() : k === "state" ? c.state : k === "rw" ? c.sizeRw : c.sizeRoot);
+const volValue = (v: DiskVolume, k: VolKey) => (k === "name" ? v.name.toLowerCase() : k === "driver" ? v.driver : k === "size" ? v.size : v.refCount);
+const flip = <K extends string>(cur: SortState<K>, k: K, textual: boolean): SortState<K> =>
+  cur.key === k ? { key: k, desc: !cur.desc } : { key: k, desc: !textual };
 
 // The Disk tab: what takes the space, largest first. The daemon call behind
 // it (`docker system df -v`) is heavy on a busy host, so the data is cached
@@ -46,9 +73,12 @@ export function DiskTab() {
     return () => clearInterval(t);
   }, [load]);
 
-  const images = report?.images ?? [];
-  const containers = report?.containers ?? [];
-  const volumes = report?.volumes ?? [];
+  const [imgSort, setImgSort] = useState<SortState<ImgKey>>({ key: "unique", desc: true });
+  const [ctSort, setCtSort] = useState<SortState<CtKey>>({ key: "rw", desc: true });
+  const [volSort, setVolSort] = useState<SortState<VolKey>>({ key: "size", desc: true });
+  const images = useMemo(() => sortBy(report?.images ?? [], imgSort, imgValue, imgName), [report, imgSort]);
+  const containers = useMemo(() => sortBy(report?.containers ?? [], ctSort, ctValue, (c) => c.name), [report, ctSort]);
+  const volumes = useMemo(() => sortBy(report?.volumes ?? [], volSort, volValue, (v) => v.name), [report, volSort]);
   const imageControls = useListControls(images, (i, q) => (i.tags ?? []).join(" ").toLowerCase().includes(q) || i.id.toLowerCase().includes(q), { storageKey: "disk-images" });
   const containerControls = useListControls(containers, (c, q) => c.name.toLowerCase().includes(q) || (c.project ?? "").toLowerCase().includes(q), { storageKey: "disk-containers" });
   const volumeControls = useListControls(volumes, (v, q) => v.name.toLowerCase().includes(q) || (v.project ?? "").toLowerCase().includes(q), { storageKey: "disk-volumes" });
@@ -73,15 +103,6 @@ export function DiskTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <button className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40" disabled={busy} onClick={() => load(true)}>
-          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Refresh
-        </button>
-        <span className="text-xs text-muted">
-          As of {new Date(report.generatedAt * 1000).toLocaleTimeString()}. Reading disk usage is heavy on the Docker
-          daemon, so it refreshes automatically at most once a minute — press Refresh to recompute on demand.
-        </span>
-      </div>
       {error && <div className="text-sm text-danger">Couldn't refresh: {error}</div>}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -91,17 +112,30 @@ export function DiskTab() {
         <StatCard icon={<Layers className="h-5 w-5" />} label="Images" value={images.length} sub="sizes overlap — see Unique" />
       </div>
 
-      <div className="flex gap-1 rounded-lg bg-panel2/50 p-0.5 w-fit">
-        {segments.map((s) => (
-          <button
-            key={s.key}
-            onClick={() => setSection(s.key)}
-            className={clsx("flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm", section === s.key ? "bg-panel text-text shadow-sm" : "text-muted hover:text-text")}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex gap-1 rounded-lg bg-panel2/50 p-0.5 w-fit">
+          {segments.map((s) => (
+            <button
+              key={s.key}
+              onClick={() => setSection(s.key)}
+              className={clsx("flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm", section === s.key ? "bg-panel text-text shadow-sm" : "text-muted hover:text-text")}
+            >
+              {s.icon} {s.label}
+              <span className="text-[10px] bg-accent/20 text-accent rounded-full px-1.5 leading-4">{s.count}</span>
+            </button>
+          ))}
+        </div>
+        <div className="ml-auto flex items-center gap-3">
+          <span
+            className="text-xs text-muted"
+            title="Reading disk usage is heavy on the Docker daemon, so it refreshes automatically at most once a minute. Press Refresh to recompute on demand."
           >
-            {s.icon} {s.label}
-            <span className="text-[10px] bg-accent/20 text-accent rounded-full px-1.5 leading-4">{s.count}</span>
+            As of {new Date(report.generatedAt * 1000).toLocaleTimeString()} · at most once a minute
+          </span>
+          <button className="btn-ghost px-2.5 py-1.5 text-sm disabled:opacity-40" disabled={busy} onClick={() => load(true)} title="Recompute now">
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Refresh
           </button>
-        ))}
+        </div>
       </div>
 
       <SearchBar controls={active as never} placeholder={`Search ${section}…`} />
@@ -113,12 +147,12 @@ export function DiskTab() {
           <table className="w-full text-sm">
             {section === "images" && (
               <>
-                <thead className="text-muted text-xs uppercase tracking-wide">
+                <thead className="text-muted text-xs">
                   <tr className="border-b border-border">
-                    <th className="text-left font-medium px-4 py-3">Image</th>
-                    <th className="text-right font-medium px-4 py-3" title="What deleting this image would free: its size minus layers other images share">Unique</th>
-                    <th className="text-right font-medium px-4 py-3" title="The whole image, including layers shared with other images">Size</th>
-                    <th className="text-right font-medium px-4 py-3">Used by</th>
+                    <SortHeader label="Image" k="name" sort={imgSort.key} desc={imgSort.desc} onSort={(k) => setImgSort((c) => flip(c, k, true))} className="text-left" />
+                    <SortHeader label="Unique" k="unique" sort={imgSort.key} desc={imgSort.desc} onSort={(k) => setImgSort((c) => flip(c, k, false))} className="text-right" title="What deleting this image would free: its size minus layers other images share" />
+                    <SortHeader label="Size" k="size" sort={imgSort.key} desc={imgSort.desc} onSort={(k) => setImgSort((c) => flip(c, k, false))} className="text-right" title="The whole image, including layers shared with other images" />
+                    <SortHeader label="Used by" k="used" sort={imgSort.key} desc={imgSort.desc} onSort={(k) => setImgSort((c) => flip(c, k, false))} className="text-right" />
                   </tr>
                 </thead>
                 <tbody>
@@ -137,12 +171,12 @@ export function DiskTab() {
             )}
             {section === "containers" && (
               <>
-                <thead className="text-muted text-xs uppercase tracking-wide">
+                <thead className="text-muted text-xs">
                   <tr className="border-b border-border">
-                    <th className="text-left font-medium px-4 py-3">Container</th>
-                    <th className="text-left font-medium px-4 py-3">State</th>
-                    <th className="text-right font-medium px-4 py-3" title="Data the container wrote on top of its image">Writable layer</th>
-                    <th className="text-right font-medium px-4 py-3" title="Writable layer plus the image">Total</th>
+                    <SortHeader label="Container" k="name" sort={ctSort.key} desc={ctSort.desc} onSort={(k) => setCtSort((c) => flip(c, k, true))} className="text-left" />
+                    <SortHeader label="State" k="state" sort={ctSort.key} desc={ctSort.desc} onSort={(k) => setCtSort((c) => flip(c, k, true))} className="text-left" />
+                    <SortHeader label="Writable layer" k="rw" sort={ctSort.key} desc={ctSort.desc} onSort={(k) => setCtSort((c) => flip(c, k, false))} className="text-right" title="Data the container wrote on top of its image" />
+                    <SortHeader label="Total" k="total" sort={ctSort.key} desc={ctSort.desc} onSort={(k) => setCtSort((c) => flip(c, k, false))} className="text-right" title="Writable layer plus the image" />
                   </tr>
                 </thead>
                 <tbody>
@@ -162,12 +196,12 @@ export function DiskTab() {
             )}
             {section === "volumes" && (
               <>
-                <thead className="text-muted text-xs uppercase tracking-wide">
+                <thead className="text-muted text-xs">
                   <tr className="border-b border-border">
-                    <th className="text-left font-medium px-4 py-3">Volume</th>
-                    <th className="text-left font-medium px-4 py-3">Driver</th>
-                    <th className="text-right font-medium px-4 py-3">Size</th>
-                    <th className="text-right font-medium px-4 py-3">Used by</th>
+                    <SortHeader label="Volume" k="name" sort={volSort.key} desc={volSort.desc} onSort={(k) => setVolSort((c) => flip(c, k, true))} className="text-left" />
+                    <SortHeader label="Driver" k="driver" sort={volSort.key} desc={volSort.desc} onSort={(k) => setVolSort((c) => flip(c, k, true))} className="text-left" />
+                    <SortHeader label="Size" k="size" sort={volSort.key} desc={volSort.desc} onSort={(k) => setVolSort((c) => flip(c, k, false))} className="text-right" />
+                    <SortHeader label="Used by" k="used" sort={volSort.key} desc={volSort.desc} onSort={(k) => setVolSort((c) => flip(c, k, false))} className="text-right" />
                   </tr>
                 </thead>
                 <tbody>

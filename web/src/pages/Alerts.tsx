@@ -946,12 +946,12 @@ function Webhooks() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         <p className="text-sm text-muted">
           Fire alerts to any HTTP endpoint (Slack, Discord, Grafana, n8n…). Also scrape{" "}
           <code className="text-accent">/metrics</code> with Prometheus for Grafana dashboards.
         </p>
-        <button className="btn-primary" onClick={() => setShowForm((v) => !v)}>
+        <button className="btn-primary shrink-0" onClick={() => setShowForm((v) => !v)}>
           <Plus className="h-4 w-4" /> New webhook
         </button>
       </div>
@@ -1186,12 +1186,12 @@ export function MaintenanceWindows() {
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted">
-        Suppress alert delivery for planned work — events still get recorded, just not paged. Distinct from a
-        disabled host, which is not monitored at all.
-      </p>
-      <div className="flex justify-end">
-        <button className="btn-primary" onClick={() => { setEditing(null); setShowForm((v) => !v); }}>
+      <div className="flex items-center justify-between gap-4">
+        <p className="text-sm text-muted">
+          Suppress alert delivery for planned work — events still get recorded, just not paged. Distinct from a
+          disabled host, which is not monitored at all.
+        </p>
+        <button className="btn-primary shrink-0" onClick={() => { setEditing(null); setShowForm((v) => !v); }}>
           <Plus className="h-4 w-4" /> New window
         </button>
       </div>

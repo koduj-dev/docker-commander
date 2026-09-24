@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import { Troubleshooting } from "./Troubleshooting";
+import { clearPrefs } from "../lib/prefs";
 import type { DiagnosticsReport } from "../lib/types";
 
 // KPI strip must count by status, and a check's details must default to
@@ -15,7 +16,7 @@ const runDiagnostics = vi.hoisted(() => vi.fn());
 
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
-  return { ...actual, api: { ...actual.api, runDiagnostics } };
+  return { ...actual, api: { ...actual.api, runDiagnostics, savePrefs: () => Promise.resolve() } };
 });
 
 const report: DiagnosticsReport = {
@@ -47,6 +48,7 @@ async function render() {
 }
 
 beforeEach(() => {
+  clearPrefs(); // open/closed choices are remembered; don't leak them between tests
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   runDiagnostics.mockReset().mockResolvedValue(report);
 });
@@ -107,5 +109,43 @@ describe("Troubleshooting collapsible details", () => {
     const run = [...container.querySelectorAll("button")].find((b) => b.textContent?.includes("Run diagnostics")) as HTMLElement;
     await act(async () => run.click());
     expect(checkCard("Network overlap").textContent).toContain("br-abc: 172.18.0.0/16");
+  });
+});
+
+describe("Troubleshooting remembers what you collapsed", () => {
+  const toggleOf = (name: string) => checkCard(name).querySelector("button[aria-expanded]") as HTMLElement;
+  async function remount() {
+    act(() => root!.unmount());
+    root = undefined;
+    container.remove();
+    await render();
+  }
+
+  it("a collapsed warning stays collapsed after a reload", async () => {
+    await render();
+    expect(checkCard("MTU mismatch").textContent).toContain("br-xyz: 1450"); // open by default
+    await act(async () => toggleOf("MTU mismatch").click());
+    expect(checkCard("MTU mismatch").textContent).not.toContain("br-xyz: 1450");
+    await remount();
+    expect(checkCard("MTU mismatch").textContent).not.toContain("br-xyz: 1450");
+  });
+
+  it("an OK check you opened stays open after a reload", async () => {
+    await render();
+    await act(async () => toggleOf("Network overlap").click());
+    await remount();
+    expect(checkCard("Network overlap").textContent).toContain("br-abc: 172.18.0.0/16");
+  });
+
+  it("does not let an old choice hide a check whose status has since changed", async () => {
+    await render();
+    await act(async () => toggleOf("Network overlap").click()); // opened while OK
+    await act(async () => toggleOf("Network overlap").click()); // collapsed while OK
+    runDiagnostics.mockResolvedValue({
+      ...report,
+      checks: report.checks.map((c) => (c.id === "net" ? { ...c, status: "fail" as const } : c)),
+    });
+    await remount();
+    expect(checkCard("Network overlap").textContent).toContain("br-abc: 172.18.0.0/16"); // failing → open again
   });
 });
