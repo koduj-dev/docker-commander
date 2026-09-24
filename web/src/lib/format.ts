@@ -1,9 +1,12 @@
 // Small formatting helpers shared across views.
 
 export function bytes(n: number): string {
-  if (!n) return "0 B";
+  // 0, negative and NaN read as empty. Anything else is clamped into the unit
+  // table: a sub-byte figure (a rate of 0.8 B/s) has a NEGATIVE log and used to
+  // index units[-1] — rendering "819.2 undefined/s".
+  if (!Number.isFinite(n) || n <= 0) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(n) / Math.log(1024));
+  const i = Math.min(units.length - 1, Math.max(0, Math.floor(Math.log(n) / Math.log(1024))));
   return `${(n / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
