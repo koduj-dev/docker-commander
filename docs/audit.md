@@ -43,7 +43,7 @@ against a username they guessed.
 
 ## Every action, by area
 
-All **179** of them, generated from the source and kept in step with it by a
+All **181** of them, generated from the source and kept in step with it by a
 test: an audited action with no entry here fails the build, and an entry the code
 never writes fails it too. The `auth.*` table above explains the ones worth reading
 when something feels wrong; this is the complete set, for looking up what you found
@@ -94,6 +94,8 @@ in the log.
 **Settings** — `settings.update`
 
 **Policy rules** — `policy.rules.update`
+
+**Data retention** — `retention.update`, `retention.purge` (a purge is recorded only when it deleted something)
 
 **LDAP** — `ldap.configure`
 
