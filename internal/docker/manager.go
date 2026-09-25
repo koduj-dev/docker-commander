@@ -29,6 +29,9 @@ type Manager struct {
 	clients  map[int64]*client.Client
 	sshConns map[int64]*ssh.Client
 
+	// diskCache holds the expensive `system df -v` report per host (see DiskReport).
+	diskCache *diskReportCache
+
 	// newClient builds the Docker client for a host. Swappable so the connection
 	// bookkeeping — caching, eviction, and not holding the lock across a dial —
 	// can be tested without a daemon or an SSH server. Production always uses
@@ -42,6 +45,7 @@ func NewManager(s *store.Store) *Manager {
 		store:     s,
 		clients:   make(map[int64]*client.Client),
 		sshConns:  make(map[int64]*ssh.Client),
+		diskCache: newDiskReportCache(),
 		newClient: buildClient,
 	}
 }

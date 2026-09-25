@@ -223,7 +223,7 @@ func TestAPIDockerBackedReads(t *testing.T) {
 		t.Skipf("docker daemon not available (GET /api/system → %d)", code)
 	}
 	for _, path := range []string{
-		"/api/system", "/api/system/df", "/api/containers", "/api/images",
+		"/api/system", "/api/system/df", "/api/stats/disk", "/api/containers", "/api/images",
 		"/api/volumes", "/api/networks", "/api/topology",
 	} {
 		if code, _ := a.do("GET", path, nil); code != 200 {

@@ -34,7 +34,7 @@ export function Recovery() {
   return (
     <>
       <PageHeader title="Recovery bundle" />
-      <div className="p-6 space-y-4 max-w-3xl">
+      <div className="p-6 space-y-4">
         <Tabs
           active={tab}
           onChange={setTab}
@@ -43,8 +43,12 @@ export function Recovery() {
             { key: "import", label: "Import", icon: <Upload className="h-4 w-4" /> },
           ]}
         />
-        {tab === "export" && <ExportPanel />}
-        {tab === "import" && <ImportPanel hosts={hosts} dialogs={dialogs} />}
+        {/* Only the panels are narrow (a form reads badly stretched across a wide
+            screen); the tab strip spans the page like every other tabbed page. */}
+        <div className="max-w-3xl">
+          {tab === "export" && <ExportPanel />}
+          {tab === "import" && <ImportPanel hosts={hosts} dialogs={dialogs} />}
+        </div>
       </div>
     </>
   );

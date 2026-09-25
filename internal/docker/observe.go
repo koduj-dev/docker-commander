@@ -171,6 +171,11 @@ func (m *Manager) DiskUsage(ctx context.Context, hostID int64) (*DiskUsage, erro
 	if err != nil {
 		return nil, err
 	}
+	return diskTotals(du), nil
+}
+
+// diskTotals summarises a verbose `system df` into the four dashboard tiles.
+func diskTotals(du client.DiskUsageResult) *DiskUsage {
 	// Images.TotalSize is what the legacy API called LayersSize (see the SDK's
 	// own legacy-response conversion).
 	out := &DiskUsage{LayersSize: du.Images.TotalSize}
@@ -190,11 +195,12 @@ func (m *Manager) DiskUsage(ctx context.Context, hostID int64) (*DiskUsage, erro
 			out.Volumes.Size += v.UsageData.Size
 		}
 	}
-	out.BuildCache.Count = len(du.BuildCache.Items)
-	for _, bc := range du.BuildCache.Items {
-		out.BuildCache.Size += bc.Size
-	}
-	return out, nil
+	// Build cache uses the client's aggregates, not a sum over Items: a record
+	// marked Shared is deliberately left out of TotalSize (its layers are still
+	// referenced elsewhere), so summing every record overstated the tile.
+	out.BuildCache.Count = int(du.BuildCache.TotalCount)
+	out.BuildCache.Size = du.BuildCache.TotalSize
+	return out
 }
 
 // StreamEvents forwards live daemon events to onEvent until the context is

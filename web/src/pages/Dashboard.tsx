@@ -61,9 +61,7 @@ export function Dashboard() {
           </div>
         )}
 
-        <ResourceBreakdown tick={tick} />
-
-        <TopTalkers tick={tick} />
+        <ResourceBreakdown tick={tick} aside={<TopTalkers tick={tick} />} />
 
         <OpenPorts tick={tick} />
 

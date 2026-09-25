@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../lib/api";
-import type { TopTalker } from "../lib/types";
-import { rate } from "../lib/format";
-import { PageHeader } from "../layout/Shell";
-import { EmptyState, Spinner } from "../components/ui";
+import { api } from "../../lib/api";
+import type { TopTalker } from "../../lib/types";
+import { rate } from "../../lib/format";
+import { EmptyState, Spinner } from "../ui";
 
 const WINDOWS = [
   { value: "5m", label: "Last 5 min" },
@@ -17,14 +16,15 @@ const METRICS = [
   { value: "nettx", label: "Sent" },
 ];
 
-// The full ranked table behind the Dashboard's small preview widget. Ranked
+// The Network tab of the Resources page: the full ranked table behind the
+// Dashboard's small preview widget. Ranked
 // over a STORED window (averaged rate, oldest-to-newest point in the
 // window), never a point-in-time poll sample — a live ranking reorders
 // itself every 8-15s and is unreadable, the same reason the dashboard's
 // ResourceBreakdown doesn't rank network there either.
 const RESULT_LIMIT = 50;
 
-export function NetworkTopTalkers() {
+export function NetworkTab() {
   const [window, setWindowSel] = useState("5m");
   const [metric, setMetric] = useState("total");
   const [talkers, setTalkers] = useState<TopTalker[] | null>(null);
@@ -61,8 +61,7 @@ export function NetworkTopTalkers() {
 
   return (
     <>
-      <PageHeader title="Top talkers" />
-      <div className="p-6 space-y-4">
+      <div className="space-y-4">
         <p className="text-sm text-muted">
           Containers ranked by network throughput, averaged over a stored window — not a snapshot of the current poll,
           which is too bursty to rank meaningfully. See the{" "}

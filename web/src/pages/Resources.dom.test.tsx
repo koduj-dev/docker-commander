@@ -1,0 +1,150 @@
+/** @vitest-environment happy-dom */
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { MemoryRouter } from "react-router-dom";
+import { Resources } from "./Resources";
+import { api } from "../lib/api";
+import { clearPrefs } from "../lib/prefs";
+import type { ResourceOverview, ResourceUsage } from "../lib/types";
+
+vi.mock("../lib/api", () => ({
+  api: {
+    statsOverview: vi.fn(), hosts: () => Promise.resolve([]), savePrefs: () => Promise.resolve(),
+    topTalkers: vi.fn(), stacks: vi.fn(), diskReport: vi.fn(),
+  },
+}));
+
+const GB = 1024 ** 3;
+const u = (name: string, cpuPercent: number, memBytes: number): ResourceUsage => ({
+  id: `id-${name}`, name, cpuPercent, memBytes, memPercent: (memBytes / (16 * GB)) * 100, netRxRate: 1000, netTxRate: 500,
+});
+// 8 cores, 16 GB host. db: 25% of host = 2 cores, 4 GB. web: 5% = 0.4 cores, 1 GB.
+const emptyTalkers = { window: "5m", metric: "total", containers: [], total: 0 };
+const overview: ResourceOverview = { cpus: 8, memTotal: 16 * GB, containers: [u("web", 5, GB), u("db", 25, 4 * GB)] };
+
+let container: HTMLDivElement;
+let root: Root;
+
+beforeEach(async () => {
+  clearPrefs(); // the list search is remembered across mounts; don't leak it between tests
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  vi.mocked(api.statsOverview).mockResolvedValue(overview);
+  vi.mocked(api.topTalkers).mockResolvedValue(emptyTalkers);
+  vi.mocked(api.stacks).mockResolvedValue([]);
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+  await act(async () => {
+    root.render(<MemoryRouter><Resources /></MemoryRouter>);
+  });
+});
+
+afterEach(() => {
+  act(() => root.unmount());
+  container.remove();
+  vi.clearAllMocks();
+  vi.useRealTimers();
+});
+
+const names = () => [...container.querySelectorAll("tbody tr td:first-child")].map((td) => td.textContent);
+
+function typeInto(el: Element, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+  setter.call(el, value);
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+describe("Resources page", () => {
+  it("shows absolute cores and bytes, not just percentages", () => {
+    const text = container.textContent ?? "";
+    expect(text).toContain("2.00 cores"); // db: 25% of 8 cores
+    expect(text).toContain("4.0 GB");
+    expect(text).toContain("of 8"); // total cores in the KPI
+    expect(text).toContain("5.0 GB"); // summed memory
+  });
+
+  it("defaults to memory descending", () => {
+    expect(names()).toEqual(["db", "web"]);
+  });
+
+  it("re-sorts when a header is clicked, and flips direction on a second click", async () => {
+    const header = (label: string) => [...container.querySelectorAll("th button")].find((b) => b.textContent?.trim() === label) as HTMLElement;
+    await act(async () => header("CPU").click()); // new column → highest first
+    expect(names()).toEqual(["db", "web"]);
+    await act(async () => header("CPU").click());
+    expect(names()).toEqual(["web", "db"]);
+  });
+
+  it("exposes the active sort to assistive tech via aria-sort", async () => {
+    const th = (label: string) => [...container.querySelectorAll("th")].find((t) => t.textContent?.trim() === label) as HTMLElement;
+    expect(th("Memory").getAttribute("aria-sort")).toBe("descending"); // the default
+    expect(th("CPU").getAttribute("aria-sort")).toBeNull();
+    const cpu = th("CPU").querySelector("button") as HTMLElement;
+    await act(async () => cpu.click());
+    expect(th("CPU").getAttribute("aria-sort")).toBe("descending");
+    expect(th("Memory").getAttribute("aria-sort")).toBeNull();
+    await act(async () => cpu.click());
+    expect(th("CPU").getAttribute("aria-sort")).toBe("ascending");
+  });
+
+  it("keeps equal rows in a stable (name) order regardless of direction", async () => {
+    const rx = [...container.querySelectorAll("th button")].find((b) => b.textContent?.trim() === "Received") as HTMLElement;
+    await act(async () => rx.click());
+    expect(names()).toEqual(["db", "web"]); // both 1000 B/s
+    await act(async () => rx.click());
+    expect(names()).toEqual(["db", "web"]);
+  });
+
+  it("filters by name and shows a specific empty state for no match", async () => {
+    await act(async () => typeInto(container.querySelector('input.input')!, "web"));
+    expect(names()).toEqual(["web"]);
+    await act(async () => typeInto(container.querySelector('input.input')!, "zzz"));
+    expect(container.textContent).toContain("No container matches that name");
+  });
+
+  it("re-reads the snapshot every 5 seconds", async () => {
+    act(() => root.unmount());
+    vi.useFakeTimers();
+    vi.mocked(api.statsOverview).mockClear();
+    root = createRoot(container);
+    await act(async () => { root.render(<MemoryRouter><Resources /></MemoryRouter>); });
+    expect(api.statsOverview).toHaveBeenCalledTimes(1); // initial load
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    expect(api.statsOverview).toHaveBeenCalledTimes(2);
+  });
+
+  it("opens the tab named in the URL and stops polling the live snapshot on a non-live tab", async () => {
+    act(() => root.unmount());
+    vi.mocked(api.statsOverview).mockClear();
+    root = createRoot(container);
+    await act(async () => { root.render(<MemoryRouter initialEntries={["/resources?tab=network"]}><Resources /></MemoryRouter>); });
+    expect(api.topTalkers).toHaveBeenCalled();
+    expect(api.statsOverview).not.toHaveBeenCalled();
+    expect(container.querySelector('input[placeholder^="Filter by container name"]')).not.toBeNull();
+  });
+
+  it("falls back to the Containers tab for an unknown ?tab", async () => {
+    act(() => root.unmount());
+    root = createRoot(container);
+    await act(async () => { root.render(<MemoryRouter initialEntries={["/resources?tab=bogus"]}><Resources /></MemoryRouter>); });
+    expect(container.textContent).toContain("Running containers");
+  });
+
+  it("ignores a slow earlier poll that resolves after a newer one", async () => {
+    act(() => root.unmount());
+    vi.useFakeTimers();
+    let resolveSlow!: (v: ResourceOverview) => void;
+    const fresh: ResourceOverview = { ...overview, containers: [u("fresh-one", 1, GB)] };
+    const stale: ResourceOverview = { ...overview, containers: [u("stale-one", 1, GB)] };
+    vi.mocked(api.statsOverview)
+      .mockImplementationOnce(() => new Promise((res) => { resolveSlow = res; })) // initial load: slow
+      .mockResolvedValueOnce(fresh); // the poll five seconds later: fast
+    root = createRoot(container);
+    await act(async () => { root.render(<MemoryRouter><Resources /></MemoryRouter>); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(names()).toEqual(["fresh-one"]);
+    await act(async () => { resolveSlow(stale); await Promise.resolve(); });
+    expect(names()).toEqual(["fresh-one"]); // the late, older response must not win
+  });
+});

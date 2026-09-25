@@ -73,6 +73,16 @@ function typeInto(el: Element, value: string) {
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
+describe("Recovery layout", () => {
+  it("keeps the tab strip page-wide while only the panel is narrow", async () => {
+    await render();
+    const strip = container.querySelector("button")!.parentElement as HTMLElement; // the Tabs bar
+    const panel = container.querySelector("section")!.parentElement as HTMLElement;
+    expect(panel.className).toContain("max-w-3xl");
+    expect(strip.closest(".max-w-3xl")).toBeNull();
+  });
+});
+
 describe("Recovery export", () => {
   it("exports with the chosen includeSecrets and passphrase", async () => {
     await render();

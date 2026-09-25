@@ -1,9 +1,12 @@
 // Small formatting helpers shared across views.
 
 export function bytes(n: number): string {
-  if (!n) return "0 B";
+  // 0, negative and NaN read as empty. Anything else is clamped into the unit
+  // table: a sub-byte figure (a rate of 0.8 B/s) has a NEGATIVE log and used to
+  // index units[-1] — rendering "819.2 undefined/s".
+  if (!Number.isFinite(n) || n <= 0) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(n) / Math.log(1024));
+  const i = Math.min(units.length - 1, Math.max(0, Math.floor(Math.log(n) / Math.log(1024))));
   return `${(n / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
@@ -73,4 +76,16 @@ export function netRates(samples: { timestamp: number; netRx: number; netTx: num
 // rate renders a bytes-per-second figure.
 export function rate(bytesPerSec: number): string {
   return `${bytes(bytesPerSec)}/s`;
+}
+
+// cpuCores turns a container's share of TOTAL host CPU (0..100, what the
+// stats API reports) into cores' worth of CPU — the number an operator can
+// actually compare against "16 cores", which a bare percentage of the host
+// hides.
+export function cpuCores(percentOfHost: number, hostCpus: number): number {
+  return (percentOfHost / 100) * hostCpus;
+}
+
+export function coresLabel(n: number): string {
+  return n >= 10 ? n.toFixed(1) : n.toFixed(2);
 }

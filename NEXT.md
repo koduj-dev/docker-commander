@@ -414,6 +414,14 @@ the security property alone, independent of the NAT-traversal convenience.
   `ServiceSpec` (name+image only) to also read networks/volumes/depends_on/ports.
   Scope v1 to a single static file, best-effort — full multi-file/`extends`/
   `profiles` resolution is more compose surface than a visualizer needs.
+- **Resources → Network: say what the numbers are.** The tab shows the
+  *average throughput* (bytes/s) over the chosen window (5 m / 15 m / 1 h),
+  computed from the stored cumulative counters — not an amount of data
+  transferred, and not the instantaneous rate the Containers tab shows — but
+  nothing on the page says so beyond one dense paragraph, and it reads as if
+  Received/Sent were totals. Rename the columns ("Avg received / Avg sent, per
+  second") with a tooltip, and consider a third "Transferred" column
+  (roughly average × window length) so "how much data was it" is answerable too.
 ---
 
 ## 📦 Backlog

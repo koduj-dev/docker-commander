@@ -21,7 +21,7 @@ import type {
   CreateSpec,
   DiffEntry,
   FileEntry,
-  DiskUsage,
+  DiskReport, DiskUsage,
   HistoryEntry,
   ScanResponse,
   IgnoredCVE,
@@ -722,6 +722,9 @@ export const api = {
   },
 
   diskUsage: () => req<DiskUsage>("GET", `/api/system/df${hostParam()}`),
+  // Per-object disk report. The daemon call behind it is expensive, so the
+  // server caches it (~1 min); refresh=true asks for a fresh one.
+  diskReport: (refresh = false) => req<DiskReport>("GET", `/api/stats/disk?${refresh ? "refresh=1" : "refresh=0"}${hostParam("&")}`),
 
   images: () => req<ImageSummary[]>("GET", `/api/images${hostParam()}`),
   // Image-name autocomplete: Docker Hub repo search (via the host daemon) and Hub
