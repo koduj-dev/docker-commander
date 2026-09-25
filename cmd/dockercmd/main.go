@@ -548,6 +548,9 @@ func runServer(shutdownCtx context.Context) error {
 	// Check every project's running services for a newer image at the registry.
 	go srv.StartImageUpdatePollLoop(shutdownCtx)
 
+	// Purge history older than the retention policy (alert feed, audit log, project revisions) once a day.
+	go srv.StartRetentionLoop(shutdownCtx)
+
 	handler := srv.Handler()
 	tlsEnabled := cfg.TLSEnabled()
 	acmeMode := len(cfg.ACMEDomains) > 0

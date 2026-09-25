@@ -22,6 +22,7 @@ import type {
   DiffEntry,
   FileEntry,
   DiskReport, DiskUsage,
+  RetentionPolicy, RetentionRun, RetentionState,
   HistoryEntry,
   ScanResponse,
   IgnoredCVE,
@@ -288,6 +289,11 @@ export const api = {
   settings: () => req<AppSettings>("GET", "/api/settings"),
   setSettings: (b: { disabledSections: string[]; localhostNo2fa: boolean }) =>
     req<{ ok: boolean }>("PUT", "/api/settings", b),
+
+  // Data retention (admin): per-area TTLs, what is stored, and "purge now".
+  retention: () => req<RetentionState>("GET", "/api/settings/retention"),
+  setRetention: (p: RetentionPolicy) => req<{ ok: boolean }>("PUT", "/api/settings/retention", p),
+  purgeRetention: () => req<RetentionRun>("POST", "/api/settings/retention/purge"),
 
   // Deploy-time policy rules (admin): off/warn/block per rule.
   policyRules: () => req<PolicyRules>("GET", "/api/policy-rules"),

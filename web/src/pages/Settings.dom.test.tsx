@@ -30,6 +30,13 @@ vi.mock("../lib/api", () => ({
     mcpAdminTokenPolicy: () => Promise.resolve({ defaultDays: 30, maxDays: 365, allowUnlimited: false }),
     // Policy rules, MCP Admin and Recovery bundle are tabs of this page.
     policyRules: () => Promise.resolve({ rules: ["privileged"], modes: { privileged: "warn" } }),
+    retention: () => Promise.resolve({
+      policy: { alertEventsDays: 90, alertDeliveriesDays: 90, auditDays: 365, revisionsKeep: 50 },
+      defaults: { alertEventsDays: 90, alertDeliveriesDays: 90, auditDays: 365, revisionsKeep: 50 },
+      limits: { minAuditDays: 30, minAlertDays: 1, minRevisionsKeep: 3, maxDays: 36500 },
+      stats: { alertEvents: { rows: 0 }, alertDeliveries: { rows: 0 }, audit: { rows: 0 }, revisions: { rows: 0 }, dbBytes: 1024, dbFreeBytes: 0 },
+      lastRun: null,
+    }),
     mcpAdminTokens: () => Promise.resolve([]),
     mcpAdminOAuthClients: () => Promise.resolve([]),
     mcpAdminSessions: () => Promise.resolve([]),
@@ -120,7 +127,7 @@ describe("Settings hosts the admin pages as tabs", () => {
   const headings = () => [...container.querySelectorAll("h1")].map((h) => h.textContent?.trim());
 
   it("shows Policy rules, MCP Admin and Recovery bundle without a second page header", async () => {
-    for (const [name, marker] of [["Policy rules", "Checked against every project deploy"], ["MCP Admin", "API tokens"], ["Recovery bundle", "Export"]] as const) {
+    for (const [name, marker] of [["Policy rules", "Checked against every project deploy"], ["MCP Admin", "API tokens"], ["Data retention", "Last purge"], ["Recovery bundle", "Export"]] as const) {
       await act(async () => tab(name).click());
       expect(container.textContent, name).toContain(marker);
       // One page, one header: the embedded page must not bring its own.

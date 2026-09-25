@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -44,6 +45,10 @@ type Server struct {
 	mcpSigningKey []byte
 	// mcpRateLimiter throttles the unauthenticated OAuth endpoints (DCR + token).
 	mcpRateLimiter *auth.LoginLimiter
+
+	// retentionMu makes a scheduled and a manual purge mutually exclusive: two at
+	// once would just fight over the single database connection.
+	retentionMu sync.Mutex
 }
 
 // NewServer constructs the API server.
@@ -157,6 +162,9 @@ func (s *Server) Handler() http.Handler {
 			r.Delete("/users/{id}", s.handleDeleteUser)
 			r.Get("/settings", s.handleGetSettings)
 			r.Put("/settings", s.handleSetSettings)
+			r.Get("/settings/retention", s.handleGetRetention)
+			r.Put("/settings/retention", s.handleSetRetention)
+			r.Post("/settings/retention/purge", s.handlePurgeRetention)
 			r.Get("/ldap", s.handleGetLDAP)
 			r.Put("/ldap", s.handleSetLDAP)
 			r.Post("/ldap/test", s.handleTestLDAP)
