@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import { DiskTab, sizeLabel } from "./DiskTab";
 import { api } from "../../lib/api";
+import { clearPrefs } from "../../lib/prefs";
 import type { DiskReport } from "../../lib/types";
 
 vi.mock("../../lib/api", () => ({ api: { diskReport: vi.fn(), savePrefs: () => Promise.resolve() } }));
@@ -22,6 +23,7 @@ const report: DiskReport = {
     { name: "nfs-vol", driver: "nfs", size: -1, refCount: -1 },
   ],
   buildCache: { count: 3, size: 2 * GB, reclaimable: GB },
+  reclaimable: { images: 2 * GB, containers: 0, volumes: 0, buildCache: GB, total: 3 * GB },
 };
 
 let container: HTMLDivElement;
@@ -32,6 +34,7 @@ const click = async (label: string) => {
 };
 
 beforeEach(async () => {
+  clearPrefs();
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.mocked(api.diskReport).mockResolvedValue(report);
   container = document.createElement("div");
@@ -114,6 +117,22 @@ describe("DiskTab", () => {
     const refresh = [...container.querySelectorAll("button")].find((b) => b.textContent?.includes("Refresh")) as HTMLElement;
     const images = [...container.querySelectorAll("button")].find((b) => b.textContent?.includes("Images")) as HTMLElement;
     expect(refresh.closest(".flex-wrap")).toBe(images.closest(".flex-wrap"));
+  });
+
+  it("shows Docker's reclaimable estimate, with what it consists of, and says it is a lower bound", () => {
+    const text = container.textContent ?? "";
+    expect(text).toContain("Reclaimable");
+    expect(text).toContain("3.0 GB"); // the total
+    expect(text).toContain("what a prune would free");
+    expect(text).toContain("lower bound");
+    expect(text).toContain("1 unused"); // exactly one of the two images has 0 containers
+  });
+
+  it("'Unused only' narrows images to those no container uses — an unknown count is not unused", async () => {
+    const select = [...container.querySelectorAll("select")].find((sel) => [...(sel as HTMLSelectElement).options].some((o) => o.value === "unused")) as HTMLSelectElement;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value")!.set!;
+    await act(async () => { setter.call(select, "unused"); select.dispatchEvent(new Event("change", { bubbles: true })); });
+    expect(names()).toEqual(["big:1"]); // the other image is used by 2 containers
   });
 
   it("sizeLabel never turns unknown into zero", () => {

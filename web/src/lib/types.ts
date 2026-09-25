@@ -389,6 +389,9 @@ export interface DiskReport {
   containers: DiskContainer[];
   volumes: DiskVolume[];
   buildCache: { count: number; size: number; reclaimable: number };
+  // Docker's own "reclaimable" figures (as `docker system df` prints them). For
+  // images it is a lower bound: layers shared only among unused images count in none.
+  reclaimable: { images: number; containers: number; volumes: number; buildCache: number; total: number };
 }
 
 export interface EventMsg {

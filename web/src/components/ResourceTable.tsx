@@ -22,7 +22,7 @@ export function SortHeader<K extends string>({
       <button
         type="button"
         title={title}
-        className={clsx("inline-flex items-center gap-1 uppercase tracking-wide", on ? "text-accent font-semibold" : "hover:text-text")}
+        className={clsx("inline-flex items-center gap-1 uppercase tracking-wide whitespace-nowrap", on ? "text-accent font-semibold" : "hover:text-text")}
         onClick={() => onSort(k)}
       >
         {label}

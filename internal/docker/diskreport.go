@@ -59,6 +59,20 @@ type DiskBuildCache struct {
 	Reclaimable int64 `json:"reclaimable"` // records not in use
 }
 
+// DiskReclaimable is what could be freed, per category, as Docker itself
+// computes it (the RECLAIMABLE column of `docker system df`): images no
+// container uses (their unique layers), stopped containers' writable layers,
+// volumes no container references, and build cache not in use. For images it is
+// a lower bound — layers shared only among several unused images are counted in
+// none of them, though pruning all of them frees those too.
+type DiskReclaimable struct {
+	Images     int64 `json:"images"`
+	Containers int64 `json:"containers"`
+	Volumes    int64 `json:"volumes"`
+	BuildCache int64 `json:"buildCache"`
+	Total      int64 `json:"total"`
+}
+
 // DiskReport is `docker system df -v` with every object kept, sorted by size
 // (largest first, unknown last) so the UI can answer "what takes the most
 // space" directly.
@@ -68,6 +82,7 @@ type DiskReport struct {
 	Containers  []DiskContainer `json:"containers"`
 	Volumes     []DiskVolume    `json:"volumes"`
 	BuildCache  DiskBuildCache  `json:"buildCache"`
+	Reclaimable DiskReclaimable `json:"reclaimable"`
 }
 
 func sizeKey(n int64) int64 {
@@ -117,6 +132,13 @@ func buildDiskReport(du client.DiskUsageResult, now time.Time) *DiskReport {
 		Size:        du.BuildCache.TotalSize,
 		Reclaimable: du.BuildCache.Reclaimable,
 	}
+	out.Reclaimable = DiskReclaimable{
+		Images:     du.Images.Reclaimable,
+		Containers: du.Containers.Reclaimable,
+		Volumes:    du.Volumes.Reclaimable,
+		BuildCache: du.BuildCache.Reclaimable,
+	}
+	out.Reclaimable.Total = out.Reclaimable.Images + out.Reclaimable.Containers + out.Reclaimable.Volumes + out.Reclaimable.BuildCache
 	// Ties fall back to name/id so the order is stable between refreshes.
 	sort.SliceStable(out.Images, func(i, j int) bool {
 		a, b := out.Images[i], out.Images[j]

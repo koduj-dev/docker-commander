@@ -34,6 +34,9 @@ func TestBuildDiskReport(t *testing.T) {
 	// count but excluded from TotalSize and Reclaimable.
 	du.BuildCache.Items = []build.CacheRecord{{Size: 30, InUse: true}, {Size: 70, InUse: false}, {Size: 500, InUse: false, Shared: true}}
 	du.BuildCache.TotalCount, du.BuildCache.TotalSize, du.BuildCache.Reclaimable = 3, 100, 70
+	// Docker's own reclaimable figures (unused images' unique size, stopped
+	// containers' writable layers, ...), as the client normalises them.
+	du.Images.Reclaimable, du.Containers.Reclaimable, du.Volumes.Reclaimable = 600, 900, 0
 
 	r := buildDiskReport(du, time.Unix(1000, 0))
 
@@ -58,6 +61,9 @@ func TestBuildDiskReport(t *testing.T) {
 	}
 	if r.BuildCache.Count != 3 || r.BuildCache.Size != 100 || r.BuildCache.Reclaimable != 70 {
 		t.Errorf("build cache = %+v, want the client aggregates (a Shared record must not count as reclaimable)", r.BuildCache)
+	}
+	if r.Reclaimable.Images != 600 || r.Reclaimable.Containers != 900 || r.Reclaimable.Volumes != 0 || r.Reclaimable.BuildCache != 70 || r.Reclaimable.Total != 1570 {
+		t.Errorf("reclaimable = %+v, want the client's per-category figures and their sum", r.Reclaimable)
 	}
 	if r.GeneratedAt != 1000 {
 		t.Errorf("generatedAt = %d", r.GeneratedAt)

@@ -1,15 +1,30 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { Boxes, Database, Eraser, Layers, Loader2, RefreshCw } from "lucide-react";
+import { Boxes, Database, Eraser, Layers, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../../lib/api";
 import type { DiskContainer, DiskImage, DiskReport, DiskVolume } from "../../lib/types";
 import { bytes } from "../../lib/format";
-import { Pager, SearchBar, useListControls } from "../ListControls";
+import { Pager, SearchBar, useListControls, type StatusOption } from "../ListControls";
 import { EmptyState, Spinner, StatCard } from "../ui";
 import { SortHeader } from "../ResourceTable";
 
 const AUTO_REFRESH_MS = 60_000;
+
+// "Unused" filters: with hundreds of images the useful question is which ones
+// nothing references. An unknown count (-1) is NOT treated as unused.
+const IMAGE_STATUSES: StatusOption<DiskImage>[] = [
+  { value: "all", label: "All images" },
+  { value: "unused", label: "Unused only", test: (i) => i.containers === 0 },
+];
+const CONTAINER_STATUSES: StatusOption<DiskContainer>[] = [
+  { value: "all", label: "All containers" },
+  { value: "stopped", label: "Stopped only", test: (c) => c.state !== "running" && c.state !== "paused" && c.state !== "restarting" },
+];
+const VOLUME_STATUSES: StatusOption<DiskVolume>[] = [
+  { value: "all", label: "All volumes" },
+  { value: "unused", label: "Unused only", test: (v) => v.refCount === 0 },
+];
 
 // A size of -1 means the daemon did not calculate it (a volume from a
 // non-local driver, an image whose shared size wasn't computed): say so
@@ -79,9 +94,9 @@ export function DiskTab() {
   const images = useMemo(() => sortBy(report?.images ?? [], imgSort, imgValue, imgName), [report, imgSort]);
   const containers = useMemo(() => sortBy(report?.containers ?? [], ctSort, ctValue, (c) => c.name), [report, ctSort]);
   const volumes = useMemo(() => sortBy(report?.volumes ?? [], volSort, volValue, (v) => v.name), [report, volSort]);
-  const imageControls = useListControls(images, (i, q) => (i.tags ?? []).join(" ").toLowerCase().includes(q) || i.id.toLowerCase().includes(q), { storageKey: "disk-images" });
-  const containerControls = useListControls(containers, (c, q) => c.name.toLowerCase().includes(q) || (c.project ?? "").toLowerCase().includes(q), { storageKey: "disk-containers" });
-  const volumeControls = useListControls(volumes, (v, q) => v.name.toLowerCase().includes(q) || (v.project ?? "").toLowerCase().includes(q), { storageKey: "disk-volumes" });
+  const imageControls = useListControls(images, (i, q) => (i.tags ?? []).join(" ").toLowerCase().includes(q) || i.id.toLowerCase().includes(q), { storageKey: "disk-images", statuses: IMAGE_STATUSES });
+  const containerControls = useListControls(containers, (c, q) => c.name.toLowerCase().includes(q) || (c.project ?? "").toLowerCase().includes(q), { storageKey: "disk-containers", statuses: CONTAINER_STATUSES });
+  const volumeControls = useListControls(volumes, (v, q) => v.name.toLowerCase().includes(q) || (v.project ?? "").toLowerCase().includes(q), { storageKey: "disk-volumes", statuses: VOLUME_STATUSES });
 
   if (!report) {
     return error
@@ -89,6 +104,7 @@ export function DiskTab() {
       : <div className="flex items-center gap-2 text-muted"><Spinner /> Reading disk usage… this can take a few seconds.</div>;
   }
 
+  const unusedImages = images.filter((i) => i.containers === 0).length;
   const known = (xs: number[]) => xs.filter((n) => n >= 0);
   const volTotal = known(volumes.map((v) => v.size)).reduce((a, b) => a + b, 0);
   const volUnknown = volumes.length - known(volumes.map((v) => v.size)).length;
@@ -105,12 +121,23 @@ export function DiskTab() {
     <div className="space-y-4">
       {error && <div className="text-sm text-danger">Couldn't refresh: {error}</div>}
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        <StatCard
+          icon={<Trash2 className="h-5 w-5" />}
+          label="Reclaimable"
+          value={bytes(report.reclaimable.total)}
+          sub="what a prune would free"
+        />
         <StatCard icon={<Database className="h-5 w-5" />} label="Volumes" value={bytes(volTotal)} sub={`${volumes.length} volumes${volUnknown ? ` · ${volUnknown} unknown` : ""}`} />
         <StatCard icon={<Boxes className="h-5 w-5" />} label="Container writable layers" value={bytes(rwTotal)} sub={`${containers.length} containers`} />
         <StatCard icon={<Eraser className="h-5 w-5" />} label="Build cache" value={bytes(report.buildCache.size)} sub={`${bytes(report.buildCache.reclaimable)} reclaimable`} />
-        <StatCard icon={<Layers className="h-5 w-5" />} label="Images" value={images.length} sub="sizes overlap — see Unique" />
+        <StatCard icon={<Layers className="h-5 w-5" />} label="Images" value={images.length} sub={`${unusedImages} unused · ${bytes(report.reclaimable.images)}`} />
       </div>
+      <p className="text-xs text-muted -mt-2">
+        Reclaimable is Docker's own estimate of what a prune would free: unused images (their unique layers), stopped
+        containers' writable layers, unreferenced volumes and idle build cache. For images it is a lower bound —
+        layers shared only among several unused images are counted in none of them, though pruning all of them frees those too.
+      </p>
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex gap-1 rounded-lg bg-panel2/50 p-0.5 w-fit">
