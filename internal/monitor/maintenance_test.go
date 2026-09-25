@@ -276,7 +276,8 @@ func TestSuppressedResourceEmitDoesNotAdvanceNotifiedAt(t *testing.T) {
 	// The condition hasn't changed. With a real (delivered) notification,
 	// this poll would stay quiet for the rest of the 300s interval — but
 	// the only notification so far was suppressed, so it must re-announce
-	// as a repeat right away.
+	// right away — as a firing, since nobody was told yet (a repeat is hidden
+	// in the feed by default, which made the alert look gone).
 	m.ready(id, cs.ID)
 	m.evalResourceRules(ctx, snapOf(cs), hostsOf(cs))
 
@@ -284,8 +285,14 @@ func TestSuppressedResourceEmitDoesNotAdvanceNotifiedAt(t *testing.T) {
 	if len(evs) != 2 {
 		t.Fatalf("expected a repeat event immediately once the window ended, got %d:\n%s", len(evs), dump(evs))
 	}
-	if evs[0].Kind != store.KindRepeat || evs[0].Suppressed {
-		t.Fatalf("the second event should be a delivered repeat: %+v", evs[0])
+	if evs[0].Kind != store.KindFiring || evs[0].Suppressed {
+		t.Fatalf("the second event should be the first real delivery, as a firing: %+v", evs[0])
+	}
+
+	// Once that was delivered, later announcements really are repeats again.
+	st2, _ := st.ListAlertStates(ctx)
+	if len(st2) != 1 || st2[0].NotifiedAt.IsZero() {
+		t.Fatalf("the delivery should have stamped NotifiedAt: %+v", st2)
 	}
 }
 
@@ -412,5 +419,138 @@ func TestAlertLogLineDoesNotClaimSilenceOutsideAWindow(t *testing.T) {
 	}
 	if strings.Contains(line, "silenced") {
 		t.Errorf("no window is active, but the line claims silence:\n%s", line)
+	}
+}
+
+// A silenced repeat says nothing the firing event didn't, and with many
+// containers on one rule it is what would fill the table for a whole window.
+func TestSilencedRepeatIsNotStoredButOtherKindsAre(t *testing.T) {
+	m, st, ctx := newMaintenanceMonitor(t)
+	const hostID = int64(1)
+	logs := captureLog(t)
+
+	rule := store.AlertRule{Name: "mem", Type: "resource", Severity: "warning", CooldownSec: 60}
+	ruleID, err := st.CreateAlertRule(ctx, &rule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule.ID = ruleID
+	if _, err := st.CreateMaintenanceWindow(ctx, &store.MaintenanceWindow{
+		Name: "w", HostIDs: []int64{hostID}, StartsAt: time.Now().Add(-time.Minute), EndsAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, kind := range []string{store.KindFiring, store.KindRepeat, store.KindRepeat, store.KindResolved} {
+		if suppressed := m.emit(ctx, rule, hostID, "host1", "c1", "es01", "", "msg", nil, kind, 5); !suppressed {
+			t.Fatalf("%s should report suppressed", kind)
+		}
+	}
+	events, _, err := st.ListAlertEvents(ctx, store.AlertQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kinds []string
+	for _, e := range events {
+		kinds = append(kinds, e.Kind)
+	}
+	if len(events) != 2 {
+		t.Fatalf("stored kinds = %v, want just firing and resolved (repeats skipped)", kinds)
+	}
+	// ...but every one still reached the process log, silenced.
+	if got := strings.Count(logs.String(), "silenced=true"); got != 4 {
+		t.Errorf("%d silenced log lines, want 4 (nothing is lost from the journal):\n%s", got, logs.String())
+	}
+}
+
+func TestRepeatOutsideAWindowIsStored(t *testing.T) {
+	m, st, ctx := newMaintenanceMonitor(t)
+	rule := store.AlertRule{Name: "mem", Type: "resource", Severity: "warning", CooldownSec: 60}
+	ruleID, err := st.CreateAlertRule(ctx, &rule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule.ID = ruleID
+	m.emit(ctx, rule, 1, "host1", "c1", "es01", "", "msg", nil, store.KindRepeat, 5)
+	events, _, _ := st.ListAlertEvents(ctx, store.AlertQuery{})
+	if len(events) != 1 || events[0].Kind != store.KindRepeat {
+		t.Fatalf("a repeat with no window active must still be recorded, got %+v", events)
+	}
+}
+
+// The journal must say when a silence begins and ends — otherwise "alerts are
+// being held back" is invisible to anyone reading it.
+func TestMaintenanceTransitionsAreLogged(t *testing.T) {
+	logs := captureLog(t)
+	now := time.Date(2026, 9, 25, 10, 0, 0, 0, time.UTC)
+	w := store.MaintenanceWindow{ID: 1, Name: "Test", StartsAt: now.Add(-9 * time.Minute), EndsAt: now.Add(time.Hour)}
+
+	// Startup with a window already running: reported as active, with its real start.
+	cur := logMaintenanceTransitions(nil, []store.MaintenanceWindow{w}, now, true)
+	if s := logs.String(); !strings.Contains(s, "maintenance window active id=1") || !strings.Contains(s, `name="Test"`) || !strings.Contains(s, "remaining=1h0m0s") || !strings.Contains(s, `scope="everything"`) {
+		t.Errorf("startup line wrong:\n%s", s)
+	}
+
+	// Unchanged: silent.
+	logs.Reset()
+	cur = logMaintenanceTransitions(cur, []store.MaintenanceWindow{w}, now.Add(30*time.Second), false)
+	if logs.Len() != 0 {
+		t.Errorf("no transition, but logged:\n%s", logs.String())
+	}
+
+	// A new window starts.
+	logs.Reset()
+	w2 := store.MaintenanceWindow{ID: 2, Name: "Nightly", Project: "shop", StartsAt: now, EndsAt: now.Add(90 * time.Minute)}
+	cur = logMaintenanceTransitions(cur, []store.MaintenanceWindow{w, w2}, now.Add(time.Minute), false)
+	if s := logs.String(); !strings.Contains(s, "maintenance window started id=2") || !strings.Contains(s, "duration=1h30m0s") || !strings.Contains(s, "project~shop") {
+		t.Errorf("start line wrong:\n%s", s)
+	}
+
+	// Window 1 ends by the clock; window 2 is ended early by an operator.
+	logs.Reset()
+	w2.Ended = true
+	at := now.Add(70 * time.Minute)
+	cur = logMaintenanceTransitions(cur, []store.MaintenanceWindow{w, w2}, at, false)
+	s := logs.String()
+	if !strings.Contains(s, "maintenance window ended id=1") || !strings.Contains(s, "maintenance window ended early id=2") || !strings.Contains(s, "alert delivery resumes") {
+		t.Errorf("end lines wrong:\n%s", s)
+	}
+
+	// A window that vanishes (deleted) is reported as removed.
+	logs.Reset()
+	w3 := store.MaintenanceWindow{ID: 3, Name: "x", StartsAt: at, EndsAt: at.Add(time.Hour)}
+	cur = logMaintenanceTransitions(cur, []store.MaintenanceWindow{w3}, at, false)
+	logs.Reset()
+	logMaintenanceTransitions(cur, nil, at.Add(time.Minute), false)
+	if !strings.Contains(logs.String(), "maintenance window removed id=3") {
+		t.Errorf("removal line wrong:\n%s", logs.String())
+	}
+}
+
+// Back-to-back occurrences of one recurring window (a daily 24 h window is
+// allowed) keep the SAME id in the active set; the boundary must still log an
+// end and a start, not stay silent because the id never left.
+func TestMaintenanceTransitionsSeeTheBoundaryBetweenOccurrences(t *testing.T) {
+	logs := captureLog(t)
+	w := store.MaintenanceWindow{
+		ID: 1, Name: "daily", Recurring: true, Weekdays: []time.Weekday{0, 1, 2, 3, 4, 5, 6},
+		TimeOfDay: "02:00", DurationMin: 24 * 60, Timezone: "UTC",
+		StartsAt: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
+	}
+	d1 := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	cur := logMaintenanceTransitions(nil, []store.MaintenanceWindow{w}, d1, false)
+	if len(cur) != 1 {
+		t.Fatalf("setup: the window should be active at %v", d1)
+	}
+	logs.Reset()
+	cur = logMaintenanceTransitions(cur, []store.MaintenanceWindow{w}, d1.Add(24*time.Hour), false)
+	s := logs.String()
+	if !strings.Contains(s, "maintenance window ended id=1") || !strings.Contains(s, "maintenance window started id=1") {
+		t.Errorf("the next occurrence must log an end and a start:\n%s", s)
+	}
+	logs.Reset()
+	logMaintenanceTransitions(cur, []store.MaintenanceWindow{w}, d1.Add(24*time.Hour+time.Minute), false)
+	if logs.Len() != 0 {
+		t.Errorf("inside one occurrence nothing is logged:\n%s", logs.String())
 	}
 }

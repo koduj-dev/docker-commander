@@ -401,3 +401,58 @@ func TestMaintenanceWindowSuppressedFieldsRoundTrip(t *testing.T) {
 		t.Fatalf("wrong event id")
 	}
 }
+
+// ActiveSpan is what the "window started / ended" log lines report, so its
+// bounds have to be the occurrence covering now — not the whole series.
+func TestActiveSpan(t *testing.T) {
+	now := time.Date(2026, 9, 25, 10, 30, 0, 0, time.UTC)
+
+	oneOff := MaintenanceWindow{StartsAt: now.Add(-30 * time.Minute), EndsAt: now.Add(30 * time.Minute)}
+	if s, e, ok := oneOff.ActiveSpan(now); !ok || !s.Equal(oneOff.StartsAt) || !e.Equal(oneOff.EndsAt) {
+		t.Errorf("one-off span = %v..%v ok=%v", s, e, ok)
+	}
+	if _, _, ok := oneOff.ActiveSpan(now.Add(time.Hour)); ok {
+		t.Error("a one-off window is not active after its end")
+	}
+
+	// Recurring daily 10:00 for 90 minutes, series started long ago.
+	rec := MaintenanceWindow{
+		Recurring: true, StartsAt: now.AddDate(0, -1, 0), Weekdays: []time.Weekday{0, 1, 2, 3, 4, 5, 6},
+		TimeOfDay: "10:00", DurationMin: 90,
+	}
+	s, e, ok := rec.ActiveSpan(now)
+	wantS := time.Date(2026, 9, 25, 10, 0, 0, 0, time.UTC)
+	if !ok || !s.Equal(wantS) || !e.Equal(wantS.Add(90*time.Minute)) {
+		t.Errorf("recurring span = %v..%v ok=%v, want the 10:00 occurrence", s, e, ok)
+	}
+	if rec.Active(now) != true || rec.Active(now.Add(3*time.Hour)) {
+		t.Error("Active must agree with ActiveSpan")
+	}
+	if _, _, ok := (MaintenanceWindow{Ended: true, StartsAt: oneOff.StartsAt, EndsAt: oneOff.EndsAt}).ActiveSpan(now); ok {
+		t.Error("an ended window is never active")
+	}
+}
+
+func TestMaintenanceWindowClosed(t *testing.T) {
+	now := time.Now()
+	open := func(w MaintenanceWindow) bool { return !w.Closed(now) }
+
+	if !open(MaintenanceWindow{StartsAt: now.Add(-time.Hour), EndsAt: now.Add(time.Hour)}) {
+		t.Error("a running one-off is not closed")
+	}
+	if !open(MaintenanceWindow{StartsAt: now.Add(time.Hour), EndsAt: now.Add(2 * time.Hour)}) {
+		t.Error("a scheduled one-off is not closed")
+	}
+	if open(MaintenanceWindow{StartsAt: now.Add(-2 * time.Hour), EndsAt: now.Add(-time.Hour)}) {
+		t.Error("a one-off whose end has passed is closed")
+	}
+	if open(MaintenanceWindow{StartsAt: now.Add(-time.Hour), EndsAt: now.Add(time.Hour), Ended: true}) {
+		t.Error("a window ended early is closed")
+	}
+	if !open(MaintenanceWindow{Recurring: true, StartsAt: now.Add(-time.Hour)}) {
+		t.Error("an open-ended series is never closed")
+	}
+	if open(MaintenanceWindow{Recurring: true, StartsAt: now.Add(-48 * time.Hour), EndsAt: now.Add(-time.Hour)}) {
+		t.Error("a series whose end date has passed is closed")
+	}
+}

@@ -111,11 +111,14 @@ type AlertQuery struct {
 	// indicate something is wrong" rather than one specific level.
 	Severities []string
 	Kind       string
-	HostID     *int64
-	Container  string // substring
-	Rule       string // substring
-	Text       string // substring of the message
-	Unacked    bool
+	// HideRepeats drops KindRepeat rows — "still true" re-announcements that
+	// bury the firing/resolved events an operator is looking for.
+	HideRepeats bool
+	HostID      *int64
+	Container   string // substring
+	Rule        string // substring
+	Text        string // substring of the message
+	Unacked     bool
 	// HostIDs restricts the query to these hosts; nil means no restriction.
 	// Empty-but-non-nil means nothing is visible, which must return no rows
 	// rather than all of them — the difference is the whole point of the type.
@@ -339,6 +342,9 @@ func (q AlertQuery) where() (string, []any) {
 	}
 	if q.Kind != "" {
 		add("kind = ?", q.Kind)
+	}
+	if q.HideRepeats {
+		add("kind <> ?", KindRepeat)
 	}
 	if q.HostID != nil {
 		add("host_id = ?", *q.HostID)
