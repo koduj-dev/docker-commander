@@ -160,3 +160,15 @@ func TestDiskTotalsBuildCacheExcludesSharedRecords(t *testing.T) {
 		t.Errorf("volumes = %+v", got.Volumes)
 	}
 }
+
+// The Images tile is the deduplicated total: two images sharing a 100-byte base
+// occupy 130 bytes, not the 260 their Sizes add up to.
+func TestDiskTotalsImagesCountSharedLayersOnce(t *testing.T) {
+	du := client.DiskUsageResult{}
+	du.Images.Items = []image.Summary{{Size: 130}, {Size: 130}}
+	du.Images.TotalCount, du.Images.TotalSize = 2, 160
+	got := diskTotals(du)
+	if got.Images.Size != 160 || got.Images.Count != 2 {
+		t.Errorf("images = %+v, want size 160 (layers counted once), count 2", got.Images)
+	}
+}
