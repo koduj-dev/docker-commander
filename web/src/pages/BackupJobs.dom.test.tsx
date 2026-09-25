@@ -5,7 +5,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import { BackupJobs } from "./BackupJobs";
 import { DialogProvider } from "../components/Dialog";
-import type { BackupJob } from "../lib/types";
+import { api } from "../lib/api";
+import type { BackupJob, BackupRun } from "../lib/types";
 
 const backupJobs = vi.hoisted(() => vi.fn());
 const updateBackupJob = vi.hoisted(() => vi.fn());
@@ -124,5 +125,81 @@ describe("BackupJobs — clear stored environment", () => {
     const [, body] = updateBackupJob.mock.calls[0];
     expect(body.clearEnv).toBe(true);
     expect(body.env).toBeUndefined();
+  });
+});
+
+const failedRun: BackupRun = {
+  id: 9, jobId: 1, startedAt: "2026-09-25T10:00:00Z", finishedAt: "2026-09-25T10:00:03Z", ok: false, exitCode: 2,
+  output: "Fatal: unable to open repository at /repo: permission denied", error: "exit status 2", triggeredBy: "admin",
+};
+const olderRun: BackupRun = { ...failedRun, id: 8, ok: true, exitCode: 0, output: "snapshot abc saved", error: "", triggeredBy: "schedule", startedAt: "2026-09-24T10:00:00Z", finishedAt: "2026-09-24T10:01:00Z" };
+
+// A failed job used to show only a "failed" badge with a hover tooltip — the
+// captured output was stored (and served by /runs) but nothing in the UI read it.
+describe("BackupJobs — run history and logs", () => {
+  const historyButton = () => [...container.querySelectorAll("button")].find((b) => b.title === "Run history & logs") as HTMLElement;
+
+  it("opens the run history from the History button, newest run expanded with its output and error", async () => {
+    vi.mocked(api.backupJobRuns).mockResolvedValue([failedRun, olderRun]);
+    await act(async () => historyButton().click());
+    expect(api.backupJobRuns).toHaveBeenCalledWith(1);
+    const text = container.textContent ?? "";
+    expect(text).toContain("Run history — nightly");
+    expect(text).toContain("permission denied"); // the newest (failed) run is open
+    expect(text).toContain("exit status 2");
+    expect(text).not.toContain("snapshot abc saved"); // older run stays collapsed until clicked
+    const older = [...container.querySelectorAll("button[aria-expanded]")].find((b) => b.textContent?.includes("scheduled")) as HTMLElement;
+    await act(async () => older.click());
+    expect(container.textContent).toContain("snapshot abc saved");
+  });
+
+  it("the failed badge opens the same history", async () => {
+    backupJobs.mockResolvedValue([{ ...existingJob, lastRunAt: "2026-09-25T10:00:00Z", lastRunOk: false, lastRunDetail: "exit status 2" }]);
+    act(() => root.unmount());
+    root = createRoot(container);
+    await act(async () => { root.render(<MemoryRouter><DialogProvider><BackupJobs /></DialogProvider></MemoryRouter>); });
+    vi.mocked(api.backupJobRuns).mockResolvedValue([failedRun]);
+    const badge = [...container.querySelectorAll("button")].find((b) => b.textContent === "failed") as HTMLElement;
+    await act(async () => badge.click());
+    expect(container.textContent).toContain("permission denied");
+  });
+
+  it("a Run-now that fails opens the log instead of vanishing", async () => {
+    vi.mocked(api.runBackupJob).mockRejectedValue(new Error("backup failed"));
+    vi.mocked(api.backupJobRuns).mockResolvedValue([failedRun]);
+    const run = [...container.querySelectorAll("button")].find((b) => b.title === "Run now") as HTMLElement;
+    await act(async () => run.click());
+    expect(container.textContent).toContain("Run history — nightly");
+    expect(container.textContent).toContain("permission denied");
+    expect(container.textContent).toContain("backup failed"); // the server's own error is shown too
+  });
+
+  it("a Run-now whose command exits non-zero (the request itself succeeds) still opens the log", async () => {
+    vi.mocked(api.runBackupJob).mockResolvedValue({ ok: true });
+    vi.mocked(api.backupJobRuns).mockResolvedValue([failedRun]);
+    const run = [...container.querySelectorAll("button")].find((b) => b.title === "Run now") as HTMLElement;
+    await act(async () => run.click());
+    expect(container.textContent).toContain("Run history — nightly");
+    expect(container.textContent).toContain("permission denied");
+  });
+
+  it("a Run-now that succeeds does not pop the history open", async () => {
+    vi.mocked(api.runBackupJob).mockResolvedValue({ ok: true });
+    vi.mocked(api.backupJobRuns).mockResolvedValue([olderRun]);
+    const run = [...container.querySelectorAll("button")].find((b) => b.title === "Run now") as HTMLElement;
+    await act(async () => run.click());
+    expect(container.textContent).not.toContain("Run history —");
+  });
+
+  it("shows the exit code of a successful run too", async () => {
+    vi.mocked(api.backupJobRuns).mockResolvedValue([olderRun]);
+    await act(async () => historyButton().click());
+    expect(container.textContent).toContain("exit 0");
+  });
+
+  it("says so when a job has never run", async () => {
+    vi.mocked(api.backupJobRuns).mockResolvedValue([]);
+    await act(async () => historyButton().click());
+    expect(container.textContent).toContain("No runs yet");
   });
 });

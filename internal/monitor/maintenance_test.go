@@ -1,10 +1,13 @@
 package monitor
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -345,4 +348,69 @@ func newMaintenanceMonitor(t *testing.T) (*Monitor, *store.Store, context.Contex
 	c, _ := crypto.New(key)
 	st.SetCipher(c)
 	return New(st, nil, nil), st, context.Background()
+}
+
+// captureLog redirects the standard logger for one test — the alert line is
+// what lands in the journal/syslog, so that is what is asserted on.
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+	return &buf
+}
+
+// The process log must say when an alert was silenced: without it an operator
+// reading the journal sees "alert kind=firing ..." during maintenance and has
+// no way to tell that nobody was paged.
+func TestAlertLogLineSaysWhenAMaintenanceWindowSilencedIt(t *testing.T) {
+	m, st, ctx := newMaintenanceMonitor(t)
+	const hostID = int64(1)
+	logs := captureLog(t)
+
+	rule := store.AlertRule{Name: "mem", Type: "resource", Severity: "warning", CooldownSec: 60}
+	ruleID, err := st.CreateAlertRule(ctx, &rule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule.ID = ruleID
+	winID, err := st.CreateMaintenanceWindow(ctx, &store.MaintenanceWindow{
+		Name: "es upgrade", Reason: "planned", HostIDs: []int64{hostID},
+		StartsAt: time.Now().Add(-time.Minute), EndsAt: time.Now().Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m.fire(ctx, rule, hostID, "host1", "c1", "cms3_es01", "", "memory over 5%", nil)
+
+	line := logs.String()
+	for _, want := range []string{"alert kind=firing", `rule="mem"`, `container="cms3_es01"`, "silenced=true", `window_name="es upgrade"`, "maintenance_window=" + itoa(winID)} {
+		if !strings.Contains(line, want) {
+			t.Errorf("log line missing %q:\n%s", want, line)
+		}
+	}
+}
+
+func TestAlertLogLineDoesNotClaimSilenceOutsideAWindow(t *testing.T) {
+	m, st, ctx := newMaintenanceMonitor(t)
+	logs := captureLog(t)
+
+	rule := store.AlertRule{Name: "mem", Type: "resource", Severity: "warning", CooldownSec: 60}
+	ruleID, err := st.CreateAlertRule(ctx, &rule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule.ID = ruleID
+
+	m.fire(ctx, rule, 1, "host1", "c1", "cms3_es01", "", "memory over 5%", nil)
+
+	line := logs.String()
+	if !strings.Contains(line, "alert kind=firing") {
+		t.Fatalf("the alert line should still be logged:\n%s", line)
+	}
+	if strings.Contains(line, "silenced") {
+		t.Errorf("no window is active, but the line claims silence:\n%s", line)
+	}
 }

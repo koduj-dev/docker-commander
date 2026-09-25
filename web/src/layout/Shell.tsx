@@ -4,7 +4,7 @@ import { Activity, Archive, Bell, Blocks, Boxes, ChevronDown, Container, Databas
 import clsx from "clsx";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../lib/api";
-import { useAlertPulse } from "../lib/alertStream";
+import { toastableEvents, useAlertPulse } from "../lib/alertStream";
 import { useToasts, type ToastTone } from "../components/Toasts";
 import type { Host, UpdateStatus } from "../lib/types";
 import { getHostId, setHostId } from "../lib/host";
@@ -227,7 +227,7 @@ export function Shell({ children }: { children: ReactNode }) {
   useEffect(() => setUnread(pulse.unread), [pulse.unread]);
   useEffect(() => {
     if (!getPref("alerts.toasts", true)) return;
-    for (const e of pulse.fresh) {
+    for (const e of toastableEvents(pulse.fresh)) {
       toasts.push({
         tone: e.kind === "resolved" ? "ok" : (e.severity as ToastTone),
         title: `${e.ruleName}${e.containerName ? ` — ${e.containerName}` : ""}`,

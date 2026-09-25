@@ -1045,16 +1045,10 @@ func (m *Monitor) fire(ctx context.Context, r store.AlertRule, hostID int64, hos
 func (m *Monitor) emit(ctx context.Context, r store.AlertRule, hostID int64, hostName, cid, name, project, message string,
 	value *float64, kind string, durationSec int,
 ) bool {
-	// Emit every fired alert to the process log (stderr) as a structured line.
-	// Under systemd this lands in the journal — and from there into syslog / any
-	// central log collector — so failures are visible beyond the in-app feed.
 	severity := r.Severity
 	if severity == "" {
 		severity = "info"
 	}
-	log.Printf("alert kind=%s severity=%s rule=%q host=%q container=%q message=%q",
-		kind, severity, r.Name, hostName, name, message)
-
 	ev := &store.AlertEvent{
 		RuleID: r.ID, RuleName: r.Name, Type: r.Type, Severity: r.Severity,
 		HostID: hostID, HostName: hostName,
@@ -1066,11 +1060,26 @@ func (m *Monitor) emit(ctx context.Context, r store.AlertRule, hostID int64, hos
 	// The event is recorded regardless of any active maintenance window — a
 	// silence stops paging, not observing — so this check only ever decides
 	// whether delivery below runs, never whether InsertAlertEvent does.
-	if win, err := m.store.FindActiveMaintenanceWindow(wctx, hostID, project, name, r.ID, severity, time.Now()); err != nil {
+	var win *store.MaintenanceWindow
+	if w, err := m.store.FindActiveMaintenanceWindow(wctx, hostID, project, name, r.ID, severity, time.Now()); err != nil {
 		log.Printf("monitor: check maintenance window: %v", err)
-	} else if win != nil {
+	} else if w != nil {
+		win = w
 		ev.Suppressed = true
-		ev.SuppressedBy = win.ID
+		ev.SuppressedBy = w.ID
+	}
+	// Every fired alert goes to the process log (stderr) as one structured line.
+	// Under systemd that lands in the journal — and from there in syslog or any
+	// central collector — so alerts are visible beyond the in-app feed. It is
+	// written after the window check so the same line says whether delivery was silenced — an operator reading the journal
+	// or syslog otherwise sees an alert firing during maintenance with no hint
+	// that nobody was paged.
+	if win != nil {
+		log.Printf("alert kind=%s severity=%s rule=%q host=%q container=%q message=%q silenced=true maintenance_window=%d window_name=%q",
+			kind, severity, r.Name, hostName, name, message, win.ID, win.Name)
+	} else {
+		log.Printf("alert kind=%s severity=%s rule=%q host=%q container=%q message=%q",
+			kind, severity, r.Name, hostName, name, message)
 	}
 	// The id is what delivery records attach to, so capture it before notifying.
 	if id, err := m.store.InsertAlertEvent(wctx, ev); err != nil {
