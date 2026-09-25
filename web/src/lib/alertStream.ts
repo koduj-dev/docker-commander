@@ -27,6 +27,16 @@ export interface AlertPulse {
   fresh: AlertEvent[];
 }
 
+/**
+ * toastableEvents drops what must not raise a toast. A maintenance window
+ * suppresses DELIVERY (webhook/e-mail) while the event is still recorded — and
+ * a toast is a notification too, so a silenced event stays in the Alerts feed
+ * (with its "silenced" badge) but does not pop up over whatever you are doing.
+ */
+export function toastableEvents(fresh: AlertEvent[]): AlertEvent[] {
+  return fresh.filter((e) => !e.suppressed);
+}
+
 type Listener = (p: AlertPulse) => void;
 
 let listeners: Listener[] = [];
