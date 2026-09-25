@@ -163,8 +163,9 @@ func (m *Manager) DiskUsage(ctx context.Context, hostID int64) (*DiskUsage, erro
 	if err != nil {
 		return nil, err
 	}
-	// Verbose: the per-object Items are what the sizes below are summed from
-	// (the daemon's own per-category totals count shared layers differently).
+	// Verbose: containers and volumes are summed from the per-object Items; images
+	// and build cache use the client's aggregates instead (summing Items would
+	// count a shared layer once per image / a Shared cache record at all).
 	du, err := cli.DiskUsage(ctx, client.DiskUsageOptions{
 		Containers: true, Images: true, Volumes: true, BuildCache: true, Verbose: true,
 	})
@@ -180,11 +181,10 @@ func diskTotals(du client.DiskUsageResult) *DiskUsage {
 	// own legacy-response conversion).
 	out := &DiskUsage{LayersSize: du.Images.TotalSize}
 	out.Images.Count = len(du.Images.Items)
-	for _, im := range du.Images.Items {
-		if im.Size > 0 {
-			out.Images.Size += im.Size
-		}
-	}
+	// Images use the client's aggregate too. Summing each image's Size counts
+	// a layer once per image that contains it, so a host of images built on one
+	// base overstated the tile by the base's size times the image count.
+	out.Images.Size = du.Images.TotalSize
 	out.Containers.Count = len(du.Containers.Items)
 	for _, c := range du.Containers.Items {
 		out.Containers.Size += c.SizeRw
