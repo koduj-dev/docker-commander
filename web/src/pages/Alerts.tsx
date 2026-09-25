@@ -277,7 +277,7 @@ function Feed({ onAckAllReady }: { onAckAllReady: (fn: (() => void) | null) => v
       ) : events.length === 0 ? (
         <EmptyState
           title={filtered ? "No alerts match those filters" : "No alerts yet"}
-          hint={filtered ? "Widen or clear the filters to see more." : "Fired alerts will appear here."}
+          hint={filtered ? "Widen or clear the filters to see more." : showRepeats ? "Fired alerts will appear here." : "Fired alerts will appear here. Repeats are hidden — tick “Show repeats” to see re-announcements."}
         />
       ) : (
         <>
@@ -394,7 +394,7 @@ function FeedRow({ e, onOpen, onAck }: { e: AlertEvent; onOpen: () => void; onAc
         {/* The repeats are hidden by default, so the row that opened the condition
             is the only place that says it is still going on, and for how long. */}
         {e.ongoing && (
-          <div className="text-xs text-warn">still firing · {formatDuration(Math.max(0, Math.floor((Date.now() - new Date(e.createdAt).getTime()) / 1000)))}</div>
+          <div className="text-xs text-warn">still firing · {formatDuration(conditionAgeSec(e))}</div>
         )}
       </td>
       <td className="px-4 py-2.5 whitespace-nowrap">
@@ -496,7 +496,7 @@ function AlertDetailModal({ e, onClose, onAck }: { e: AlertEvent; onClose: () =>
             {row("Fired at", e.createdAt.slice(0, 19).replace("T", " "))}
             {row("Lifecycle", <span className="capitalize">{e.kind || "firing"}</span>)}
             {e.durationSec > 0 && row("Condition lasted", formatDuration(e.durationSec))}
-            {e.ongoing && row("Status", <span className="text-warn">Still firing for {formatDuration(Math.max(0, Math.floor((Date.now() - new Date(e.createdAt).getTime()) / 1000)))}</span>)}
+            {e.ongoing && row("Status", <span className="text-warn">Still firing for {formatDuration(conditionAgeSec(e))}</span>)}
             {!!e.repeats && row("Repeats", `${e.repeats}${e.lastRepeatAt ? ` — last ${e.lastRepeatAt.slice(0, 19).replace("T", " ")}` : ""}`)}
             {e.value !== null && e.value !== undefined && row("Measured value", e.value.toFixed(1))}
             {row("Host", e.hostName || "local")}
@@ -569,6 +569,14 @@ function AlertDetailModal({ e, onClose, onAck }: { e: AlertEvent; onClose: () =>
       </div>
     </div>
   );
+}
+
+// conditionAgeSec is how long the condition an event belongs to has been true:
+// the time since the event PLUS the age it already had when it was emitted (an
+// escalated/eased opener is later than the incident's start; durationSec is that
+// head start, 0 for a firing).
+function conditionAgeSec(e: AlertEvent): number {
+  return Math.max(0, Math.floor((Date.now() - new Date(e.createdAt).getTime()) / 1000)) + (e.durationSec || 0);
 }
 
 // formatDuration renders how long a condition held, matching the engine's own

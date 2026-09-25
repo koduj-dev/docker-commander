@@ -71,6 +71,18 @@ describe("Alerts feed: repeats", () => {
   });
 });
 
+describe("Alerts feed: empty state with repeats hidden", () => {
+  it("does not claim there are no alerts when only repeats could be hidden", async () => {
+    vi.mocked(api.alerts).mockResolvedValue({ events: [], total: 0, unread: 0, outstanding: 0 } as never);
+    act(() => root.unmount());
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<MemoryRouter><DialogProvider><Alerts /></DialogProvider></MemoryRouter>);
+    });
+    expect(container.textContent).toContain("Repeats are hidden");
+  });
+});
+
 describe("Alerts feed: event flags", () => {
   it("shows repeat and silenced as icon flags in their own cell, not as words in the severity cell", () => {
     const repeatRow = [...container.querySelectorAll("tbody tr")][1];
@@ -110,6 +122,14 @@ describe("Alerts feed: condition summary on the opening row", () => {
     const flag = tr.querySelectorAll("td")[2].querySelector('[aria-label="repeated 12 times"]');
     expect(flag?.textContent).toBe("12");
     expect(flag?.getAttribute("title")).toContain("Repeated 12 times, last");
+  });
+
+  it("counts an escalated opener from the incident's start, not from the escalation", async () => {
+    // Started 32 min ago (durationSec 300 when this event was emitted 27 min ago).
+    await remount([opener({ kind: "escalated", durationSec: 300, ongoing: true })]);
+    expect(container.querySelector("tbody tr")!.textContent).toContain("still firing · 32m");
+    await act(async () => (container.querySelector("tbody tr") as HTMLElement).click());
+    expect(document.body.textContent).toContain("Still firing for 32m");
   });
 
   it("says nothing extra for a condition that has ended or never repeated", async () => {

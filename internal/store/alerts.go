@@ -464,6 +464,12 @@ func (s *Store) annotateConditionSummary(ctx context.Context, events []AlertEven
 		if e.Kind != KindFiring && e.Kind != KindEscalated && e.Kind != KindEased {
 			continue
 		}
+		// Only level-triggered (resource) conditions have a life: state, log,
+		// restart, network and host events are one-shots that never resolve, so
+		// "ongoing" would be true of them forever.
+		if e.Type != "resource" {
+			continue
+		}
 		var next sql.NullInt64
 		if err := s.db.QueryRowContext(ctx, `
 			SELECT MIN(id) FROM alert_events

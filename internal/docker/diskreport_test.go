@@ -161,8 +161,8 @@ func TestDiskTotalsBuildCacheExcludesSharedRecords(t *testing.T) {
 	}
 }
 
-// The Images tile is the deduplicated total: two images sharing a 100-byte base
-// occupy 130 bytes, not the 260 their Sizes add up to.
+// The Images tile is the deduplicated total: two 130-byte images sharing a
+// 100-byte base occupy 160 bytes (100 + 30 + 30), not the 260 their Sizes add up to.
 func TestDiskTotalsImagesCountSharedLayersOnce(t *testing.T) {
 	du := client.DiskUsageResult{}
 	du.Images.Items = []image.Summary{{Size: 130}, {Size: 130}}

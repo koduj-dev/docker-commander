@@ -11,8 +11,8 @@ var sumT0 = time.Date(2026, 9, 25, 13, 13, 58, 0, time.UTC)
 // "seconds since the incident started" (0 for a firing).
 func ev(t *testing.T, st *Store, id int64, rule int64, container, kind string, offset time.Duration, duration int) {
 	t.Helper()
-	mustExec(t, st, `INSERT INTO alert_events (id, rule_id, rule_name, container_id, host_id, kind, duration_sec, created_at)
-		VALUES (?, ?, 'r', ?, 0, ?, ?, ?)`, id, rule, container, kind, duration, sumT0.Add(offset).Format(time.RFC3339))
+	mustExec(t, st, `INSERT INTO alert_events (id, rule_id, rule_name, type, container_id, host_id, kind, duration_sec, created_at)
+		VALUES (?, ?, 'r', 'resource', ?, 0, ?, ?, ?)`, id, rule, container, kind, duration, sumT0.Add(offset).Format(time.RFC3339))
 }
 
 func summaries(t *testing.T, st *Store) map[int64]AlertEvent {
@@ -91,5 +91,20 @@ func TestEscalationHandsOverAndTheResolveEndsTheWholeIncident(t *testing.T) {
 	ev(t, st, 5, 1, "c1", "firing", time.Hour, 0)
 	if a := summaries(t, st)[5]; !a.Ongoing {
 		t.Error("an unrelated, later incident is still ongoing")
+	}
+}
+
+// State / log / restart / network / host events fire once and never resolve; the
+// summary must not present them as "still firing" for ever.
+func TestOneShotEventsAreNeverOngoing(t *testing.T) {
+	st, _ := retStore(t)
+	for i, typ := range []string{"state", "log", "restart", "network", "host"} {
+		mustExec(t, st, `INSERT INTO alert_events (id, rule_id, rule_name, type, container_id, host_id, kind, created_at)
+			VALUES (?, 3, 'r', ?, 'c1', 0, 'firing', ?)`, i+1, typ, sumT0.Format(time.RFC3339))
+	}
+	for id, e := range summaries(t, st) {
+		if e.Ongoing || e.Repeats != 0 {
+			t.Errorf("event %d (%s) is a one-shot: %+v", id, e.Type, e)
+		}
 	}
 }
