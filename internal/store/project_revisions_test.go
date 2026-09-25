@@ -1,6 +1,10 @@
 package store
 
-import "testing"
+import (
+	"sort"
+	"sync"
+	"testing"
+)
 
 func TestCreateRevision_NumbersSequentiallyPerProject(t *testing.T) {
 	s, ctx := openStore(t)
@@ -23,6 +27,62 @@ func TestCreateRevision_NumbersSequentiallyPerProject(t *testing.T) {
 	}
 	if r2.Revision != 2 {
 		t.Errorf("second revision = %d, want 2", r2.Revision)
+	}
+}
+
+// TestCreateRevision_ConcurrentCallsDoNotCollideOrLoseRows is the regression
+// test for a race in the old two-statement (SELECT MAX, then INSERT)
+// implementation: concurrent successful deploys of the same project could
+// both read the same max and collide on the UNIQUE(project_id, revision)
+// constraint, silently dropping one deploy's revision-history row. Run with
+// -race to actually exercise the concurrency, not just serialize on go test's
+// default scheduling.
+func TestCreateRevision_ConcurrentCallsDoNotCollideOrLoseRows(t *testing.T) {
+	s, ctx := openStore(t)
+	pid, err := s.CreateProject(ctx, &Project{Name: "app", Slug: "app", ComposeFile: "compose.yml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const n = 20
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	revisions := make([]int, 0, n)
+	errs := make([]error, 0)
+
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rev := &ProjectRevision{ProjectID: pid, Author: "concurrent", Valid: true}
+			_, err := s.CreateRevision(ctx, rev)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				errs = append(errs, err)
+				return
+			}
+			revisions = append(revisions, rev.Revision)
+		}()
+	}
+	wg.Wait()
+
+	if len(errs) != 0 {
+		t.Fatalf("%d of %d concurrent CreateRevision calls failed instead of retrying: %v", len(errs), n, errs)
+	}
+	if len(revisions) != n {
+		t.Fatalf("got %d revisions, want %d (some were silently lost)", len(revisions), n)
+	}
+	sort.Ints(revisions)
+	seen := make(map[int]bool, n)
+	for i, rev := range revisions {
+		if seen[rev] {
+			t.Fatalf("revision %d assigned more than once: %v", rev, revisions)
+		}
+		seen[rev] = true
+		if want := i + 1; rev != want {
+			t.Fatalf("revisions are not a contiguous 1..%d sequence, got %v", n, revisions)
+		}
 	}
 }
 

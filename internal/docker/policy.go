@@ -1,6 +1,8 @@
 package docker
 
 import (
+	"path"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -93,7 +95,7 @@ func EvaluatePolicy(configJSON []byte, modes map[PolicyRuleID]PolicyMode) ([]Pol
 			add(RuleHostPID, name, "uses the host's PID namespace")
 		}
 		for _, v := range svc.Volumes {
-			if v.Type == "bind" && (strings.HasSuffix(v.Source, "docker.sock") || strings.HasSuffix(v.Target, "docker.sock")) {
+			if v.Type == "bind" && mountsDockerSocket(v.Source, v.Target) {
 				add(RuleDockerSocket, name, "mounts the Docker socket")
 				break
 			}
@@ -111,6 +113,50 @@ func EvaluatePolicy(configJSON []byte, modes map[PolicyRuleID]PolicyMode) ([]Pol
 		}
 	}
 	return out, nil
+}
+
+// dockerSocketCandidatePaths are the default ROOTFUL locations dockerd
+// listens on (the default, and its /run alias).
+var dockerSocketCandidatePaths = []string{
+	"/var/run/docker.sock",
+	"/run/docker.sock",
+}
+
+// rootlessRuntimeDirRE matches a user's XDG runtime directory in its default
+// location — "/run/user/<uid>" or "/var/run/user/<uid>" (or that directory's
+// own parent, "/run/user", which is an ancestor of every uid's) — where
+// rootless dockerd's default socket lives, at "<dir>/docker.sock". This is a
+// SEPARATE tree from dockerSocketCandidatePaths above: a rootless socket's
+// directory is never itself an ancestor of either literal rootful path, so a
+// bind of e.g. "/run/user/1000" would otherwise go completely unrecognised
+// by the ancestor check below.
+var rootlessRuntimeDirRE = regexp.MustCompile(`^/(?:var/)?run/user(?:/[0-9]+)?$`)
+
+// mountsDockerSocket reports whether a bind mount exposes a working
+// docker.sock inside the container — either because source/target names the
+// socket file directly, or because source is "/", an ANCESTOR directory of a
+// well-known rootful socket location (e.g. "/var/run", "/run"), or a user's
+// XDG runtime directory (rootless), any of which hands the container the
+// socket just as surely as mounting the file itself, but doesn't match on a
+// bare suffix check of the mount's own strings.
+func mountsDockerSocket(source, target string) bool {
+	source = path.Clean(source)
+	target = path.Clean(target)
+	if strings.HasSuffix(source, "docker.sock") || strings.HasSuffix(target, "docker.sock") {
+		return true
+	}
+	if source == "/" {
+		return true
+	}
+	if rootlessRuntimeDirRE.MatchString(source) {
+		return true
+	}
+	for _, candidate := range dockerSocketCandidatePaths {
+		if source == candidate || strings.HasPrefix(candidate, source+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // isLatestTag reports whether ref is unpinned: no digest, and either no tag

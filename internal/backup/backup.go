@@ -43,7 +43,12 @@ var ErrNotABackup = errors.New("backup: not a Docker Commander backup archive")
 // dataDirEntries are the directories copied verbatim alongside the database.
 // Anything else under the data dir (e.g. a tls/ folder written by --make-certs)
 // is deliberately left out: it is reproducible and may be machine-specific.
-var dataDirEntries = []string{"projects", "project-templates"}
+//
+// project-revisions holds the per-revision file snapshots (zips) that
+// project_revisions DB rows point at — without it, a restored database can
+// report a revision as valid while its snapshot is gone, and diff/restore of
+// that revision fails.
+var dataDirEntries = []string{"projects", "project-templates", "project-revisions"}
 
 // dbFileName is the database's name inside the archive and in the data dir.
 const dbFileName = "docker-commander.db"

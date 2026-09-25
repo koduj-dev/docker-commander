@@ -153,6 +153,65 @@ func TestBackupJobs_CreateListGetUpdateDelete(t *testing.T) {
 
 // clearEnv is the only way to remove stored env — an update without it (even
 // with an empty/absent env map) must leave the existing secret untouched.
+// TestBackupJobs_SetEnabledIsAudited is the regression test for
+// handleSetBackupJobEnabled being the only mutating backup-job handler that
+// never wrote an audit entry — enabling/disabling a scheduled arbitrary-command
+// job is at least as significant as updating one, and every sibling handler
+// (create/update/delete/run) already audits its action.
+func TestBackupJobs_SetEnabledIsAudited(t *testing.T) {
+	srv, admin := newBackupJobsServer(t)
+
+	createBody := `{"name":"nightly","scope":"volume","volumeName":"data","hostId":1,
+		"image":"restic/restic","command":"restic backup /data","intervalMinutes":60}`
+	r := httptest.NewRequest("POST", "/api/backup-jobs", strings.NewReader(createBody)).WithContext(ctxAsNamed(admin, "admin", "admin"))
+	w := httptest.NewRecorder()
+	srv.handleCreateBackupJob(w, r)
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	idStr := strconv.FormatInt(created.ID, 10)
+
+	setEnabled := func(enabled bool) {
+		t.Helper()
+		body := `{"enabled":false}`
+		if enabled {
+			body = `{"enabled":true}`
+		}
+		r := httptest.NewRequest("PUT", "/api/backup-jobs/"+idStr+"/enabled", strings.NewReader(body)).WithContext(ctxAsNamed(admin, "admin", "admin"))
+		r = withURLParam(r, "id", idStr)
+		w := httptest.NewRecorder()
+		srv.handleSetBackupJobEnabled(w, r)
+		if w.Code != 200 {
+			t.Fatalf("set enabled=%v status = %d: %s", enabled, w.Code, w.Body.String())
+		}
+	}
+	setEnabled(false)
+	setEnabled(true)
+
+	entries, err := srv.store.RecentAudit(context.Background(), 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawDisable, sawEnable bool
+	for _, e := range entries {
+		switch e.Action {
+		case "backup_job.disable":
+			sawDisable = true
+		case "backup_job.enable":
+			sawEnable = true
+		}
+	}
+	if !sawDisable {
+		t.Error("expected a backup_job.disable audit entry")
+	}
+	if !sawEnable {
+		t.Error("expected a backup_job.enable audit entry")
+	}
+}
+
 func TestBackupJobs_UpdateClearEnv(t *testing.T) {
 	srv, admin := newBackupJobsServer(t)
 
@@ -285,5 +344,71 @@ func TestBackupJobs_RunNowAndListRuns(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected a backup_job.run audit entry for the manual trigger")
+	}
+}
+
+// TestBackupJobs_RunNowSurvivesRequestCancellation is the regression test for
+// a "Run now" that used to be tied to r.Context(): a disconnected client (or a
+// proxy timeout) cancelling the HTTP request used to cancel the in-flight
+// backup AND the run-outcome bookkeeping recorded right after it. This
+// simulates the client having already disconnected BEFORE the handler even
+// starts — the most aggressive case — and asserts the run still completes and
+// its outcome is still recorded, proving handleRunBackupJob no longer hands
+// backupjobs.TriggerNow a context tied to the request's own lifecycle.
+func TestBackupJobs_RunNowSurvivesRequestCancellation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon; skipped under -short")
+	}
+	srv, admin := newBackupJobsServer(t)
+	if _, err := srv.docker.Client(context.Background(), 0); err != nil {
+		t.Skip("docker not reachable")
+	}
+	if _, err := srv.docker.SystemInfo(context.Background(), 0); err != nil {
+		t.Skipf("docker daemon not available: %v", err)
+	}
+
+	id, err := srv.store.CreateBackupJob(context.Background(), &store.BackupJob{
+		Name: "job-cancel", Scope: store.BackupScopeVolume, VolumeName: "dc-backupjobs-apitest-cancel-vol",
+		Image: "alpine:latest", Command: "true",
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli, err := srv.docker.Client(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cli.VolumeCreate(context.Background(), client.VolumeCreateOptions{Name: "dc-backupjobs-apitest-cancel-vol"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = cli.VolumeRemove(context.Background(), "dc-backupjobs-apitest-cancel-vol", client.VolumeRemoveOptions{Force: true})
+	})
+
+	idStr := strconv.FormatInt(id, 10)
+	// A context that's already cancelled stands in for "the client is gone by
+	// the time this would matter" — the strongest version of the bug: under
+	// the old code, TriggerNow (and the run's own bookkeeping) would receive
+	// this same cancelled context and fail immediately.
+	cancelledCtx, cancel := context.WithCancel(ctxAsNamed(admin, "alice", "admin"))
+	cancel()
+	r := httptest.NewRequest("POST", "/api/backup-jobs/"+idStr+"/run", nil).WithContext(cancelledCtx)
+	r = withURLParam(r, "id", idStr)
+	w := httptest.NewRecorder()
+	srv.handleRunBackupJob(w, r)
+	if w.Code != 200 {
+		t.Fatalf("run status = %d: %s (a request-context cancellation must not abort the backup run)", w.Code, w.Body.String())
+	}
+
+	r = httptest.NewRequest("GET", "/api/backup-jobs/"+idStr+"/runs", nil).WithContext(ctxAsNamed(admin, "admin", "admin"))
+	r = withURLParam(r, "id", idStr)
+	w = httptest.NewRecorder()
+	srv.handleListBackupRuns(w, r)
+	var runs []store.BackupRun
+	if err := json.Unmarshal(w.Body.Bytes(), &runs); err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || !runs[0].OK {
+		t.Errorf("the run's outcome must still be recorded despite the cancelled request context, got %+v", runs)
 	}
 }

@@ -26,6 +26,47 @@ func TestRefTagOrDigest(t *testing.T) {
 	}
 }
 
+// TestMatchRepoDigest_SingleEntryOwnRepo is the fast path's correct case: one
+// RepoDigest, and it belongs to ref's own repository — it must still be
+// returned.
+func TestMatchRepoDigest_SingleEntryOwnRepo(t *testing.T) {
+	got := matchRepoDigest([]string{"ghcr.io/owner/app@sha256:aaaa"}, "owner/app")
+	if got != "sha256:aaaa" {
+		t.Errorf("matchRepoDigest = %q, want %q", got, "sha256:aaaa")
+	}
+}
+
+// TestMatchRepoDigest_SingleEntryUnrelatedRepo is the regression test for the
+// bypassed-verification bug: a single RepoDigest from a repository OTHER
+// than ref's must be rejected, not handed back unconditionally — otherwise a
+// locally re-tagged (or base-layer-sharing) image produces persistent false
+// digest-drift for a service it has nothing to do with.
+func TestMatchRepoDigest_SingleEntryUnrelatedRepo(t *testing.T) {
+	got := matchRepoDigest([]string{"ghcr.io/someone-else/unrelated@sha256:bbbb"}, "owner/app")
+	if got != "" {
+		t.Errorf("matchRepoDigest returned digest %q for an unrelated repository, want \"\"", got)
+	}
+}
+
+// The multi-digest case already worked correctly before this fix — kept as a
+// regression guard that the extraction into matchRepoDigest didn't change it.
+func TestMatchRepoDigest_MultipleEntriesPicksMatchingRepo(t *testing.T) {
+	got := matchRepoDigest([]string{
+		"ghcr.io/someone-else/unrelated@sha256:bbbb",
+		"ghcr.io/owner/app@sha256:aaaa",
+	}, "owner/app")
+	if got != "sha256:aaaa" {
+		t.Errorf("matchRepoDigest = %q, want %q", got, "sha256:aaaa")
+	}
+}
+
+func TestMatchRepoDigest_NoMatchReturnsEmpty(t *testing.T) {
+	got := matchRepoDigest([]string{"ghcr.io/someone-else/unrelated@sha256:bbbb"}, "owner/app")
+	if got != "" {
+		t.Errorf("matchRepoDigest = %q, want empty", got)
+	}
+}
+
 func TestRegistryManifestDigest_BearerHandshake(t *testing.T) {
 	const wantDigest = "sha256:deadbeef00000000000000000000000000000000000000000000000000000"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

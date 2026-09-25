@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
@@ -148,6 +149,11 @@ func (s *Server) handleSetBackupJobEnabled(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusInternalServerError, "could not update backup job")
 		return
 	}
+	if body.Enabled {
+		s.audit(r, "backup_job.enable", chi.URLParam(r, "id"), "")
+	} else {
+		s.audit(r, "backup_job.disable", chi.URLParam(r, "id"), "")
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -171,7 +177,13 @@ func (s *Server) handleRunBackupJob(w http.ResponseWriter, r *http.Request) {
 	if c, ok := auth.ClaimsFrom(r.Context()); ok && c.Username != "" {
 		triggeredBy = c.Username
 	}
-	if err := backupjobs.TriggerNow(r.Context(), s.store, s.docker, id, triggeredBy); err != nil {
+	// A run can take up to 30 minutes (see backupjobs.runTimeout); r.Context()
+	// dies the moment the client disconnects or a proxy times the request out,
+	// which would abort a legitimately-still-running backup AND the run-outcome
+	// bookkeeping RunJob does right after — detach from the request so both
+	// survive independently of whoever's waiting on the HTTP response. Matches
+	// how handleApplyUpdate detaches its own long-running action.
+	if err := backupjobs.TriggerNow(context.WithoutCancel(r.Context()), s.store, s.docker, id, triggeredBy); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}

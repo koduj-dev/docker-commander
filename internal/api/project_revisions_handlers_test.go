@@ -685,6 +685,76 @@ func TestRestoreRevision_PolicyBlockLeavesLiveProjectUntouched(t *testing.T) {
 	}
 }
 
+// TestRestoreRevision_PolicyBlockRefusesBeforeRemoteSeed is the regression
+// test for the more severe, remote-host variant of the same finding: a
+// restore used to call projectDeployEnv (and, for a remote-host project with
+// an internal bind, its SeedProjectBinds side effect — a real, irreversible
+// write into a live-mounted named volume on that host) before the policy
+// check ever ran. Proven the same way as the deploy-side regression test:
+// point the project at a host nothing listens on, so an attempted
+// SeedProjectBinds fails distinctly (a connection/dial error) from a clean
+// policy-blocked response.
+func TestRestoreRevision_PolicyBlockRefusesBeforeRemoteSeed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	const slug = "dctest-restore-remote-policy-block"
+	// The internal bind (./data) is what makes SeedProjectBinds relevant once
+	// this project is pointed at a remote host below.
+	composeV1 := "services:\n  web:\n    image: " + deployTestImage + "\n    command: [\"sleep\", \"300\"]\n    privileged: true\n    volumes:\n      - ./data:/data\n"
+	srv, st, pid, admin := deployTestServer(t, slug, composeV1)
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = docker.ComposeDown(bg, srv.projectRoot(pid), slug, nil)
+		freeDeployStack(slug)
+	})
+
+	// Revision 1: privileged, captured while the project still targets the
+	// local daemon (host 0) — a remote deploy isn't needed to CREATE the
+	// snapshot, only to restore it below.
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+
+	ctx := context.Background()
+	hostID, err := st.CreateHost(ctx, &store.Host{Name: "unreachable", Kind: "tcp", Address: "tcp://127.0.0.1:1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateProjectSettings(ctx, pid, "app", hostID, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetPolicyRuleModes(ctx, map[string]string{"privileged": "block"}); err != nil {
+		t.Fatal(err)
+	}
+
+	w := restoreRevisionRequest(srv, pid, 1, admin, "admin", `{}`)
+	if w.Code != 200 {
+		t.Fatalf("restore status = %d: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if strings.Contains(body, "copying the project files") {
+		t.Fatalf("the restore tried to seed the remote host before the policy check ran: %s", body)
+	}
+	var resp struct {
+		OK     bool `json:"ok"`
+		Policy struct {
+			Blocked []docker.PolicyViolation `json:"blocked"`
+		} `json:"policy"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response was not the expected policy-block shape: %v (%s)", err, body)
+	}
+	if resp.OK {
+		t.Fatal("a block-mode violation on the restored revision must refuse the restore")
+	}
+	if len(resp.Policy.Blocked) != 1 || resp.Policy.Blocked[0].Rule != docker.RulePrivileged {
+		t.Errorf("expected exactly one privileged violation reported, got %+v", resp.Policy.Blocked)
+	}
+}
+
 // TestCaptureRevision_SnapshotDirFailureLeavesRevisionMarkedInvalid is the
 // regression test for P2-1: if the on-disk snapshot can never be written,
 // the revision row must not be left claiming Valid=true — restore must
