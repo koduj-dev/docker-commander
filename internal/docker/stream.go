@@ -55,7 +55,12 @@ func (m *Manager) SampleStats(ctx context.Context, hostID int64, id string) (Sta
 	if err != nil {
 		return StatsSample{}, err
 	}
-	resp, err := cli.ContainerStats(ctx, id, client.ContainerStatsOptions{Stream: false})
+	// IncludePreviousSample is required for a usable CPU figure. Without it the SDK
+	// sends one-shot=true, the daemon leaves precpu_stats empty and the delta below
+	// is taken against zero: CPU becomes the container's average since it started
+	// (a container burning four cores read as 0.1%). It costs the daemon about a
+	// second per call, which is what `docker stats` itself does.
+	resp, err := cli.ContainerStats(ctx, id, client.ContainerStatsOptions{Stream: false, IncludePreviousSample: true})
 	if err != nil {
 		return StatsSample{}, err
 	}
