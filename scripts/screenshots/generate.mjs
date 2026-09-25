@@ -127,6 +127,16 @@ const SHOTS = [
   { name: 'stacks', path: '/stacks' },
   { name: 'projects', path: '/projects' },
   { name: 'volumes', path: '/volumes' },
+  // Backup jobs live in the Storage group. Photograph an instance that has a few
+  // jobs with run history, or the list is empty.
+  { name: 'backup_jobs', path: '/backup-jobs' },
+  // Resources: one picture per tab. The live tabs poll every 5 s and the sampler
+  // snapshot they read updates more slowly, so give them a moment; the Network
+  // tab averages a stored window and Disk runs a daemon-wide `system df`.
+  { name: 'resources_containers', path: '/resources', settle: 8000 },
+  { name: 'resources_network', path: '/resources?tab=network', settle: 8000 },
+  { name: 'resources_stacks', path: '/resources?tab=stacks', settle: 8000 },
+  { name: 'resources_disk', path: '/resources?tab=disk', settle: 10000 },
   { name: 'networks', path: '/networks' },
   { name: 'topology', path: '/topology' },
   {
@@ -155,6 +165,10 @@ const SHOTS = [
       }
     },
   },
+  // The Feed hides repeats by default; a firing condition shows how long it has
+  // been going and how often it repeated. Needs alerts to have fired.
+  { name: 'alerts_feed', path: '/alerts', prep: (page) => openTab(page, /^feed$/i), settle: 3000 },
+  { name: 'alerts_maintenance', path: '/alerts', prep: (page) => openTab(page, /^maintenance$/i) },
   { name: 'hosts', path: '/hosts' },
   { name: 'registries', path: '/registries' },
   { name: 'users', path: '/users' },
@@ -164,6 +178,11 @@ const SHOTS = [
   { name: 'settings_security', path: '/settings', prep: (page) => openTab(page, /^security$/i) },
   { name: 'settings_ldap', path: '/settings', prep: (page) => openTab(page, /^ldap$/i) },
   { name: 'settings_email', path: '/settings', prep: (page) => openTab(page, /^e-?mail$/i) },
+  // Settings tabs that used to be pages of their own (Policy rules, Recovery bundle)
+  // or are new (Data retention). ?tab= opens each one directly.
+  { name: 'settings_policy', path: '/settings?tab=policy' },
+  { name: 'settings_retention', path: '/settings?tab=retention' },
+  { name: 'settings_recovery', path: '/settings?tab=recovery' },
   { name: 'audit', path: '/audit' },
   { name: 'templates', path: '/templates' },
   { name: 'mcp', path: '/mcp-tokens' },

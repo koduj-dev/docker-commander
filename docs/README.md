@@ -15,11 +15,13 @@ two cover installation and configuration.
 - [Templates](projects.md#managing-templates) — reusable presets, builder service blocks, and shared definitions (built-in + your own)
 - [Images](images.md) — pull, build, push, tag, save/load/import, history, prune
 - [Volumes](volumes.md) — list, inspect, create, remove, prune, browse files
+- [Backup jobs](backup-jobs.md) — run your own backup command against a volume or a project's volumes; run history with the captured log
 
 ## Network
 - [Networks & Topology](networks.md) — manage networks (create/connect/disconnect/prune) and the connectivity graph
 
 ## Observability
+- [Resources](resources.md) — live CPU / memory / network per container and stack, network top talkers, and what takes the disk
 - [Logs](logs.md) — aggregated streaming, regex search, structured parse rules
 - [Events](events.md) — the live Docker event feed
 - [Alerts](alerts.md) — rules, conditions with a lifetime, the feed, delivery records, webhooks, email, Prometheus
@@ -29,7 +31,9 @@ two cover installation and configuration.
 - [Registries](registries.md) — stored credentials for private pull & push
 - [Users & roles](users.md) — accounts, permissions, read-only
 - [Your profile](profile.md) — your own account, second factors, sessions, and what you can reach
-- [Settings](settings.md) — feature flags, localhost 2FA, MCP token lifetimes, LDAP, SMTP
+- [Settings](settings.md) — feature flags, localhost 2FA, MCP token lifetimes, LDAP, SMTP, data retention, and the tabs for the pages below
+- [Policy rules](policy-rules.md) — what a project deploy is allowed to do (off / warn / block)
+- [Recovery bundle](recovery.md) — export and import everything the app knows
 - [Audit log](audit.md) — record of privileged actions
 - [MCP (AI tools)](mcp.md) — remote control from AI tools (Claude Code/Desktop, Cursor): tokens, OAuth, the safe tool surface
 

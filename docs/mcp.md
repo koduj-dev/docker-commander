@@ -67,8 +67,8 @@ immediately.
 
 ![MCP Admin](images/mcp_admin.png)
 
-Administrators get a second page, **MCP Admin** (under *System*), with a
-fleet-wide view: **every user's** active API tokens (each labelled with its
+Administrators also get **MCP Admin** (a tab of **Settings**, `/settings?tab=mcp`),
+with a fleet-wide view: **every user's** active API tokens (each labelled with its
 owner), all registered **OAuth clients**, and every live **connector session**.
 From here an admin can **revoke** any token or session, or **remove** any
 OAuth client. Only metadata is shown; secrets are never recoverable here. This
@@ -298,7 +298,7 @@ and authorize against it; see the security model below.
   expiry date is the only control here that still works when nobody is paying
   attention. There is also a **ceiling** (a year by default), because otherwise
   "no never-expiring tokens" is a formality anyone can sidestep by asking for a
-  hundred years. Admins set all three in **Settings → Security**, next to the other instance-wide credential rules; the **MCP Admin** page stays the operational view of who holds a token.
+  hundred years. Admins set all three in **Settings → Security**, next to the other instance-wide credential rules; the **MCP Admin** tab stays the operational view of who holds a token.
 
   It governs what may be **minted**. Tokens that already exist keep the expiry
   they were given, so tightening the policy will not cut off a running
