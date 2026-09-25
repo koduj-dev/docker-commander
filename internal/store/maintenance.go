@@ -59,6 +59,19 @@ func (w MaintenanceWindow) Active(now time.Time) bool {
 	return ok
 }
 
+// Closed reports whether the window is over for good: ended early by an
+// operator, a one-off whose end has passed, or a recurring series that has
+// stopped recurring. A closed window is history — it can be read and deleted
+// but not edited, since changing it would rewrite a record of what was silenced.
+func (w MaintenanceWindow) Closed(now time.Time) bool {
+	if w.Ended {
+		return true
+	}
+	// A one-off always has a real EndsAt; a recurring series may leave it zero
+	// ("indefinitely"), which is never closed.
+	return !w.EndsAt.IsZero() && !now.Before(w.EndsAt)
+}
+
 // ActiveSpan is Active plus the bounds of the occurrence covering now: the
 // window's own start/end for a one-off, the current occurrence's for a
 // recurring one. It is what a "window started / ended" log line reports.

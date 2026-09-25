@@ -232,6 +232,35 @@ describe("MaintenanceWindows", () => {
     expect("endsAt" in body ? body.endsAt : undefined).toBeUndefined();
   });
 
+  // A closed window is history: no Edit (the server answers 409), no End. Delete stays.
+  it("offers no Edit or End on a closed window, only Delete", async () => {
+    const past = (ms: number) => new Date(Date.now() - ms).toISOString();
+    maintenanceWindows.mockResolvedValue([
+      { ...window1, id: 10, name: "Old one-off", startsAt: past(7_200_000), endsAt: past(3_600_000) },
+      { ...window1, id: 11, name: "Ended early", ended: true },
+      { ...recurringWindow, id: 12, name: "Old series", endsAt: past(3_600_000) },
+    ]);
+    // The list loads on mount, so remount to pick up the new mock.
+    act(() => root.unmount());
+    root = createRoot(container);
+    await act(async () => root.render(<DialogProvider><MaintenanceWindows /></DialogProvider>));
+
+    for (const name of ["Old one-off", "Ended early", "Old series"]) {
+      expect(() => rowButton(name, "Edit"), `${name}: Edit`).toThrow();
+      expect(() => rowButton(name, "End now"), `${name}: End`).toThrow();
+      expect(rowButton(name, "Delete")).toBeTruthy();
+    }
+    // A series past its end date reads as history, not as "Recurring".
+    expect(container.textContent).not.toContain("Recurring");
+  });
+
+  it("still offers Edit and End on a running window and an open-ended series", () => {
+    expect(rowButton("DB upgrade", "Edit")).toBeTruthy();
+    expect(rowButton("DB upgrade", "End now")).toBeTruthy();
+    expect(rowButton("Nightly backup window", "Edit")).toBeTruthy();
+    expect(rowButton("Nightly backup window", "End now")).toBeTruthy();
+  });
+
   // A regression test for a real bug: editing an existing window whose
   // stored timezone is "" (the server's own convention for UTC) silently
   // switched it to the browser's own timezone, changing the window's actual

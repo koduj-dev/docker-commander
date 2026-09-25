@@ -330,8 +330,15 @@ func (s *Server) handleUpdateMaintenanceWindow(w http.ResponseWriter, r *http.Re
 	// must not even be discoverable as editable) AND the new scope must be
 	// too (an in-reach window must not be reassigned to silence a host the
 	// caller cannot see).
-	if _, err := s.maintenanceWindowInReach(r, id); err != nil {
+	existing, err := s.maintenanceWindowInReach(r, id)
+	if err != nil {
 		writeErr(w, http.StatusNotFound, "maintenance window not found")
+		return
+	}
+	// Checked after reach, so an out-of-scope window still answers 404 rather
+	// than revealing that it exists and is closed.
+	if existing.Closed(time.Now()) {
+		writeErr(w, http.StatusConflict, "a closed maintenance window cannot be edited — create a new one instead")
 		return
 	}
 	if !s.maintenanceWindowHostsAllowed(r, b.HostIDs) {

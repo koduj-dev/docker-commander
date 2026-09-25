@@ -1130,9 +1130,17 @@ function fromZonedDate(value: string, tz: string): string {
   }
 }
 
+// A window is closed once it ended early, or its end has passed — for a
+// recurring series that is the series end (absent = open-ended, never closed).
+// Closed windows are history: no Edit, no End (mirrors the server's 409).
+function windowClosed(w: MaintenanceWindow): boolean {
+  if (w.ended) return true;
+  return !!w.endsAt && new Date(w.endsAt).getTime() <= Date.now();
+}
+
 function windowStatus(w: MaintenanceWindow): { label: string; cls: string } {
   if (w.ended) return { label: "Ended", cls: "bg-panel2 text-muted" };
-  if (w.recurring) return { label: "Recurring", cls: "bg-accent/15 text-accent" };
+  if (w.recurring && !windowClosed(w)) return { label: "Recurring", cls: "bg-accent/15 text-accent" };
   // A one-off window always carries a real endsAt (the server requires it);
   // only a recurring series — handled above — can omit it.
   const now = Date.now();
@@ -1256,7 +1264,7 @@ export function MaintenanceWindows() {
             <tbody>
               {windows.map((w) => {
                 const status = windowStatus(w);
-                const canEnd = !w.ended && (w.recurring || new Date(w.endsAt ?? 0).getTime() > Date.now());
+                const closed = windowClosed(w);
                 return (
                   <tr key={w.id} className="border-b border-border/50">
                     <td className="px-4 py-2.5 font-medium">
@@ -1270,8 +1278,10 @@ export function MaintenanceWindows() {
                     </td>
                     <td className="px-4 py-2.5 text-right">
                       <div className="flex items-center justify-end gap-1">
-                        <button className="btn-ghost px-2 py-1" title="Edit" onClick={() => { setShowForm(false); setEditing(w); }}><Pencil className="h-4 w-4" /></button>
-                        {canEnd && (
+                        {!closed && (
+                          <button className="btn-ghost px-2 py-1" title="Edit" onClick={() => { setShowForm(false); setEditing(w); }}><Pencil className="h-4 w-4" /></button>
+                        )}
+                        {!closed && (
                           <button className="btn-ghost px-2 py-1" title="End now" onClick={() => end(w)}><Ban className="h-4 w-4" /></button>
                         )}
                         <button className="btn-ghost px-2 py-1 text-danger" title="Delete" onClick={() => del(w)}><Trash2 className="h-4 w-4" /></button>

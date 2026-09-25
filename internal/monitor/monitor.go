@@ -486,8 +486,17 @@ func (m *Monitor) evalResourceRules(ctx context.Context, snap map[string]Contain
 			suppressed = m.emit(ctx, c.rule, c.stat.HostID, c.stat.HostName, c.stat.ID, c.stat.Name, c.stat.Project,
 				msg, &v, store.KindEased, int(now.Sub(st.StartedAt).Seconds()))
 		case c.rule.CooldownSec > 0 && now.Sub(st.NotifiedAt) >= time.Duration(c.rule.CooldownSec)*time.Second:
+			// A zero NotifiedAt means nobody was ever told — the firing (and any
+			// escalation since) was silenced by a maintenance window that has now
+			// ended. This is the FIRST real delivery, not a re-announcement, so it
+			// goes out as a firing: a repeat is hidden in the feed by default,
+			// which made the alert look like it had vanished when the window ended.
+			kind := store.KindRepeat
+			if st.NotifiedAt.IsZero() {
+				kind = store.KindFiring
+			}
 			suppressed = m.emit(ctx, c.rule, c.stat.HostID, c.stat.HostName, c.stat.ID, c.stat.Name, c.stat.Project,
-				msg, &v, store.KindRepeat, int(now.Sub(st.StartedAt).Seconds()))
+				msg, &v, kind, int(now.Sub(st.StartedAt).Seconds()))
 		default:
 			// Still true, nothing changed, not yet time to repeat: say nothing.
 			// This is the whole point — silence here is the feature.

@@ -432,3 +432,27 @@ func TestActiveSpan(t *testing.T) {
 		t.Error("an ended window is never active")
 	}
 }
+
+func TestMaintenanceWindowClosed(t *testing.T) {
+	now := time.Now()
+	open := func(w MaintenanceWindow) bool { return !w.Closed(now) }
+
+	if !open(MaintenanceWindow{StartsAt: now.Add(-time.Hour), EndsAt: now.Add(time.Hour)}) {
+		t.Error("a running one-off is not closed")
+	}
+	if !open(MaintenanceWindow{StartsAt: now.Add(time.Hour), EndsAt: now.Add(2 * time.Hour)}) {
+		t.Error("a scheduled one-off is not closed")
+	}
+	if open(MaintenanceWindow{StartsAt: now.Add(-2 * time.Hour), EndsAt: now.Add(-time.Hour)}) {
+		t.Error("a one-off whose end has passed is closed")
+	}
+	if open(MaintenanceWindow{StartsAt: now.Add(-time.Hour), EndsAt: now.Add(time.Hour), Ended: true}) {
+		t.Error("a window ended early is closed")
+	}
+	if !open(MaintenanceWindow{Recurring: true, StartsAt: now.Add(-time.Hour)}) {
+		t.Error("an open-ended series is never closed")
+	}
+	if open(MaintenanceWindow{Recurring: true, StartsAt: now.Add(-48 * time.Hour), EndsAt: now.Add(-time.Hour)}) {
+		t.Error("a series whose end date has passed is closed")
+	}
+}

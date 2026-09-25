@@ -276,7 +276,8 @@ func TestSuppressedResourceEmitDoesNotAdvanceNotifiedAt(t *testing.T) {
 	// The condition hasn't changed. With a real (delivered) notification,
 	// this poll would stay quiet for the rest of the 300s interval — but
 	// the only notification so far was suppressed, so it must re-announce
-	// as a repeat right away.
+	// right away — as a firing, since nobody was told yet (a repeat is hidden
+	// in the feed by default, which made the alert look gone).
 	m.ready(id, cs.ID)
 	m.evalResourceRules(ctx, snapOf(cs), hostsOf(cs))
 
@@ -284,8 +285,14 @@ func TestSuppressedResourceEmitDoesNotAdvanceNotifiedAt(t *testing.T) {
 	if len(evs) != 2 {
 		t.Fatalf("expected a repeat event immediately once the window ended, got %d:\n%s", len(evs), dump(evs))
 	}
-	if evs[0].Kind != store.KindRepeat || evs[0].Suppressed {
-		t.Fatalf("the second event should be a delivered repeat: %+v", evs[0])
+	if evs[0].Kind != store.KindFiring || evs[0].Suppressed {
+		t.Fatalf("the second event should be the first real delivery, as a firing: %+v", evs[0])
+	}
+
+	// Once that was delivered, later announcements really are repeats again.
+	st2, _ := st.ListAlertStates(ctx)
+	if len(st2) != 1 || st2[0].NotifiedAt.IsZero() {
+		t.Fatalf("the delivery should have stamped NotifiedAt: %+v", st2)
 	}
 }
 
