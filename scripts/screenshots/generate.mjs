@@ -167,7 +167,8 @@ const SHOTS = [
   { name: 'audit', path: '/audit' },
   { name: 'templates', path: '/templates' },
   { name: 'mcp', path: '/mcp-tokens' },
-  { name: 'mcp_admin', path: '/mcp-admin' },
+  // MCP Admin is a Settings tab now (no route of its own); ?tab= opens it directly.
+  { name: 'mcp_admin', path: '/settings?tab=mcp' },
   {
     // Everything an account holds that decides how it signs in: live sessions,
     // paired authenticators and passkeys, and whether a passkey alone may be the
