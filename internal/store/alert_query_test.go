@@ -497,3 +497,32 @@ func TestAlertQuerySortIsWhitelisted(t *testing.T) {
 		}
 	})
 }
+
+// HideRepeats is how the feed stops "still true" re-announcements from burying
+// firing/resolved. It must drop ONLY repeats, and only when asked.
+func TestAlertQueryHideRepeats(t *testing.T) {
+	s, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	for _, k := range []string{KindFiring, KindRepeat, KindRepeat, KindResolved} {
+		if _, err := s.InsertAlertEvent(ctx, &AlertEvent{RuleName: "Memory", Severity: "warning", Kind: k, HostID: 1, ContainerName: "db"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	all, total, err := s.ListAlertEvents(ctx, AlertQuery{})
+	if err != nil || len(all) != 4 || total != 4 {
+		t.Fatalf("by default every kind is listed: got %d (total %d), err %v", len(all), total, err)
+	}
+	hidden, total, err := s.ListAlertEvents(ctx, AlertQuery{HideRepeats: true})
+	if err != nil || len(hidden) != 2 || total != 2 {
+		t.Fatalf("HideRepeats: got %d (total %d), want 2, err %v", len(hidden), total, err)
+	}
+	for _, e := range hidden {
+		if e.Kind == KindRepeat {
+			t.Errorf("a repeat survived HideRepeats: %+v", e)
+		}
+	}
+}

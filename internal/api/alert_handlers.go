@@ -181,16 +181,17 @@ func (s *Server) alertQueryFrom(w http.ResponseWriter, r *http.Request) (store.A
 	// caller isn't allowed to see.
 	ids, all := s.visibleHostIDs(r)
 	aq := store.AlertQuery{
-		Severity:  q.Get("severity"),
-		Kind:      q.Get("kind"),
-		Container: q.Get("container"),
-		Rule:      q.Get("rule"),
-		Text:      q.Get("q"),
-		Unacked:   q.Get("unacked") == "1",
-		Sort:      q.Get("sort"),
-		Desc:      q.Get("desc") == "1",
-		Limit:     atoiDefault(q.Get("limit"), 50),
-		Offset:    atoiDefault(q.Get("offset"), 0),
+		Severity:    q.Get("severity"),
+		Kind:        q.Get("kind"),
+		HideRepeats: q.Get("hideRepeats") == "1",
+		Container:   q.Get("container"),
+		Rule:        q.Get("rule"),
+		Text:        q.Get("q"),
+		Unacked:     q.Get("unacked") == "1",
+		Sort:        q.Get("sort"),
+		Desc:        q.Get("desc") == "1",
+		Limit:       atoiDefault(q.Get("limit"), 50),
+		Offset:      atoiDefault(q.Get("offset"), 0),
 	}
 	if !all {
 		aq.HostIDs = ids
@@ -239,6 +240,7 @@ func (s *Server) handleListAlertEvents(w http.ResponseWriter, r *http.Request) {
 	unackQ.Unacked, unackQ.Limit, unackQ.Offset = true, 1, 0
 	unackQ.Severity, unackQ.Kind, unackQ.Container, unackQ.Rule, unackQ.Text = "", "", "", "", ""
 	unackQ.HostID = nil
+	unackQ.HideRepeats = false // the badge counts what needs attention, whatever the feed is hiding
 	// The badge means "something is wrong", so it counts only warnings and
 	// criticals. That is also why it needs no separate rule for resolved events:
 	// a condition ending is emitted as info, so good news can never make the

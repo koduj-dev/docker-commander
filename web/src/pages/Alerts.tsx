@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Plus, Trash2, Webhook as WebhookIcon, Check, CheckCheck, Pencil, Download, Upload, X , ChevronDown, ChevronUp, ChevronsUpDown, BellOff, Ban} from "lucide-react";
+import { Plus, Trash2, Webhook as WebhookIcon, Check, CheckCheck, Pencil, Download, Upload, X , ChevronDown, ChevronUp, ChevronsUpDown, BellOff, Ban, Repeat, TrendingUp, TrendingDown} from "lucide-react";
 import { Link } from "react-router-dom";
 import clsx from "clsx";
 import { api } from "../lib/api";
@@ -12,6 +12,7 @@ import { useAuth } from "../auth/AuthContext";
 import { Tabs } from "../components/Tabs";
 import { useDialogs } from "../components/Dialog";
 import { useAlertPulse } from "../lib/alertStream";
+import { getPref, setPref } from "../lib/prefs";
 
 // Metric names understood by a resource rule. "cpu" is Docker's own
 // one-core-is-100% figure; "cpu_total" normalises it across the host's cores.
@@ -98,6 +99,11 @@ function Feed({ onAckAllReady }: { onAckAllReady: (fn: (() => void) | null) => v
   const [text, setText] = useState("");
   const [q, setQ] = useState("");
   const [unacked, setUnacked] = useState(false);
+  // Repeats (a condition that is still true, re-announced each cooldown) bury the
+  // firing/resolved events people look for, so they are hidden unless asked for —
+  // by this switch, or by picking "Repeat" as the lifecycle.
+  const [showRepeats, setShowRepeats] = useState(() => getPref("alerts.showRepeats", false));
+  const hideRepeats = !showRepeats && kind !== "repeat";
   const [host, setHost] = useState<string>("");
   const [hosts, setHosts] = useState<Host[]>([]);
   useEffect(() => {
@@ -110,18 +116,18 @@ function Feed({ onAckAllReady }: { onAckAllReady: (fn: (() => void) | null) => v
 
   // Any filter change restarts paging: staying on page 4 of a result set that
   // just shrank to one page shows an empty table and looks like a bug.
-  useEffect(() => setOffset(0), [severity, kind, container, rule, q, unacked, host]);
+  useEffect(() => setOffset(0), [severity, kind, container, rule, q, unacked, host, showRepeats]);
 
   const load = useCallback(() => {
     api
-      .alerts({ severity, kind, container, rule, q, unacked, host: host === "" ? undefined : Number(host), sort, desc, limit: PAGE, offset })
+      .alerts({ severity, kind, hideRepeats, container, rule, q, unacked, host: host === "" ? undefined : Number(host), sort, desc, limit: PAGE, offset })
       .then((r) => {
         setEvents(r.events);
         setTotal(r.total);
         setOutstanding(r.outstanding);
       })
       .catch(() => setEvents([]));
-  }, [severity, kind, container, rule, q, unacked, host, sort, desc, offset]);
+  }, [severity, kind, hideRepeats, container, rule, q, unacked, host, sort, desc, offset]);
 
   // Refresh on the shared alert poll rather than a timer of its own: a second
   // interval is what made a toast arrive seconds after its row appeared.
@@ -168,7 +174,7 @@ function Feed({ onAckAllReady }: { onAckAllReady: (fn: (() => void) | null) => v
       }))
     )
       return;
-    await api.ackAllAlerts({ severity, kind, container, rule, q, host: host === "" ? undefined : Number(host) });
+    await api.ackAllAlerts({ severity, kind, hideRepeats, container, rule, q, host: host === "" ? undefined : Number(host) });
     load();
   };
   // Hand the action to the page header, and take it back on unmount so it can't
@@ -251,6 +257,14 @@ function Feed({ onAckAllReady }: { onAckAllReady: (fn: (() => void) | null) => v
           <input type="checkbox" checked={unacked} onChange={(e) => setUnacked(e.target.checked)} />
           Unacknowledged only
         </label>
+        <label className="flex items-center gap-2 text-sm pb-1.5" title="A repeat is a condition that is still true, re-announced every cooldown">
+          <input
+            type="checkbox"
+            checked={showRepeats}
+            onChange={(e) => { setShowRepeats(e.target.checked); setPref("alerts.showRepeats", e.target.checked); }}
+          />
+          Show repeats
+        </label>
         {filtered && (
           <button className="btn-ghost px-3 py-1.5 text-sm" onClick={clear}>
             Clear
@@ -273,6 +287,7 @@ function Feed({ onAckAllReady }: { onAckAllReady: (fn: (() => void) | null) => v
                 <tr className="border-b border-border">
                   <SortTh label="Time" col="time" sort={sort} desc={desc} onSort={applySort} />
                   <SortTh label="Severity" col="severity" sort={sort} desc={desc} onSort={applySort} />
+                  <th className="px-2 py-3" aria-label="Event flags"></th>
                   <SortTh label="Rule" col="rule" sort={sort} desc={desc} onSort={applySort} />
                   <SortTh label="Host" col="host" sort={sort} desc={desc} onSort={applySort} className="hidden lg:table-cell" />
                   <SortTh label="Container" col="container" sort={sort} desc={desc} onSort={applySort} />
@@ -352,6 +367,21 @@ function SortTh({
 
 // FeedRow renders one event. The whole row opens the detail — the table can only
 // ever show a truncated view, and the message is often the least of it.
+// kindFlag is the icon for a lifecycle kind that deserves one. "Firing" (the
+// ordinary case) and "resolved" (already said by the badge) get none.
+function kindFlag(kind?: string) {
+  switch (kind) {
+    case "repeat":
+      return <span title="Repeat — the condition is still true" aria-label="repeat"><Repeat className="h-3.5 w-3.5" /></span>;
+    case "escalated":
+      return <span title="Escalated to a higher severity" aria-label="escalated"><TrendingUp className="h-3.5 w-3.5 text-warn" /></span>;
+    case "eased":
+      return <span title="Eased to a lower severity" aria-label="eased"><TrendingDown className="h-3.5 w-3.5" /></span>;
+    default:
+      return null;
+  }
+}
+
 function FeedRow({ e, onOpen, onAck }: { e: AlertEvent; onOpen: () => void; onAck: () => void }) {
   const deliveries = e.deliveries ?? [];
   return (
@@ -364,14 +394,18 @@ function FeedRow({ e, onOpen, onAck }: { e: AlertEvent; onOpen: () => void; onAc
         <span className={clsx("text-xs px-2 py-0.5 rounded-md font-medium capitalize", kindBadge(e))}>
           {e.kind === "resolved" ? "resolved" : e.severity}
         </span>
-        {e.kind && e.kind !== "firing" && e.kind !== "resolved" && (
-          <span className="ml-1 text-[10px] uppercase tracking-wide text-muted">{e.kind}</span>
-        )}
-        {e.suppressed && (
-          <span className="ml-1 inline-flex items-center gap-0.5 text-[10px] uppercase tracking-wide text-muted" title="A maintenance window suppressed delivery for this event">
-            <BellOff className="h-3 w-3" /> silenced
-          </span>
-        )}
+      </td>
+      {/* What kind of event this is, and whether it was silenced, are icon flags in
+          their own column — not extra words squeezed next to the severity. */}
+      <td className="px-2 py-2.5 whitespace-nowrap">
+        <span className="inline-flex items-center gap-1.5 text-muted">
+          {kindFlag(e.kind)}
+          {e.suppressed && (
+            <span title="A maintenance window suppressed delivery for this event" aria-label="silenced">
+              <BellOff className="h-3.5 w-3.5" />
+            </span>
+          )}
+        </span>
       </td>
       <td className="px-4 py-2.5">{e.ruleName}</td>
       <td className="px-4 py-2.5 hidden lg:table-cell text-xs text-muted">{e.hostName || "—"}</td>

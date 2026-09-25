@@ -46,6 +46,8 @@ func (m *Monitor) maintenanceLogLoop(ctx context.Context) {
 	}
 }
 
+// Times are logged in the server's local zone, matching the log line's own timestamp.
+//
 // logMaintenanceTransitions writes a line for every window that became active
 // or stopped being active since prev, and returns the new active set. On the
 // first pass (startup) a window that is already running is reported as such,
@@ -67,10 +69,10 @@ func logMaintenanceTransitions(prev map[int64]activeWindow, windows []store.Main
 		w := byID[id]
 		if first {
 			log.Printf("maintenance window active id=%d name=%q scope=%q since=%s until=%s remaining=%s — matching alerts are recorded but not delivered",
-				id, a.name, windowScope(w), a.start.Format(time.RFC3339), a.end.Format(time.RFC3339), a.end.Sub(now).Round(time.Second))
+				id, a.name, windowScope(w), a.start.Local().Format(time.RFC3339), a.end.Local().Format(time.RFC3339), a.end.Sub(now).Round(time.Second))
 		} else {
 			log.Printf("maintenance window started id=%d name=%q scope=%q until=%s duration=%s — matching alerts are recorded but not delivered",
-				id, a.name, windowScope(w), a.end.Format(time.RFC3339), a.end.Sub(a.start).Round(time.Second))
+				id, a.name, windowScope(w), a.end.Local().Format(time.RFC3339), a.end.Sub(a.start).Round(time.Second))
 		}
 	}
 	for id, a := range prev {

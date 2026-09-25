@@ -214,6 +214,8 @@ export interface LoginResult {
 export interface AlertListParams {
   severity?: string;
   kind?: string;
+  /** Drop "repeat" events — still-true re-announcements — from the list. */
+  hideRepeats?: boolean;
   host?: number;
   container?: string;
   rule?: string;
@@ -915,6 +917,7 @@ export const api = {
     const p = new URLSearchParams();
     if (params?.severity) p.set("severity", params.severity);
     if (params?.kind) p.set("kind", params.kind);
+    if (params?.hideRepeats) p.set("hideRepeats", "1");
     if (params?.host !== undefined) p.set("host", String(params.host));
     if (params?.container) p.set("container", params.container);
     if (params?.rule) p.set("rule", params.rule);
@@ -934,6 +937,7 @@ export const api = {
     const p = new URLSearchParams();
     if (params?.severity) p.set("severity", params.severity);
     if (params?.kind) p.set("kind", params.kind);
+    if (params?.hideRepeats) p.set("hideRepeats", "1");
     if (params?.host !== undefined) p.set("host", String(params.host));
     if (params?.container) p.set("container", params.container);
     if (params?.rule) p.set("rule", params.rule);
