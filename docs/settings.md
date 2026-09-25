@@ -1,9 +1,8 @@
 # Settings
 
-_Admin only._ Tabs: **Features**, **Security**, **Policy rules**, **LDAP**, **Email**,
-**MCP Admin**, **Data retention** and **Recovery bundle**. The tab is in the URL
-(`/settings?tab=policy`, `?tab=mcp`, `?tab=retention`, `?tab=recovery`), so a link
-or a reload lands on it.
+_Admin only._ Tabs: Features, Security, Policy rules, LDAP, Email, MCP Admin, Data
+retention and Recovery bundle. The tab is in the URL (for example
+`/settings?tab=retention`), so a link or a reload opens the same tab.
 
 [← Manual index](README.md)
 
@@ -167,65 +166,54 @@ on an untrusted network, use implicit TLS.
 ## Policy rules
 ![Policy rules](images/settings_policy.png)
 
-Deploy-time checks (privileged containers, host network, the Docker socket,
-unpinned `:latest` images, missing limits or healthchecks), each set to **Off**,
-**Warn** or **Block**. Moved here from its own menu item; the full description is
-in [Policy rules](policy-rules.md).
+Checks that run on every project deploy (privileged container, host network, Docker
+socket mount, `:latest` image, no limits, no healthcheck). Each rule is Off, Warn
+or Block. Details in [Policy rules](policy-rules.md).
 
 ## MCP Admin
-Every API token, OAuth client and live session across all users, and the place to
-revoke them. Moved here from the System menu; see
+All API tokens, OAuth clients and sessions of all users, with revoke. See
 [MCP → Admin overview](mcp.md#admin-overview-the-mcp-admin-page).
 
 ## Data retention
 ![Data retention](images/settings_retention.png)
 
-Nothing deletes history by itself unless you tell it how long to keep it — this
-tab does. Once a day the server deletes what is older than the policy below and
-records what it did. **The defaults are on**:
+Old history is deleted once a day. This tab sets how long each kind is kept. It is
+on by default:
 
 | Area | Default | Notes |
 | --- | --- | --- |
-| Alert events | **90 days** | The [Alerts feed](alerts.md#the-feed). |
-| Alert deliveries | **90 days** | The webhook/e-mail attempt records. Cannot be kept **longer** than the events they belong to — a delivery record is removed with its event. |
-| Audit log | **365 days** | Never below **30 days**: the log is what an incident review reads. |
-| Project revisions | newest **50** per project | A count, not an age. Deleting a revision deletes its file snapshot on disk too. Never fewer than **3**. |
+| Alert events | 90 days | The [Alerts feed](alerts.md#the-feed). |
+| Alert deliveries | 90 days | Webhook and e-mail attempts. They are deleted with their event, so this can't be longer than the events. |
+| Audit log | 365 days | 30 days at the minimum. |
+| Project revisions | newest 50 per project | A count, not an age. The snapshot file of a deleted revision is removed too. At least 3. |
 
-Each row can be set to **keep forever** (stored as `0`), and **Reset to defaults**
-fills the form without saving. Next to every row you see how many rows are stored
-and how old the oldest one is, and at the top the database size — including the
-free space inside the file. SQLite reuses that space for new data but does **not**
-shrink the file, so a purge lowers what is *used*, not the file size.
+Set a row to **keep forever** to never delete it. **Reset to defaults** fills in the
+form without saving.
 
-- **The daily job** runs shortly after the server starts and then every 24 hours.
-  It deletes in small batches, so a large backlog does not stall the app. Deleting
-  alert events also removes their delivery records and any queued retries;
-  project revisions are trimmed newest-first, and any snapshot file that no longer
-  has a revision behind it (from an interrupted or failed purge) is swept up on
-  the next run, with a failure reported rather than forgotten.
-- **Purge now** runs the same purge immediately, against the policy as **saved**
-  (it is disabled while the form has unsaved changes, so what it deletes never
-  differs from what the page says) and after a confirmation — it cannot be undone.
-- **The last purge** is shown on the page — when, whether it was scheduled or
-  manual, how many rows of each kind it deleted, how long it took, the database
-  size before and after, and any error. Each run also writes one line to the
-  process log, and — only when it deleted something or failed — a `retention.purge`
-  entry to the [audit log](audit.md).
-- **A saved policy that cannot be read** (a damaged setting, or one written by a
-  different version) **pauses purging** instead of falling back to the defaults:
-  the page says so, shows the defaults, and nothing is deleted until you save a
-  policy.
+Next to each row you see how many entries are stored and the age of the oldest one.
+At the top is the database size. SQLite does not shrink the file after a delete, it
+reuses the free space, so the size stays the same.
 
-> **Upgrading to 1.7.0 with the defaults on:** the first scheduled purge deletes
-> alert history older than 90 days and audit entries older than a year. If you
-> want to keep more (or everything), set it here — or export what you need —
-> **before** the server has been running for a couple of minutes.
+- **Schedule.** The first purge runs about two minutes after the server starts,
+  then every 24 hours. It deletes in small batches. Snapshot files that have no
+  revision left (from a failed purge) are removed on the next run.
+- **Purge now** runs the purge immediately, after a confirmation. It uses the saved
+  policy, so it is disabled while the form has unsaved changes.
+- **Last purge.** The page shows when it ran, whether it was scheduled or manual,
+  what it deleted, how long it took, the database size before and after, and any
+  error. Each run writes a line to the process log. If it deleted something or
+  failed, it also adds a `retention.purge` entry to the [audit log](audit.md).
+- **Unreadable policy.** If the saved policy can't be read, nothing is deleted. The
+  page shows a warning and the defaults; save a policy to resume.
 
-The limits are collected in [Limits](limits.md#history-retention).
+> **Upgrading to 1.7.0:** the defaults are on, so the first purge deletes alert
+> history older than 90 days and audit entries older than a year. To keep more,
+> change the values here before the server has been up for a few minutes.
+
+Limits are listed in [Limits](limits.md#history-retention).
 
 ## Recovery bundle
 ![Recovery bundle](images/settings_recovery.png)
 
-Export everything the app knows into one portable file and import it on another
-instance; **Export** and **Import** are sub-tabs. Moved here from its own menu
-item; see [Recovery bundle](recovery.md).
+Export your setup to one file and import it on another instance. See
+[Recovery bundle](recovery.md).
