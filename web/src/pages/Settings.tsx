@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Loader2, ShieldOff, LayoutGrid, Network, Send, Plus, Trash2, Mail, ShieldCheck, Plug, HardDriveDownload } from "lucide-react";
+import { Loader2, ShieldOff, LayoutGrid, Network, Send, Plus, Trash2, Mail, ShieldCheck, Plug, HardDriveDownload, Database } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import type { LdapConfig, Role } from "../lib/types";
@@ -11,12 +11,13 @@ import { Tabs } from "../components/Tabs";
 import { TokenPolicyEditor } from "../components/TokenPolicyEditor";
 import { SelfUpdatePolicyEditor } from "../components/SelfUpdatePolicyEditor";
 import { EmailConfig } from "../components/EmailConfig";
+import { RetentionSettings } from "../components/RetentionSettings";
 import { PolicyRules } from "./PolicyRules";
 import { MCPAdmin } from "./MCPAdmin";
 import { Recovery } from "./Recovery";
 
-type Tab = "features" | "security" | "policy" | "ldap" | "email" | "mcp" | "recovery";
-const TABS: Tab[] = ["features", "security", "policy", "ldap", "email", "mcp", "recovery"];
+type Tab = "features" | "security" | "policy" | "ldap" | "email" | "mcp" | "retention" | "recovery";
+const TABS: Tab[] = ["features", "security", "policy", "ldap", "email", "mcp", "retention", "recovery"];
 
 export function Settings() {
   const [all, setAll] = useState<string[]>([]);
@@ -73,12 +74,14 @@ export function Settings() {
             { key: "ldap", label: "LDAP", icon: <Network className="h-4 w-4" /> },
             { key: "email", label: "Email", icon: <Mail className="h-4 w-4" /> },
             { key: "mcp", label: "MCP Admin", icon: <Plug className="h-4 w-4" /> },
+            { key: "retention", label: "Data retention", icon: <Database className="h-4 w-4" /> },
             { key: "recovery", label: "Recovery bundle", icon: <HardDriveDownload className="h-4 w-4" /> },
           ]}
         />
 
         {tab === "policy" && <PolicyRules embedded />}
         {tab === "mcp" && <MCPAdmin embedded />}
+        {tab === "retention" && <RetentionSettings />}
         {tab === "recovery" && <Recovery embedded />}
 
         {tab === "features" && (

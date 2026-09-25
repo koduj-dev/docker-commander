@@ -1185,3 +1185,42 @@ export interface BackupRun {
   /** "schedule" or the username that triggered a manual run. */
   triggeredBy: string;
 }
+
+// Data retention (Settings → Data retention). A 0 means "keep forever".
+export interface RetentionPolicy {
+  alertEventsDays: number;
+  alertDeliveriesDays: number;
+  auditDays: number;
+  revisionsKeep: number;
+}
+export interface RetentionArea { rows: number; oldest?: string }
+export interface RetentionStats {
+  alertEvents: RetentionArea;
+  alertDeliveries: RetentionArea;
+  audit: RetentionArea;
+  revisions: RetentionArea;
+  dbBytes: number;
+  dbFreeBytes: number;
+}
+export interface RetentionRun {
+  at: string;
+  trigger: "scheduled" | "manual";
+  durationMs: number;
+  alertEvents: number;
+  alertDeliveries: number;
+  audit: number;
+  revisions: number;
+  revisionFiles: number;
+  dbBytesBefore: number;
+  dbBytesAfter: number;
+  error?: string;
+}
+export interface RetentionState {
+  policy: RetentionPolicy;
+  defaults: RetentionPolicy;
+  limits: { minAuditDays: number; minAlertDays: number; minRevisionsKeep: number; maxDays: number };
+  stats: RetentionStats;
+  lastRun: RetentionRun | null;
+  /** Set when a policy is stored but unreadable: purging is paused until a new one is saved. */
+  policyError?: string;
+}
