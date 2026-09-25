@@ -138,3 +138,19 @@ func TestDiskReportCacheDoesNotCacheErrorsAndCoalesces(t *testing.T) {
 		t.Errorf("concurrent callers should share one computation (and a prior error must not be cached), computed %d times", calls)
 	}
 }
+
+// The dashboard's Build cache tile must use the client's aggregates too: a
+// Shared record (its layers are referenced elsewhere) is not part of TotalSize.
+func TestDiskTotalsBuildCacheExcludesSharedRecords(t *testing.T) {
+	du := client.DiskUsageResult{}
+	du.BuildCache.Items = []build.CacheRecord{{Size: 30}, {Size: 500, Shared: true}}
+	du.BuildCache.TotalCount, du.BuildCache.TotalSize = 2, 30
+	du.Volumes.Items = []volume.Volume{{Name: "v", UsageData: &volume.UsageData{Size: 7, RefCount: 1}}}
+	got := diskTotals(du)
+	if got.BuildCache.Size != 30 || got.BuildCache.Count != 2 {
+		t.Errorf("build cache = %+v, want size 30 (shared record excluded), count 2", got.BuildCache)
+	}
+	if got.Volumes.Size != 7 || got.Volumes.Count != 1 {
+		t.Errorf("volumes = %+v", got.Volumes)
+	}
+}
