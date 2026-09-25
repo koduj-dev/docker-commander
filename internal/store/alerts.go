@@ -90,6 +90,15 @@ type AlertEvent struct {
 	SuppressedBy int64 `json:"suppressedBy,omitempty"`
 	// Deliveries is filled in on request, not on every list.
 	Deliveries []AlertDelivery `json:"deliveries,omitempty"`
+	// Repeats, LastRepeatAt and Ongoing summarise the life of the condition this
+	// event opened, so the feed can hide the repeat rows and still say that
+	// something is going on. Filled by ListAlertEvents for firing/escalated/eased
+	// events only. Repeats counts STORED repeat events: one silenced by a
+	// maintenance window is not stored (see monitor.emit), so a window shortens it.
+	Repeats      int        `json:"repeats,omitempty"`
+	LastRepeatAt *time.Time `json:"lastRepeatAt,omitempty"`
+	// Ongoing: the condition has not resolved yet (nothing later ended it).
+	Ongoing bool `json:"ongoing,omitempty"`
 }
 
 // AlertDelivery is one attempt to get an alert out of the building.
@@ -427,7 +436,77 @@ func (s *Store) ListAlertEvents(ctx context.Context, q AlertQuery) ([]AlertEvent
 		}
 		out = append(out, e)
 	}
-	return out, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	// Close before annotating: the pool is a single connection, so a query
+	// issued while these rows are still open would wait on them forever.
+	_ = rows.Close()
+	s.annotateConditionSummary(ctx, out)
+	return out, total, nil
+}
+
+// annotateConditionSummary fills Repeats / LastRepeatAt / Ongoing on the events
+// that open a stretch of a condition (firing, escalated, eased). It is
+// best-effort decoration: a failure leaves the fields empty rather than failing
+// the list.
+//
+// A stretch is the same rule on the same container and host, from the event up
+// to the next non-repeat event of that key. "Ongoing" is stricter — the whole
+// condition must be unresolved. A rule that escalates hands over to another rule
+// (so the next event is under a different rule id), which means the resolve
+// arrives under THAT rule; it is matched by the incident's start instead
+// (created_at - duration_sec is the same for every event of one incident).
+func (s *Store) annotateConditionSummary(ctx context.Context, events []AlertEvent) {
+	const maxID = int64(1<<63 - 1)
+	for i := range events {
+		e := &events[i]
+		if e.Kind != KindFiring && e.Kind != KindEscalated && e.Kind != KindEased {
+			continue
+		}
+		// Only level-triggered (resource) conditions have a life: state, log,
+		// restart, network and host events are one-shots that never resolve, so
+		// "ongoing" would be true of them forever.
+		if e.Type != "resource" {
+			continue
+		}
+		var next sql.NullInt64
+		if err := s.db.QueryRowContext(ctx, `
+			SELECT MIN(id) FROM alert_events
+			WHERE container_id = ? AND host_id = ? AND rule_id = ? AND kind <> 'repeat' AND id > ?`,
+			e.ContainerID, e.HostID, e.RuleID, e.ID).Scan(&next); err != nil {
+			continue
+		}
+		bound := maxID
+		if next.Valid {
+			bound = next.Int64
+		}
+		var count int
+		var last sql.NullString
+		if err := s.db.QueryRowContext(ctx, `
+			SELECT COUNT(*), MAX(created_at) FROM alert_events
+			WHERE container_id = ? AND host_id = ? AND rule_id = ? AND kind = 'repeat' AND id > ? AND id < ?`,
+			e.ContainerID, e.HostID, e.RuleID, e.ID, bound).Scan(&count, &last); err != nil {
+			continue
+		}
+		e.Repeats = count
+		if t, err := time.Parse(time.RFC3339, last.String); err == nil {
+			e.LastRepeatAt = &t
+		}
+		if next.Valid {
+			continue // this stretch ended under the same rule
+		}
+		start := e.CreatedAt.Unix() - int64(e.DurationSec)
+		var resolved int
+		if err := s.db.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM alert_events
+			WHERE container_id = ? AND host_id = ? AND kind = 'resolved' AND id > ?
+			  AND ABS(CAST(strftime('%s', created_at) AS INTEGER) - duration_sec - ?) <= 2`,
+			e.ContainerID, e.HostID, e.ID, start).Scan(&resolved); err != nil {
+			continue
+		}
+		e.Ongoing = resolved == 0
+	}
 }
 
 // escapeLike neutralises LIKE wildcards in user input, so searching for "100%"

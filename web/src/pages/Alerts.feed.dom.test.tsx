@@ -100,3 +100,50 @@ describe("Alerts feed: event flags", () => {
     expect(flags.querySelector("[aria-label]")).toBeNull();
   });
 });
+
+// With repeats hidden, the row that opened a condition is the only place that
+// says it is still going on: how long, and how many times it was re-announced.
+describe("Alerts feed: condition summary on the opening row", () => {
+  const remount = async (events: AlertEvent[]) => {
+    vi.mocked(api.alerts).mockResolvedValue({ events, total: events.length, unread: 0, outstanding: 0 } as never);
+    act(() => root.unmount());
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<MemoryRouter><DialogProvider><Alerts /></DialogProvider></MemoryRouter>);
+    });
+  };
+  const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
+  const opener = (over: Partial<AlertEvent>) => ({ ...row(1, "firing"), createdAt: ago(27), ...over }) as AlertEvent;
+
+  it("shows how long an unresolved condition has been firing and how often it repeated", async () => {
+    await remount([opener({ ongoing: true, repeats: 12, lastRepeatAt: ago(1) })]);
+    const tr = container.querySelector("tbody tr")!;
+    expect(tr.querySelectorAll("td")[0].textContent).toContain("still firing · 27m");
+    const flag = tr.querySelectorAll("td")[2].querySelector('[aria-label="repeated 12 times"]');
+    expect(flag?.textContent).toBe("12");
+    expect(flag?.getAttribute("title")).toContain("Repeated 12 times, last");
+  });
+
+  it("counts an escalated opener from the incident's start, not from the escalation", async () => {
+    // Started 32 min ago (durationSec 300 when this event was emitted 27 min ago).
+    await remount([opener({ kind: "escalated", durationSec: 300, ongoing: true })]);
+    expect(container.querySelector("tbody tr")!.textContent).toContain("still firing · 32m");
+    await act(async () => (container.querySelector("tbody tr") as HTMLElement).click());
+    expect(document.body.textContent).toContain("Still firing for 32m");
+  });
+
+  it("says nothing extra for a condition that has ended or never repeated", async () => {
+    await remount([opener({ ongoing: false, repeats: 0 })]);
+    const tr = container.querySelector("tbody tr")!;
+    expect(tr.textContent).not.toContain("still firing");
+    expect(tr.querySelector('[aria-label^="repeated"]')).toBeNull();
+  });
+
+  it("repeats the summary in the detail view", async () => {
+    await remount([opener({ ongoing: true, repeats: 1, lastRepeatAt: ago(1) })]);
+    await act(async () => (container.querySelector("tbody tr") as HTMLElement).click());
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("Still firing for 27m");
+    expect(text).toMatch(/Repeats\s*1 — last/);
+  });
+});

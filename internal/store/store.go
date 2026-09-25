@@ -673,6 +673,10 @@ CREATE TABLE IF NOT EXISTS project_image_update_state (
 		`ALTER TABLE hosts ADD COLUMN alert_email TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE alert_events ADD COLUMN host_id INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE alert_events ADD COLUMN host_name TEXT NOT NULL DEFAULT ''`,
+		// The feed summarises a condition's repeats per event; that looks the
+		// same container/rule up by key, which would otherwise scan the table.
+		// Here (not in the schema above) because host_id is added by ALTER.
+		`CREATE INDEX IF NOT EXISTS idx_alert_events_key ON alert_events(container_id, host_id, rule_id, id)`,
 		// 'firing' is the default so every event recorded before alerts had a
 		// lifecycle reads as what it was: the moment a condition was noticed.
 		`ALTER TABLE alert_events ADD COLUMN kind TEXT NOT NULL DEFAULT 'firing'`,

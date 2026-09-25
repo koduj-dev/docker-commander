@@ -389,7 +389,14 @@ function FeedRow({ e, onOpen, onAck }: { e: AlertEvent; onOpen: () => void; onAc
       className={clsx("border-b border-border/50 cursor-pointer hover:bg-panel2/40", e.acknowledged && "opacity-50")}
       onClick={onOpen}
     >
-      <td className="px-4 py-2.5 text-muted whitespace-nowrap">{e.createdAt.slice(0, 19).replace("T", " ")}</td>
+      <td className="px-4 py-2.5 text-muted whitespace-nowrap">
+        {e.createdAt.slice(0, 19).replace("T", " ")}
+        {/* The repeats are hidden by default, so the row that opened the condition
+            is the only place that says it is still going on, and for how long. */}
+        {e.ongoing && (
+          <div className="text-xs text-warn">still firing · {formatDuration(conditionAgeSec(e))}</div>
+        )}
+      </td>
       <td className="px-4 py-2.5 whitespace-nowrap">
         <span className={clsx("text-xs px-2 py-0.5 rounded-md font-medium capitalize", kindBadge(e))}>
           {e.kind === "resolved" ? "resolved" : e.severity}
@@ -400,6 +407,12 @@ function FeedRow({ e, onOpen, onAck }: { e: AlertEvent; onOpen: () => void; onAc
       <td className="px-2 py-2.5 whitespace-nowrap">
         <span className="inline-flex items-center gap-1.5 text-muted">
           {kindFlag(e.kind)}
+          {!!e.repeats && (
+            <span className="inline-flex items-center gap-0.5 text-xs" aria-label={`repeated ${e.repeats} times`}
+              title={`Repeated ${e.repeats} time${e.repeats === 1 ? "" : "s"}${e.lastRepeatAt ? `, last ${e.lastRepeatAt.slice(0, 19).replace("T", " ")}` : ""}`}>
+              <Repeat className="h-3.5 w-3.5" />{e.repeats}
+            </span>
+          )}
           {e.suppressed && (
             <span title="A maintenance window suppressed delivery for this event" aria-label="silenced">
               <BellOff className="h-3.5 w-3.5" />
@@ -483,6 +496,8 @@ function AlertDetailModal({ e, onClose, onAck }: { e: AlertEvent; onClose: () =>
             {row("Fired at", e.createdAt.slice(0, 19).replace("T", " "))}
             {row("Lifecycle", <span className="capitalize">{e.kind || "firing"}</span>)}
             {e.durationSec > 0 && row("Condition lasted", formatDuration(e.durationSec))}
+            {e.ongoing && row("Status", <span className="text-warn">Still firing for {formatDuration(conditionAgeSec(e))}</span>)}
+            {!!e.repeats && row("Repeats", `${e.repeats}${e.lastRepeatAt ? ` — last ${e.lastRepeatAt.slice(0, 19).replace("T", " ")}` : ""}`)}
             {e.value !== null && e.value !== undefined && row("Measured value", e.value.toFixed(1))}
             {row("Host", e.hostName || "local")}
             {row(
@@ -554,6 +569,14 @@ function AlertDetailModal({ e, onClose, onAck }: { e: AlertEvent; onClose: () =>
       </div>
     </div>
   );
+}
+
+// conditionAgeSec is how long the condition an event belongs to has been true:
+// the time since the event PLUS the age it already had when it was emitted (an
+// escalated/eased opener is later than the incident's start; durationSec is that
+// head start, 0 for a firing).
+function conditionAgeSec(e: AlertEvent): number {
+  return Math.max(0, Math.floor((Date.now() - new Date(e.createdAt).getTime()) / 1000)) + (e.durationSec || 0);
 }
 
 // formatDuration renders how long a condition held, matching the engine's own

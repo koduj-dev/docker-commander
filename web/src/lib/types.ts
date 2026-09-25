@@ -885,6 +885,13 @@ export interface AlertEvent {
    * to a since-deleted one; the event still explains why nothing was sent). */
   suppressed?: boolean;
   suppressedBy?: number;
+  /** Summary of the condition this event opened (firing/escalated/eased rows
+   * only): how many repeat events followed it and when the last one was, and
+   * whether it is still unresolved. Repeats silenced by a maintenance window are
+   * not recorded, so a window makes the count lower than what really happened. */
+  repeats?: number;
+  lastRepeatAt?: string;
+  ongoing?: boolean;
 }
 
 /** Suppresses alert delivery for a scope and time, without turning off
