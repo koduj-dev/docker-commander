@@ -78,7 +78,7 @@ export function BackupRunsModal({ job, note, onClose }: { job: BackupJob; note?:
                   <span className={clsx("text-xs rounded-md px-2 py-0.5", r.ok ? "bg-ok/15 text-ok" : "bg-danger/15 text-danger")}>{r.ok ? "ok" : "failed"}</span>
                   <span>{new Date(r.startedAt).toLocaleString()}</span>
                   <span className="text-xs text-muted">{durationLabel(r)}</span>
-                  <span className="text-xs text-muted ml-auto">{r.triggeredBy === "schedule" ? "scheduled" : `by ${r.triggeredBy}`}{!r.ok && ` · exit ${r.exitCode}`}</span>
+                  <span className="text-xs text-muted ml-auto">{r.triggeredBy === "schedule" ? "scheduled" : `by ${r.triggeredBy}`}{` · exit ${r.exitCode}`}</span>
                 </button>
                 {isOpen && (
                   <div className="border-t border-border p-3 space-y-2">
@@ -134,6 +134,11 @@ export function BackupJobs() {
     setRunning((prev) => new Set(prev).add(j.id));
     try {
       await api.runBackupJob(j.id);
+      // A command that ran and exited non-zero is a recorded failure, not an
+      // API error — the endpoint answers 200 — so the request resolving says
+      // nothing about whether the backup worked. Look at what was recorded.
+      const [latest] = await api.backupJobRuns(j.id).catch(() => []);
+      if (latest && !latest.ok) setHistory(j);
     } catch (e) {
       // The run is recorded even when it fails — show its log (and the error
       // the server returned, which may be all there is if nothing was recorded)

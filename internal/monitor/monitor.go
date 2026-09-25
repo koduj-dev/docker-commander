@@ -473,7 +473,7 @@ func (m *Monitor) evalResourceRules(ctx context.Context, snap map[string]Contain
 		v := c.value
 		st, existed := prev[ck]
 
-		var suppressed bool
+		var suppressed, repeated bool
 		switch {
 		case !existed:
 			suppressed = m.emit(ctx, c.rule, c.stat.HostID, c.stat.HostName, c.stat.ID, c.stat.Name, c.stat.Project,
@@ -487,14 +487,23 @@ func (m *Monitor) evalResourceRules(ctx context.Context, snap map[string]Contain
 				msg, &v, store.KindEased, int(now.Sub(st.StartedAt).Seconds()))
 		case c.rule.CooldownSec > 0 && now.Sub(st.NotifiedAt) >= time.Duration(c.rule.CooldownSec)*time.Second:
 			// A zero NotifiedAt means nobody was ever told — the firing (and any
-			// escalation since) was silenced by a maintenance window that has now
-			// ended. This is the FIRST real delivery, not a re-announcement, so it
-			// goes out as a firing: a repeat is hidden in the feed by default,
+			// escalation since) was silenced by a maintenance window. Once that
+			// window is over this is the FIRST real delivery, not a re-announcement,
+			// so it goes out as a firing: a repeat is hidden in the feed by default,
 			// which made the alert look like it had vanished when the window ended.
+			//
+			// While the window is still open there is nothing to do: emitting now
+			// would record a silenced "firing" on every poll (the gate stays open
+			// precisely because nothing was delivered). Just wait for it to end.
 			kind := store.KindRepeat
 			if st.NotifiedAt.IsZero() {
+				if m.silencedNow(c.stat.HostID, c.stat.Project, c.stat.Name, c.rule) {
+					m.saveState(ctx, c.stat, c.cfg, c.rule, &v, st.StartedAt, st.NotifiedAt)
+					continue
+				}
 				kind = store.KindFiring
 			}
+			repeated = kind == store.KindRepeat
 			suppressed = m.emit(ctx, c.rule, c.stat.HostID, c.stat.HostName, c.stat.ID, c.stat.Name, c.stat.Project,
 				msg, &v, kind, int(now.Sub(st.StartedAt).Seconds()))
 		default:
@@ -514,9 +523,13 @@ func (m *Monitor) evalResourceRules(ctx context.Context, snap map[string]Contain
 		// active maintenance window ends — not after a full interval
 		// measured from a notification nobody received.
 		notifiedAt := now
-		if suppressed {
+		if suppressed && !(repeated && !st.NotifiedAt.IsZero()) {
 			notifiedAt = st.NotifiedAt
 		}
+		// (A suppressed REPEAT of something that WAS delivered before does advance
+		// the gate: nothing new is owed after the window, and leaving it open made
+		// every poll re-evaluate — and log — the silenced repeat, not once per
+		// cooldown.)
 		m.saveState(ctx, c.stat, c.cfg, c.rule, &v, orNow(st.StartedAt, now), notifiedAt)
 	}
 
@@ -1115,6 +1128,21 @@ func (m *Monitor) emit(ctx context.Context, r store.AlertRule, hostID int64, hos
 		m.emailNotify(ev, r.Emails)
 	}
 	return false
+}
+
+// silencedNow reports whether a maintenance window would silence an alert of
+// this rule for this container right now (same lookup emit does). A lookup
+// error counts as "not silenced": emit will hit and log the same error, and
+// failing towards delivery is the safe direction for an alert.
+func (m *Monitor) silencedNow(hostID int64, project, name string, r store.AlertRule) bool {
+	severity := r.Severity
+	if severity == "" {
+		severity = "info"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	w, err := m.store.FindActiveMaintenanceWindow(ctx, hostID, project, name, r.ID, severity, time.Now())
+	return err == nil && w != nil
 }
 
 // ---- host reachability ------------------------------------------------------
