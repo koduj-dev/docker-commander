@@ -108,6 +108,16 @@ describe("RetentionSettings", () => {
     expect(button("Save").disabled).toBe(true);
   });
 
+  it("treats a cleared box as an unsaved change: no Purge now, no Save until it is a number again", async () => {
+    await type(input("auditDays"), "");
+    expect(button("Purge now").disabled).toBe(true);
+    expect(button("Save").disabled).toBe(true);
+    expect(container.textContent).toContain("Enter a whole number");
+    await type(input("auditDays"), "365"); // back to what is saved
+    expect(container.textContent).not.toContain("Enter a whole number");
+    expect(button("Purge now").disabled).toBe(false);
+  });
+
   it("resets the form to the defaults without saving", async () => {
     await type(input("auditDays"), "90");
     await act(async () => button("Reset to defaults").click());

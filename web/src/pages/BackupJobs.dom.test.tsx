@@ -174,6 +174,29 @@ describe("BackupJobs — run history and logs", () => {
     expect(container.textContent).toContain("backup failed"); // the server's own error is shown too
   });
 
+  it("a Run-now whose command exits non-zero (the request itself succeeds) still opens the log", async () => {
+    vi.mocked(api.runBackupJob).mockResolvedValue({ ok: true });
+    vi.mocked(api.backupJobRuns).mockResolvedValue([failedRun]);
+    const run = [...container.querySelectorAll("button")].find((b) => b.title === "Run now") as HTMLElement;
+    await act(async () => run.click());
+    expect(container.textContent).toContain("Run history — nightly");
+    expect(container.textContent).toContain("permission denied");
+  });
+
+  it("a Run-now that succeeds does not pop the history open", async () => {
+    vi.mocked(api.runBackupJob).mockResolvedValue({ ok: true });
+    vi.mocked(api.backupJobRuns).mockResolvedValue([olderRun]);
+    const run = [...container.querySelectorAll("button")].find((b) => b.title === "Run now") as HTMLElement;
+    await act(async () => run.click());
+    expect(container.textContent).not.toContain("Run history —");
+  });
+
+  it("shows the exit code of a successful run too", async () => {
+    vi.mocked(api.backupJobRuns).mockResolvedValue([olderRun]);
+    await act(async () => historyButton().click());
+    expect(container.textContent).toContain("exit 0");
+  });
+
   it("says so when a job has never run", async () => {
     vi.mocked(api.backupJobRuns).mockResolvedValue([]);
     await act(async () => historyButton().click());

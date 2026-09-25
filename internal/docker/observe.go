@@ -163,8 +163,9 @@ func (m *Manager) DiskUsage(ctx context.Context, hostID int64) (*DiskUsage, erro
 	if err != nil {
 		return nil, err
 	}
-	// Verbose: the per-object Items are what the sizes below are summed from
-	// (the daemon's own per-category totals count shared layers differently).
+	// Verbose: containers and volumes are summed from the per-object Items; images
+	// and build cache use the client's aggregates instead (summing Items would
+	// count a shared layer once per image / a Shared cache record at all).
 	du, err := cli.DiskUsage(ctx, client.DiskUsageOptions{
 		Containers: true, Images: true, Volumes: true, BuildCache: true, Verbose: true,
 	})

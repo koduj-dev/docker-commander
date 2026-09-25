@@ -67,7 +67,11 @@ export function RetentionSettings() {
   // With an unreadable stored policy the form shows the defaults, which are not
   // "saved" — so Save must be available even though nothing was edited.
   const broken = !!state.policyError;
-  const dirty = broken || (Object.keys(form) as Key[]).some((k) => form[k] !== state.policy[k]);
+  // Typed-but-uncommitted input counts as a change too: a cleared box leaves
+  // `form` at its old number, and Purge now must not run against the saved policy
+  // while the visible form says something else.
+  const typing = (Object.keys(draft) as Key[]).some((k) => draft[k] !== undefined && draft[k] !== String(form[k]));
+  const dirty = broken || typing || (Object.keys(form) as Key[]).some((k) => form[k] !== state.policy[k]);
   const { limits } = state;
   const minFor = (k: Key) => (k === "auditDays" ? limits.minAuditDays : k === "revisionsKeep" ? limits.minRevisionsKeep : limits.minAlertDays);
   const set = (k: Key, v: number) => { setMsg(null); setDraft((d) => ({ ...d, [k]: undefined })); setForm({ ...form, [k]: v }); };
@@ -77,7 +81,11 @@ export function RetentionSettings() {
     const n = Number(text);
     if (text.trim() !== "" && Number.isInteger(n) && n >= 0) setForm({ ...form, [k]: n });
   };
-  const problem = validate(form, limits);
+  const badDraft = (Object.keys(draft) as Key[]).some((k) => {
+    const t = draft[k];
+    return t !== undefined && (t.trim() === "" || !Number.isInteger(Number(t)) || Number(t) < 0);
+  });
+  const problem = badDraft ? "Enter a whole number, or tick “keep forever”." : validate(form, limits);
 
   const save = async () => {
     setBusy("save"); setMsg(null);

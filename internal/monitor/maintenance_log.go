@@ -62,8 +62,12 @@ func logMaintenanceTransitions(prev map[int64]activeWindow, windows []store.Main
 			cur[w.ID] = activeWindow{name: w.Name, start: start, end: end}
 		}
 	}
+	// Same window AND same occurrence. Keying on the id alone missed the boundary
+	// of back-to-back occurrences of one recurring window (a daily 24 h window is
+	// allowed): the id never leaves the set, so no end/start pair was logged.
+	same := func(a, b activeWindow) bool { return a.start.Equal(b.start) && a.end.Equal(b.end) }
 	for id, a := range cur {
-		if _, was := prev[id]; was {
+		if p, was := prev[id]; was && same(p, a) {
 			continue
 		}
 		w := byID[id]
@@ -76,7 +80,7 @@ func logMaintenanceTransitions(prev map[int64]activeWindow, windows []store.Main
 		}
 	}
 	for id, a := range prev {
-		if _, still := cur[id]; still {
+		if c, still := cur[id]; still && same(c, a) {
 			continue
 		}
 		reason := "ended"
