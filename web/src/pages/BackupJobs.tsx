@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { Plus, Trash2, Pencil, Play } from "lucide-react";
+import { Plus, Trash2, Pencil, Play, History, X, ChevronDown, ChevronRight } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
-import type { BackupJob, BackupJobInput, Host, Project } from "../lib/types";
+import type { BackupJob, BackupJobInput, BackupRun, Host, Project } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
 import { useDialogs } from "../components/Dialog";
@@ -19,12 +19,83 @@ function Loading() {
   return <div className="flex items-center gap-2 text-muted"><Spinner /> Loading…</div>;
 }
 
-function statusBadge(job: BackupJob) {
+// The badge opens the run history (with the captured output) — a bare "failed"
+// with only a hover tooltip left nowhere to read what actually went wrong.
+function statusBadge(job: BackupJob, onOpen: () => void) {
   if (!job.lastRunAt) return <span className="text-xs bg-panel2 text-muted rounded-md px-2 py-0.5">never run</span>;
   return job.lastRunOk ? (
-    <span className="text-xs bg-ok/15 text-ok rounded-md px-2 py-0.5">ok</span>
+    <button type="button" className="text-xs bg-ok/15 text-ok rounded-md px-2 py-0.5 hover:underline" title="Show run history" onClick={onOpen}>ok</button>
   ) : (
-    <span className="text-xs bg-danger/15 text-danger rounded-md px-2 py-0.5" title={job.lastRunDetail}>failed</span>
+    <button type="button" className="text-xs bg-danger/15 text-danger rounded-md px-2 py-0.5 hover:underline" title={job.lastRunDetail ? `${job.lastRunDetail} — click for the full log` : "Show run history"} onClick={onOpen}>failed</button>
+  );
+}
+
+function durationLabel(r: BackupRun): string {
+  const ms = new Date(r.finishedAt).getTime() - new Date(r.startedAt).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  // Timestamps are stored at one-second resolution, so a shorter run would read as "0 ms".
+  return ms < 1000 ? "" : ms < 60_000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.floor(ms / 60_000)} m ${Math.round((ms % 60_000) / 1000)} s`;
+}
+
+// BackupRunsModal is a job's run history with each run's captured output and
+// error — the log of what the backup command actually printed. The newest run
+// starts expanded, since "why did it fail" is almost always about the last one.
+export function BackupRunsModal({ job, note, onClose }: { job: BackupJob; note?: string; onClose: () => void }) {
+  const [runs, setRuns] = useState<BackupRun[] | null>(null);
+  const [error, setError] = useState("");
+  const [open, setOpen] = useState<Set<number>>(new Set());
+
+  useEffect(() => {
+    let cancelled = false;
+    api.backupJobRuns(job.id)
+      .then((r) => { if (cancelled) return; setRuns(r ?? []); if (r && r.length > 0) setOpen(new Set([r[0].id])); })
+      .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : "could not load the run history"); });
+    return () => { cancelled = true; };
+  }, [job.id]);
+
+  const toggle = (id: number) => setOpen((o) => { const n = new Set(o); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+
+  return (
+    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+      <div className="card w-[70vw] max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-3 p-4 border-b border-border">
+          <History className="h-4 w-4 text-accent" />
+          <div className="font-medium">Run history — {job.name}</div>
+          <button type="button" className="btn-ghost px-2 py-1.5 ml-auto" aria-label="Close" onClick={onClose}><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-4 space-y-2 overflow-y-auto">
+          {note && <div className="text-sm text-danger whitespace-pre-wrap break-words">{note}</div>}
+          {error && <div className="text-sm text-danger">{error}</div>}
+          {!runs && !error && <Loading />}
+          {runs && runs.length === 0 && <EmptyState title="No runs yet" hint="Run the job (▶) or wait for its schedule." />}
+          {runs?.map((r) => {
+            const isOpen = open.has(r.id);
+            const Chev = isOpen ? ChevronDown : ChevronRight;
+            return (
+              <div key={r.id} className="rounded-lg border border-border">
+                <button type="button" aria-expanded={isOpen} className="w-full flex items-center gap-3 px-3 py-2 text-left text-sm" onClick={() => toggle(r.id)}>
+                  <Chev className="h-4 w-4 text-muted shrink-0" />
+                  <span className={clsx("text-xs rounded-md px-2 py-0.5", r.ok ? "bg-ok/15 text-ok" : "bg-danger/15 text-danger")}>{r.ok ? "ok" : "failed"}</span>
+                  <span>{new Date(r.startedAt).toLocaleString()}</span>
+                  <span className="text-xs text-muted">{durationLabel(r)}</span>
+                  <span className="text-xs text-muted ml-auto">{r.triggeredBy === "schedule" ? "scheduled" : `by ${r.triggeredBy}`}{!r.ok && ` · exit ${r.exitCode}`}</span>
+                </button>
+                {isOpen && (
+                  <div className="border-t border-border p-3 space-y-2">
+                    {r.error && <div className="text-sm text-danger whitespace-pre-wrap break-words">{r.error}</div>}
+                    {r.output ? (
+                      <pre className="text-xs font-mono whitespace-pre-wrap break-words bg-panel2/50 rounded-md p-3 max-h-[45vh] overflow-auto">{r.output}</pre>
+                    ) : (
+                      !r.error && <div className="text-xs text-muted">The command printed nothing.</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -39,6 +110,8 @@ export function BackupJobs() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<BackupJob | null>(null);
   const [running, setRunning] = useState<Set<number>>(new Set());
+  const [history, setHistory] = useState<BackupJob | null>(null);
+  const [historyNote, setHistoryNote] = useState("");
   const dialogs = useDialogs();
 
   const load = useCallback(() => {
@@ -61,6 +134,12 @@ export function BackupJobs() {
     setRunning((prev) => new Set(prev).add(j.id));
     try {
       await api.runBackupJob(j.id);
+    } catch (e) {
+      // The run is recorded even when it fails — show its log (and the error
+      // the server returned, which may be all there is if nothing was recorded)
+      // rather than letting the failure vanish.
+      setHistoryNote(e instanceof Error ? e.message : "the run failed");
+      setHistory(j);
     } finally {
       setRunning((prev) => { const n = new Set(prev); n.delete(j.id); return n; });
       load();
@@ -122,7 +201,7 @@ export function BackupJobs() {
                     <td className="px-4 py-2.5 text-xs text-muted">{scheduleLabel(j)}</td>
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-2">
-                        {statusBadge(j)}
+                        {statusBadge(j, () => { setHistoryNote(""); setHistory(j); })}
                         {j.lastRunAt && <span className="text-xs text-muted">{new Date(j.lastRunAt).toLocaleString()}</span>}
                       </div>
                     </td>
@@ -136,6 +215,7 @@ export function BackupJobs() {
                         <button className="btn-ghost px-2 py-1" title="Run now" disabled={running.has(j.id)} onClick={() => runNow(j)}>
                           {running.has(j.id) ? <Spinner className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                         </button>
+                        <button className="btn-ghost px-2 py-1" title="Run history & logs" onClick={() => { setHistoryNote(""); setHistory(j); }}><History className="h-4 w-4" /></button>
                         <button className="btn-ghost px-2 py-1" title="Edit" onClick={() => { setShowForm(false); setEditing(j); }}><Pencil className="h-4 w-4" /></button>
                         <button className="btn-ghost px-2 py-1 text-danger" title="Delete" onClick={() => del(j)}><Trash2 className="h-4 w-4" /></button>
                       </div>
@@ -147,6 +227,7 @@ export function BackupJobs() {
           </div>
         )}
       </div>
+      {history && <BackupRunsModal job={history} note={historyNote} onClose={() => setHistory(null)} />}
     </>
   );
 }
