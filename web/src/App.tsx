@@ -23,12 +23,9 @@ import { Hosts } from "./pages/Hosts";
 import { Registries } from "./pages/Registries";
 import { MCPTokens } from "./pages/MCPTokens";
 import { Profile } from "./pages/Profile";
-import { MCPAdmin } from "./pages/MCPAdmin";
 import { Users } from "./pages/Users";
 import { Settings } from "./pages/Settings";
-import { Recovery } from "./pages/Recovery";
 import { BackupJobs } from "./pages/BackupJobs";
-import { PolicyRules } from "./pages/PolicyRules";
 import { Audit } from "./pages/Audit";
 import { Troubleshooting } from "./pages/Troubleshooting";
 
@@ -74,12 +71,9 @@ export default function App() {
         <Route path="/mcp-tokens" element={<MCPTokens />} />
         {/* Self-service: any signed-in user, no section required. */}
         <Route path="/profile" element={<Profile />} />
-        <Route path="/mcp-admin" element={<MCPAdmin />} />
         <Route path="/users" element={<Users />} />
         <Route path="/settings" element={<Settings />} />
-        <Route path="/recovery" element={<Recovery />} />
         <Route path="/backup-jobs" element={<BackupJobs />} />
-        <Route path="/policy-rules" element={<PolicyRules />} />
         <Route path="/audit" element={<Audit />} />
         <Route path="/troubleshooting" element={<Troubleshooting />} />
         <Route path="*" element={<Navigate to="/" replace />} />

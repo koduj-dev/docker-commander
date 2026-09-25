@@ -25,7 +25,7 @@ function downloadBlob(blob: Blob, filename: string) {
 
 type Tab = "export" | "import";
 
-export function Recovery() {
+export function Recovery({ embedded = false }: { embedded?: boolean } = {}) {
   const dialogs = useDialogs();
   const [tab, setTab] = useState<Tab>("export");
   const [hosts, setHosts] = useState<Host[]>([]);
@@ -33,8 +33,8 @@ export function Recovery() {
 
   return (
     <>
-      <PageHeader title="Recovery bundle" />
-      <div className="p-6 space-y-4">
+      {!embedded && <PageHeader title="Recovery bundle" />}
+      <div className={embedded ? "space-y-4" : "p-6 space-y-4"}>
         <Tabs
           active={tab}
           onChange={setTab}

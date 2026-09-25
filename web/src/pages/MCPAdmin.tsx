@@ -14,7 +14,7 @@ import { useDialogs } from "../components/Dialog";
 // registered OAuth client, and every live connector session, and lets an
 // admin revoke/delete any of them. Admin-only: the route is gated by the
 // "__admin" section on the backend.
-export function MCPAdmin() {
+export function MCPAdmin({ embedded = false }: { embedded?: boolean } = {}) {
   const dialogs = useDialogs();
   const [tokens, setTokens] = useState<AdminMCPToken[] | null>(null);
   const [clients, setClients] = useState<AdminOAuthClient[] | null>(null);
@@ -61,12 +61,12 @@ export function MCPAdmin() {
     load();
   };
 
-  if (!tokens || !clients || !sessions) return (<><PageHeader title="MCP Admin" /><div className="p-6 flex items-center gap-2 text-muted"><Spinner /> Loading…</div></>);
+  if (!tokens || !clients || !sessions) return (<>{!embedded && <PageHeader title="MCP Admin" />}<div className={embedded ? "flex items-center gap-2 text-muted" : "p-6 flex items-center gap-2 text-muted"}><Spinner /> Loading…</div></>);
 
   return (
     <>
-      <PageHeader title="MCP Admin" />
-      <div className="p-6 space-y-4">
+      {!embedded && <PageHeader title="MCP Admin" />}
+      <div className={embedded ? "space-y-4" : "p-6 space-y-4"}>
         <Tabs
           active={tab}
           onChange={setTab}

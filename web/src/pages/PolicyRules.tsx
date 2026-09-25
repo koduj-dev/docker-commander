@@ -26,7 +26,7 @@ const RULE_INFO: Record<PolicyRuleId, { label: string; description: string }> = 
 const MODES: PolicyMode[] = ["off", "warn", "block"];
 const MODE_LABEL: Record<PolicyMode, string> = { off: "Off", warn: "Warn", block: "Block" };
 
-export function PolicyRules() {
+export function PolicyRules({ embedded = false }: { embedded?: boolean }) {
   const [rules, setRules] = useState<PolicyRuleId[]>([]);
   const [modes, setModes] = useState<Record<string, PolicyMode>>({});
   const [loaded, setLoaded] = useState(false);
@@ -54,12 +54,12 @@ export function PolicyRules() {
     } finally { setBusy(false); }
   };
 
-  if (!loaded) return (<><PageHeader title="Policy rules" /><div className="p-6 flex items-center gap-2 text-muted"><Spinner /> Loading…</div></>);
+  if (!loaded) return (<>{!embedded && <PageHeader title="Policy rules" />}<div className={embedded ? "flex items-center gap-2 text-muted" : "p-6 flex items-center gap-2 text-muted"}><Spinner /> Loading…</div></>);
 
   if (loadError) return (
     <>
-      <PageHeader title="Policy rules" />
-      <div className="p-6 max-w-3xl">
+      {!embedded && <PageHeader title="Policy rules" />}
+      <div className={embedded ? "max-w-3xl" : "p-6 max-w-3xl"}>
         <div className="card p-5 space-y-3">
           <p className="text-sm text-danger">
             Could not load the current policy rules. Saving is disabled until they load
@@ -75,8 +75,8 @@ export function PolicyRules() {
 
   return (
     <>
-      <PageHeader title="Policy rules" />
-      <div className="p-6 max-w-3xl space-y-4">
+      {!embedded && <PageHeader title="Policy rules" />}
+      <div className={embedded ? "max-w-3xl space-y-4" : "p-6 max-w-3xl space-y-4"}>
         <p className="text-sm text-muted">
           Checked against every project deploy. <b>Off</b> never looks. <b>Warn</b> asks the
           operator to confirm before the deploy runs. <b>Block</b> refuses the deploy outright —
