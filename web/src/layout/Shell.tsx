@@ -1,6 +1,6 @@
 import { Link, NavLink, useNavigate, useLocation, useNavigationType } from "react-router-dom";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Activity, Archive, Bell, Blocks, Boxes, ChevronDown, Container, Database, FolderGit2, KeyRound, Layers, LayoutDashboard, LayoutTemplate, Network, Plug, ScrollText, Server, Settings, ShieldCheck, Share2, Stethoscope, Terminal, Users, LogOut, CircleUser, ArrowUpCircle, ExternalLink, X, Loader2, HardDriveDownload, CheckCircle2, Gauge } from "lucide-react";
+import { Activity, Archive, Bell, Blocks, Boxes, ChevronDown, Container, Database, FolderGit2, KeyRound, Layers, LayoutDashboard, LayoutTemplate, Network, ScrollText, Server, Settings, Share2, Stethoscope, Terminal, Users, LogOut, CircleUser, ArrowUpCircle, ExternalLink, X, Loader2, CheckCircle2, Gauge } from "lucide-react";
 import clsx from "clsx";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../lib/api";
@@ -35,6 +35,7 @@ const navGroups: { title: string; items: NavItem[] }[] = [
     items: [
       { to: "/images", label: "Images", icon: Layers, section: "images" },
       { to: "/volumes", label: "Volumes", icon: Database, section: "volumes" },
+      { to: "/backup-jobs", label: "Backup jobs", icon: Archive, adminOnly: true },
     ],
   },
   {
@@ -62,12 +63,8 @@ const navGroups: { title: string; items: NavItem[] }[] = [
       { to: "/audit", label: "Audit log", icon: ScrollText, section: "audit" },
       { to: "/troubleshooting", label: "Troubleshooting", icon: Stethoscope, section: "diagnostics" },
       { to: "/mcp-tokens", label: "MCP Access", icon: KeyRound },
-      { to: "/mcp-admin", label: "MCP Admin", icon: Plug, adminOnly: true },
       { to: "/users", label: "Users", icon: Users, adminOnly: true },
-      { to: "/policy-rules", label: "Policy rules", icon: ShieldCheck, adminOnly: true },
       { to: "/settings", label: "Settings", icon: Settings, adminOnly: true },
-      { to: "/recovery", label: "Recovery bundle", icon: HardDriveDownload, adminOnly: true },
-      { to: "/backup-jobs", label: "Backup jobs", icon: Archive, adminOnly: true },
     ],
   },
 ];
