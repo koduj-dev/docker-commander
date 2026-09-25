@@ -398,7 +398,7 @@ that project.
 ## 🧪 How it's tested
 
 You're pointing this at real Docker daemons, so the fast tests are the floor, not
-the ceiling. Alongside **~1020 Go unit tests** and **~310 frontend tests**, the repo
+the ceiling. Alongside **~1020 Go unit tests** and **~350 frontend tests**, the repo
 carries **150 adversarial "pentest" cases** that assert attacks are *rejected* (token
 forgery, OAuth replay, CSRF, IDOR, per-host scope bypass, privilege escalation,
 path traversal), an integration tier against a **real Docker daemon** (plus
