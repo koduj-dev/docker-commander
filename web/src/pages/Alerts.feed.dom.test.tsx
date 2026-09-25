@@ -71,6 +71,18 @@ describe("Alerts feed: repeats", () => {
   });
 });
 
+describe("Alerts feed: empty state with repeats hidden", () => {
+  it("does not claim there are no alerts when only repeats could be hidden", async () => {
+    vi.mocked(api.alerts).mockResolvedValue({ events: [], total: 0, unread: 0, outstanding: 0 } as never);
+    act(() => root.unmount());
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<MemoryRouter><DialogProvider><Alerts /></DialogProvider></MemoryRouter>);
+    });
+    expect(container.textContent).toContain("Repeats are hidden");
+  });
+});
+
 describe("Alerts feed: event flags", () => {
   it("shows repeat and silenced as icon flags in their own cell, not as words in the severity cell", () => {
     const repeatRow = [...container.querySelectorAll("tbody tr")][1];

@@ -277,7 +277,7 @@ function Feed({ onAckAllReady }: { onAckAllReady: (fn: (() => void) | null) => v
       ) : events.length === 0 ? (
         <EmptyState
           title={filtered ? "No alerts match those filters" : "No alerts yet"}
-          hint={filtered ? "Widen or clear the filters to see more." : "Fired alerts will appear here."}
+          hint={filtered ? "Widen or clear the filters to see more." : showRepeats ? "Fired alerts will appear here." : "Fired alerts will appear here. Repeats are hidden — tick “Show repeats” to see re-announcements."}
         />
       ) : (
         <>

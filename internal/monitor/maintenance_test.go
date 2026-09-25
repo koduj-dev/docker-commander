@@ -526,3 +526,31 @@ func TestMaintenanceTransitionsAreLogged(t *testing.T) {
 		t.Errorf("removal line wrong:\n%s", logs.String())
 	}
 }
+
+// Back-to-back occurrences of one recurring window (a daily 24 h window is
+// allowed) keep the SAME id in the active set; the boundary must still log an
+// end and a start, not stay silent because the id never left.
+func TestMaintenanceTransitionsSeeTheBoundaryBetweenOccurrences(t *testing.T) {
+	logs := captureLog(t)
+	w := store.MaintenanceWindow{
+		ID: 1, Name: "daily", Recurring: true, Weekdays: []time.Weekday{0, 1, 2, 3, 4, 5, 6},
+		TimeOfDay: "02:00", DurationMin: 24 * 60, Timezone: "UTC",
+		StartsAt: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
+	}
+	d1 := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	cur := logMaintenanceTransitions(nil, []store.MaintenanceWindow{w}, d1, false)
+	if len(cur) != 1 {
+		t.Fatalf("setup: the window should be active at %v", d1)
+	}
+	logs.Reset()
+	cur = logMaintenanceTransitions(cur, []store.MaintenanceWindow{w}, d1.Add(24*time.Hour), false)
+	s := logs.String()
+	if !strings.Contains(s, "maintenance window ended id=1") || !strings.Contains(s, "maintenance window started id=1") {
+		t.Errorf("the next occurrence must log an end and a start:\n%s", s)
+	}
+	logs.Reset()
+	logMaintenanceTransitions(cur, []store.MaintenanceWindow{w}, d1.Add(24*time.Hour+time.Minute), false)
+	if logs.Len() != 0 {
+		t.Errorf("inside one occurrence nothing is logged:\n%s", logs.String())
+	}
+}
