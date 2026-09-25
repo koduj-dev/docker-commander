@@ -11,14 +11,14 @@ Top row of cards: hostname + Docker version, CPU count + architecture, total
 memory + OS, and counts of **running** / **stopped** containers and **images**.
 
 ## Disk usage
-A breakdown from `docker system df`:
+Four tiles from `docker system df`. Each shows a size and a count.
 
-- **Layers total** — combined size of image layers on disk.
-- **Images / Containers (rw) / Volumes / Build cache** — count and reclaimable
-  size per category.
+- **Images**: the daemon's image total and the number of images. Shared layers are counted once.
+- **Containers (rw)**: the writable layers of all containers, and the container count.
+- **Volumes**: the size of volumes with a known size, and the volume count.
+- **Build cache**: the cache size and its number of records. Records the daemon marks as *shared* are left out of both.
 
-Use this to spot bloat; reclaim space from [Images](images.md) (prune dangling),
-[Volumes](volumes.md) (prune unused) or the build cache.
+For a per-object breakdown and what a prune would reclaim, open [Resources → Disk](resources.md#disk). To reclaim space, use [Images](images.md) (prune dangling), [Volumes](volumes.md) (prune unused) or the build cache.
 
 ## Resource usage
 Three panels: **CPU** and **memory** as a share of the host, and **network** as
@@ -49,25 +49,18 @@ All three panels re-sample on Docker lifecycle events and on a slow poll, updati
 in place; a transient error keeps the last good numbers rather than blanking the
 section.
 
+## Top consumers
+A table of the running containers that use the most, with **CPU** (cores in use) and **Memory** (bytes in use). Click a column header to re-sort. The default is memory, largest first. It shows the top 10. The title says *10 of N* when there are more. **View all →** opens [Resources](resources.md) for the full, searchable list. Click a name to open the container's [detail page](containers.md).
+
 ## Top talkers
-A small ranked list of the busiest containers by network throughput, next to
-**Resource usage**. Unlike the network summary above, this is not a live
-snapshot: ranking containers by a point-in-time poll sample is unreadable
-(throughput is bursty enough to reorder itself every 8–15 seconds), so this
-ranks by the **average rate over a stored window** instead — 5 minutes by
-default here, refetched every 15 seconds.
+The busiest containers by network throughput, next to **Top consumers**.
 
-"View all →" opens the full **Top talkers** page (also reachable from the
-sidebar's Network group), with a bigger table, a window selector (5 min / 15
-min / 1 hour) and a metric selector (total, received, sent). Both share the
-same limitation as the rest of the app's network reporting: a container
-attached to more than one Docker network has its traffic summed across all of
-its interfaces, since Docker's own stats API does not say which interface
-belongs to which network.
+The figure is the average rate over the last 5 minutes, by total (received + sent). It shows the top 10 and refetches every 15 seconds. It is not a live snapshot, because a single poll sample reorders the list every few seconds.
 
-A container needs at least two samples inside the chosen window to show up at
-all — a container that just started, or a window shorter than the metrics poll
-interval, shows "not enough history yet" rather than a misleading zero.
+**View all →** opens [Resources → Network](resources.md#network). There you get a bigger table, a window selector (5 min / 15 min / 1 hour), a metric selector (total, received, sent) and a name filter.
+
+- A container on more than one Docker network has its traffic summed across all its interfaces. Docker's stats do not say which interface belongs to which network.
+- A container needs at least two samples in the window. A container that just started, or a window with too little history, is left out. If nothing qualifies, the panel says "Not enough history yet".
 
 ## Open ports
 A host-wide map of every **published port** across the running containers.

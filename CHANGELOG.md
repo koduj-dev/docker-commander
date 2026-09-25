@@ -6,7 +6,43 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ## [1.7.0] — 2026-09-21
 
+### Security
+- **The Docker-socket policy check now catches a socket reached through a parent
+  directory.** Binding `/`, `/var/run`, `/run` or a rootless `/run/user/<uid>`
+  gives the container the socket, but only the `docker.sock` paths themselves were
+  recognised.
+- **A deploy writes nothing to the target host before the policy check passes.**
+  This applies to the REST deploy, the MCP deploy and a revision restore.
+- **OAuth refresh-token rotation is one transaction** and checks that the session
+  is still alive. A revoked session can no longer refresh, and a crash can no
+  longer leave a session without a valid refresh token.
+- **The masked-secret fingerprint uses an HKDF-derived key** instead of the AES key
+  itself.
+- **Deleting a project removes its revision snapshots.** They are zips of the whole
+  project directory, secrets included, and were left on disk.
+
 ### Added
+- **Resources page** (Observability → Resources). CPU, memory and network per
+  container and per stack, refreshed every 5 s. A Network tab with the top talkers
+  as an average rate over a window. A Disk tab with the size of every image,
+  container, volume and build-cache record, what an image shares with others, and
+  what a prune would free. See `docs/resources.md`.
+- **Settings → Data retention.** The alert feed, its delivery records, the audit
+  log and project revisions used to grow forever. A daily purge now deletes what
+  is older than a per-area limit. It is on by default: 90 days for alert events and
+  deliveries, 365 days for the audit log (30 at the minimum), and the newest 50
+  revisions per project (3 at the minimum, with their snapshot files). Each area
+  can be kept forever. **Purge now** runs it on demand. The page shows what the last
+  run deleted. If the saved policy can't be read, nothing is deleted. On upgrade
+  the first purge removes older history; see `docs/settings.md`.
+- **Alerts feed.** Repeats are hidden by default (tick *Show repeats*). The row that
+  started a condition shows **still firing · 27m** and the number of repeats.
+  Event kind and the silenced state are icons in their own column.
+- **Backup jobs keep a run history.** Output, exit code, duration and trigger of
+  each run (newest 200 per job), opened from the History button or the status
+  badge. A failed *Run now* opens the log.
+- **Maintenance windows log when they start and end**, with scope and duration. An
+  alert that a window silenced says so on its log line.
 - **Embedded per-container reverse proxy (phase 2 of "Per-container domain +
   TLS").** Domain mappings (phase 1) now actually route traffic: opt-in
   (`DC_PROXY_ENABLED`, off by default — it's a second public-facing surface
@@ -36,8 +72,8 @@ All notable changes to Docker Commander are documented here. The format follows
   interface errors *increase* by at least a chosen amount within a window —
   never on their absolute value, since a drops counter that has sat at a high
   total since a bad afternoon last month is not an incident. Separately, a new
-  **Top talkers** dashboard widget (plus a full page under the sidebar's
-  Network group) ranks running containers by throughput — averaged over a
+  **Top talkers** dashboard widget (its full table is the **Network** tab of
+  the new Resources page) ranks running containers by throughput — averaged over a
   **stored window** (5 min / 15 min / 1 hour), never a point-in-time poll
   sample, which reorders itself every poll and is unreadable.
 - **Domain mappings (phase 1 of "Per-container domain + TLS").** A project
@@ -267,6 +303,22 @@ All notable changes to Docker Commander are documented here. The format follows
   config is only resolved for evaluation once at least one rule is enabled.
 
 ### Changed
+- **Menu.** Policy rules, MCP Admin and Recovery bundle are now tabs in Settings
+  (`/settings?tab=policy|mcp|recovery`). Backup jobs moved to Storage, next to
+  Volumes. The old `/policy-rules`, `/mcp-admin` and `/recovery` URLs no longer
+  work and don't redirect. The API paths are unchanged.
+- **Top talkers** has no page of its own. Its table is Resources → Network, and
+  the dashboard panel links there.
+- **Dashboard disk tiles.** The Images tile now shows the image total with shared
+  layers counted once (it used to add up every image's size). The *Layers total*
+  tile is gone. Build cache leaves out records marked shared.
+- **Maintenance windows and repeats.** While a window is open, the `firing` and
+  `resolved` of a silenced condition are stored, but its `repeat` re-announcements
+  are not (they are still logged). When the window ends and the condition is still
+  true, the next check delivers it as a `firing`, not as a `repeat`. Silenced
+  events no longer show a toast.
+- **A closed maintenance window can't be edited.** After it has been ended or has
+  expired, only Delete is left (the API returns `409`).
 - **Docker SDK moved from `github.com/docker/docker` to `github.com/moby/moby/client`
   (+ `moby/moby/api`).** The old Go module is frozen at 28.5.2 and will never
   receive another fix, so every future daemon CVE would keep flagging this
@@ -286,6 +338,23 @@ All notable changes to Docker Commander are documented here. The format follows
   on Windows) rather than just failing.
 
 ### Fixed
+- **`dockercmd --backup` includes the project revision snapshots**
+  (`project-revisions/`). Before, a restored database could list a revision whose
+  snapshot was missing. Revision numbers are now assigned in a transaction, so two
+  deploys at once can't get the same number. The recovery bundle does not carry
+  revisions.
+- **Image digest matching no longer reports drift that isn't there** for a
+  re-tagged image, or one sharing a layer with another image, that has a single
+  digest from a different repository.
+- **A slow webhook can't lose its delivery record.** The send, the record and the
+  retry each get their own timeout.
+- **Backup job *Run now* is no longer cancelled when the browser disconnects.** A
+  run can take 30 minutes. Enabling and disabling a job is now audited.
+- **A redeploy preview uses the profiles of the last deploy**, so a profiled service
+  is no longer shown as added or removed by mistake.
+- **Build-cache "reclaimable" and the dashboard build-cache tile leave out shared
+  records**, which made a prune look bigger than it is.
+- **A rate below 1 B/s no longer shows as "819.2 undefined/s".**
 - **Clicking outside any modal in the app no longer also closes whatever
   modal it was opened from.** The same missing-`stopPropagation` bug as the
   Projects modals, found the same way, fixed everywhere it occurs — 26 more

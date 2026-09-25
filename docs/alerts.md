@@ -67,6 +67,8 @@ the plain cooldown and never resolve.
 
 ## The feed
 
+![Alerts feed](images/alerts_feed.png)
+
 The event feed is **paged** (50 at a time) and filterable by severity, lifecycle
 kind, **host**, rule, container and message text, plus an *unacknowledged only*
 toggle — and **sortable by any of the first five columns**. All of it happens in
@@ -76,6 +78,28 @@ looking at. Severity sorts by how much it matters, not alphabetically (which wou
 put *warning* above *info* and look almost right).
 
 **Ack all** sits in the page header with the other actions.
+
+**Repeats are hidden by default.** While a condition stays true it is announced
+again every cooldown (see [above](#threshold-alerts-are-conditions-not-lines)).
+Those `repeat` rows would bury the `firing` and `resolved` ones, so the feed hides
+them. Tick **Show repeats** to see them, or pick *repeat* in the lifecycle filter.
+The choice is saved per account.
+
+The row that started a condition shows what happened since:
+
+- **still firing · 27m** under the time, while the condition has not resolved.
+  The time counts from when the condition started, also after an escalation.
+- **↻ 12** in the flags column: how many repeats followed. The tooltip has the
+  time of the last one.
+- The same two facts in the [alert detail](#alert-detail).
+
+This applies to threshold conditions only. A one-off event (a container died, a
+log line matched) never resolves, so it never says "still firing". Repeats that a
+[maintenance window](#maintenance-windows) silenced are not stored, so the count
+is lower during a window.
+
+Row flags: ↻ repeat, ↗ escalated, ↘ eased, and a crossed-out bell for
+**silenced**.
 
 The **sidebar badge counts problems**, not events: unacknowledged **warnings and
 criticals** only. A condition ending is recorded as `info`, so the number never
@@ -100,16 +124,26 @@ feed is the record. Resolved conditions toast in green, a countdown bar shows ho
 long is left, and hovering pauses it. Turn them off per account under
 **Profile → Preferences**; the alerts themselves are unaffected — still recorded,
 still counted in the sidebar badge, still delivered by webhook and e-mail.
+An event that a [maintenance window](#maintenance-windows) silenced does not
+toast. Nothing was sent, so there is nothing to announce. It is still in the feed,
+with the silenced flag.
 
 The feed, the badge and the toasts share **one** poll. They used to have separate
 timers, which meant a row could appear in the table seconds before the toast
 announcing it — the same event telling you about itself twice, out of order.
 
+## How long the feed is kept
+
+Alert events and their delivery records are deleted after 90 days by default.
+You can change this under **Settings → Data retention**, see
+[Settings](settings.md#data-retention).
+
 ## Alert detail
 
 **Click any row** to open it. A table can only ever show a truncated view, and
 the message is often the least of what matters. The detail has the full message,
-the measured value, how long the condition lasted, the host, a link straight to
+the measured value, how long the condition lasted (or, if it is still going, how
+long it has been firing and how often it repeated), the host, a link straight to
 the **container** it is about, whether it was acknowledged and by whom, and every
 delivery attempt with the endpoint's own response.
 
@@ -163,11 +197,12 @@ not every failure, and not forever:
 
 ## Maintenance windows
 
+![Maintenance windows](images/alerts_maintenance.png)
+
 Suppress alert **delivery** (webhook/e-mail) for planned work without turning
 monitoring off. The alert still **fires and is recorded** in the feed — the
-point is to stop the paging, not the observing — and a suppressed row carries a
-small **silenced** badge so you can tell "nothing happened" from "something
-happened and was silenced" at a glance. This is different from a **disabled
+point is to stop the paging, not the observing. A silenced row has a crossed-out
+bell in the feed. This is different from a **disabled
 host**, which the engine doesn't watch at all.
 
 A window's **scope** is every dimension you can restrict it by, and every one
@@ -191,6 +226,20 @@ A window is either:
 Every window records a **reason** and an **author** — this suppresses paging, so
 why must always stay answerable later — and both are audited on
 create/update/end/delete.
+
+**While a window is open**, the condition's `firing`, `resolved` and any
+escalation are stored with the silenced flag. The `repeat` rows are not stored
+(they only say "still true"), but they are written to the
+[process log](#system-log).
+
+**When the window ends** and the condition is still true, the next check delivers
+it as a `firing`, because nobody has been told yet. If it was already delivered
+before the window started, the next repeat comes after the normal cooldown.
+
+**A closed window can't be edited.** After a window is ended early, or its end
+(for a series, its end date) has passed, Edit and End are gone and the API
+returns `409`. You can still delete it. To silence something again, create a new
+window. A series past its end date shows as *Expired*.
 
 **End early** stops a window immediately, without deleting it, so its record
 (and why it existed) stays in place. **Delete** removes it outright; neither
@@ -338,7 +387,18 @@ was already true of the container metrics; it is worth knowing before exposing i
 ## System log
 Beyond these channels, every fired alert is also written to the process log
 (stderr) as a structured line, so under systemd it lands in the journal — and,
-if you enable forwarding, in syslog. See
+if you enable forwarding, in syslog. An alert that a maintenance window silenced
+says so on the same line (`silenced=true maintenance_window=3 window_name="…"`).
+
+Maintenance windows also log when they start and end, with scope and duration.
+The check runs every 30 seconds, and once at startup for windows already running:
+
+```text
+maintenance window started id=3 name="DB upgrade" scope="project~shop" until=… duration=1h30m0s — matching alerts are recorded but not delivered
+maintenance window ended id=3 name="DB upgrade" after=1h30m0s — alert delivery resumes
+```
+
+`ended early` and `removed` are reported the same way. See
 [Deployment → Logs](deployment.md#logs).
 
 ## Who receives an alert e-mail

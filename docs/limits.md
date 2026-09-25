@@ -39,6 +39,18 @@ If you hit one, the app says so — the point of this page is that you can find 
 | Compose file read or displayed | **1 MiB** | |
 | `docker compose` command | **10 minutes** | A deploy that takes longer is given up on. |
 
+## History retention
+
+Set under [Settings → Data retention](settings.md#data-retention).
+
+| Limit | Value | Notes |
+| --- | --- | --- |
+| Alert events and deliveries | 90 days by default | 1 to 36 500 days, or keep forever. Deliveries can't outlive their events. |
+| Audit log | 365 days by default | 30 to 36 500 days, or keep forever. |
+| Project revisions | newest 50 per project by default | At least 3, or unlimited. |
+| Purge schedule | first run about 2 minutes after start, then every 24 hours | Batches of 2 000 rows. |
+| Backup job run history | newest 200 runs per job | See [Backup jobs](backup-jobs.md). |
+
 ## Images
 
 | Limit | Value | Notes |

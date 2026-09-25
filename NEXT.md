@@ -424,6 +424,12 @@ the security property alone, independent of the NAT-traversal convenience.
   (roughly average × window length) so "how much data was it" is answerable too.
 ---
 
+- **Revision restore under a Warn-mode policy rule.** The restore API accepts
+  `confirmPolicyWarnings` (a deploy's dialog sends it), but the deploy-history
+  restore dialog never does — so a restore that trips a *warn* rule is refused
+  with no way to confirm it from the UI. Send it after the same confirmation a
+  deploy shows.
+
 ## 📦 Backlog
 
 Plausible, deliberately not prioritized — different from 🧭 below, which is a
