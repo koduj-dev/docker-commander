@@ -55,16 +55,27 @@ type MaintenanceWindow struct {
 // one is active during any occurrence its schedule produces. An ended window
 // is never active, regardless of its schedule.
 func (w MaintenanceWindow) Active(now time.Time) bool {
-	if w.Ended {
-		return false
-	}
-	if !w.Recurring {
-		return !now.Before(w.StartsAt) && now.Before(w.EndsAt)
-	}
-	return w.recurringActiveAt(now)
+	_, _, ok := w.ActiveSpan(now)
+	return ok
 }
 
-// recurringActiveAt checks both today's occurrence and yesterday's, so a
+// ActiveSpan is Active plus the bounds of the occurrence covering now: the
+// window's own start/end for a one-off, the current occurrence's for a
+// recurring one. It is what a "window started / ended" log line reports.
+func (w MaintenanceWindow) ActiveSpan(now time.Time) (start, end time.Time, ok bool) {
+	if w.Ended {
+		return time.Time{}, time.Time{}, false
+	}
+	if !w.Recurring {
+		if !now.Before(w.StartsAt) && now.Before(w.EndsAt) {
+			return w.StartsAt, w.EndsAt, true
+		}
+		return time.Time{}, time.Time{}, false
+	}
+	return w.recurringSpanAt(now)
+}
+
+// recurringSpanAt checks both today's occurrence and yesterday's, so a
 // window whose occurrence spans midnight in its own timezone (e.g. starts
 // 23:00 for 120 minutes) is still found active just after midnight, when the
 // occurrence that covers "now" actually started on the previous calendar day.
@@ -72,14 +83,14 @@ func (w MaintenanceWindow) Active(now time.Time) bool {
 // 24h for a recurring window (enforced where one is created/updated) — any
 // occurrence that could still cover "now" therefore started within the last
 // 24h, which both candidate days together always contain.
-func (w MaintenanceWindow) recurringActiveAt(now time.Time) bool {
+func (w MaintenanceWindow) recurringSpanAt(now time.Time) (start, end time.Time, ok bool) {
 	loc, err := time.LoadLocation(w.Timezone)
 	if err != nil || w.Timezone == "" {
 		loc = time.UTC
 	}
-	hh, mm, ok := parseTimeOfDay(w.TimeOfDay)
-	if !ok || w.DurationMin <= 0 {
-		return false
+	hh, mm, parsed := parseTimeOfDay(w.TimeOfDay)
+	if !parsed || w.DurationMin <= 0 {
+		return time.Time{}, time.Time{}, false
 	}
 	// The series begins on StartsAt's CALENDAR DATE in the schedule's own
 	// timezone — its time-of-day is documented as ignored (see the field's
@@ -88,10 +99,10 @@ func (w MaintenanceWindow) recurringActiveAt(now time.Time) bool {
 	sy, sm, sd := w.StartsAt.In(loc).Date()
 	seriesStart := time.Date(sy, sm, sd, 0, 0, 0, 0, loc)
 	if now.Before(seriesStart) {
-		return false // the series hasn't begun yet
+		return time.Time{}, time.Time{}, false // the series hasn't begun yet
 	}
 	if !w.EndsAt.IsZero() && !now.Before(w.EndsAt) {
-		return false // the series has stopped recurring
+		return time.Time{}, time.Time{}, false // the series has stopped recurring
 	}
 	local := now.In(loc)
 	for _, dayOffset := range [2]int{0, -1} {
@@ -106,15 +117,15 @@ func (w MaintenanceWindow) recurringActiveAt(now time.Time) bool {
 		occStart := time.Date(day.Year(), day.Month(), day.Day(), hh, mm, 0, 0, loc)
 		occEnd := occStart.Add(time.Duration(w.DurationMin) * time.Minute)
 		if !now.Before(occStart) && now.Before(occEnd) {
-			return true
+			return occStart, occEnd, true
 		}
 	}
-	return false
+	return time.Time{}, time.Time{}, false
 }
 
 // MaxRecurringDurationMin bounds how long a single recurring occurrence may
 // last. Enforced by callers that create/update a window (REST and MCP);
-// recurringActiveAt's two-candidate-day lookback is only correct up to this
+// recurringSpanAt's two-candidate-day lookback is only correct up to this
 // bound — a longer occurrence could start further back than either candidate
 // day covers and be missed.
 const MaxRecurringDurationMin = 24 * 60

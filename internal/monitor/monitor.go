@@ -190,12 +190,13 @@ func (m *Monitor) SetStatsInterval(d time.Duration) {
 // Run starts all background loops and blocks until ctx is cancelled.
 func (m *Monitor) Run(ctx context.Context) {
 	var wg sync.WaitGroup
-	wg.Add(5)
+	wg.Add(6)
 	go func() { defer wg.Done(); m.statsLoop(ctx) }()
 	go func() { defer wg.Done(); m.watchManagerLoop(ctx) }()
 	go func() { defer wg.Done(); m.logReconcileLoop(ctx) }()
 	go func() { defer wg.Done(); m.healthLoop(ctx) }()
 	go func() { defer wg.Done(); m.retrySweepLoop(ctx) }()
+	go func() { defer wg.Done(); m.maintenanceLogLoop(ctx) }()
 	wg.Wait()
 }
 
@@ -1057,9 +1058,9 @@ func (m *Monitor) emit(ctx context.Context, r store.AlertRule, hostID int64, hos
 	}
 	wctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	// The event is recorded regardless of any active maintenance window — a
-	// silence stops paging, not observing — so this check only ever decides
-	// whether delivery below runs, never whether InsertAlertEvent does.
+	// A silence stops paging, not observing: the event is recorded regardless of
+	// an active maintenance window, so this check decides whether delivery below
+	// runs — with one exception, a silenced repeat, handled just below.
 	var win *store.MaintenanceWindow
 	if w, err := m.store.FindActiveMaintenanceWindow(wctx, hostID, project, name, r.ID, severity, time.Now()); err != nil {
 		log.Printf("monitor: check maintenance window: %v", err)
@@ -1080,6 +1081,14 @@ func (m *Monitor) emit(ctx context.Context, r store.AlertRule, hostID int64, hos
 	} else {
 		log.Printf("alert kind=%s severity=%s rule=%q host=%q container=%q message=%q",
 			kind, severity, r.Name, hostName, name, message)
+	}
+	// A silenced REPEAT is not stored. The condition's firing event (and its
+	// resolution) are already in the feed; a repeat only re-announces "still
+	// true", which during a window nobody is being told anyway — and with
+	// many containers on one rule it is what would fill the table (and the
+	// database) for the whole window. The log line above still records it.
+	if ev.Suppressed && kind == store.KindRepeat {
+		return true
 	}
 	// The id is what delivery records attach to, so capture it before notifying.
 	if id, err := m.store.InsertAlertEvent(wctx, ev); err != nil {
