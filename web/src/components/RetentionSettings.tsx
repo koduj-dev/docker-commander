@@ -64,7 +64,10 @@ export function RetentionSettings() {
   if (failed) return <div className="text-sm text-danger">Could not load the retention settings.</div>;
   if (!state || !form) return <div className="p-2 flex items-center gap-2 text-muted"><Spinner /> Loading…</div>;
 
-  const dirty = (Object.keys(form) as Key[]).some((k) => form[k] !== state.policy[k]);
+  // With an unreadable stored policy the form shows the defaults, which are not
+  // "saved" — so Save must be available even though nothing was edited.
+  const broken = !!state.policyError;
+  const dirty = broken || (Object.keys(form) as Key[]).some((k) => form[k] !== state.policy[k]);
   const { limits } = state;
   const minFor = (k: Key) => (k === "auditDays" ? limits.minAuditDays : k === "revisionsKeep" ? limits.minRevisionsKeep : limits.minAlertDays);
   const set = (k: Key, v: number) => { setMsg(null); setDraft((d) => ({ ...d, [k]: undefined })); setForm({ ...form, [k]: v }); };
@@ -108,6 +111,12 @@ export function RetentionSettings() {
     <div className="space-y-4 max-w-3xl">
       <div className="card p-5 space-y-4">
         <div className="flex items-center gap-2 font-medium"><Database className="h-4 w-4 text-accent" /> Data retention</div>
+        {broken && (
+          <div role="alert" className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">
+            The saved retention policy could not be read, so <b>nothing is being purged</b>. The values below are the defaults —
+            review them and press Save to resume. <span className="text-xs opacity-80">({state.policyError})</span>
+          </div>
+        )}
         <p className="text-xs text-muted">
           Old history is deleted automatically once a day. Leave a value empty (“keep forever”) to never delete that kind of data.
           Database: <b>{bytes(state.stats.dbBytes)}</b> ({bytes(state.stats.dbFreeBytes)} of it free space that new data reuses — deleting rows does not shrink the file).

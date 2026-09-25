@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -214,5 +215,141 @@ func TestRunRetentionRefusesToRunTwiceAtOnce(t *testing.T) {
 	srv.handlePurgeRetention(w, httptest.NewRequest("POST", "/api/settings/retention/purge", nil).WithContext(ctxAs(1, "admin")))
 	if w.Code != http.StatusConflict {
 		t.Errorf("purge while one runs → %d, want 409", w.Code)
+	}
+}
+
+// A settings row that cannot be read must stop the purge cold. Falling back to
+// the defaults would delete data an admin chose to keep forever.
+func TestRunRetentionAbortsOnAnUnreadablePolicyAndDeletesNothing(t *testing.T) {
+	srv, _, raw := newRetentionServer(t)
+	ctx := t.Context()
+	if err := srv.store.SetRetention(ctx, store.RetentionPolicy{}); err != nil { // keep forever
+		t.Fatal(err)
+	}
+	if _, err := srv.store.InsertAlertEvent(ctx, &store.AlertEvent{RuleName: "r", Severity: "warning", Kind: store.KindFiring}); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-1000 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	if _, err := raw.Exec(`UPDATE alert_events SET created_at = ?`, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`UPDATE settings SET value = '{corrupt' WHERE key = 'retention.policy'`); err != nil {
+		t.Fatal(err)
+	}
+
+	run, err := srv.runRetention(ctx, "scheduled", nil)
+	if !errors.Is(err, store.ErrRetentionPolicyInvalid) || run != nil {
+		t.Fatalf("run=%+v err=%v, want a refusal", run, err)
+	}
+	var n int
+	if err := raw.QueryRow(`SELECT COUNT(*) FROM alert_events`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("%d alert events left, want 1 — nothing may be deleted", n)
+	}
+	if last, _ := srv.store.LastRetentionRun(ctx); last != nil {
+		t.Errorf("a refused run must not be recorded as a purge: %+v", last)
+	}
+
+	// The page still loads (showing the defaults plus the problem) and a manual
+	// purge explains itself instead of failing opaquely.
+	w := httptest.NewRecorder()
+	srv.handleGetRetention(w, httptest.NewRequest("GET", "/api/settings/retention", nil).WithContext(ctxAs(1, "admin")))
+	var out struct{ PolicyError string }
+	_ = json.Unmarshal(w.Body.Bytes(), &out)
+	if w.Code != http.StatusOK || out.PolicyError == "" {
+		t.Errorf("GET → %d, policyError=%q, want 200 with the problem reported", w.Code, out.PolicyError)
+	}
+	w = httptest.NewRecorder()
+	srv.handlePurgeRetention(w, httptest.NewRequest("POST", "/api/settings/retention/purge", nil).WithContext(ctxAs(1, "admin")))
+	if w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), "Nothing was deleted") {
+		t.Errorf("purge → %d %s, want 422 saying nothing was deleted", w.Code, w.Body)
+	}
+	// Saving a valid policy is the way out.
+	if w := retentionPut(t, srv, `{"alertEventsDays":90,"alertDeliveriesDays":90,"auditDays":365,"revisionsKeep":50}`); w.Code != http.StatusOK {
+		t.Fatalf("save → %d", w.Code)
+	}
+	if _, err := srv.runRetention(ctx, "manual", nil); err != nil {
+		t.Errorf("after saving a valid policy the purge runs again: %v", err)
+	}
+}
+
+// Snapshot files with no revision row (a purge that stopped part-way, or a file
+// that could not be removed) are found and removed by a later run.
+func TestRunRetentionSweepsOrphanedSnapshotFiles(t *testing.T) {
+	srv, projectID, _ := newRetentionServer(t)
+	ctx := t.Context()
+	p, _ := srv.store.ProjectByID(ctx, projectID)
+	srv.captureRevision(ctx, p, nil, "out", "test", "tester") // revision 1: row + file
+	dir := srv.projectRevisionsDir(projectID)
+
+	orphan := srv.revisionZipPath(projectID, 77) // no row
+	tmp := dir + "/.revision-123.zip.tmp"        // in-flight capture
+	note := dir + "/README.txt"                  // not ours
+	strayDir := srv.projectRevisionsDir(999) + "/5.zip"
+	for _, f := range []string{orphan, tmp, note} {
+		if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(srv.projectRevisionsDir(999), 0o700); err != nil { // a project that has no rows at all
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(strayDir, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	run, err := srv.runRetention(ctx, "scheduled", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.RevisionFiles != 2 {
+		t.Errorf("RevisionFiles = %d, want 2 (the orphan and the stray project's file)", run.RevisionFiles)
+	}
+	for _, gone := range []string{orphan, strayDir} {
+		if _, err := os.Stat(gone); !os.IsNotExist(err) {
+			t.Errorf("%s should have been swept (stat err = %v)", gone, err)
+		}
+	}
+	for _, kept := range []string{srv.revisionZipPath(projectID, 1), tmp, note} {
+		if _, err := os.Stat(kept); err != nil {
+			t.Errorf("%s must be left alone: %v", kept, err)
+		}
+	}
+}
+
+// A file that cannot be removed is reported in the run, not just logged, and is
+// retried by the next run instead of being forgotten.
+func TestRunRetentionReportsASnapshotItCannotRemove(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	srv, projectID, _ := newRetentionServer(t)
+	ctx := t.Context()
+	orphan := srv.revisionZipPath(projectID, 5)
+	if err := os.MkdirAll(srv.projectRevisionsDir(projectID), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(orphan, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := srv.projectRevisionsDir(projectID)
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	run, err := srv.runRetention(ctx, "manual", nil)
+	if err == nil || run == nil || !strings.Contains(run.Error, "remove orphan snapshot") {
+		t.Fatalf("run=%+v err=%v, want the failed removal reported", run, err)
+	}
+	if last, _ := srv.store.LastRetentionRun(ctx); last == nil || last.Error == "" {
+		t.Errorf("the failure must be stored with the run: %+v", last)
+	}
+
+	_ = os.Chmod(dir, 0o700)
+	if run, err := srv.runRetention(ctx, "manual", nil); err != nil || run.RevisionFiles != 1 {
+		t.Errorf("the next run must retry and succeed: run=%+v err=%v", run, err)
 	}
 }

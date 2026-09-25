@@ -1221,4 +1221,6 @@ export interface RetentionState {
   limits: { minAuditDays: number; minAlertDays: number; minRevisionsKeep: number; maxDays: number };
   stats: RetentionStats;
   lastRun: RetentionRun | null;
+  /** Set when a policy is stored but unreadable: purging is paused until a new one is saved. */
+  policyError?: string;
 }

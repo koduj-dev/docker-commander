@@ -3,9 +3,13 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/koduj-dev/docker-commander/internal/auth"
@@ -75,18 +79,22 @@ func (s *Server) runRetention(ctx context.Context, trigger string, actor *auth.C
 	run.Audit, derr = s.store.PurgeAudit(ctx, policy.AuditDays, start)
 	note(derr)
 
+	// Trim returns what it managed to delete even when it stops early, so those
+	// snapshots are still removed below rather than stranded.
 	refs, derr := s.store.TrimRevisions(ctx, policy.RevisionsKeep)
 	note(derr)
 	run.Revisions = int64(len(refs))
 	for _, ref := range refs {
-		// Rows are already gone; a missing file is fine, any other failure is only
-		// logged — the row can't be restored and the file is now unreachable.
+		// The row is already gone. A failure here is not lost: the file has no row
+		// now, so the orphan sweep below finds it again (and reports it if it
+		// still cannot be removed).
 		if err := os.Remove(s.revisionZipPath(ref.ProjectID, ref.Revision)); err == nil {
 			run.RevisionFiles++
-		} else if !errors.Is(err, os.ErrNotExist) {
-			log.Printf("retention: remove snapshot project %d rev %d: %v", ref.ProjectID, ref.Revision, err)
 		}
 	}
+	swept, derr := s.sweepOrphanRevisionFiles(ctx)
+	run.RevisionFiles += swept
+	note(derr)
 
 	run.DBBytesAfter, _, _ = s.store.DBSize(ctx)
 	run.DurationMs = time.Since(start).Milliseconds()
@@ -120,6 +128,67 @@ func (s *Server) runRetention(ctx context.Context, trigger string, actor *auth.C
 	return run, nil
 }
 
+// revisionZipRE matches a snapshot file name: "<revision>.zip".
+var revisionZipRE = regexp.MustCompile(`^([0-9]+)\.zip$`)
+
+// sweepOrphanRevisionFiles removes snapshot files that no revision row points to
+// — left behind by a purge that failed part-way, a file that could not be removed
+// the first time, or an interrupted delete. Snapshots hold a copy of the project
+// directory (secrets included), so an unreachable one must not linger forever.
+//
+// A row is always written BEFORE its snapshot (see captureRevision), so a file
+// without a row is never one in the middle of being created. When the database
+// cannot be consulted for a project its files are left alone: deleting on
+// "unknown" is the mistake to avoid.
+func (s *Server) sweepOrphanRevisionFiles(ctx context.Context) (removed int64, err error) {
+	root := filepath.Join(s.cfg.DataDir, "project-revisions")
+	dirs, rerr := os.ReadDir(root)
+	if errors.Is(rerr, os.ErrNotExist) {
+		return 0, nil
+	}
+	if rerr != nil {
+		return 0, rerr
+	}
+	var errs []error
+	for _, d := range dirs {
+		projectID, perr := strconv.ParseInt(d.Name(), 10, 64)
+		if !d.IsDir() || perr != nil {
+			continue
+		}
+		if ctx.Err() != nil {
+			errs = append(errs, ctx.Err())
+			break
+		}
+		live, qerr := s.store.RevisionNumbers(ctx, projectID)
+		if qerr != nil {
+			errs = append(errs, qerr)
+			continue
+		}
+		dir := filepath.Join(root, d.Name())
+		files, ferr := os.ReadDir(dir)
+		if ferr != nil {
+			errs = append(errs, ferr)
+			continue
+		}
+		for _, f := range files {
+			m := revisionZipRE.FindStringSubmatch(f.Name())
+			if f.IsDir() || m == nil {
+				continue
+			}
+			n, _ := strconv.Atoi(m[1])
+			if live[n] {
+				continue
+			}
+			if rmerr := os.Remove(filepath.Join(dir, f.Name())); rmerr != nil {
+				errs = append(errs, fmt.Errorf("remove orphan snapshot %s/%s: %w", d.Name(), f.Name(), rmerr))
+				continue
+			}
+			removed++
+		}
+	}
+	return removed, errors.Join(errs...)
+}
+
 func errSuffix(msg string) string {
 	if msg == "" {
 		return ""
@@ -137,8 +206,14 @@ func retentionLimits() map[string]int {
 }
 
 func (s *Server) handleGetRetention(w http.ResponseWriter, r *http.Request) {
+	// An unusable stored policy is reported, not hidden: the page shows the
+	// defaults so the admin can save a fresh one, and the purge stays paused
+	// (runRetention refuses to act on it) until they do.
 	policy, err := s.store.Retention(r.Context())
-	if err != nil {
+	policyError := ""
+	if errors.Is(err, store.ErrRetentionPolicyInvalid) {
+		policyError = err.Error()
+	} else if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not read the retention policy")
 		return
 	}
@@ -150,7 +225,7 @@ func (s *Server) handleGetRetention(w http.ResponseWriter, r *http.Request) {
 	last, _ := s.store.LastRetentionRun(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{
 		"policy": policy, "defaults": store.DefaultRetention(), "limits": retentionLimits(),
-		"stats": stats, "lastRun": last,
+		"stats": stats, "lastRun": last, "policyError": policyError,
 	})
 }
 
@@ -181,6 +256,10 @@ func (s *Server) handlePurgeRetention(w http.ResponseWriter, r *http.Request) {
 	run, err := s.runRetention(ctx, "manual", claims)
 	if errors.Is(err, errRetentionBusy) {
 		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	if errors.Is(err, store.ErrRetentionPolicyInvalid) {
+		writeErr(w, http.StatusUnprocessableEntity, "Nothing was deleted: "+err.Error()+". Save a new policy first.")
 		return
 	}
 	if run == nil {

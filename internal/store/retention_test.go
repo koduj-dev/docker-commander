@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -84,11 +85,63 @@ func TestRetentionDefaultsAndPersistence(t *testing.T) {
 	if got, _ := st.Retention(ctx); got != want {
 		t.Errorf("a refused save must not change the stored policy, got %+v", got)
 	}
-	// A corrupt or invalid stored value falls back to the defaults rather than
-	// silently purging with something nobody chose.
-	mustExec(t, st, `UPDATE settings SET value = '{"auditDays":1}' WHERE key = ?`, retentionSettingKey)
-	if got, _ := st.Retention(ctx); got != DefaultRetention() {
-		t.Errorf("an invalid stored policy must fall back to the defaults, got %+v", got)
+}
+
+// A stored policy that cannot be read must NOT silently become the defaults: the
+// defaults delete data, and an admin who chose "keep forever" would lose history
+// to a corrupted settings row.
+func TestRetentionCorruptStoredPolicyIsAnErrorNotTheDefaults(t *testing.T) {
+	st, ctx := retStore(t)
+	if err := st.SetRetention(ctx, RetentionPolicy{}); err != nil { // keep everything, forever
+		t.Fatal(err)
+	}
+	for name, raw := range map[string]string{
+		"not json":                  `{"auditDays":`,
+		"fails validation":          `{"auditDays":1}`,
+		"deliveries outlive events": `{"alertEventsDays":10,"alertDeliveriesDays":50}`,
+	} {
+		mustExec(t, st, `UPDATE settings SET value = ? WHERE key = ?`, raw, retentionSettingKey)
+		got, err := st.Retention(ctx)
+		if !errors.Is(err, ErrRetentionPolicyInvalid) {
+			t.Errorf("%s: err = %v, want ErrRetentionPolicyInvalid", name, err)
+		}
+		if got != DefaultRetention() {
+			t.Errorf("%s: the page still needs something to show, got %+v", name, got)
+		}
+	}
+	// Only a setting that was NEVER saved means "use the defaults".
+	mustExec(t, st, `DELETE FROM settings WHERE key = ?`, retentionSettingKey)
+	if got, err := st.Retention(ctx); err != nil || got != DefaultRetention() {
+		t.Errorf("absent setting: %+v %v", got, err)
+	}
+}
+
+// If deleting stops part-way, the revisions already deleted must still be
+// reported: their snapshot files are reachable only through that list.
+func TestTrimRevisionsReturnsWhatItDeletedWhenItFailsPartway(t *testing.T) {
+	st, ctx := retStore(t)
+	for rev := 1; rev <= 5; rev++ {
+		mustExec(t, st, `INSERT INTO project_revisions (project_id, revision, created_at) VALUES (1, ?, ?)`, rev, retAgo(1))
+	}
+	mustExec(t, st, `CREATE TRIGGER boom BEFORE DELETE ON project_revisions WHEN OLD.revision = 2 BEGIN SELECT RAISE(ABORT, 'boom'); END`)
+	refs, err := st.TrimRevisions(ctx, 2) // wants to delete revisions 1, 2, 3
+	if err == nil {
+		t.Fatal("expected the trigger's error")
+	}
+	if len(refs) != 1 || refs[0].Revision != 1 {
+		t.Errorf("refs = %+v, want exactly the revision that WAS deleted (1)", refs)
+	}
+	if got := count(t, st, "project_revisions"); got != 4 {
+		t.Errorf("%d rows left, want 4", got)
+	}
+}
+
+func TestRevisionNumbers(t *testing.T) {
+	st, ctx := retStore(t)
+	mustExec(t, st, `INSERT INTO project_revisions (project_id, revision, created_at) VALUES (1, 1, ?), (1, 4, ?), (2, 9, ?)`, retAgo(1), retAgo(1), retAgo(1))
+	got, err := st.RevisionNumbers(ctx, 1)
+	if err != nil || len(got) != 2 || !got[1] || !got[4] || got[9] {
+		t.Errorf("got %v err=%v", got, err)
 	}
 }
 

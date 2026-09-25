@@ -76,9 +76,18 @@ func (p RetentionPolicy) Validate() error {
 	return nil
 }
 
-// Retention returns the stored policy, or the defaults when none was saved. An
-// unreadable stored value falls back to the defaults too — a corrupt setting
-// must not switch the purge off (or on, more aggressively) by accident.
+// ErrRetentionPolicyInvalid means a policy IS stored but cannot be trusted
+// (unparseable, or no longer passes Validate — e.g. written by a different
+// version). Callers that delete data must treat it as "do nothing".
+var ErrRetentionPolicyInvalid = errors.New("the stored retention policy is unreadable")
+
+// Retention returns the stored policy, or the defaults when none was ever saved.
+//
+// A stored value that is present but unusable is an ERROR, not a silent fall
+// back to the defaults: the defaults purge data, and an admin who chose "keep
+// forever" must not have their history deleted because a settings row got
+// corrupted. The returned policy is still the defaults, so the settings page has
+// something to show and the admin can save a fresh policy.
 func (s *Store) Retention(ctx context.Context) (RetentionPolicy, error) {
 	raw, err := s.Setting(ctx, retentionSettingKey)
 	if err != nil {
@@ -88,8 +97,11 @@ func (s *Store) Retention(ctx context.Context) (RetentionPolicy, error) {
 		return DefaultRetention(), nil
 	}
 	var p RetentionPolicy
-	if json.Unmarshal([]byte(raw), &p) != nil || p.Validate() != nil {
-		return DefaultRetention(), nil
+	if err := json.Unmarshal([]byte(raw), &p); err != nil {
+		return DefaultRetention(), fmt.Errorf("%w: %v", ErrRetentionPolicyInvalid, err)
+	}
+	if err := p.Validate(); err != nil {
+		return DefaultRetention(), fmt.Errorf("%w: %v", ErrRetentionPolicyInvalid, err)
 	}
 	return p, nil
 }
@@ -236,9 +248,9 @@ type RevisionRef struct {
 }
 
 // TrimRevisions keeps the newest keep revisions of every project and deletes the
-// rest, returning what it deleted (the caller removes the snapshot files after
-// the rows are gone, so a failed file removal can never leave a row pointing at
-// a missing file).
+// rest, returning what it deleted — also when it stops early with an error (the
+// caller removes the snapshot files after the rows are gone, so a failed file
+// removal can never leave a row pointing at a missing file).
 func (s *Store) TrimRevisions(ctx context.Context, keep int) ([]RevisionRef, error) {
 	if keep <= 0 {
 		return nil, nil
@@ -266,15 +278,37 @@ func (s *Store) TrimRevisions(ctx context.Context, keep int) ([]RevisionRef, err
 		return nil, err
 	}
 	_ = rows.Close()
-	for _, id := range ids {
+	// Rows are deleted one at a time; on failure the ones ALREADY gone are still
+	// returned (with the error), because their snapshot files are now reachable
+	// only through this list.
+	for i, id := range ids {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return refs[:i], err
 		}
 		if _, err := s.db.ExecContext(ctx, `DELETE FROM project_revisions WHERE id = ?`, id); err != nil {
-			return nil, err
+			return refs[:i], err
 		}
 	}
 	return refs, nil
+}
+
+// RevisionNumbers returns the revision numbers a project still has rows for —
+// what a snapshot file must correspond to in order to be reachable.
+func (s *Store) RevisionNumbers(ctx context.Context, projectID int64) (map[int]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT revision FROM project_revisions WHERE project_id = ?`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int]bool{}
+	for rows.Next() {
+		var n int
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out[n] = true
+	}
+	return out, rows.Err()
 }
 
 // RetentionArea is the size of one purgeable area.

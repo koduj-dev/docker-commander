@@ -132,6 +132,19 @@ describe("RetentionSettings", () => {
     expect(container.textContent).toContain("Purged 3 rows");
   });
 
+  it("says purging is paused when the stored policy is unreadable, and lets the admin save a new one", async () => {
+    retention.mockResolvedValue(state({ policyError: "the stored retention policy is unreadable: bad json" }));
+    act(() => root.unmount());
+    root = createRoot(container);
+    await act(async () => root.render(<DialogProvider><RetentionSettings /></DialogProvider>));
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("nothing is being purged");
+    // Nothing was edited, yet Save is available (the shown defaults were never saved) and Purge is not.
+    expect(button("Save").disabled).toBe(false);
+    expect(button("Purge now").disabled).toBe(true);
+    await act(async () => button("Save").click());
+    expect(setRetention).toHaveBeenCalledWith(state().defaults);
+  });
+
   it("shows what the last purge did", async () => {
     retention.mockResolvedValue(state({
       lastRun: { at: "2026-09-25T02:00:00Z", trigger: "scheduled", durationMs: 12, alertEvents: 7, alertDeliveries: 3, audit: 2, revisions: 1, revisionFiles: 1, dbBytesBefore: 2048, dbBytesAfter: 1024, error: "boom" },
