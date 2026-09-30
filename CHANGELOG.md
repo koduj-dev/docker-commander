@@ -355,6 +355,8 @@ All notable changes to Docker Commander are documented here. The format follows
 - **Build-cache "reclaimable" and the dashboard build-cache tile leave out shared
   records**, which made a prune look bigger than it is.
 - **A rate below 1 B/s no longer shows as "819.2 undefined/s".**
+- **Expired MCP tokens are no longer listed as active**, neither in Settings →
+  MCP Admin nor in your own token list. They had already stopped working.
 - **Clicking outside any modal in the app no longer also closes whatever
   modal it was opened from.** The same missing-`stopPropagation` bug as the
   Projects modals, found the same way, fixed everywhere it occurs — 26 more
