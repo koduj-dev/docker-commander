@@ -582,10 +582,10 @@ export function ProjectSecretsModal({ project, onClose }: { project: Project; on
   );
 }
 
-// ProjectDomainsModal manages a project's domain -> service:port mappings
-// (see NEXT.md's "Per-container domain + TLS"). Phase 1 only stores intent —
-// there is no reverse proxy yet to actually route these domains, which the
-// modal says up front so it isn't mistaken for a live feature.
+// ProjectDomainsModal manages a project's domain -> service:port mappings. The
+// embedded reverse proxy routes them only when it is enabled (DC_PROXY_ENABLED
+// with ACME mode) and only for local-host projects, which the modal says up
+// front: a mapping on its own is not proof that anything is served.
 export function ProjectDomainsModal({ project, onClose }: { project: Project; onClose: () => void }) {
   const [mappings, setMappings] = useState<DomainMapping[] | null>(null);
   const [services, setServices] = useState<string[]>([]);
@@ -655,7 +655,7 @@ export function ProjectDomainsModal({ project, onClose }: { project: Project; on
   const remove = async (m: DomainMapping) => {
     if (!(await dialogs.confirm({
       title: `Delete domain "${m.domain}"?`,
-      message: "This only removes the stored mapping — there is no live proxy yet for it to affect.",
+      message: "If the embedded reverse proxy is serving this domain, it stops being served as soon as the mapping is deleted.",
       danger: true, confirmLabel: "Delete",
     }))) return;
     setBusy(`delete-${m.id}`);
@@ -682,8 +682,9 @@ export function ProjectDomainsModal({ project, onClose }: { project: Project; on
           <p className="text-xs text-muted flex items-start gap-2">
             <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-warn" />
             <span>
-              Not yet active: this records which domain should route to which service, for the embedded
-              reverse proxy planned in a future release. Nothing listens on these domains yet.
+              These domains are served only when the server runs the embedded reverse proxy
+              (<code>DC_PROXY_ENABLED=1</code> with ACME mode) and only for projects on the local host.
+              Otherwise the mapping is just recorded and nothing listens on these domains.
             </span>
           </p>
           {err && (

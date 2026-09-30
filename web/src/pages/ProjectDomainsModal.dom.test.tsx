@@ -7,10 +7,10 @@ import { DialogProvider } from "../components/Dialog";
 import { api } from "../lib/api";
 import type { Project, DomainMapping } from "../lib/types";
 
-// Phase 1 of "Per-container domain + TLS" (NEXT.md) only stores intent — no
-// reverse proxy exists yet to route these domains. The modal must say so, and
-// its CRUD must round-trip through the domains API without ever implying a
-// live proxy is running.
+// The embedded reverse proxy routes these domains only when it is enabled and
+// only for local-host projects. The modal must say so, and it must not tell an
+// operator that deleting a mapping cannot affect live traffic: with the proxy
+// on, it takes the domain offline.
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -59,9 +59,23 @@ afterEach(() => {
 });
 
 describe("ProjectDomainsModal", () => {
-  it("says up front that nothing proxies traffic yet", async () => {
+  it("says up front what it takes for a mapping to serve traffic", async () => {
     await renderModal();
-    expect(container.textContent).toContain("Not yet active");
+    expect(container.textContent).toContain("DC_PROXY_ENABLED=1");
+    expect(container.textContent).toContain("only for projects on the local host");
+    // The proxy shipped in 1.7.0; the phase-1 wording must not come back.
+    expect(container.textContent).not.toContain("future release");
+  });
+
+  it("warns in the delete confirmation that a served domain goes offline", async () => {
+    vi.mocked(api.listDomainMappings).mockResolvedValue([mapping]);
+    await renderModal();
+    const del = container.querySelector<HTMLButtonElement>('button[title="Delete"]')!;
+    await act(async () => del.click());
+    const text = document.body.textContent ?? "";
+    expect(text).toContain(`Delete domain "app.example.com"?`);
+    expect(text).toContain("stops being served");
+    expect(text).not.toContain("no live proxy");
   });
 
   it("lists existing mappings with their service:port", async () => {

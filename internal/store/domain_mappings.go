@@ -8,10 +8,10 @@ import (
 	"time"
 )
 
-// DomainMapping records a human's intent to route a public domain to one
-// service+port inside a project, for the (not-yet-built) embedded reverse
-// proxy — see NEXT.md's "Per-container domain + TLS". This stores intent
-// only: nothing listens on Domain until the proxy engine itself ships.
+// DomainMapping routes a public domain to one service+port inside a project.
+// The embedded reverse proxy (internal/proxy) serves it only when enabled
+// (DC_PROXY_ENABLED with ACME mode) and only for local-host projects;
+// otherwise the row is recorded and nothing listens on Domain.
 type DomainMapping struct {
 	ID         int64     `json:"id"`
 	ProjectID  int64     `json:"projectId"`

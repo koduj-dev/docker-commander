@@ -48,7 +48,8 @@ func toAdminMCPTokenJSON(t store.APITokenWithUser) adminMCPTokenJSON {
 }
 
 // handleAdminListMCPTokens returns every user's active API tokens, annotated
-// with the owner's username. Revoked tokens are omitted (they no longer work).
+// with the owner's username. Revoked and expired tokens are omitted (they no
+// longer work, and listing them as active hid which clients had lost access).
 func (s *Server) handleAdminListMCPTokens(w http.ResponseWriter, r *http.Request) {
 	toks, err := s.store.ListAllAPITokens(r.Context())
 	if err != nil {
@@ -57,7 +58,7 @@ func (s *Server) handleAdminListMCPTokens(w http.ResponseWriter, r *http.Request
 	}
 	out := []adminMCPTokenJSON{}
 	for _, t := range toks {
-		if t.Revoked {
+		if t.Revoked || t.Expired() {
 			continue
 		}
 		out = append(out, toAdminMCPTokenJSON(t))

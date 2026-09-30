@@ -8,6 +8,7 @@ import (
 	"net/http/cookiejar"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/koduj-dev/docker-commander/internal/store"
 )
@@ -110,4 +111,35 @@ func loginAs(t *testing.T, admin *apiClient, username, password string, sections
 		t.Fatalf("%s login → %d", username, code)
 	}
 	return c
+}
+
+// TestTokenListsHideExpiredTokens: an expired token no longer authenticates, so
+// neither the admin overview ("every active API token") nor the owner's own list
+// may present it as live. A token that has not expired yet, and one that never
+// expires, both stay.
+func TestTokenListsHideExpiredTokens(t *testing.T) {
+	a := newAPI(t)
+	_, _ = a.do("POST", "/api/auth/setup", map[string]string{"username": "admin", "password": "correcthorse123"})
+
+	ctx := context.Background()
+	expired, _ := a.st.CreateAPIToken(ctx, &store.APIToken{UserID: 1, TokenHash: "hexp", Name: "expired", ExpiresAt: time.Now().Add(-time.Hour)})
+	live, _ := a.st.CreateAPIToken(ctx, &store.APIToken{UserID: 1, TokenHash: "hlive", Name: "live", ExpiresAt: time.Now().Add(24 * time.Hour)})
+	forever, _ := a.st.CreateAPIToken(ctx, &store.APIToken{UserID: 1, TokenHash: "hforever", Name: "forever"})
+
+	for _, path := range []string{"/api/mcp-admin/tokens", "/api/mcp/tokens"} {
+		code, toks := a.getJSONArray(path)
+		if code != 200 {
+			t.Fatalf("GET %s → %d", path, code)
+		}
+		seen := map[int64]bool{}
+		for _, tk := range toks {
+			seen[int64(tk["id"].(float64))] = true
+		}
+		if seen[expired] {
+			t.Errorf("%s lists an expired token as active", path)
+		}
+		if !seen[live] || !seen[forever] {
+			t.Errorf("%s dropped a working token: live=%v forever=%v", path, seen[live], seen[forever])
+		}
+	}
 }
