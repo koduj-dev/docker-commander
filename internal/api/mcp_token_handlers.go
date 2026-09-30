@@ -111,7 +111,7 @@ func (s *Server) handleListMCPTokens(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []mcpTokenJSON{}
 	for _, t := range toks {
-		if t.Revoked {
+		if t.Revoked || t.Expired() {
 			continue
 		}
 		out = append(out, toMCPTokenJSON(t))

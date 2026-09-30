@@ -682,8 +682,9 @@ export function ProjectDomainsModal({ project, onClose }: { project: Project; on
           <p className="text-xs text-muted flex items-start gap-2">
             <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-warn" />
             <span>
-              Not yet active: this records which domain should route to which service, for the embedded
-              reverse proxy planned in a future release. Nothing listens on these domains yet.
+              These domains are served only when the server runs the embedded reverse proxy
+              (<code>DC_PROXY_ENABLED=1</code> with ACME mode) and only for projects on the local host.
+              Otherwise the mapping is just recorded and nothing listens on these domains.
             </span>
           </p>
           {err && (

@@ -59,9 +59,12 @@ afterEach(() => {
 });
 
 describe("ProjectDomainsModal", () => {
-  it("says up front that nothing proxies traffic yet", async () => {
+  it("says up front what it takes for a mapping to serve traffic", async () => {
     await renderModal();
-    expect(container.textContent).toContain("Not yet active");
+    expect(container.textContent).toContain("DC_PROXY_ENABLED=1");
+    expect(container.textContent).toContain("only for projects on the local host");
+    // The proxy shipped in 1.7.0; the phase-1 wording must not come back.
+    expect(container.textContent).not.toContain("future release");
   });
 
   it("lists existing mappings with their service:port", async () => {

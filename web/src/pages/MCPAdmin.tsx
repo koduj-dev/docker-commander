@@ -170,10 +170,12 @@ export function MCPAdmin({ embedded = false }: { embedded?: boolean } = {}) {
 
         <p className="text-xs text-muted flex items-start gap-1.5">
           <ShieldCheck className="h-4 w-4 text-accent shrink-0 mt-0.5" />
+          <span>
           Tokens authenticate AI tools as their owner and never exceed that user's live permissions. Revoking a token,
           removing a client, or revoking one session takes effect immediately. Secrets are never shown here — only
           metadata. How long new tokens may live is set in <strong>Settings → Security</strong>; changing it does not
           affect the tokens listed above, so revoke here anything that should not outlive the new rule.
+          </span>
         </p>
       </div>
     </>
