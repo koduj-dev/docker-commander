@@ -79,6 +79,15 @@ every guard and the fixture traps that come with a real Docker daemon.
   could silently activate more than what gets persisted as "last deployed
   profiles".
 
+- **A non-streaming `ContainerStats` call needs `IncludePreviousSample`, or CPU
+  is a lifetime average.** The moby client sends `one-shot=true` unless you set
+  it. The daemon then returns an empty `precpu_stats`, and the usual
+  `(cpuDelta / sysDelta) * cpus * 100` is taken against zero. A container using
+  four cores shows as about 0.1%. Memory and network look fine, so it is easy to
+  miss. The old SDK call took the previous sample by default; the migration
+  (#256) lost that. The test in `internal/docker/stats_sample_test.go` fakes a
+  daemon that answers one-shot requests the way the real one does.
+
 ## HTTP timeouts and streaming
 
 - **A handler runs from the moment the HEADERS arrive, not the body.** With no
