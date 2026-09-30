@@ -623,8 +623,8 @@ export const api = {
     req<{ ok: boolean }>("PUT", `/api/projects/${id}/secrets/${encodeURIComponent(name)}`, { value }),
   deleteProjectSecret: (id: number, name: string) =>
     req<{ ok: boolean }>("DELETE", `/api/projects/${id}/secrets/${encodeURIComponent(name)}`),
-  // Domain mappings (see NEXT.md's "Per-container domain + TLS"): Phase 1
-  // only stores intent — no reverse proxy listens on these domains yet.
+  // Domain mappings: domain -> service:port, routed by the embedded reverse
+  // proxy when it is enabled (local-host projects only).
   listDomainMappings: (id: number) => req<DomainMapping[]>("GET", `/api/projects/${id}/domains`),
   createDomainMapping: (id: number, body: DomainMappingInput) =>
     req<{ id: number }>("POST", `/api/projects/${id}/domains`, body),
