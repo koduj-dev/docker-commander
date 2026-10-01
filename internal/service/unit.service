@@ -15,6 +15,11 @@ User=dockercmd
 Group=dockercmd
 SupplementaryGroups=docker
 
+# Lets the unprivileged user listen on ports below 1024, which HTTPS on 443 (and
+# the ACME tls-alpn-01 challenge) needs. This is the only capability granted:
+# nothing else is added, and NoNewPrivileges below still holds.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
 # The -data-dir flag is pinned here because it must match ReadWritePaths below.
 # Everything else (DC_ADDR, DC_REDIS_ADDR, DC_METRICS_TOKEN, …) is read from
 # /etc/docker-commander/commander.conf — the binary loads it automatically
