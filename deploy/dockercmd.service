@@ -16,8 +16,9 @@ Group=dockercmd
 SupplementaryGroups=docker
 
 # Lets the unprivileged user listen on ports below 1024, which HTTPS on 443 (and
-# the ACME tls-alpn-01 challenge) needs. This is the only capability granted:
-# nothing else is added, and NoNewPrivileges below still holds.
+# the ACME tls-alpn-01 challenge) needs. This is the only capability granted, and
+# NoNewPrivileges below still holds. Processes the server starts (docker, docker
+# compose and its plugins, ssh) inherit it too, so they could also bind a low port.
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 
 # The -data-dir flag is pinned here because it must match ReadWritePaths below.
