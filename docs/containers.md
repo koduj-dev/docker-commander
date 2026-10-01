@@ -2,103 +2,123 @@
 
 [← Manual index](README.md)
 
+Everything running on the selected host. Start and stop containers, open a shell,
+move files in and out, and see what each one costs in CPU, memory and network.
+
+A container that belongs to a stack can be managed here too, but change its
+*definition* in [Stacks](stacks.md) or [Projects](projects.md). Changes made to
+a single container are lost on the next redeploy.
+
 ![Containers](images/containers.png)
 
+## Common tasks
+
+**A container stopped responding.** Click **Restart**. If it still hangs, use
+**Kill**: it sends `SIGKILL`, so the process cannot clean up and unsaved data is
+lost. That's why it asks first.
+
+**It keeps restarting.** Open it and check **Restart count** on Overview. The
+**Logs** tab usually shows why in the last lines before each restart. If the
+logs are quiet and the memory chart climbs to the limit first, the kernel is
+killing it for running out of memory. [Events](events.md), filtered by its name,
+shows how often it happens.
+
+**It needs more memory or CPU.** Click the **Settings** (gear) button on the
+detail page. The new limit applies straight away, without a restart. For a stack
+or project container, put the limit in the compose file as well, or the next
+redeploy undoes it.
+
+**Update several containers to a newer image.** Tick them, click **Pull**. This
+only downloads the images. The containers switch to them once you **redeploy**
+the stack or project. A plain restart keeps the old image.
+
+**Copy files in or out.** Use the **Files** tab: download a file or a folder (as
+`.tar`), upload files, or upload a `.zip`/`.tar`/`.tar.gz` and unpack it in
+place.
+
+**What is really listening on this port?** On Overview, click **Probe**. It
+connects and identifies the service, which helps when it isn't on its usual port.
+
+**Keep a container you fixed by hand.** Click **Commit** to save it as a new
+image, then [push](registries.md) or [save](images.md) it. Fix the Dockerfile
+too, or the next build loses the change.
+
 ## The list
-Filter by **state** (running / stopped / all), search by name / image / id /
-state, choose a page size (10–100), and act on a
-row: **start**, **stop**, **restart**, **pause/unpause**, and **kill**. Kill sends
-SIGKILL immediately — no shutdown handler runs and nothing in flight is flushed —
-so it asks first, and is for a container that has stopped responding to Stop. Click a name
-to open the detail page.
 
-### Bulk actions
-Select several rows with the checkboxes (or the header checkbox to select every
-row currently shown) and a toolbar appears with **Start**, **Restart**,
-**Stop**, and **Pull**. All four open the app's confirm dialog first, listing
-exactly which containers are targeted — nothing runs on a single click.
+Filter by state, search by name, image, id or state, and pick a page size
+(10–100). Each row has **Start**, **Stop**, **Restart**, **Pause/Unpause** and
+**Kill**. Click a name to open the detail page.
 
-Start/Restart/Stop run with bounded parallelism, and once they finish you get
-a per-container summary: which containers succeeded and which failed, with the
-daemon's error for each failure. Pull downloads the current image for every
-selected container without touching the container itself — no restart, no
-recreate — pulling each distinct image once even when several selected
-containers share it (including the same image spelled two ways, e.g. `nginx`
-vs. `nginx:latest`), with live per-image progress; cancelling stops the
-download server-side too, not just the browser. Pull needs both the
-**containers** and **images** section, since it names containers but performs
-an images-subsystem operation (registry credentials, the shared image store)
-— holding only one of the two isn't enough. Per-host scoping for bulk actions
-isn't part of this pass — see `NEXT.md`.
+**Bulk actions.** Tick rows (the header checkbox selects the current page) to get
+**Start**, **Restart**, **Stop** and **Pull**.
 
-### Create / run
-**Create container** opens a form covering the common `docker run` options:
+- Every bulk action confirms first and lists the containers it will touch.
+- Start/Restart/Stop run a few at a time in parallel and end with a summary of
+  what succeeded and what failed, with Docker's error for each failure.
+- Pull downloads each image once, even when containers share it or spell it
+  differently (`nginx` vs `nginx:latest`). Progress is per image, and **Cancel**
+  stops the download on the server too.
+- Pull needs access to both **Containers** and **Images**, because it uses
+  registry credentials and writes to the image store.
 
-- **Image** (required) and optional **name** and **command**.
-- **Ports** — one `host:container[/proto]` per line (e.g. `8080:80`, `53:53/udp`).
-- **Env** — `KEY=VALUE` per line. **Volumes** — `src:dst[:ro]` per line.
-- **Restart policy**, **memory limit (MB)**, **CPUs**, and *start immediately*.
+**Create container** covers the common `docker run` options: image (required),
+name, command, ports (`host:container[/proto]` per line), env (`KEY=VALUE` per
+line), volumes (`src:dst[:ro]` per line), restart policy, memory limit (MB),
+CPUs, and whether to start it now. For anything you'll run again, a
+[project](projects.md) is better: its setup is saved in a compose file.
 
 ## Detail page
 
 ![Container detail](images/container_detail.png)
 
-Live **CPU** and **memory** charts plus a **history** card over 15m / 1h / 6h,
-which switches between two views: **CPU & memory** (percentages) and **Network**.
-Header actions: **Commit** (snapshot to a new image), **Settings** (rename +
-update limits/restart policy at runtime), **Export** (download the filesystem as
-a tar), **Inspect** (raw JSON), and lifecycle buttons.
+Live CPU, memory and network charts, and a history chart (15 min, 1 h, 6 h) with
+a **CPU & memory** view and a **Network** view.
 
-Tabs:
+| Button | What it does |
+|---|---|
+| **Commit** | Saves the container's filesystem as a new image. |
+| **Settings** | Rename; change memory/CPU limits and restart policy while running. |
+| **Export** | Downloads the whole filesystem as a `.tar`. |
+| **Inspect** | Docker's raw JSON for the container. |
 
-- **Overview** — status, health, command, networks, ports, mounts. Each port
-  shows a passive **guess** from its number; the **Probe** button then actively
-  connects to the published **TCP** ports and fingerprints what's *really*
-  listening (SSH, HTTP(S), TLS, SMTP, POP3, IMAP, FTP, DNS, NTP, syslog, SNMP,
-  Redis, Memcached, MongoDB, MySQL/MariaDB, PostgreSQL, MSSQL, AMQP,
-  Elasticsearch, or a raw banner) — useful when the port number doesn't match the
-  service. **UDP ports keep only the passive guess**: they cannot be
-  banner-grabbed reliably, so nothing connects to them. For SSH hosts the probe is
-  tunnelled through the same SSH connection; it only touches **your own** hosts.
-- **Logs** — live `stdout`/`stderr` tail.
-- **Console** — an interactive shell (xterm.js) into the running container.
-- **Processes** — `docker top`, refreshed periodically.
-- **Files** — a file browser: navigate directories, **create** folders,
-  **download** a file or a whole directory (as a tar), **upload** files or
-  **upload & extract** an archive (`.zip` / `.tar` / `.tar.gz`) into the current
-  directory, and delete paths. Transfers are `docker cp`; listing, creating and
-  deleting run a direct `ls`/`mkdir`/`rm` in the container — no shell is involved,
-  but the image does need those binaries. Only **Console** needs `/bin/sh`.
-  Uploads are capped at 2 GiB, and an archive that expands past 512 MiB is
-  refused.
-- **Changes** — filesystem changes since start (`docker diff`: added / modified
-  / deleted).
-- **Env** — environment variables.
+| Tab | Shows |
+|---|---|
+| **Overview** | Status, health, restart count and policy, command, networks, ports, mounts. |
+| **Logs** | Live `stdout`/`stderr`. To search many containers, use [Logs](logs.md). |
+| **Console** | A shell inside the container. Needs `/bin/sh` in the image. |
+| **Processes** | `docker top`, refreshed periodically. |
+| **Files** | Browse, create folders, upload, download, delete. |
+| **Changes** | Files added, changed or deleted since start (`docker diff`). |
+| **Env** | Environment variables. |
 
-## Network
+### Technical notes
+- **Memory limit and swap.** Setting a memory limit sets the swap limit to the
+  same value, so the container gets no extra swap. Docker would otherwise reject
+  the change when an existing swap limit is lower.
+- **Probe.** Without it, a port shows a guess from its number. Probe connects to
+  published **TCP** ports and recognises SSH, HTTP(S), TLS, SMTP, POP3, IMAP,
+  FTP, DNS, NTP, syslog, SNMP, Redis, Memcached, MongoDB, MySQL/MariaDB,
+  PostgreSQL, MSSQL, AMQP and Elasticsearch, or shows the raw banner. UDP ports
+  keep the guess, since UDP services often don't answer an unknown client. On an
+  [SSH host](hosts.md) the probe goes through the SSH connection. It only
+  connects to your own hosts.
+- **Files.** Transfers work like `docker cp`. Listing, creating and deleting run
+  `ls`, `mkdir` and `rm` in the container without a shell, so an image without
+  those binaries can't be browsed (use **Export** instead). Uploads are capped at
+  **2 GiB**, and an archive that would unpack to more than **512 MiB** is refused
+  ([Limits](limits.md)).
 
-The **Network** chart — live on this section, and as the history card's second
-view — plots throughput: the derived rate, not the raw counter, since a chart of a
-number that only ever goes up says nothing. History stores the cumulative counters
-and derives the rate at read time, which is what lets an old window be re-read
-correctly. Beneath it, the
-totals since the container started, with packets, **dropped** and **errors**
-called out: those are usually zero, and on the day they are not they are often
-the only visible sign of the problem.
+### Network
+- Docker only reports counters that grow from container start, so the chart
+  shows the rate calculated from them. History stores the
+  counters and calculates the rate on read, so old windows stay correct. A
+  recreated container restarts its counters, which shows as a gap, not a spike.
+- **Dropped** and **errors** are shown under the chart because they are normally zero,
+  and when they aren't, they're often the only sign of a network problem.
+- **Several interfaces** are summed, with the count shown. Docker doesn't say
+  which network each interface belongs to, so per-network figures live on the
+  [network detail](networks.md), where that is known.
 
-With more than one interface you get the **count**, not a per-interface table.
-Docker reports interface names (`eth0`, `eth1`…) and **does not say which Docker
-network each belongs to** — mapping that reliably needs MAC/namespace inspection,
-which is Linux-only and awkward on remote hosts. A per-interface split would
-therefore invite a question it cannot answer, so the aggregate is what you get
-here; the per-network figures live on the [network detail](networks.md), where
-the attachment is known.
-
-> A **counter reset** (the container was recreated) shows as a gap at zero rather
-> than a negative rate or a phantom spike.
-
-## Tips
-- **Commit** is handy to capture a debugged container as an image you can then
-  [push](registries.md) or [save](images.md).
-- A **read-only** user can view everything here but the action buttons (start,
-  exec, upload, delete…) are blocked. See [Users & roles](users.md).
+## Permissions
+A **read-only** user sees everything here, but all actions are blocked. See
+[Users & roles](users.md).
