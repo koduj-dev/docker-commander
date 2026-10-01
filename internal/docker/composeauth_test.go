@@ -15,10 +15,13 @@ import (
 // configDirFromEnv returns the dir a DOCKER_CONFIG= env entry points at.
 func configDirFromEnv(t *testing.T, env []string) string {
 	t.Helper()
-	if len(env) != 1 || !strings.HasPrefix(env[0], "DOCKER_CONFIG=") {
-		t.Fatalf("want exactly one DOCKER_CONFIG entry, got %v", env)
+	for _, e := range env {
+		if v, ok := strings.CutPrefix(e, "DOCKER_CONFIG="); ok {
+			return v
+		}
 	}
-	return strings.TrimPrefix(env[0], "DOCKER_CONFIG=")
+	t.Fatalf("no DOCKER_CONFIG entry in %v", env)
+	return ""
 }
 
 type cliConfig struct {
@@ -47,7 +50,7 @@ func basicAuth(user, pass string) string {
 
 // With nothing stored, compose runs exactly as before: no env, no temp dir.
 func TestComposeRegistryEnvWithNoCredentialsChangesNothing(t *testing.T) {
-	env, cleanup, err := ComposeRegistryEnv(nil)
+	env, cleanup, _, err := ComposeRegistryEnv(nil)
 	defer cleanup()
 	if err != nil || env != nil {
 		t.Fatalf("want no env and no error, got %v, %v", env, err)
@@ -70,7 +73,7 @@ func TestComposeRegistryEnvMergesOverTheUsersConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	env, cleanup, err := ComposeRegistryEnv([]store.RegistryAuth{
+	env, cleanup, _, err := ComposeRegistryEnv([]store.RegistryAuth{
 		{Address: "ghcr.io", Username: "bot", Password: "s3cret"},
 	})
 	if err != nil {
@@ -103,7 +106,7 @@ func TestComposeRegistryEnvMergesOverTheUsersConfig(t *testing.T) {
 // Docker Hub is filed under the CLI's own key, whatever alias it was stored as.
 func TestComposeRegistryEnvFilesDockerHubUnderTheCLIKey(t *testing.T) {
 	t.Setenv("DOCKER_CONFIG", t.TempDir())
-	env, cleanup, err := ComposeRegistryEnv([]store.RegistryAuth{
+	env, cleanup, _, err := ComposeRegistryEnv([]store.RegistryAuth{
 		{Address: "index.docker.io", Username: "me", Password: "tok"},
 	})
 	if err != nil {
@@ -119,7 +122,7 @@ func TestComposeRegistryEnvFilesDockerHubUnderTheCLIKey(t *testing.T) {
 // PENTEST: the file holds passwords. It must be private, and gone after cleanup.
 func TestPentestComposeRegistryConfigIsPrivateAndRemoved(t *testing.T) {
 	t.Setenv("DOCKER_CONFIG", t.TempDir())
-	env, cleanup, err := ComposeRegistryEnv([]store.RegistryAuth{
+	env, cleanup, _, err := ComposeRegistryEnv([]store.RegistryAuth{
 		{Address: "registry.example.com", Username: "u", Password: "p"},
 	})
 	if err != nil {
@@ -151,7 +154,7 @@ func TestComposeRegistryEnvKeepsPluginsAndCleansOnlyItsOwnDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	env, cleanup, err := ComposeRegistryEnv([]store.RegistryAuth{{Address: "ghcr.io", Username: "u", Password: "p"}})
+	env, cleanup, _, err := ComposeRegistryEnv([]store.RegistryAuth{{Address: "ghcr.io", Username: "u", Password: "p"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +181,7 @@ func TestPentestComposeRegistryEnvIgnoresAConfigInTheWorkingDir(t *testing.T) {
 	t.Setenv("DOCKER_CONFIG", "")
 	t.Setenv("HOME", "")
 
-	env, cleanup, err := ComposeRegistryEnv([]store.RegistryAuth{{Address: "ghcr.io", Username: "u", Password: "p"}})
+	env, cleanup, _, err := ComposeRegistryEnv([]store.RegistryAuth{{Address: "ghcr.io", Username: "u", Password: "p"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,21 +195,24 @@ func TestPentestComposeRegistryEnvIgnoresAConfigInTheWorkingDir(t *testing.T) {
 	}
 }
 
-// A user config that isn't valid JSON fails the run instead of being replaced,
-// and leaves no temp dir behind.
-func TestComposeRegistryEnvRefusesACorruptConfig(t *testing.T) {
+// A user config that isn't valid JSON doesn't stop the deploy: the Docker CLI
+// only warns about it, and so do we. The stored credential is still used.
+func TestComposeRegistryEnvWarnsAboutACorruptConfigAndCarriesOn(t *testing.T) {
 	src := t.TempDir()
 	t.Setenv("DOCKER_CONFIG", src)
 	if err := os.WriteFile(filepath.Join(src, "config.json"), []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := filepath.Glob(filepath.Join(os.TempDir(), "dc-docker-config-*"))
-	if _, _, err := ComposeRegistryEnv([]store.RegistryAuth{{Address: "ghcr.io", Username: "u", Password: "p"}}); err == nil {
-		t.Fatal("a corrupt config.json was accepted")
+	env, cleanup, warnings, err := ComposeRegistryEnv([]store.RegistryAuth{{Address: "ghcr.io", Username: "u", Password: "p"}})
+	if err != nil {
+		t.Fatalf("a corrupt user config failed the run: %v", err)
 	}
-	after, _ := filepath.Glob(filepath.Join(os.TempDir(), "dc-docker-config-*"))
-	if len(after) > len(before) {
-		t.Error("a temp config dir was left behind after an error")
+	defer cleanup()
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "not valid JSON") {
+		t.Fatalf("want one warning about the invalid JSON, got %v", warnings)
+	}
+	if got := readCLIConfig(t, configDirFromEnv(t, env)).Auths["ghcr.io"]["auth"]; got != basicAuth("u", "p") {
+		t.Fatalf("the stored credential is missing: %q", got)
 	}
 }
 
@@ -239,7 +245,7 @@ func TestComposeRegistryEnvToleratesNullsInTheUsersConfig(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(src, "config.json"), []byte(cfg), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			env, cleanup, err := ComposeRegistryEnv([]store.RegistryAuth{{Address: "ghcr.io", Username: "u", Password: "p"}})
+			env, cleanup, _, err := ComposeRegistryEnv([]store.RegistryAuth{{Address: "ghcr.io", Username: "u", Password: "p"}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -255,7 +261,7 @@ func TestComposeRegistryEnvToleratesNullsInTheUsersConfig(t *testing.T) {
 // Images page uses (AuthForHost), so deploys and pulls agree.
 func TestComposeRegistryEnvUsesTheOldestEntryForARegistry(t *testing.T) {
 	t.Setenv("DOCKER_CONFIG", t.TempDir())
-	env, cleanup, err := ComposeRegistryEnv([]store.RegistryAuth{
+	env, cleanup, _, err := ComposeRegistryEnv([]store.RegistryAuth{
 		{Address: "ghcr.io", Username: "first", Password: "1"},
 		{Address: "ghcr.io", Username: "second", Password: "2"},
 	})
@@ -265,5 +271,77 @@ func TestComposeRegistryEnvUsesTheOldestEntryForARegistry(t *testing.T) {
 	defer cleanup()
 	if got := readCLIConfig(t, configDirFromEnv(t, env)).Auths["ghcr.io"]["auth"]; got != basicAuth("first", "1") {
 		t.Fatalf("want the oldest entry, got %q", got)
+	}
+}
+
+// A relative DOCKER_CONFIG still yields working links: the plugin is reachable
+// through the temp dir, not resolved against it.
+func TestComposeRegistryEnvLinksWorkWithARelativeDockerConfig(t *testing.T) {
+	base := t.TempDir()
+	t.Chdir(base)
+	plugin := filepath.Join(base, "relative", "cli-plugins", "docker-compose")
+	if err := os.MkdirAll(filepath.Dir(plugin), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(plugin, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DOCKER_CONFIG", "relative")
+
+	env, cleanup, _, err := ComposeRegistryEnv([]store.RegistryAuth{{Address: "ghcr.io", Username: "u", Password: "p"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if _, err := os.Stat(filepath.Join(configDirFromEnv(t, env), "cli-plugins", "docker-compose")); err != nil {
+		t.Fatalf("the plugin isn't reachable through a relative DOCKER_CONFIG: %v", err)
+	}
+}
+
+// An inherited DOCKER_AUTH_CONFIG is read by the CLI before config.json. It is
+// passed on with the stored credential laid over it, and other registries kept.
+func TestComposeRegistryEnvOverridesAnInheritedDockerAuthConfig(t *testing.T) {
+	t.Setenv("DOCKER_CONFIG", t.TempDir())
+	t.Setenv("DOCKER_AUTH_CONFIG", `{"auths":{"ghcr.io":{"auth":"`+basicAuth("wrong", "wrong")+`"},"quay.io":{"auth":"`+basicAuth("q", "q")+`"}}}`)
+
+	env, cleanup, _, err := ComposeRegistryEnv([]store.RegistryAuth{{Address: "ghcr.io", Username: "bot", Password: "s3cret"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	var v string
+	for _, e := range env {
+		if s, ok := strings.CutPrefix(e, "DOCKER_AUTH_CONFIG="); ok {
+			v = s
+		}
+	}
+	var got struct {
+		Auths map[string]map[string]string `json:"auths"`
+	}
+	if err := json.Unmarshal([]byte(v), &got); err != nil {
+		t.Fatalf("no usable DOCKER_AUTH_CONFIG passed on (%q): %v", v, err)
+	}
+	if got.Auths["ghcr.io"]["auth"] != basicAuth("bot", "s3cret") {
+		t.Errorf("the inherited entry still wins for ghcr.io: %v", got.Auths["ghcr.io"])
+	}
+	if got.Auths["quay.io"]["auth"] != basicAuth("q", "q") {
+		t.Errorf("an unrelated inherited entry was lost: %v", got.Auths)
+	}
+}
+
+// A DOCKER_AUTH_CONFIG the CLI would reject (unknown field) is not rewritten
+// into one it accepts.
+func TestComposeRegistryEnvLeavesAnInvalidDockerAuthConfigAlone(t *testing.T) {
+	t.Setenv("DOCKER_CONFIG", t.TempDir())
+	t.Setenv("DOCKER_AUTH_CONFIG", `{"auths":{},"credsStore":"x"}`)
+	env, cleanup, _, err := ComposeRegistryEnv([]store.RegistryAuth{{Address: "ghcr.io", Username: "u", Password: "p"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	for _, e := range env {
+		if strings.HasPrefix(e, "DOCKER_AUTH_CONFIG=") {
+			t.Fatalf("an invalid DOCKER_AUTH_CONFIG was turned into a valid one: %s", e)
+		}
 	}
 }

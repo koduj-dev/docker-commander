@@ -30,7 +30,7 @@ func TestDuplicateRegistriesResolveToTheOldest(t *testing.T) {
 	if err != nil || a.Username != "first" {
 		t.Fatalf("AuthForHost = %+v, %v; want the oldest entry", a, err)
 	}
-	all, err := st.AllRegistryAuths(ctx)
+	all, _, err := st.AllRegistryAuths(ctx)
 	if err != nil || len(all) != 2 || all[0].Username != "first" {
 		t.Fatalf("AllRegistryAuths = %+v, %v; want the oldest first", all, err)
 	}

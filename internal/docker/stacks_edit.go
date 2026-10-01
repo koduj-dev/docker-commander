@@ -298,18 +298,14 @@ func (m *Manager) StackRedeploy(ctx context.Context, hostID int64, project strin
 
 	switch t.host.Kind {
 	case "local", "":
-		auths, err := m.store.AllRegistryAuths(ctx)
-		if err != nil {
-			return "", fmt.Errorf("load registry credentials: %w", err)
-		}
-		env, cleanup, err := ComposeRegistryEnv(auths)
+		env, cleanup, warnings, err := RegistryEnvFromStore(ctx, m.store)
 		if err != nil {
 			return "", err
 		}
 		defer cleanup()
 		out, err := runComposeFiles(ctx, t.workDir, t.stack.Project, env,
 			[]string{t.path}, "up", "-d", "--build")
-		return out, err
+		return warningLines(warnings) + out, err
 	case "ssh":
 		// Here compose runs on the host itself, over SSH, and logs in with that
 		// host's own `docker login`. Stored credentials are deliberately not
@@ -333,8 +329,8 @@ func sshStackRedeploy(run func(cmd string) (string, error), workDir, project, pa
 
 // sshRegistryNote heads the output of a stack redeploy on an SSH host.
 const sshRegistryNote = "Note: this stack's `docker compose` runs on the SSH host itself, so private " +
-	"images are pulled with that host's own `docker login`. Credentials stored under " +
-	"Registries are not sent to other machines.\n\n"
+	"images are pulled with that host's own `docker login`. This redeploy doesn't copy the " +
+	"credentials stored under Registries to that host.\n\n"
 
 // sshRun runs a command on the stack's host and returns its combined output.
 func (m *Manager) sshRun(ctx context.Context, t *stackTarget, cmd string) (string, error) {

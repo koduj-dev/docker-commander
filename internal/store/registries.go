@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 )
@@ -140,13 +139,15 @@ func NormalizeRegistryHost(host string) string {
 
 // AllRegistryAuths returns every stored credential, decrypted, for handing to a
 // `docker compose` run. They come oldest first: when two entries share a
-// registry, the oldest one is the one used, here and in AuthForHost alike. A row that can't be decrypted is an error rather than
-// skipped: a deploy that silently lost one credential would fail later with a
-// registry 401 that points nowhere near the cause.
-func (s *Store) AllRegistryAuths(ctx context.Context) ([]RegistryAuth, error) {
+// registry, the oldest one is the one used, here and in AuthForHost alike.
+//
+// A row that can't be decrypted is skipped and named in skipped, rather than
+// failing every deploy: one broken entry must not stop projects that never use
+// that registry. The caller shows the names, so a later 401 has an explanation.
+func (s *Store) AllRegistryAuths(ctx context.Context) (auths []RegistryAuth, skipped []string, err error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT address, username, secret_enc FROM registries ORDER BY id`)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	type row struct{ address, username, enc string }
 	var raw []row
@@ -154,28 +155,30 @@ func (s *Store) AllRegistryAuths(ctx context.Context) ([]RegistryAuth, error) {
 		var r row
 		if err := rows.Scan(&r.address, &r.username, &r.enc); err != nil {
 			rows.Close()
-			return nil, err
+			return nil, nil, err
 		}
 		raw = append(raw, r)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	out := make([]RegistryAuth, 0, len(raw))
+	auths = make([]RegistryAuth, 0, len(raw))
 	for _, r := range raw {
 		a := RegistryAuth{Address: r.address, Username: r.username}
 		if r.enc != "" {
 			if s.cipher == nil {
-				return nil, errors.New("store: cipher not configured")
+				skipped = append(skipped, r.address)
+				continue
 			}
 			pw, err := s.cipher.Decrypt(r.enc)
 			if err != nil {
-				return nil, fmt.Errorf("decrypt registry %s: %w", r.address, err)
+				skipped = append(skipped, r.address)
+				continue
 			}
 			a.Password = pw
 		}
-		out = append(out, a)
+		auths = append(auths, a)
 	}
-	return out, nil
+	return auths, skipped, nil
 }

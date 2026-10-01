@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
@@ -44,7 +45,7 @@ func TestComposePullsAPrivateImageWithStoredCredentials(t *testing.T) {
 	}
 
 	_, ref, auth := privateRegistry(t, ctx)
-	env, cleanup, err := ComposeRegistryEnv([]store.RegistryAuth{auth})
+	env, cleanup, _, err := ComposeRegistryEnv([]store.RegistryAuth{auth})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +109,7 @@ func privateRegistry(t *testing.T, ctx context.Context) (addr, ref string, auth 
 	t.Setenv("DOCKER_CONFIG", userCfg)
 
 	auth = store.RegistryAuth{Address: addr, Username: "dctest", Password: "pw-123"}
-	env, cleanup, err := ComposeRegistryEnv([]store.RegistryAuth{auth})
+	env, cleanup, _, err := ComposeRegistryEnv([]store.RegistryAuth{auth})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +153,18 @@ func TestIntegrationStackRedeployUsesStoredCredentials(t *testing.T) {
 	if out, err := dockerCLI(ctx, nil, "image", "inspect", "registry:2", "busybox:latest"); err != nil {
 		t.Skipf("needs registry:2 and busybox:latest locally: %s", out)
 	}
+	// One credential saved under another key, which can't be decrypted: the
+	// redeploy must go ahead and say so in its output.
+	oldKey, err := crypto.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.store.SetCipher(oldKey)
+	if _, err := m.store.CreateRegistry(ctx, "broken", "quay.io", "x", "y"); err != nil {
+		t.Fatal(err)
+	}
 	key := make([]byte, 32)
+	key[0] = 1
 	cph, err := crypto.New(key)
 	if err != nil {
 		t.Fatal(err)
@@ -178,7 +190,7 @@ func TestIntegrationStackRedeployUsesStoredCredentials(t *testing.T) {
 	})
 
 	// Create the stack with the real CLI so its labels are genuine.
-	env, cleanup, err := ComposeRegistryEnv([]store.RegistryAuth{auth})
+	env, cleanup, _, err := ComposeRegistryEnv([]store.RegistryAuth{auth})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +200,47 @@ func TestIntegrationStackRedeployUsesStoredCredentials(t *testing.T) {
 		t.Fatalf("could not create the stack: %v\n%s", err, out)
 	}
 
-	if out, err := m.StackRedeploy(ctx, 0, slug); err != nil {
+	out, err = m.StackRedeploy(ctx, 0, slug)
+	if err != nil {
 		t.Fatalf("StackRedeploy didn't use the stored credentials: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Warning: the stored credential for quay.io could not be decrypted") {
+		t.Errorf("the skipped credential isn't named in the redeploy output:\n%s", out)
+	}
+}
+
+// End to end: a wrong credential for the same registry in an inherited
+// DOCKER_AUTH_CONFIG must not beat the stored one.
+func TestComposeStoredCredentialBeatsDockerAuthConfig(t *testing.T) {
+	if testing.Short() {
+		t.Skip("docker integration test; skipped under -short")
+	}
+	ctx := context.Background()
+	if !ComposeAvailable(ctx) {
+		t.Skip("docker compose not available")
+	}
+	if out, err := dockerCLI(ctx, nil, "image", "inspect", "registry:2", "busybox:latest"); err != nil {
+		t.Skipf("needs registry:2 and busybox:latest locally: %s", out)
+	}
+	addr, ref, auth := privateRegistry(t, ctx)
+	wrong := base64.StdEncoding.EncodeToString([]byte("dctest:wrong-password"))
+	t.Setenv("DOCKER_AUTH_CONFIG", `{"auths":{"`+addr+`":{"auth":"`+wrong+`"}}}`)
+
+	env, cleanup, _, err := ComposeRegistryEnv([]store.RegistryAuth{auth})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	dir := t.TempDir()
+	compose := fmt.Sprintf("services:\n  app:\n    image: %s\n", ref)
+	if err := os.WriteFile(filepath.Join(dir, "compose.yml"), []byte(compose), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	project := fmt.Sprintf("dctest-regauth-env-%d", time.Now().UnixNano())
+	if out, err := runComposeFiles(ctx, dir, project, nil, nil, "pull"); err == nil {
+		t.Fatalf("the wrong env credential let the pull through, so this test proves nothing: %s", out)
+	}
+	if out, err := runComposeFiles(ctx, dir, project, env, nil, "pull"); err != nil {
+		t.Fatalf("the inherited DOCKER_AUTH_CONFIG beat the stored credential: %v: %s", err, out)
 	}
 }
