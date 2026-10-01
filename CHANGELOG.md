@@ -338,6 +338,10 @@ All notable changes to Docker Commander are documented here. The format follows
   on Windows) rather than just failing.
 
 ### Fixed
+- **The Audit log shows each entry's detail and host.** Both were recorded and
+  returned by the API but never displayed, so the page couldn't say how a
+  sign-in happened or on which server a container was stopped. The search now
+  covers them too. A host the account can't see is shown by its id.
 - **`dockercmd --backup` includes the project revision snapshots**
   (`project-revisions/`). Before, a restored database could list a revision whose
   snapshot was missing. Revision numbers are now assigned in a transaction, so two
