@@ -459,7 +459,8 @@ mint themselves an admin session. Guard the data dir accordingly.
 ## Backup & restore
 
 Everything the installation needs lives under the **data dir**: the SQLite
-database plus `projects/` and `project-templates/`. Both secret keys — the session
+database plus `projects/`, `project-templates/` and `project-revisions/` (the
+file snapshot of every deploy revision). Both secret keys — the session
 signing secret and the at-rest encryption key — are rows *inside that database*, so
 a backup is self-contained and restores onto a fresh machine as-is.
 
