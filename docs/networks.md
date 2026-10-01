@@ -2,79 +2,107 @@
 
 [← Manual index](README.md)
 
+The Docker networks on the selected host, and a graph of which containers sit on
+which network. For a container's own traffic, open its
+[detail page](containers.md#network).
+
 ![Networks](images/networks.png)
 
-## Networks
-A card per network with driver, scope, subnets, an **internal / external** flag
-and the attached-container count. Search and filter (**in use / unused /
-internal / all**) as elsewhere.
+## Common tasks
 
-- **Create** (header) — a user-defined network: name, **driver** (default
-  `bridge`), optional **subnet** / **gateway**, and the **internal** (no external
-  connectivity) and **attachable** (containers outside a compose stack can join)
-  flags.
-- **Prune unused** (header) — remove every network not used by any container.
+**Let two containers talk to each other.** Create a network, or open an existing
+one, and click **Connect** for each container. Containers on the same
+user-defined network can reach each other.
+
+**Find a container's IP.** Open the network and look at the **List** view. It
+shows each container's IP on that network and its published ports.
+
+**Remove a network.** Disconnect its containers first, using the per-row
+**disconnect** in the network detail. The daemon refuses a network that still has
+containers attached.
+
+**Isolate a backend from the internet.** Create the network with **Internal**
+ticked. Containers on it get no external connectivity.
+
+**See what a stack is connected to.** Open **Topology** and pick the stack in
+the **stack** dropdown.
+
+## Networks
+A card per network with driver, scope, subnets, an **internal** or **external**
+badge and the
+attached-container count. Search and filter (**in use, unused, internal, all**) as
+elsewhere.
+
+- **Create** (header): a user-defined network with a name, a **driver** (default
+  `bridge`), an optional **subnet** and **gateway**, and two flags. **Internal**
+  means no external connectivity. **Attachable** lets containers outside a
+  compose stack join.
+- **Prune unused** (header): removes every network not used by any container.
 
 ### Network detail
 
 ![Network detail](images/network_detail.png)
 
-Click a card to open its detail modal, which shows the network's attached
-containers as a **list** or a **graph** (toggle, top-right):
+Click a card to open its detail. It shows the attached containers as a **list**
+or a **graph** (toggle, top-right).
 
-- **List** (default) — a compact table: state, image, stack, **published ports**
-  and the container's **IP** on this network, with a per-row **disconnect**.
-- **Graph** — the network and its containers as an interactive force-directed
-  diagram (the same renderer as the Topology page).
+| Control | What it does |
+|---|---|
+| **List** (default) | A compact table: state, image, stack, **published ports** and the container's **IP** on this network, with a **disconnect** per row. |
+| **Graph** | The network and its containers as an interactive diagram, drawn like the Topology page. |
+| **Connect** | Attaches any container not already on the network. |
+| **Inspect** | Docker's raw JSON. |
+| **Remove** | Deletes the network. Predefined networks (`bridge`, `host`, `none`) can't be removed. |
 
-  ![Network detail — graph view](images/network_detail_graph.png)
+![Network detail — graph view](images/network_detail_graph.png)
 
-- **Connect** — attach any container not already on the network.
-- **Inspect** (raw JSON) and **Remove**. Predefined networks (`bridge`, `host`,
-  `none`) can't be removed; the daemon also refuses a network that still has
-  containers attached — disconnect them first.
+The detail also shows **Endpoint traffic**: RX and TX totals summed from the
+attached containers. See [Endpoint traffic](#endpoint-traffic) for what that
+number does and doesn't mean.
 
 ## Topology
 
 ![Topology](images/topology.png)
 
-An interactive graph of **containers ↔ networks** (React Flow), laid out with a
-force-directed simulation so containers cluster around their networks and the
-whole graph spreads across the width (rather than one tall column).
+An interactive graph of **containers and networks**. Containers cluster around
+their networks, and the graph spreads across the width instead of one tall
+column.
 
-- **Pan / zoom**, drag nodes to rearrange (edges re-route cleanly), and use the
+- **Pan and zoom**, drag nodes to rearrange (edges re-route cleanly), and use the
   controls bottom-left, the minimap, or the **fullscreen** button top-right.
 - Click a container node to jump to its [detail page](containers.md).
-- **Find container** search (name / image / stack) narrows the graph to the
-  matches and the networks they're on; a **stack** dropdown filters to a single
-  compose project. A badge shows the current node count.
-- Toggles: **Hide empty networks** and **Show stopped** — both default to a clean
-  view (running containers, non-empty networks); the filters persist across
-  reloads.
-- **List view** (toggle, top-right) — a dense, filterable table of containers
-  (state, image, stack, ports, networks) as a legible fallback at scale.
+- **Find container** (name, image or stack) narrows the graph to the matches and
+  the networks they're on. The **stack** dropdown filters to a single compose
+  project. A badge shows the current node count.
+- **Hide empty** (graph only) and **Show stopped** toggles. The default is a
+  clean view: running containers and non-empty networks. The toggles, stack and
+  view persist across reloads; the search does not.
+- **List view** (toggle, top-right): a dense, filterable table of containers
+  (state, image, stack, ports, networks). Easier to read on a large host.
+
+On a busy host, use the search, the stack filter or the list view. Empty networks
+are hidden automatically while a filter is active.
 
 ## Endpoint traffic
-
-Docker does **not** report per-network counters. `/containers/{id}/stats` is keyed
-by *interface* name (`eth0`, `eth1`…) and carries no network identity on Linux —
-the API has an `endpoint_id` field, but the daemon only fills it on Windows.
-`docker stats` itself shows a single aggregate `NET I/O` column for the same
-reason.
-
-So the network detail sums the attached containers' own totals, and says two
-things plainly rather than presenting a confident wrong number:
+Docker does **not** report per-network counters, so the network detail sums the
+attached containers' own totals. It says two things plainly instead of showing a
+confident wrong number:
 
 - It is **endpoint** traffic, not network traffic. Container-to-container traffic
-  inside the network is counted **twice** — once as one side's TX and once as the
+  inside the network is counted **twice**: once as one side's TX and once as the
   other's RX.
 - A container attached to **several** networks has counters covering all of them,
-  and Docker gives no way to split them. Those containers are listed but excluded
-  from the totals, and the count of excluded ones is shown.
+  and Docker gives no way to split them. Those containers are listed but left out
+  of the totals, and the number left out is shown.
 
-A container attached to exactly **one** network is unambiguous, which is the common
-case and what makes the number useful at all.
+A container attached to exactly **one** network is unambiguous. That is the
+common case, and it is what makes the number useful at all.
 
-## Tips
-- On a busy host, use the search / stack filter or the list view; empty networks
-  are hidden automatically while a filter is active.
+### Technical notes
+- **Why no per-network counters.** `/containers/{id}/stats` is keyed by
+  *interface* name (`eth0`, `eth1`…) and carries no network identity on Linux. The
+  API has an `endpoint_id` field, but the daemon only fills it on Windows.
+  `docker stats` itself shows a single aggregate `NET I/O` column for the same
+  reason.
+- **Graph layout.** The graph uses React Flow with a force-directed layout. The
+  network detail graph uses the same renderer as the Topology page.
