@@ -2,167 +2,184 @@
 
 [← Manual index](README.md)
 
-_Admin only._ Manage accounts and what each can do.
+_Admin only._ Create accounts and decide what each one can do, on which hosts.
+To see your own access or manage your own sign-in, use [Your profile](profile.md).
 
 ![Users & roles](images/users.png)
 
+## Common tasks
+
+**Give a colleague read-only access to one host's containers.** On **Roles**,
+click **New role**, set **Containers** to **read** and pick that host under
+**Hosts**. Then create the user on **Accounts** and assign the role. Don't also
+tick Containers among the account's own sections: those carry no host scope and
+would reach every host.
+
+**Make a role that is almost Operator.** Built-in roles can't be edited. Click
+**Duplicate** on **Operator**, then change the copy. Members of the original are
+not affected.
+
+**Take access away now.** Use **Edit access** to remove the role or section.
+It applies on the user's next request, because nothing is cached in their
+session.
+
+**Make someone read-only everywhere.** Tick the account's **read-only** flag. It
+caps every grant to reads, and no writable role can lift it.
+
+**Reset a forgotten password.** Use **Reset password**. It also signs the user
+out of every session. Their second factor stays as it is: no admin can reset
+another account's 2FA, so they still need their authenticator or passkey.
+
+**Let the directory decide access.** Map LDAP groups to roles in
+[Settings → LDAP](settings.md). See [Roles from LDAP groups](#roles-from-ldap-groups).
+
 ## Account types
-- **admin** — full access plus administration (users, roles, settings, all hosts).
-- **user** — limited to what you grant, and optionally **read-only** for the whole
-  account (can view, but every mutating action — start/stop, exec, upload, delete,
-  create… — is blocked).
 
-## Named roles
-A **role** is a reusable bundle of section grants, so you don't tick fourteen
-checkboxes per account. Each section in a role is either **read-only** or
-**writable**, which is finer-grained than the account-level read-only flag.
+| Type | Access |
+|---|---|
+| **admin** | Everything, plus administration: users, roles, settings, all hosts. |
+| **user** | Only what you grant. Can be marked **read-only** for the whole account: it can view, but every change (start/stop, exec, upload, delete, create…) is blocked. |
 
-Two roles ship built in and cannot be edited — **Duplicate** one to make an
-editable copy, the same way [project templates](projects.md#managing-templates)
-work:
+## Managing accounts
+
+- **New user**: username, password (at least 10 characters), account type,
+  read-only flag, any **roles**, and optional per-account **sections**
+  (checkboxes matching the menu).
+- **Edit access**: change type, read-only, roles or sections later. Revoking a
+  role is immediate.
+- **Reset password**: set a new password. All of the user's sessions end.
+- **Delete**: you can't delete your own account or the last admin. You also
+  can't demote the last admin.
+
+## Roles
+
+A **role** is a reusable set of section grants, so you don't tick fourteen
+checkboxes per account. Each section in a role is **read-only** or **writable**,
+which is finer than the account-level read-only flag.
+
+Two roles are built in. They can't be edited; **Duplicate** one to get an
+editable copy, as with [project templates](projects.md#managing-templates).
 
 | Role | Grants |
 |---|---|
 | **Viewer** | Every section, read-only. |
-| **Operator** | Day-to-day work — containers, projects, images, volumes, networks, topology, logs, events, alerts, diagnostics — writable. Deliberately **not** hosts, registries or the audit log, which are authority over the installation itself. |
+| **Operator** | Day-to-day work, writable: containers, projects, images, volumes, networks, topology, logs, events, alerts, diagnostics. Not hosts, registries or the audit log. Those are authority over the installation itself. |
 
-A user can hold several roles, and can still have per-account sections on top.
-Their **effective access** is the union, so the more permissive grant wins.
+Manage roles on the **Roles** tab. Each card shows the role's grants, how many
+accounts hold it, whether it is limited to specific hosts, and whether it is
+built in or yours. The editor shows all fourteen sections, each set to **—**
+(not granted), **read** or **write**. Built-in roles open read-only.
 
-> Only an **admin** can create, edit or assign roles. Anyone able to edit a role
+A user can hold several roles and still have per-account sections on top. The
+**effective access** is the union, so the more permissive grant wins.
+
+> Only an **admin** can create, edit or assign roles. Anyone who could edit a role
 > could widen their own access, so no combination of section grants reaches role
 > management.
 
-Manage them on **Users & roles → Roles**. Each card shows the role's grants, how
-many accounts hold it, whether it's limited to specific hosts, and whether it's
-built-in or yours. The editor sets every
-section to **—** (not granted), **read** or **write**, with all fourteen visible at
-once. Built-in roles open read-only — use **Duplicate** for an editable copy.
-
-## Managing accounts
-- **New user** — username, password (min 10 chars), account type, read-only flag,
-  any **roles**, and optionally per-account **sections** (checkboxes matching the
-  menu).
-- **Edit access** — change type / read-only / roles / sections later. Changes take
-  effect on the user's **next request** — nothing is cached in their session, so
-  revoking a role is immediate.
-- **Reset password** — set a new password.
-- **Delete** — with guards: you can't delete your own account or the last admin,
-  and you can't demote the last admin.
-
 ## Limiting a role to specific hosts
-A role can be limited to a set of Docker hosts, so *"may restart containers"* can
-mean *"on staging, not production"*. Pick the hosts in the role editor.
 
-- **An empty host list means every host.** That's the backwards-compatible
-  default: every role and account keeps exactly the reach it had before scoping
-  existed, and a role you create without thinking about hosts isn't silently
-  scoped to nothing.
-- **The local daemon is always in scope.** Making it scopeable would let a
-  single-host install lock itself out of its own Docker.
-- **Scope is per grant, and grants union.** Hold *Operator on staging* and
-  *Viewer everywhere* and you read everywhere but change only staging. Sections
-  granted directly on your account carry no scope — they reach every host, as they
-  always did.
-- The **read-only flag still caps everything**: being in scope decides *where*,
-  not *what*.
+A role can be limited to a set of Docker hosts. Then *"may restart containers"*
+can mean *"on staging, not production"*. Pick the hosts in the role editor.
 
-Your own profile page shows the resulting reach per section under **Where**.
+- **An empty host list means every host.** Existing roles and accounts keep the
+  reach they had before scoping existed, and a new role isn't silently scoped to
+  nothing.
+- **The local daemon is always in scope.** Otherwise a single-host install could
+  lock itself out of its own Docker.
+- **Scope is per grant, and grants combine.** With *Operator on staging* and
+  *Viewer everywhere*, you read everywhere but change only staging. Sections
+  granted directly on the account have no scope and reach every host.
+- **The read-only flag still caps everything.** Scope decides *where*, not *what*.
+
+The user's [profile](profile.md) shows the resulting reach per section under
+**Where**.
 
 Scoping **hides as well as blocks**. A host outside your scope doesn't appear in
-the host list, its projects aren't listed, its alerts don't reach your feed (nor
-the unread badge), its entries don't appear in the audit log, and a container's
-metrics history is refused even if you know the container id. The per-host views —
-dashboard counts, disk usage, published ports, topology, the events feed — are
-each authorized against the host they name.
-
-That holds for objects addressed by **id** as well, not only for views that name a
-host: a project, a host record, an alert. Those resolve the host from the record
-itself and authorize against it, so knowing an id buys nothing — ids are
-sequential, and a record you can't reach answers exactly like one that doesn't
-exist. Being able to *see* something and being allowed to *change* it stay
-separate, though: a read-only grant on a visible project is told **403**, not 404,
-because pretending it vanished would only mislead the person looking at it.
-
-> **The one thing scoping still doesn't cover.** The **alert engine** watches every
-> host by design: it is background work with no user context. So if a rule lists
-> you as an e-mail recipient, you can receive mail about a host you can't see in
-> the app. That's a property of how you configure recipients, not something the
-> app decides per viewer — set the rule's recipients accordingly.
-
-## How enforcement works
-Permissions are checked on the server for every request: the path maps to a
-section, and a non-admin must have that section granted — with **write** access
-for mutating calls. The menu also hides what you can't reach. Globally
-[disabled sections](settings.md) are hidden and blocked for everyone.
-
-The order the rules apply in, which matters when they disagree:
-
-1. **admin** bypasses section, read-only and host checks.
-2. Grants are the **union** of the account's roles and its own section list.
-3. The account-level **read-only flag caps everything** to reads — a writable role
-   cannot lift it.
-4. An app-wide **disabled section** is removed last, so a role can never re-enable
-   a feature an admin turned off.
-5. The **host scope** of the grant is checked last of all: the right section on the
-   wrong host is a 403.
-
-> LDAP users are provisioned here automatically on first login (as `user`, or
-> `admin` if in the configured admin group). Grant them access by hand, or let
-> the directory decide with **group mappings** — see below.
+the host list. Its projects aren't listed, its alerts don't reach your feed or
+the unread badge, and its entries don't appear in the audit log. A container's
+metrics history is refused even if you know the container id. Per-host views
+(dashboard counts, disk usage, published ports, topology, the events feed) are
+each checked against the host they name.
 
 ## Roles from LDAP groups
-A group mapping in [Settings → LDAP](settings.md) grants **roles** (and, for older
-configs, raw sections) to members of an LDAP group, matched on the group's full DN.
-A user's access is the union over every mapped group they belong to, re-derived on
-**each login**, so moving someone between groups in the directory takes effect the
-next time they sign in — including having a role taken away.
 
-Two things it deliberately cannot do:
+A group mapping in [Settings → LDAP](settings.md) grants **roles** to members of
+an LDAP group, matched on the group's full DN. Older configs may also grant raw
+sections. A user's access is the union over every mapped group they belong to.
+It is recalculated on **each login**, so a group change in the directory applies
+the next time they sign in. That includes a role being taken away.
 
-- **It cannot make anyone an admin.** Only the configured *admin group DN* does
-  that. A role cannot contain role management either, so no mapping — however
-  generous — hands out the keys.
-- **It cannot lock anyone out by referencing a deleted role.** A stale role id in
-  a mapping simply grants nothing — or the **fallback role**, if you set one.
+What a mapping cannot do:
+
+- **Make anyone an admin.** Only the configured *admin group DN* does that. A
+  role can't contain role management either, so no mapping hands out the keys.
+- **Lock anyone out by referencing a deleted role.** A stale role id grants
+  nothing, or the **fallback role** if you set one.
 
 ### The fallback role
-Pick one in *Settings → LDAP*. It's granted **in place of a mapped role that no
-longer exists**, so deleting a role degrades its members to a known baseline
-(**Viewer** is the obvious choice) instead of quietly leaving them with no access
-at all. The two built-in roles can't be deleted, and the role you nominate as the
-fallback can't be deleted either while it holds that job — point the fallback
-somewhere else first.
 
-It deliberately does **not** apply to a user whose groups map to no role at all.
-That's the ordinary "not entitled" case, and granting a baseline there would hand a
-role to every account in the directory that can authenticate. The fallback covers a
-*broken* mapping, not an *absent* one. It also doesn't stack on top of a mapping
-that resolves fine.
+Pick one in *Settings → LDAP*. It is granted **in place of a mapped role that no
+longer exists**. Deleting a role then drops its members to a known baseline
+(**Viewer** is the obvious choice) instead of leaving them with no access.
 
-Whether the directory is authoritative for roles depends on whether you use them:
+- It does **not** apply to a user whose groups map to no role at all. That is the
+  normal "not entitled" case, and a baseline there would give a role to every
+  account in the directory that can sign in. The fallback covers a *broken*
+  mapping, not an *absent* one.
+- It doesn't stack on top of a mapping that resolves fine.
+- The built-in roles can't be deleted. Neither can the role currently set as the
+  fallback; point the fallback elsewhere first.
+
+Whether the directory owns roles depends on whether your mappings use them:
 
 | Your mappings | What a login does |
 |---|---|
-| No mapping grants a role | Roles assigned by hand on the account are left alone |
-| Any mapping grants a role | Roles are replaced by what the groups grant — hand-assigned ones are dropped |
+| No mapping grants a role | Roles assigned by hand on the account are left alone. |
+| Any mapping grants a role | Roles are replaced by what the groups grant. Hand-assigned ones are dropped. |
 
-That's so upgrading doesn't quietly strip roles from installs whose mappings were
-written before roles existed. Once you map a role anywhere, assign roles in the
-directory rather than per account. **Sections** work the other way round and always
-have: as soon as *any* mapping exists, group membership is authoritative for a
-non-admin's sections and manual edits are overwritten on the next login.
+This keeps an upgrade from stripping roles on installs whose mappings predate
+roles. Once you map a role anywhere, assign roles in the directory, not per
+account. **Sections** work differently: as soon as *any* mapping exists, group
+membership decides a non-admin's sections, and manual edits are overwritten on
+the next login.
 
-## Note on the live stream
-RBAC is enforced on the REST API **and** on the shared live stats/logs
-WebSocket (`/api/ws`): each subscription is authorised per **channel and host**,
-and both the **stats** and **logs** streams require the **containers** section.
-A subscribe frame names its own host, so streaming a container on a host outside
-your scope is refused there too. A signed-in
-user without it can no longer stream a container's data.
+> LDAP users are created here automatically on first login, as `user`, or
+> `admin` if they are in the admin group. Grant access by hand, or use group
+> mappings.
 
-## Your own profile
-Every signed-in user has one, whatever their permissions: their account details,
-their second factors and signed-in sessions, what they can reach, and their
-interface preferences. It has its own page — see **[Your profile](profile.md)**.
+### Technical notes
 
+**Where it is enforced.** Every request is checked on the server. The path maps
+to a section, and a non-admin must hold that section, with **write** access for
+changes. The menu hides what you can't reach. Sections an admin
+[disabled](settings.md) app-wide are hidden from everyone's menu and blocked
+for everyone except admins.
+
+**Order of rules**, which matters when they disagree:
+
+1. **admin** bypasses section, read-only and host checks.
+2. Grants are the **union** of the account's roles and its own sections.
+3. The account's **read-only flag** caps everything to reads. A writable role
+   can't lift it.
+4. An app-wide **disabled section** is removed next, so a role can't re-enable a
+   feature an admin turned off.
+5. The grant's **host scope** is checked last. The right section on the wrong
+   host is a 403.
+
+**Records addressed by id.** A project, a host record or an alert is checked
+against the host stored in the record itself. Ids are sequential, so knowing one
+buys nothing: a record you can't reach answers exactly like one that doesn't
+exist. Seeing and changing stay separate, though. A read-only grant on a project
+you can see gets **403**, not 404, because pretending it vanished would only
+mislead you.
+
+**Live stream.** The live stats/logs WebSocket (`/api/ws`) is checked per
+**channel and host**. Both the **stats** and **logs** streams need the
+**containers** section. Each subscribe message names its host, so streaming a
+container on a host outside your scope is refused there too.
+
+**What scoping doesn't cover: alert e-mail.** The alert engine watches every
+host by design. It is background work with no user attached. If a rule lists you
+as an e-mail recipient, you can get mail about a host you can't see in the app.
+Choose each rule's recipients with that in mind.

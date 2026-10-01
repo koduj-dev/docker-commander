@@ -20,8 +20,9 @@ lost. That's why it asks first.
 **It keeps restarting.** Open it and check **Restart count** on Overview. The
 **Logs** tab usually shows why in the last lines before each restart. If the
 logs are quiet and the memory chart climbs to the limit first, the kernel is
-killing it for running out of memory. [Events](events.md), filtered by its name,
-shows how often it happens.
+killing it for running out of memory. To watch it happen, leave
+[Events](events.md) open, filtered by its name. It shows only what happens while
+the page is open, not past restarts.
 
 **It needs more memory or CPU.** Click the **Settings** (gear) button on the
 detail page. The new limit applies straight away, without a restart. For a stack
@@ -99,7 +100,8 @@ a **CPU & memory** view and a **Network** view.
   published **TCP** ports and recognises SSH, HTTP(S), TLS, SMTP, POP3, IMAP,
   FTP, DNS, NTP, syslog, SNMP, Redis, Memcached, MongoDB, MySQL/MariaDB,
   PostgreSQL, MSSQL, AMQP and Elasticsearch, or shows the raw banner. UDP ports
-  keep the guess, since UDP services often don't answer an unknown client. On an
+  keep the guess and nothing connects to them, since UDP services often don't
+  answer an unknown client. On an
   [SSH host](hosts.md) the probe goes through the SSH connection. It only
   connects to your own hosts.
 - **Files.** Transfers work like `docker cp`. Listing, creating and deleting run
@@ -113,8 +115,9 @@ a **CPU & memory** view and a **Network** view.
   shows the rate calculated from them. History stores the
   counters and calculates the rate on read, so old windows stay correct. A
   recreated container restarts its counters, which shows as a gap, not a spike.
-- **Dropped** and **errors** are shown under the chart because they are normally zero,
-  and when they aren't, they're often the only sign of a network problem.
+- Under the chart are the totals since the container started: received and
+  sent, with packets, **dropped** and **errors**. Dropped and errors are normally
+  zero, and when they aren't, they're often the only sign of a network problem.
 - **Several interfaces** are summed, with the count shown. Docker doesn't say
   which network each interface belongs to, so per-network figures live on the
   [network detail](networks.md), where that is known.

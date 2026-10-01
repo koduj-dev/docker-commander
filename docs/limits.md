@@ -2,42 +2,40 @@
 
 [← Manual index](README.md)
 
-Every cap the app enforces that you can actually hit, with the reason where the
-number is not obvious. They exist so one request cannot cost the whole
-installation its memory, its disk or its responsiveness.
-
-If you hit one, the app says so — the point of this page is that you can find out
-*before* that, and know whether the number is adjustable.
+Every cap you can actually hit, with the reason where it isn't obvious. The
+caps stop one request from using up the memory, disk or responsiveness of the
+whole installation. The app tells you when you hit one. This page lets you know
+in advance, and whether the number can be changed.
 
 ## Signing in
 
 | Limit | Value | Notes |
 | --- | --- | --- |
-| Session lifetime | **12 hours** | `-session-ttl`, flag-only (no `DC_` equivalent). After it you are signed out and sign in again. |
-| Failed sign-ins | **5 per 15 minutes**, per address | Then the password form is refused for the rest of the window, right password or not. Behind a reverse proxy without `DC_TRUSTED_PROXIES`, every client shares one address — see [Deployment](deployment.md). |
-| Passkey sign-in attempts | **30 per 5 minutes**, per address | A separate budget on purpose: the sign-in button is offered to everyone, and dismissing the browser prompt is the commonest outcome, so it must not close the password form. |
-| Authenticators and passkeys | **10 per account** | TOTP apps and passkeys share the pool. |
-| Password length | **at least 10 characters** | The same floor everywhere, including the offline `--reset-password`. |
+| Session lifetime | **12 hours** | Set with `-session-ttl` (flag only, no `DC_` variable). Then you sign in again. |
+| Failed sign-ins | **5 per 15 minutes**, per address | After that the password form is refused until the window ends, even with the right password. Behind a reverse proxy without `DC_TRUSTED_PROXIES`, all clients share one address. See [Deployment](deployment.md). |
+| Passkey sign-in attempts | **30 per 5 minutes**, per address | A separate budget, because everyone sees the button and closing the browser prompt is common. It must not lock the password form. |
+| Authenticators and passkeys | **10 per account** | TOTP apps and passkeys count together. |
+| Password length | **at least 10 characters** | Everywhere, including the offline `--reset-password`. |
 
 ## Uploads and files
 
 | Limit | Value | Notes |
 | --- | --- | --- |
-| Ordinary request body | **1 MiB** | Everything that is not one of the streaming routes below. |
-| File upload into a container or volume | **2 GiB** | Buffered to a temporary file, unlinked immediately, so it never costs memory. |
-| Uploaded archive, after decompression | **512 MiB** | The guard against a zip/gzip bomb: a small archive that expands without bound. |
-| Idle time during a streaming upload | **2 minutes** | Measures *silence*, not duration — a slow multi-gigabyte upload is fine, a stalled one is dropped. |
-| Any request's body, start to finish | **60 seconds** | Except the streaming routes, which use the idle limit above. |
+| Ordinary request body | **1 MiB** | Everything except the streaming routes below. |
+| File upload into a container or volume | **2 GiB** | Written to a temporary file that is unlinked at once, so it costs no memory. |
+| Uploaded archive, after decompression | **512 MiB** | Protects against a zip or gzip bomb. |
+| Idle time during a streaming upload | **2 minutes** | Counts silence, not total time. A slow large upload is fine; a stalled one is dropped. |
+| Any request's body, start to finish | **60 seconds** | Streaming routes use the idle limit above instead. |
 
 ## Projects and stacks
 
 | Limit | Value | Notes |
 | --- | --- | --- |
 | Files in a project | **100** | |
-| Size of one project file | **1 MiB** | The editor refuses a larger write. |
-| Imported project `.zip` | **32 MiB** | Entries over the per-file limit, or past the file count, are skipped. |
+| Size of one project file | **1 MiB** | The editor refuses to save a larger file. |
+| Imported project `.zip` | **32 MiB** | Entries over the file size or file count limit are skipped. |
 | Compose file read or displayed | **1 MiB** | |
-| `docker compose` command | **10 minutes** | A deploy that takes longer is given up on. |
+| `docker compose` command | **10 minutes** | A longer deploy is abandoned. |
 
 ## History retention
 
@@ -45,17 +43,17 @@ Set under [Settings → Data retention](settings.md#data-retention).
 
 | Limit | Value | Notes |
 | --- | --- | --- |
-| Alert events and deliveries | 90 days by default | 1 to 36 500 days, or keep forever. Deliveries can't outlive their events. |
-| Audit log | 365 days by default | 30 to 36 500 days, or keep forever. |
+| Alert events and deliveries | 90 days by default | 1 to 36 500 days, or forever. Deliveries are never kept longer than their events. |
+| Audit log | 365 days by default | 30 to 36 500 days, or forever. |
 | Project revisions | newest 50 per project by default | At least 3, or unlimited. |
-| Purge schedule | first run about 2 minutes after start, then every 24 hours | Batches of 2 000 rows. |
-| Backup job run history | newest 200 runs per job | See [Backup jobs](backup-jobs.md). |
+| Purge schedule | first run about 2 minutes after start, then every 24 hours | Deletes in batches of 2 000 rows. |
+| Backup job run history | newest 200 runs per job | Not adjustable. See [Backup jobs](backup-jobs.md). |
 
 ## Images
 
 | Limit | Value | Notes |
 | --- | --- | --- |
-| Vulnerability scan | **6 minutes**, 2 at a time | Trivy is the one doing the work; concurrency is capped so a scan cannot starve the daemon. |
+| Vulnerability scan | **6 minutes**, 2 at a time | Trivy does the scan. Two at a time so scans cannot starve the daemon. |
 | Vulnerabilities reported per scan | **5000** | |
 | Registry response while listing tags | **2 MiB** | |
 
@@ -63,23 +61,23 @@ Set under [Settings → Data retention](settings.md#data-retention).
 
 | Limit | Value | Notes |
 | --- | --- | --- |
-| Lines held by the Logs page | **3000** | Oldest are dropped; this is the browser's memory, not the server's. |
-| Events held by the Events page | **2000** | Same, and the feed is live-only — it shows nothing from before you opened it. |
+| Lines held by the Logs page | **3000** | Oldest lines are dropped. This is browser memory, not server. |
+| Events held by the Events page | **2000** | Same. The feed is live only and shows nothing from before you opened it. |
 | Alert feed | **500** entries | |
-| Audit entries fetched by the page | **1000** | The server will not return more than that in one request. |
+| Audit entries fetched by the page | **1000** | The server returns at most that many per request. |
 
 ## MCP (AI-tool access)
 
 | Limit | Value | Notes |
 | --- | --- | --- |
-| Token lifetime | **30 days** default, **365** ceiling | Both admin-settable; see [Settings](settings.md). |
+| Token lifetime | **30 days** default, **365** maximum | Both set by an admin in [Settings](settings.md). |
 | OAuth access token | **15 minutes** | |
-| Control actions | **30 per minute** | So a runaway agent is bounded. See [MCP](mcp.md). |
+| Control actions | **30 per minute** | Keeps a runaway agent in check. See [MCP](mcp.md). |
 
 ## Sessions and ceremonies
 
 | Limit | Value | Notes |
 | --- | --- | --- |
 | Sessions listed on your profile | **256** | |
-| WebAuthn ceremony | **2 minutes** | The window between pressing the button and answering the browser prompt. |
-| Half-finished passkey sign-ins held at once | **512** | Server-wide. Reachable without signing in, so it is bounded separately from everything else — a flood of them cannot stop anyone pairing a passkey or completing a second factor. |
+| WebAuthn ceremony | **2 minutes** | Time between pressing the button and answering the browser prompt. |
+| Half-finished passkey sign-ins held at once | **512** | Server-wide. Anyone can start one without signing in, so it has its own cap. A flood of them cannot stop anyone pairing a passkey or finishing a second factor. |
