@@ -1,51 +1,54 @@
 # Docker Commander — User manual
 
-A guide to each part of the app. Most pages map 1:1 to a menu item; the last
-two cover installation and configuration.
+One page per part of the app, grouped roughly like the sidebar. The last section
+covers installing and running it.
 
 > New here? Start with **[Getting started](getting-started.md)**.
 >
 > Project home page: **[docker-commander.app](https://docker-commander.app)**.
 
-## Compute
+## Workloads
 - [Dashboard](dashboard.md) — host overview, disk usage, running containers
-- [Containers](containers.md) — create/run, lifecycle, console, files, logs, processes
-- [Stacks](stacks.md) — Compose stacks: discover, lifecycle, view / **edit & redeploy** the compose file on its host
-- [Projects](projects.md) — managed Compose folders: edit + live validation, deploy, profiles, templates, import/export
-- [Templates](projects.md#managing-templates) — reusable presets, builder service blocks, and shared definitions (built-in + your own)
+- [Containers](containers.md) — run, start/stop, console, files, logs, processes
+- [Stacks](stacks.md) — Compose stacks: lifecycle, view and edit the compose file, redeploy
+- [Projects](projects.md) — managed Compose folders: edit, validate, deploy, profiles, import/export
+- [Templates](projects.md#managing-templates) — reusable presets, builder blocks and shared definitions, built-in and your own
+
+## Storage
 - [Images](images.md) — pull, build, push, tag, save/load/import, history, prune
-- [Volumes](volumes.md) — list, inspect, create, remove, prune, browse files
-- [Backup jobs](backup-jobs.md) — run your own backup command against a volume or a project's volumes
+- [Volumes](volumes.md) — create, inspect, remove, prune, browse files
+- [Backup jobs](backup-jobs.md) — run your own backup command against volumes
 
 ## Network
-- [Networks & Topology](networks.md) — manage networks (create/connect/disconnect/prune) and the connectivity graph
+- [Networks & Topology](networks.md) — create, connect, prune, and the connectivity graph
 
 ## Observability
 - [Resources](resources.md) — CPU, memory and network per container and stack, top talkers, disk usage
-- [Logs](logs.md) — aggregated streaming, regex search, structured parse rules
+- [Logs](logs.md) — live logs from many containers, regex search, parse rules
 - [Events](events.md) — the live Docker event feed
-- [Alerts](alerts.md) — rules, conditions with a lifetime, the feed, delivery records, webhooks, email, Prometheus
+- [Alerts](alerts.md) — rules and conditions, the feed, delivery records, webhooks, email, Prometheus
 
 ## System & administration
-- [Hosts](hosts.md) — local / TCP+TLS / SSH daemons, host-key trust, per-host email
-- [Registries](registries.md) — stored credentials for private pull & push
+- [Hosts](hosts.md) — local, TCP+TLS and SSH daemons, host-key trust, per-host email
+- [Registries](registries.md) — credentials for private pull and push
 - [Users & roles](users.md) — accounts, permissions, read-only
-- [Your profile](profile.md) — your own account, second factors, sessions, and what you can reach
-- [Settings](settings.md) — feature flags, localhost 2FA, MCP token lifetimes, LDAP, SMTP, data retention, and the tabs for the pages below
+- [Your profile](profile.md) — your account, second factors, sessions, what you can reach
+- [Settings](settings.md) — feature flags, localhost 2FA, MCP tokens, LDAP, SMTP, data retention; also hosts the two pages below
 - [Policy rules](policy-rules.md) — checks on project deploys (off / warn / block)
 - [Recovery bundle](recovery.md) — export and import your setup
 - [Audit log](audit.md) — record of privileged actions
-- [MCP (AI tools)](mcp.md) — remote control from AI tools (Claude Code/Desktop, Cursor): tokens, OAuth, the safe tool surface
+- [Troubleshooting](troubleshooting.md) — health checks for the host's Docker setup
+- [MCP (AI tools)](mcp.md) — control from AI tools (Claude Code/Desktop, Cursor): tokens, OAuth, allowed tools
 
 ## Operations
 - [Getting started](getting-started.md) — first run, 2FA, the basics
-- [Deployment](deployment.md) — running on a server (systemd, HTTPS, config, logs, health, self-update)
-- [How it's tested](testing.md) — the test tiers, incl. real multi-daemon runs over TCP/SSH, and what isn't covered
-- [Limits](limits.md) — every cap you can actually hit, and which are adjustable
-- [Gotchas](gotchas.md) — behaviours of this codebase that cost real debugging time once
-- [Dev environment](dev-environment.md) — local setup, and the throwaway services the tests expect
+- [Deployment](deployment.md) — running on a server: systemd, HTTPS, config, logs, health, self-update
+- [Limits](limits.md) — every cap you can hit, and which can be changed
+- [How it's tested](testing.md) — test tiers, multi-daemon runs over TCP/SSH, what isn't covered (for developers)
+- [Gotchas](gotchas.md) — pitfalls in this codebase that cost real debugging time (for developers)
+- [Dev environment](dev-environment.md) — local setup and the services the tests expect (for developers)
 - [Changelog](../CHANGELOG.md) — what changed in each release
 
 ---
 
-Screenshots used throughout live in [`docs/images/`](images/).
+Screenshots live in [`docs/images/`](images/).
