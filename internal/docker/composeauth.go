@@ -53,11 +53,19 @@ func ComposeRegistryEnv(auths []store.RegistryAuth) (env []string, cleanup func(
 		return nil, noop, err
 	}
 
+	// json.Unmarshal turns a JSON null into a nil map, and a valid config may
+	// carry `null` at the top or for either key. Writing into a nil map panics.
+	if cfg == nil {
+		cfg = map[string]json.RawMessage{}
+	}
 	authMap := map[string]json.RawMessage{}
 	if raw, ok := cfg["auths"]; ok {
 		if err := json.Unmarshal(raw, &authMap); err != nil {
 			return nil, noop, fmt.Errorf("config.json auths: %w", err)
 		}
+	}
+	if authMap == nil {
+		authMap = map[string]json.RawMessage{}
 	}
 	helpers := map[string]string{}
 	if raw, ok := cfg["credHelpers"]; ok {
@@ -65,8 +73,16 @@ func ComposeRegistryEnv(auths []store.RegistryAuth) (env []string, cleanup func(
 			return nil, noop, fmt.Errorf("config.json credHelpers: %w", err)
 		}
 	}
+	if helpers == nil {
+		helpers = map[string]string{}
+	}
+	seen := map[string]bool{}
 	for _, a := range auths {
 		host := store.NormalizeRegistryHost(a.Address)
+		if seen[host] {
+			continue // auths come oldest first, and the oldest entry wins, as in AuthForHost
+		}
+		seen[host] = true
 		key := host
 		if host == "docker.io" {
 			key = dockerHubConfigKey

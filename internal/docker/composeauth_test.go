@@ -228,3 +228,42 @@ func TestSSHStackRedeployExplainsWhichLoginIsUsed(t *testing.T) {
 		t.Fatalf("unexpected remote command: %q", ran)
 	}
 }
+
+// A config may hold JSON null at the top or for auths/credHelpers. That must
+// not crash the deploy.
+func TestComposeRegistryEnvToleratesNullsInTheUsersConfig(t *testing.T) {
+	for _, cfg := range []string{`null`, `{"auths": null}`, `{"credHelpers": null}`, `{"auths": null, "credHelpers": null}`} {
+		t.Run(cfg, func(t *testing.T) {
+			src := t.TempDir()
+			t.Setenv("DOCKER_CONFIG", src)
+			if err := os.WriteFile(filepath.Join(src, "config.json"), []byte(cfg), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			env, cleanup, err := ComposeRegistryEnv([]store.RegistryAuth{{Address: "ghcr.io", Username: "u", Password: "p"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cleanup()
+			if got := readCLIConfig(t, configDirFromEnv(t, env)).Auths["ghcr.io"]["auth"]; got != basicAuth("u", "p") {
+				t.Fatalf("credential missing after a %s config: %q", cfg, got)
+			}
+		})
+	}
+}
+
+// Two stored entries for one registry: the oldest is used, the same one the
+// Images page uses (AuthForHost), so deploys and pulls agree.
+func TestComposeRegistryEnvUsesTheOldestEntryForARegistry(t *testing.T) {
+	t.Setenv("DOCKER_CONFIG", t.TempDir())
+	env, cleanup, err := ComposeRegistryEnv([]store.RegistryAuth{
+		{Address: "ghcr.io", Username: "first", Password: "1"},
+		{Address: "ghcr.io", Username: "second", Password: "2"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if got := readCLIConfig(t, configDirFromEnv(t, env)).Auths["ghcr.io"]["auth"]; got != basicAuth("first", "1") {
+		t.Fatalf("want the oldest entry, got %q", got)
+	}
+}

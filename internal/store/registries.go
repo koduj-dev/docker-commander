@@ -86,7 +86,7 @@ func (s *Store) AuthByID(ctx context.Context, id int64) (*RegistryAuth, error) {
 func (s *Store) AuthForHost(ctx context.Context, host string) (*RegistryAuth, error) {
 	host = NormalizeRegistryHost(host)
 	return s.scanAuth(s.db.QueryRowContext(ctx, `
-		SELECT address, username, secret_enc FROM registries WHERE address = ? LIMIT 1`, host))
+		SELECT address, username, secret_enc FROM registries WHERE address = ? ORDER BY id LIMIT 1`, host))
 }
 
 // scanAuth decrypts a credential row.
@@ -139,7 +139,8 @@ func NormalizeRegistryHost(host string) string {
 }
 
 // AllRegistryAuths returns every stored credential, decrypted, for handing to a
-// `docker compose` run. A row that can't be decrypted is an error rather than
+// `docker compose` run. They come oldest first: when two entries share a
+// registry, the oldest one is the one used, here and in AuthForHost alike. A row that can't be decrypted is an error rather than
 // skipped: a deploy that silently lost one credential would fail later with a
 // registry 401 that points nowhere near the cause.
 func (s *Store) AllRegistryAuths(ctx context.Context) ([]RegistryAuth, error) {
