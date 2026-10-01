@@ -68,3 +68,13 @@ func TestPentestMenuDoesNotWidenPastGrants(t *testing.T) {
 		t.Errorf("SECURITY: an account with no grants sees menu sections: %v", menu)
 	}
 }
+
+// PENTEST: when the grants can't be loaded, the menu fails closed: empty, never
+// every enabled section.
+func TestPentestMenuFailsClosedOnAStoreError(t *testing.T) {
+	srv, st, u := scopedFixture(t, "images", 7)
+	st.Close()
+	if menu := srv.effectiveSections(context.Background(), u); len(menu) != 0 {
+		t.Fatalf("SECURITY: a store error produced a menu: %v", menu)
+	}
+}
