@@ -298,17 +298,43 @@ func (m *Manager) StackRedeploy(ctx context.Context, hostID int64, project strin
 
 	switch t.host.Kind {
 	case "local", "":
-		out, err := runComposeFiles(ctx, t.workDir, t.stack.Project, nil,
+		auths, err := m.store.AllRegistryAuths(ctx)
+		if err != nil {
+			return "", fmt.Errorf("load registry credentials: %w", err)
+		}
+		env, cleanup, err := ComposeRegistryEnv(auths)
+		if err != nil {
+			return "", err
+		}
+		defer cleanup()
+		out, err := runComposeFiles(ctx, t.workDir, t.stack.Project, env,
 			[]string{t.path}, "up", "-d", "--build")
 		return out, err
 	case "ssh":
-		q := shellQuote
-		return m.sshRun(ctx, t, fmt.Sprintf(
-			"cd %s && docker compose -p %s -f %s up -d --build",
-			q(t.workDir), q(t.stack.Project), q(t.path)))
+		// Here compose runs on the host itself, over SSH, and logs in with that
+		// host's own `docker login`. Stored credentials are deliberately not
+		// copied to another machine. The output says so, because a pull that
+		// fails with "unauthorized" here would otherwise contradict a credential
+		// that works for every other deploy.
+		return sshStackRedeploy(func(cmd string) (string, error) { return m.sshRun(ctx, t, cmd) },
+			t.workDir, t.stack.Project, t.path)
 	}
 	return "", fmt.Errorf("unsupported host kind %q", t.host.Kind)
 }
+
+// sshStackRedeploy runs `compose up` for a stack on its SSH host through run,
+// and heads the output with sshRegistryNote, success or not.
+func sshStackRedeploy(run func(cmd string) (string, error), workDir, project, path string) (string, error) {
+	q := shellQuote
+	out, err := run(fmt.Sprintf("cd %s && docker compose -p %s -f %s up -d --build",
+		q(workDir), q(project), q(path)))
+	return sshRegistryNote + out, err
+}
+
+// sshRegistryNote heads the output of a stack redeploy on an SSH host.
+const sshRegistryNote = "Note: this stack's `docker compose` runs on the SSH host itself, so private " +
+	"images are pulled with that host's own `docker login`. Credentials stored under " +
+	"Registries are not sent to other machines.\n\n"
 
 // sshRun runs a command on the stack's host and returns its combined output.
 func (m *Manager) sshRun(ctx context.Context, t *stackTarget, cmd string) (string, error) {

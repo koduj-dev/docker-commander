@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -135,4 +136,45 @@ func NormalizeRegistryHost(host string) string {
 		return "docker.io"
 	}
 	return host
+}
+
+// AllRegistryAuths returns every stored credential, decrypted, for handing to a
+// `docker compose` run. A row that can't be decrypted is an error rather than
+// skipped: a deploy that silently lost one credential would fail later with a
+// registry 401 that points nowhere near the cause.
+func (s *Store) AllRegistryAuths(ctx context.Context) ([]RegistryAuth, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT address, username, secret_enc FROM registries ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	type row struct{ address, username, enc string }
+	var raw []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.address, &r.username, &r.enc); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		raw = append(raw, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]RegistryAuth, 0, len(raw))
+	for _, r := range raw {
+		a := RegistryAuth{Address: r.address, Username: r.username}
+		if r.enc != "" {
+			if s.cipher == nil {
+				return nil, errors.New("store: cipher not configured")
+			}
+			pw, err := s.cipher.Decrypt(r.enc)
+			if err != nil {
+				return nil, fmt.Errorf("decrypt registry %s: %w", r.address, err)
+			}
+			a.Password = pw
+		}
+		out = append(out, a)
+	}
+	return out, nil
 }
