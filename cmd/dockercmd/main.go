@@ -283,8 +283,6 @@ func (b storeBackuper) BackupTo(path string) error {
 	return b.st.BackupTo(context.Background(), path)
 }
 
-// flagValue returns the value following one of the given flag names, supporting
-// both "--name value" and "--name=value".
 // backupDataDir snapshots dataDir into file. The database is opened read-only
 // through a live connection, so the WAL is accounted for and the server can keep
 // running. A data dir with no Docker Commander database is refused rather than
@@ -294,17 +292,19 @@ func (b storeBackuper) BackupTo(path string) error {
 func backupDataDir(dataDir, file, passphrase string) (*backup.Report, error) {
 	db := filepath.Join(dataDir, "docker-commander.db")
 	st, err := store.OpenSnapshotSource(db)
-	if err != nil {
-		if errors.Is(err, store.ErrNotADatabase) {
-			return nil, err
-		}
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
 		return nil, fmt.Errorf("no database at %s — point at the right one with --data-dir "+
 			"(a packaged install uses /var/lib/dockercmd)", db)
+	case err != nil:
+		return nil, fmt.Errorf("cannot back up %s: %w", db, err)
 	}
 	defer st.Close()
 	return backup.Create(dataDir, file, storeBackuper{st}, passphrase)
 }
 
+// flagValue returns the value following one of the given flag names, supporting
+// both "--name value" and "--name=value".
 func flagValue(names ...string) string {
 	args := os.Args[1:]
 	for i, a := range args {

@@ -147,3 +147,42 @@ func TestBackupRefusesADirectoryNamedLikeTheDatabase(t *testing.T) {
 		t.Fatal("a directory named docker-commander.db was accepted as a database")
 	}
 }
+
+// A file of random bytes is SQLite's "not a database": refused as foreign.
+func TestBackupCallsGarbageNotADatabase(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "docker-commander.db"), []byte("this is not sqlite at all, just text padding it out"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := backupDataDir(dir, filepath.Join(t.TempDir(), "b.tar.gz"), "")
+	if !errors.Is(err, store.ErrNotADatabase) {
+		t.Fatalf("want ErrNotADatabase, got %v", err)
+	}
+}
+
+// A real database that can't be read is reported as a read failure with its
+// cause, not as "no database" and not as a foreign file.
+func TestBackupReportsAnUnreadableDatabaseAsItIs(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a 0000 file anyway")
+	}
+	dir := t.TempDir()
+	db := filepath.Join(dir, "docker-commander.db")
+	st, err := store.Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	if err := os.Chmod(db, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(db, 0o600) })
+
+	_, err = backupDataDir(dir, filepath.Join(t.TempDir(), "b.tar.gz"), "")
+	if err == nil {
+		t.Fatal("an unreadable database was backed up")
+	}
+	if errors.Is(err, store.ErrNotADatabase) || strings.Contains(err.Error(), "no database at") {
+		t.Fatalf("an unreadable database was misreported: %v", err)
+	}
+}

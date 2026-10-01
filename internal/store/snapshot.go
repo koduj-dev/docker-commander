@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -50,7 +51,13 @@ func OpenSnapshotSource(path string) (*Store, error) {
 			`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&n)
 		if err != nil {
 			_ = db.Close()
-			return nil, fmt.Errorf("%s: %w (%v)", path, ErrNotADatabase, err)
+			// Only SQLite's own verdict means "not a database". Anything else (an
+			// unreadable file, an I/O error, a timeout) is reported as itself, so a
+			// real database that couldn't be read isn't called foreign.
+			if strings.Contains(err.Error(), "not a database") {
+				return nil, fmt.Errorf("%s: %w (%v)", path, ErrNotADatabase, err)
+			}
+			return nil, fmt.Errorf("read %s: %w", path, err)
 		}
 		if n == 0 {
 			_ = db.Close()
