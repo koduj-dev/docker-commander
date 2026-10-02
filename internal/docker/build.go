@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/koduj-dev/docker-commander/internal/store"
+	"github.com/moby/moby/api/types/registry"
 	"io"
 
 	"github.com/moby/moby/api/types/jsonstream"
@@ -44,12 +47,24 @@ func (m *Manager) BuildImage(ctx context.Context, hostID int64, buildContext io.
 		dockerfile = "Dockerfile"
 	}
 
+	// A private base image (FROM ghcr.io/…) is pulled by the daemon during the
+	// build, with the credentials sent along here. Before, a build had none, so
+	// such a FROM failed even with the registry stored under Registries.
+	auths, skipped, err := m.store.AllRegistryAuths(ctx)
+	if err != nil {
+		return fmt.Errorf("load registry credentials: %w", err)
+	}
+	for _, addr := range skipped {
+		onMsg(BuildMessage{Stream: "Warning: the stored credential for " + addr + " could not be decrypted and was not used\n"})
+	}
+
 	resp, err := cli.ImageBuild(ctx, buildContext, client.ImageBuildOptions{
-		Tags:       opts.Tags,
-		Dockerfile: dockerfile,
-		NoCache:    opts.NoCache,
-		Remove:     true,
-		BuildArgs:  args,
+		Tags:        opts.Tags,
+		Dockerfile:  dockerfile,
+		NoCache:     opts.NoCache,
+		Remove:      true,
+		BuildArgs:   args,
+		AuthConfigs: buildAuthConfigs(auths),
 	})
 	if err != nil {
 		return err
@@ -73,4 +88,24 @@ func (m *Manager) BuildImage(ctx context.Context, hostID int64, buildContext io.
 			onMsg(BuildMessage{Stream: jm.Stream})
 		}
 	}
+}
+
+// buildAuthConfigs keys stored credentials the way the daemon looks them up for
+// a build: Docker Hub under its index URL, every other registry by its host.
+// auths come oldest first, and the oldest entry for a registry wins, as for
+// pulls (AuthForHost) and deploys (ComposeRegistryEnv).
+func buildAuthConfigs(auths []store.RegistryAuth) map[string]registry.AuthConfig {
+	out := make(map[string]registry.AuthConfig, len(auths))
+	for _, a := range auths {
+		host := store.NormalizeRegistryHost(a.Address)
+		key := host
+		if host == "docker.io" {
+			key = dockerHubConfigKey
+		}
+		if _, seen := out[key]; seen {
+			continue
+		}
+		out[key] = registry.AuthConfig{Username: a.Username, Password: a.Password, ServerAddress: key}
+	}
+	return out
 }
