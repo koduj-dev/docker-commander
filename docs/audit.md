@@ -29,6 +29,7 @@ The `auth.*` actions are the ones worth reading when something feels wrong.
 | `auth.2fa.failed` | A rejected second factor. |
 | `auth.2fa.enable` / `auth.2fa.repair.denied` | An authenticator paired / a pairing refused for a wrong password. |
 | `auth.2fa.remove` / `auth.2fa.remove.denied` | An authenticator unpaired / an unpairing refused. Removing one needs the password, and the last one cannot be removed at all. |
+| `auth.password.change` / `auth.password.change.denied` | Own password changed from *Profile*, which ends every other session / a change refused for a wrong current password. |
 | `auth.session.revoke` | A signed-in session was ended from *Profile → Security*. |
 | `auth.passkey.add` / `auth.passkey.add.denied` | A passkey paired / refused. |
 | `auth.passwordless` / `auth.passwordless.denied` | Signing in with a passkey alone turned on or off / refused for a wrong password. |
@@ -49,7 +50,7 @@ never writes fails it too. The `auth.*` table above explains the ones worth read
 when something feels wrong; this is the complete set, for looking up what you found
 in the log.
 
-**Sign-in and second factors** — `auth.2fa.enable`, `auth.2fa.failed`, `auth.2fa.remove`, `auth.2fa.remove.denied`, `auth.2fa.repair.denied`, `auth.login`, `auth.login.failed`, `auth.passkey.add`, `auth.passkey.add.denied`, `auth.passkey.cloned`, `auth.password.reset`, `auth.passwordless`, `auth.passwordless.denied`, `auth.session.revoke`, `auth.session.revoke_others`, `auth.setup`
+**Sign-in and second factors** — `auth.2fa.enable`, `auth.2fa.failed`, `auth.2fa.remove`, `auth.2fa.remove.denied`, `auth.2fa.repair.denied`, `auth.login`, `auth.login.failed`, `auth.passkey.add`, `auth.passkey.add.denied`, `auth.passkey.cloned`, `auth.password.change`, `auth.password.change.denied`, `auth.password.reset`, `auth.passwordless`, `auth.passwordless.denied`, `auth.session.revoke`, `auth.session.revoke_others`, `auth.setup`
 
 **Accounts** — `user.create`, `user.delete`, `user.email`, `user.password_reset`, `user.update`
 
