@@ -221,14 +221,26 @@ func makeCerts(hosts []string) error {
 	covered := append([]string{"localhost", "127.0.0.1", "::1"}, hosts...)
 	fmt.Printf("Wrote a self-signed certificate (valid ~13 months) covering %s:\n", strings.Join(covered, ", "))
 	fmt.Printf("  cert: %s\n  key:  %s  (mode 0600)\n\n", certPath, keyPath)
-	fmt.Printf("Serve HTTPS with it:\n  DC_TLS_CERT=%s DC_TLS_KEY=%s dockercmd\n", certPath, keyPath)
+	fmt.Printf("Serve HTTPS with it:\n  DC_TLS_CERT=%s DC_TLS_KEY=%s dockercmd\n", shQuote(certPath), shQuote(keyPath))
 	fmt.Println("  (or the -tls-cert / -tls-key flags). It's self-signed, so clients warn until they trust it.")
 	if os.Geteuid() == 0 {
 		// The key is written 0600 and owned by root; a service running as its own
 		// user can't read it until it owns the files.
-		fmt.Printf("\nWritten as root. If the server runs as another user (the packaged service runs as dockercmd):\n  chown -R dockercmd: %s\n", dir)
+		fmt.Printf("\nWritten as root. If the server runs as another user (the packaged service runs as dockercmd):\n  %s\n", chownHint(dir))
 	}
 	return nil
+}
+
+// chownHint is the command that hands the data dir to the packaged service's
+// user. dir comes from --data-dir, so it is quoted: the line is meant to be
+// copied into a root shell.
+func chownHint(dir string) string {
+	return "chown -R dockercmd: -- " + shQuote(dir)
+}
+
+// shQuote single-quotes s for a POSIX shell.
+func shQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // runBackupAction performs --backup / --restore and exits. Both need the data dir

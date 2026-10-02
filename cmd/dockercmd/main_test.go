@@ -11,6 +11,7 @@ import (
 	"go/token"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -380,6 +381,30 @@ func TestMakeCertsHonoursDataDir(t *testing.T) {
 	for _, f := range []string{"cert.pem", "key.pem"} {
 		if _, err := os.Stat(filepath.Join(want, "tls", f)); err != nil {
 			t.Errorf("%s was not written under --data-dir: %v", f, err)
+		}
+	}
+}
+
+// The hints make-certs prints are meant to be pasted into a (root) shell, and the
+// paths in them come from --data-dir. Each must reach the shell as one literal
+// word, whatever it contains.
+func TestMakeCertsHintsQuotePaths(t *testing.T) {
+	for _, dir := range []string{
+		"/var/lib/dc data",
+		"/tmp/it's",
+		"/tmp/x; touch /tmp/pwned",
+		"/tmp/$(id)`id`",
+		"-rf",
+	} {
+		out, err := exec.Command("sh", "-c", "printf %s "+shQuote(dir)).Output()
+		if err != nil {
+			t.Fatalf("%q: %v", dir, err)
+		}
+		if string(out) != dir {
+			t.Errorf("%q reached the shell as %q", dir, out)
+		}
+		if want := "chown -R dockercmd: -- " + shQuote(dir); chownHint(dir) != want {
+			t.Errorf("chownHint(%q) = %q, want %q", dir, chownHint(dir), want)
 		}
 	}
 }
