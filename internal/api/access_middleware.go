@@ -155,6 +155,29 @@ func isWriteRequest(r *http.Request) bool {
 			return true
 		}
 	}
+	return isRawDataDownload(r.URL.Path)
+}
+
+// isRawDataDownload reports whether a GET hands over raw content a read-only
+// grant can't otherwise see: a container's whole filesystem, a file out of a
+// container or a volume, or an image's layers. Read access shows lists and
+// metadata of these, not their contents, so downloading them needs write.
+//
+// Downloads of things a reader already sees in full (a project's or template's
+// files, which the editor shows; exported alert rules) stay reads. Matched by
+// shape, not by suffix alone: /alert-rules/export also ends in /export.
+func isRawDataDownload(path string) bool {
+	p := strings.TrimPrefix(path, "/api/")
+	parts := strings.Split(p, "/")
+	switch {
+	case len(parts) == 3 && parts[0] == "containers" && parts[2] == "export":
+		return true
+	case len(parts) == 4 && (parts[0] == "containers" || parts[0] == "volumes") &&
+		parts[2] == "files" && parts[3] == "download":
+		return true
+	case p == "images/save":
+		return true
+	}
 	return false
 }
 

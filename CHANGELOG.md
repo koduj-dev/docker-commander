@@ -23,6 +23,12 @@ All notable changes to Docker Commander are documented here. The format follows
   admin hostname (the embedded proxy would then serve it to a container), an
   invalid hostname, a missing service or an out-of-range port. Such rows are
   now skipped with a warning.
+- **Read-only access no longer downloads raw content.** Exporting a container's
+  filesystem, downloading a file from a container or a volume, and saving an
+  image are GET requests, so a read-only account could do them, although it
+  only ever sees lists and metadata of these. They now need write access.
+  Downloads of what a reader already sees in full (project and template files,
+  exported alert rules) are unchanged.
 - **The Docker-socket policy check now catches a socket reached through a parent
   directory.** Binding `/`, `/var/run`, `/run` or a rootless `/run/user/<uid>`
   gives the container the socket, but only the `docker.sock` paths themselves were
