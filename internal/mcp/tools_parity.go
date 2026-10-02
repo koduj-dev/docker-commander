@@ -388,11 +388,14 @@ func (h *handler) scanImage(ctx context.Context, req *mcpsdk.CallToolRequest, in
 	}
 	defer cleanup()
 
-	res, err := docker.ScanImage(ctx, env, in.Ref)
 	// Audited like the REST scan: it pulls the image if it's missing and runs
 	// Trivy on the host. Trivy is a CLI, not a Docker client call, so the host
-	// is named here rather than recorded by docker.Manager.Client.
-	h.auditOn(p, h.daemonHost(ctx, in.HostID), "mcp.image.scan", in.Ref, outcome(err))
+	// is named here rather than recorded by docker.Manager.Client. Resolved
+	// before the scan: a request cancelled during it would leave ctx unable to
+	// look the local host up, and the entry would read as hostless.
+	auditHost := h.daemonHost(ctx, in.HostID)
+	res, err := docker.ScanImage(ctx, env, in.Ref)
+	h.auditOn(p, auditHost, "mcp.image.scan", in.Ref, outcome(err))
 	if err != nil {
 		return nil, scanImageOut{Available: true, Error: err.Error()}, nil
 	}
