@@ -366,6 +366,11 @@ All notable changes to Docker Commander are documented here. The format follows
   and `mcp.diagnostics.run`, like their REST counterparts. Both are writes (a
   scan pulls the image and runs Trivy; diagnostics run commands over SSH) but
   left no audit entry over MCP.
+- **A Project's stack can no longer be edited or redeployed from Stacks.** The
+  Stacks editor offered Save and Redeploy for any stack whose file it could
+  reach, including the ones Projects deploy, which bypassed the project's
+  revisions and policy checks. Such a stack now opens read-only with a note to
+  use Projects.
 - **`dockercmd --backup` no longer writes to what it backs up.** It opens the
   database read-only and without migrations. A data dir with no database is now
   refused instead of backed up as a new empty one (which happened with

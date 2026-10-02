@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -39,6 +41,9 @@ func (s *Server) handleStackCompose(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	if msg := s.managedByProject(r.Context(), hostID, project); msg != "" {
+		editable, reason = false, msg
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "path": path, "content": content,
 		"editable": editable, "readOnlyReason": reason,
@@ -62,6 +67,10 @@ func (s *Server) handleWriteStackCompose(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	project := chi.URLParam(r, "project")
+	if msg := s.managedByProject(r.Context(), hostID, project); msg != "" {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": msg})
+		return
+	}
 	path, err := s.docker.StackWriteComposeFile(r.Context(), hostID, project, body.Content)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
@@ -81,6 +90,10 @@ func (s *Server) handleRedeployStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	project := chi.URLParam(r, "project")
+	if msg := s.managedByProject(r.Context(), hostID, project); msg != "" {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": msg})
+		return
+	}
 	out, err := s.docker.StackRedeploy(r.Context(), hostID, project)
 	if err != nil {
 		s.audit(r, "stack.redeploy.failed", project, err.Error())
@@ -107,4 +120,30 @@ func (s *Server) handleStackAction(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r, "stack."+action, project, "")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// managedByProject returns why a stack can't be edited here because a Project
+// owns it, or "" when none does. A project deploys as the Compose project named
+// by its slug, on its target host (0 = the local daemon). Editing that stack's
+// file here would bypass the project: no revision, no policy check, and the next
+// project deploy would overwrite the change anyway.
+func (s *Server) managedByProject(ctx context.Context, hostID int64, stack string) string {
+	projects, err := s.store.ListProjects(ctx)
+	if err != nil {
+		return "could not check whether a project owns this stack"
+	}
+	host, err := s.docker.ResolveHostID(ctx, hostID)
+	if err != nil {
+		return "could not resolve the host"
+	}
+	for _, p := range projects {
+		if p.Slug != stack {
+			continue
+		}
+		ph, err := s.docker.ResolveHostID(ctx, p.HostID)
+		if err == nil && ph == host {
+			return fmt.Sprintf("this stack belongs to the project %q; edit and deploy it in Projects", p.Name)
+		}
+	}
+	return ""
 }
