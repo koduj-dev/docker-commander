@@ -104,8 +104,8 @@ func (m *Manager) RunBackupJob(ctx context.Context, hostID int64, image, command
 			// restic rejects, and every run failed.
 			Entrypoint: []string{"sh", "-c"},
 			Cmd:        []string{command},
-			Env:    envList,
-			Labels: map[string]string{backupJobLabel: "1"},
+			Env:        envList,
+			Labels:     map[string]string{backupJobLabel: "1"},
 		},
 		HostConfig: &container.HostConfig{Mounts: mountList},
 	})
