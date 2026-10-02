@@ -74,7 +74,12 @@ func TestStacksShowAProjectsStackReadOnly(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "compose.yml"), []byte(compose), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _, _ = docker.ComposeDown(context.Background(), dir, slug, nil) })
+	// Fixed slug: clear what an interrupted run left behind, before and after.
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		_, _ = docker.ComposeDown(context.Background(), dir, slug, nil)
+		freeDeployStack(slug)
+	})
 	if out, err := docker.ComposeUpFiles(ctx, dir, slug, nil, nil, nil, false); err != nil {
 		t.Fatalf("compose up: %v\n%s", err, out)
 	}
@@ -86,5 +91,19 @@ func TestStacksShowAProjectsStackReadOnly(t *testing.T) {
 	reason, _ := out["readOnlyReason"].(string)
 	if out["editable"] != false || !strings.Contains(reason, "Projects") {
 		t.Fatalf("a project's stack must open read-only with the reason, got editable=%v reason=%q", out["editable"], reason)
+	}
+}
+
+// When the projects can't be listed, the guard refuses rather than letting the
+// edit through: not knowing whether a project owns the stack is not "no".
+func TestManagedByProjectFailsClosed(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = st.Close() // every query now fails
+	srv := &Server{store: st}
+	if reason := srv.managedByProject(context.Background(), 0, "any-stack"); reason == "" {
+		t.Fatal("SECURITY: a failed project lookup let the stack be edited")
 	}
 }
