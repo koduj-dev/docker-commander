@@ -284,10 +284,13 @@ var forwardingHeaders = []string{
 	"X-Forwarded-Server", "X-Real-Ip", "Via",
 }
 
-// hasForwardingHeaders reports whether the request carries any of them.
+// hasForwardingHeaders reports whether the request carries any of them. It is
+// about presence, not value: Header.Get returns "" for an empty header too, so
+// a client could send an empty "X-Forwarded-For:" through a proxy that keeps it
+// and still pass as local.
 func hasForwardingHeaders(r *http.Request) bool {
 	for _, h := range forwardingHeaders {
-		if r.Header.Get(h) != "" {
+		if len(r.Header.Values(h)) > 0 {
 			return true
 		}
 	}

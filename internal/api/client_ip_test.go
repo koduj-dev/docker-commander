@@ -156,6 +156,14 @@ func TestPentestLoopbackWithForwardingHeadersIsNotExempt(t *testing.T) {
 		if loop {
 			t.Errorf("SECURITY: a loopback request carrying %s (a local, unlisted proxy) qualifies for the 2FA exemption", h)
 		}
+		// Present but empty counts too: Header.Get can't tell it from absent.
+		empty := httptest.NewRequest("GET", "/", nil)
+		empty.RemoteAddr = "127.0.0.1:6000"
+		empty.Header[http.CanonicalHeaderKey(h)] = []string{""}
+		handler.ServeHTTP(httptest.NewRecorder(), empty)
+		if loop {
+			t.Errorf("SECURITY: a loopback request with an EMPTY %s header qualifies for the 2FA exemption", h)
+		}
 	}
 	if _, loop := runClientIP(nil, "[::1]:6000", []string{"8.8.8.8"}); loop {
 		t.Error("SECURITY: ::1 with an X-Forwarded-For (a local, unlisted proxy) qualifies for the 2FA exemption")
