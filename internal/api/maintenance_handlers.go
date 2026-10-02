@@ -310,7 +310,7 @@ func (s *Server) handleCreateMaintenanceWindow(w http.ResponseWriter, r *http.Re
 		writeErr(w, http.StatusInternalServerError, "could not create maintenance window")
 		return
 	}
-	s.audit(r, "maintenance_window.create", b.Name, b.Reason)
+	s.auditOn(r, s.store.AuditHostOf(r.Context(), win.HostIDs), "maintenance_window.create", b.Name, b.Reason)
 	writeJSON(w, http.StatusOK, map[string]int64{"id": id})
 }
 
@@ -345,7 +345,8 @@ func (s *Server) handleUpdateMaintenanceWindow(w http.ResponseWriter, r *http.Re
 		writeErr(w, http.StatusForbidden, "cannot scope a maintenance window to a host outside your access")
 		return
 	}
-	if err := s.store.UpdateMaintenanceWindow(r.Context(), id, b.toWindow()); err != nil {
+	updated := b.toWindow()
+	if err := s.store.UpdateMaintenanceWindow(r.Context(), id, updated); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeErr(w, http.StatusNotFound, "maintenance window not found")
 			return
@@ -353,7 +354,10 @@ func (s *Server) handleUpdateMaintenanceWindow(w http.ResponseWriter, r *http.Re
 		writeErr(w, http.StatusInternalServerError, "could not update maintenance window")
 		return
 	}
-	s.audit(r, "maintenance_window.update", b.Name, b.Reason)
+	// Both the hosts it covered and the ones it covers now: a reader who could see
+	// neither must not learn of the change.
+	s.auditOn(r, s.store.AuditHostOf(r.Context(), unionHostIDs(existing.HostIDs, updated.HostIDs)),
+		"maintenance_window.update", b.Name, b.Reason)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -378,7 +382,8 @@ func (s *Server) maintenanceWindowInReach(r *http.Request, id int64) (*store.Mai
 // schedule — without deleting its row or audit trail.
 func (s *Server) handleEndMaintenanceWindow(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if _, err := s.maintenanceWindowInReach(r, id); err != nil {
+	win, err := s.maintenanceWindowInReach(r, id)
+	if err != nil {
 		writeErr(w, http.StatusNotFound, "maintenance window not found")
 		return
 	}
@@ -386,13 +391,14 @@ func (s *Server) handleEndMaintenanceWindow(w http.ResponseWriter, r *http.Reque
 		writeErr(w, http.StatusInternalServerError, "could not end maintenance window")
 		return
 	}
-	s.audit(r, "maintenance_window.end", chi.URLParam(r, "id"), "")
+	s.auditOn(r, s.store.AuditHostOf(r.Context(), win.HostIDs), "maintenance_window.end", chi.URLParam(r, "id"), "")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleDeleteMaintenanceWindow(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if _, err := s.maintenanceWindowInReach(r, id); err != nil {
+	win, err := s.maintenanceWindowInReach(r, id)
+	if err != nil {
 		writeErr(w, http.StatusNotFound, "maintenance window not found")
 		return
 	}
@@ -400,6 +406,23 @@ func (s *Server) handleDeleteMaintenanceWindow(w http.ResponseWriter, r *http.Re
 		writeErr(w, http.StatusInternalServerError, "could not delete maintenance window")
 		return
 	}
-	s.audit(r, "maintenance_window.delete", chi.URLParam(r, "id"), "")
+	s.auditOn(r, s.store.AuditHostOf(r.Context(), win.HostIDs), "maintenance_window.delete", chi.URLParam(r, "id"), "")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// unionHostIDs merges two host scopes. Either being empty means every host, and
+// so does the union.
+func unionHostIDs(a, b []int64) []int64 {
+	if len(a) == 0 || len(b) == 0 {
+		return nil
+	}
+	seen := map[int64]bool{}
+	var out []int64
+	for _, id := range append(append([]int64{}, a...), b...) {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
 }

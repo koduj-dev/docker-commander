@@ -344,7 +344,7 @@ func TestAuditStackContainerResultsAuditsSuccessAndFailure(t *testing.T) {
 		t.Error("the overall result should be false when any container in the batch failed")
 	}
 
-	entries, err := h.deps.Store.RecentAudit(ctx, 500, 0)
+	entries, err := h.deps.Store.RecentAudit(ctx, 500, 0, nil, true)
 	if err != nil {
 		t.Fatalf("read audit: %v", err)
 	}

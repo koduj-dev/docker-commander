@@ -307,7 +307,9 @@ func (s *Server) handleAckAllAlertEvents(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusInternalServerError, "could not acknowledge")
 		return
 	}
-	s.audit(r, "alert.ack-all", strconv.FormatInt(n, 10), "")
+	// Spans every host the caller can see, so it is shown only to readers who see
+	// them all: the count alone tells how busy hosts outside a reader's scope are.
+	s.auditOn(r, store.AuditHostSeveral, "alert.ack-all", strconv.FormatInt(n, 10), "")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "acknowledged": n})
 }
 
@@ -336,7 +338,7 @@ func (s *Server) handleAckAlertEvent(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "could not acknowledge")
 		return
 	}
-	s.audit(r, "alert.ack", strconv.FormatInt(id, 10), "")
+	s.auditOn(r, s.daemonHost(r.Context(), hostID), "alert.ack", strconv.FormatInt(id, 10), "")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

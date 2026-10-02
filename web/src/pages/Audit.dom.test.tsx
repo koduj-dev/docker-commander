@@ -54,6 +54,7 @@ describe("Audit page", () => {
     expect(rowText("4d75a58e5fdc")).toContain("prod-eu");
     expect(rowText("aa11")).toContain("#9");
     expect(hostLabel(0, new Map())).toBe("—");
+    expect(hostLabel(-1, new Map())).toBe("several hosts");
   });
 
   it("searches the detail and the host name", async () => {

@@ -42,6 +42,10 @@ func (r *HostRecorder) Host() (int64, bool) {
 	return r.id, r.set
 }
 
+// RecordHost notes hostID in ctx's recorder, for a caller that knows the host an
+// action is about without connecting to it (an authorisation check on it, say).
+func RecordHost(ctx context.Context, hostID int64) { recordHost(ctx, hostID) }
+
 // recordHost notes hostID in ctx's recorder. The first host wins: an action
 // names one target, and a later lookup on the side (another host's status, say)
 // must not relabel it.

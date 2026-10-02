@@ -15,6 +15,7 @@ const RECENT = 1000;
 // shown by id rather than guessed at.
 export function hostLabel(id: number, names: Map<number, string>): string {
   if (!id) return "—";
+  if (id < 0) return "several hosts"; // e.g. a maintenance window covering more than one
   return names.get(id) ?? `#${id}`;
 }
 
@@ -25,7 +26,7 @@ function matchAudit(e: AuditEntry, q: string, names: Map<number, string>): boole
     (e.target ?? "").toLowerCase().includes(q) ||
     (e.detail ?? "").toLowerCase().includes(q) ||
     (e.ip ?? "").toLowerCase().includes(q) ||
-    (e.hostId ? hostLabel(e.hostId, names).toLowerCase().includes(q) : false)
+    (e.hostId !== 0 ? hostLabel(e.hostId, names).toLowerCase().includes(q) : false)
   );
 }
 

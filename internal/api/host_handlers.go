@@ -125,7 +125,7 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
 		if *b.Disabled {
 			action = "host.disable"
 		}
-		s.audit(r, action, chi.URLParam(r, "id"), "")
+		s.auditOn(r, id, action, chi.URLParam(r, "id"), "")
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

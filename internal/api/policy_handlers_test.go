@@ -66,7 +66,7 @@ func TestHandleSetPolicyRules_PersistsAndAudits(t *testing.T) {
 	if modes["privileged"] != "block" || modes["latest_tag"] != "warn" {
 		t.Errorf("modes not persisted correctly: %v", modes)
 	}
-	entries, err := st.RecentAudit(context.Background(), 50, 0)
+	entries, err := st.RecentAudit(context.Background(), 50, 0, nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestHandleDeployProject_BlockModePreventsDeploy(t *testing.T) {
 		t.Errorf("SECURITY: the container ran despite a block-mode policy violation (%d running)", n)
 	}
 
-	entries, err := st.RecentAudit(context.Background(), 50, 0)
+	entries, err := st.RecentAudit(context.Background(), 50, 0, nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +253,7 @@ func TestHandleDeployProject_WarnModeRequiresConfirmationThenProceeds(t *testing
 		t.Errorf("expected the deploy to actually run after confirmation, got %d running", n)
 	}
 
-	entries, err := st.RecentAudit(context.Background(), 50, 0)
+	entries, err := st.RecentAudit(context.Background(), 50, 0, nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}

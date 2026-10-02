@@ -139,7 +139,7 @@ func TestBackupJobs_CreateListGetUpdateDelete(t *testing.T) {
 	}
 
 	// Audit trail recorded the config changes.
-	entries, _ := srv.store.RecentAudit(context.Background(), 10, 0)
+	entries, _ := srv.store.RecentAudit(context.Background(), 10, 0, nil, true)
 	actions := map[string]bool{}
 	for _, e := range entries {
 		actions[e.Action] = true
@@ -191,7 +191,7 @@ func TestBackupJobs_SetEnabledIsAudited(t *testing.T) {
 	setEnabled(false)
 	setEnabled(true)
 
-	entries, err := srv.store.RecentAudit(context.Background(), 10, 0)
+	entries, err := srv.store.RecentAudit(context.Background(), 10, 0, nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,7 +335,7 @@ func TestBackupJobs_RunNowAndListRuns(t *testing.T) {
 		t.Errorf("runs = %+v", runs)
 	}
 
-	entries, _ := srv.store.RecentAudit(context.Background(), 10, 0)
+	entries, _ := srv.store.RecentAudit(context.Background(), 10, 0, nil, true)
 	found := false
 	for _, e := range entries {
 		if e.Action == "backup_job.run" {

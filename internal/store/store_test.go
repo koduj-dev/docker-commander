@@ -321,12 +321,12 @@ func TestParseRulesAndSettingsAndAudit(t *testing.T) {
 		}
 	}
 	// Newest first, limited.
-	page1, _ := s.RecentAudit(ctx, 2, 0)
+	page1, _ := s.RecentAudit(ctx, 2, 0, nil, true)
 	if len(page1) != 2 || page1[0].Action != "a3" || page1[1].Action != "a2" {
 		t.Fatalf("audit page1: %+v", page1)
 	}
 	// Cursor: entries older than the last one returned.
-	page2, _ := s.RecentAudit(ctx, 2, page1[1].ID)
+	page2, _ := s.RecentAudit(ctx, 2, page1[1].ID, nil, true)
 	if len(page2) != 1 || page2[0].Action != "a1" {
 		t.Errorf("audit cursor page2: %+v", page2)
 	}

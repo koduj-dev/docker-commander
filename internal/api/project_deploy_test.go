@@ -251,7 +251,7 @@ services:
 		t.Fatalf("last deployed profiles = %v, want the normalized [extra], not the raw 3-element request", p.LastDeployedProfiles)
 	}
 
-	entries, err := st.RecentAudit(context.Background(), 50, 0)
+	entries, err := st.RecentAudit(context.Background(), 50, 0, nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}

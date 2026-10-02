@@ -180,7 +180,7 @@ func TestRunRetentionAppliesThePolicyAndRecordsTheRun(t *testing.T) {
 		t.Errorf("last run not recorded: %+v", last)
 	}
 	// Something was deleted, so the purge itself is in the audit log.
-	entries, _ := srv.store.RecentAudit(ctx, 20, 0)
+	entries, _ := srv.store.RecentAudit(ctx, 20, 0, nil, true)
 	var seen bool
 	for _, e := range entries {
 		seen = seen || e.Action == "retention.purge"
@@ -196,7 +196,7 @@ func TestRunRetentionWithNothingToDoLeavesNoAuditNoise(t *testing.T) {
 	if err != nil || run.Total() != 0 {
 		t.Fatalf("run=%+v err=%v", run, err)
 	}
-	entries, _ := srv.store.RecentAudit(t.Context(), 20, 0)
+	entries, _ := srv.store.RecentAudit(t.Context(), 20, 0, nil, true)
 	for _, e := range entries {
 		if e.Action == "retention.purge" {
 			t.Error("a daily purge that deleted nothing must not write an audit entry")

@@ -159,7 +159,7 @@ func (h *handler) createMaintenanceWindow(ctx context.Context, req *mcpsdk.CallT
 		return nil, maintenanceWindowOut{}, err
 	}
 	win.ID = id
-	h.audit(ctx, p, "mcp.maintenance_window.create", in.Name, in.Reason)
+	h.auditOn(p, h.deps.Store.AuditHostOf(ctx, win.HostIDs), "mcp.maintenance_window.create", in.Name, in.Reason)
 	return nil, toMaintenanceWindowOut(*win), nil
 }
 
@@ -190,7 +190,7 @@ func (h *handler) endMaintenanceWindow(ctx context.Context, req *mcpsdk.CallTool
 	if err := h.deps.Store.EndMaintenanceWindow(ctx, in.ID); err != nil {
 		return nil, endMaintenanceWindowOut{}, err
 	}
-	h.audit(ctx, p, "mcp.maintenance_window.end", strconv.FormatInt(in.ID, 10), "")
+	h.auditOn(p, h.deps.Store.AuditHostOf(ctx, win.HostIDs), "mcp.maintenance_window.end", strconv.FormatInt(in.ID, 10), "")
 	return nil, endMaintenanceWindowOut{OK: true}, nil
 }
 

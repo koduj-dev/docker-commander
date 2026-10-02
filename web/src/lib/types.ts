@@ -978,8 +978,9 @@ export interface AuditEntry {
   target: string;
   detail: string;
   ip: string;
-  // The Docker host the action reached. 0 means the action has no host; entries
-  // written before 1.7.0 also used 0 for the local daemon.
+  // The Docker host the action reached. 0 means the action has no host (entries
+  // written before 1.7.0 also used 0 for the local daemon); -1 means several
+  // hosts, e.g. a maintenance window covering more than one.
   hostId: number;
   createdAt: string;
 }

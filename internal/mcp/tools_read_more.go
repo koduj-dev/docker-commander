@@ -240,7 +240,8 @@ type recentAuditOut struct {
 }
 
 func (h *handler) recentAudit(ctx context.Context, req *mcpsdk.CallToolRequest, in recentAuditInput) (*mcpsdk.CallToolResult, recentAuditOut, error) {
-	if _, err := h.authorize(ctx, req, "audit", false, 0); err != nil {
+	p, err := h.authorize(ctx, req, "audit", false, 0)
+	if err != nil {
 		return nil, recentAuditOut{}, err
 	}
 	limit := in.Limit
@@ -250,7 +251,10 @@ func (h *handler) recentAudit(ctx context.Context, req *mcpsdk.CallToolRequest, 
 	if limit > auditMaxLimit {
 		limit = auditMaxLimit
 	}
-	entries, err := h.deps.Store.RecentAudit(ctx, limit, 0)
+	// Scoped to the hosts this principal may see, like the REST log. This tool
+	// used to return every host's entries to any holder of "audit".
+	ids, all := h.scopedHostIDs(ctx, p)
+	entries, err := h.deps.Store.RecentAudit(ctx, limit, 0, ids, all)
 	if err != nil {
 		return nil, recentAuditOut{}, err
 	}

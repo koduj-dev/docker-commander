@@ -52,7 +52,7 @@ func serveAudited(t *testing.T, target string, fn func(w http.ResponseWriter, r 
 
 func lastAuditHost(t *testing.T, st *store.Store) int64 {
 	t.Helper()
-	entries, err := st.RecentAudit(context.Background(), 1, 0)
+	entries, err := st.RecentAudit(context.Background(), 1, 0, nil, true)
 	if err != nil || len(entries) == 0 {
 		t.Fatalf("no audit entry: %v", err)
 	}

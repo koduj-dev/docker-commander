@@ -240,12 +240,12 @@ func (h *handler) scopedHostIDs(ctx context.Context, p *principal) ([]int64, boo
 		if len(p.hosts) == 0 {
 			return nil, true
 		}
-		return append([]int64{0}, p.hosts...), false
+		return append(h.localHostIDs(ctx), p.hosts...), false
 	}
 
 	hosts, all, err := h.deps.Store.ReachableHosts(ctx, p.user)
 	if err != nil {
-		return []int64{0}, false // fail closed: the local daemon only
+		return h.localHostIDs(ctx), false // fail closed: the local daemon only
 	}
 
 	var ids []int64
@@ -254,12 +254,12 @@ func (h *handler) scopedHostIDs(ctx context.Context, p *principal) ([]int64, boo
 			return nil, true // unrestricted by either
 		}
 		// The token narrows an otherwise-unlimited user.
-		ids = append(ids, 0)
+		ids = append(ids, h.localHostIDs(ctx)...)
 		ids = append(ids, p.hosts...)
 		return ids, false
 	}
 
-	ids = append(ids, 0) // the local daemon is always in reach
+	ids = append(ids, h.localHostIDs(ctx)...) // the local daemon is always in reach
 	for id := range hosts {
 		if len(p.hosts) > 0 && !containsID(p.hosts, id) {
 			continue // outside the token's narrowing
@@ -267,4 +267,15 @@ func (h *handler) scopedHostIDs(ctx context.Context, p *principal) ([]int64, boo
 		ids = append(ids, id)
 	}
 	return ids, false
+}
+
+// localHostIDs names the local daemon both ways it is recorded: 0, and its own
+// host row id. Audit entries use the row id; older rows and some feeds use 0.
+// Both are always in reach.
+func (h *handler) localHostIDs(ctx context.Context) []int64 {
+	ids := []int64{0}
+	if id, err := h.deps.Store.LocalHostID(ctx); err == nil {
+		ids = append(ids, id)
+	}
+	return ids
 }

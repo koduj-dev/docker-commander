@@ -317,6 +317,13 @@ func principalFromExtra(re *mcpsdk.RequestExtra) *principal {
 // token can only reduce rights) and then the live user RBAC. It returns the
 // principal so write tools can audit under the acting user.
 func (h *handler) authorizeExtra(ctx context.Context, re *mcpsdk.RequestExtra, section string, write bool, hostID int64) (*principal, error) {
+	// A tool aimed at a remote host names it in the audit even when it fails
+	// before reaching Docker (a rate limit, a bad argument): an entry with no
+	// host is shown to every reader of the audit log. The local daemon needs no
+	// mark, as it is in every reader's scope anyway.
+	if hostID > 0 {
+		docker.RecordHost(ctx, hostID)
+	}
 	p := principalFromExtra(re)
 	if p == nil {
 		return nil, errors.New("unauthenticated")
