@@ -39,6 +39,10 @@ func TestIntegrationStacks(t *testing.T) {
 	ensureImage(ctx, t, m)
 
 	const project = "dctest_stack"
+	// Clear the whole project first, not just the names created below: a run
+	// killed before its cleanup leaves containers carrying this project's label,
+	// and the next run would count them as part of the stack.
+	freeStack(ctx, m, project)
 	createLabeled(ctx, t, m, "dctest_stack_web", map[string]string{
 		labelComposeProject: project, labelComposeService: "web",
 	})
@@ -127,6 +131,10 @@ func TestStackActionOnIDsUnaffectedByLateArrivals(t *testing.T) {
 	ensureImage(ctx, t, m)
 
 	const project = "dctest_stack_late"
+	// Clear the whole project first: dctest_stack_late_c is only created after
+	// the snapshot, so createLabeled freeing its name comes too late. A leftover
+	// from a killed run would already be in the snapshot.
+	freeStack(ctx, m, project)
 	idA := createLabeled(ctx, t, m, "dctest_stack_late_a", map[string]string{
 		labelComposeProject: project, labelComposeService: "a",
 	})
