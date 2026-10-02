@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/koduj-dev/docker-commander/internal/store"
-	"github.com/moby/moby/api/types/registry"
 	"io"
 
 	"github.com/moby/moby/api/types/jsonstream"
+	"github.com/moby/moby/api/types/registry"
 	"github.com/moby/moby/client"
+
+	"github.com/koduj-dev/docker-commander/internal/store"
 )
 
 // BuildMessage is one line of build output forwarded to the UI. Build streams
@@ -54,9 +55,21 @@ func (m *Manager) BuildImage(ctx context.Context, hostID int64, buildContext io.
 	if err != nil {
 		return fmt.Errorf("load registry credentials: %w", err)
 	}
-	for _, addr := range skipped {
-		onMsg(BuildMessage{Stream: "Warning: the stored credential for " + addr + " could not be decrypted and was not used\n"})
+	// Said once the build is over, never before it starts. buildContext is
+	// usually the request body, and the first message sends the response
+	// headers: net/http then drains or cuts off a body the handler hasn't read,
+	// and the daemon would get an empty or truncated context.
+	warned := false
+	warn := func() {
+		if warned {
+			return
+		}
+		warned = true
+		for _, addr := range skipped {
+			onMsg(BuildMessage{Stream: "Warning: the stored credential for " + addr + " could not be decrypted and was not used\n"})
+		}
 	}
+	defer warn()
 
 	resp, err := cli.ImageBuild(ctx, buildContext, client.ImageBuildOptions{
 		Tags:        opts.Tags,
@@ -81,6 +94,7 @@ func (m *Manager) BuildImage(ctx context.Context, hostID int64, buildContext io.
 			return err
 		}
 		if jm.Error != nil {
+			warn() // before the failure, which may well be the missing credential
 			onMsg(BuildMessage{Error: jm.Error.Message})
 			return errors.New(jm.Error.Message)
 		}

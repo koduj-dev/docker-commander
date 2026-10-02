@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"io"
 	"strings"
 	"testing"
 
@@ -83,5 +84,94 @@ func TestBuildAuthConfigsKeys(t *testing.T) {
 	}
 	if got["ghcr.io"].Username != "first" {
 		t.Errorf("want the oldest ghcr.io entry, got %+v", got["ghcr.io"])
+	}
+}
+
+// eofReader records whether its reader has been read to the end.
+type eofReader struct {
+	r   io.Reader
+	eof bool
+}
+
+func (e *eofReader) Read(p []byte) (int, error) {
+	n, err := e.r.Read(p)
+	if err == io.EOF {
+		e.eof = true
+	}
+	return n, err
+}
+
+// The warning about a credential that can't be decrypted must not be the first
+// thing a build says. The build context is the request body, and the first
+// message sends the response headers, at which point net/http drains or cuts off
+// whatever of the body is still unread. Every message must come after the daemon
+// has read the whole context.
+func TestBuildWarnsAboutSkippedCredentialsOnlyAfterTheContextIsRead(t *testing.T) {
+	m, ctx := newManager(t)
+	if out, err := dockerCLI(ctx, nil, "image", "inspect", "busybox:latest"); err != nil {
+		t.Skipf("needs busybox:latest locally: %s", out)
+	}
+	key := make([]byte, 32)
+	cph, err := crypto.New(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.store.SetCipher(cph)
+	if _, err := m.store.CreateRegistry(ctx, "lost", "registry.invalid", "u", "p"); err != nil {
+		t.Fatal(err)
+	}
+	key[0] = 1 // a different key: the stored secret no longer decrypts
+	other, err := crypto.New(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.store.SetCipher(other)
+
+	cli, err := m.Client(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const tag = "dctest-build-warn-order:latest"
+	t.Cleanup(func() {
+		_, _ = cli.ImageRemove(context.Background(), tag, client.ImageRemoveOptions{Force: true})
+	})
+
+	// A context large enough that a cut-off body would show.
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	dockerfile := "FROM busybox:latest\nCOPY big /big\n"
+	big := bytes.Repeat([]byte("x"), 1<<20)
+	for _, f := range []struct {
+		name string
+		body []byte
+	}{{"Dockerfile", []byte(dockerfile)}, {"big", big}} {
+		if err := tw.WriteHeader(&tar.Header{Name: f.name, Mode: 0o644, Size: int64(len(f.body))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write(f.body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	body := &eofReader{r: &buf}
+
+	var out strings.Builder
+	early := false
+	err = m.BuildImage(ctx, 0, body, BuildOptions{Tags: []string{tag}}, func(msg BuildMessage) {
+		if !body.eof {
+			early = true
+		}
+		out.WriteString(msg.Stream + msg.Error)
+	})
+	if err != nil {
+		t.Fatalf("build: %v\n%s", err, out.String())
+	}
+	if early {
+		t.Errorf("a message was sent before the build context was read to the end:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "registry.invalid could not be decrypted") {
+		t.Errorf("no warning about the skipped credential:\n%s", out.String())
 	}
 }
