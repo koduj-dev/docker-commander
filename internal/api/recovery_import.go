@@ -570,15 +570,24 @@ func (s *Server) applyRecoveryBundle(ctx context.Context, m *recoveryManifest, z
 		// the destination (another project, or this bundle importing twice) is
 		// a real conflict, not something to silently drop — same "skip with a
 		// warning" treatment collisions get everywhere else in this import.
+		created, _ := s.store.ProjectByID(ctx, id)
 		for _, dm := range pm.DomainMappings {
-			// The API refuses any tlsMode but "acme"; a bundle is not the API,
-			// so hold it to the same rule here rather than store a mode the
-			// rest of the app never expects (the reserved "none", or junk).
-			if !validDomainTLSModes[dm.TLSMode] {
-				warnings = append(warnings, fmt.Sprintf("project %q: domain %q has unsupported tlsMode %q, skipped", pm.Slug, dm.Domain, dm.TLSMode))
+			// A bundle is not the API, but it gets the API's checks: a valid
+			// hostname, never the admin's own domain (the proxy would hijack it),
+			// a real service, a port in range, tlsMode "acme". They used to be
+			// skipped here, apart from tlsMode.
+			b := domainMappingBody{
+				Domain: strings.ToLower(strings.TrimSpace(dm.Domain)), Service: dm.Service,
+				TargetPort: dm.TargetPort, TLSMode: dm.TLSMode,
+			}
+			if created == nil {
+				created = &store.Project{ID: id, Slug: pm.Slug, ComposeFile: pm.ComposeFile, HostID: targetHostID}
+			}
+			if msg, ok := s.validateDomainMapping(ctx, created, b); !ok {
+				warnings = append(warnings, fmt.Sprintf("project %q: domain %q skipped: %s", pm.Slug, dm.Domain, msg))
 				continue
 			}
-			_, derr := s.store.CreateDomainMapping(ctx, id, dm.Domain, dm.Service, dm.TargetPort, dm.TLSMode, createdBy)
+			_, derr := s.store.CreateDomainMapping(ctx, id, b.Domain, b.Service, b.TargetPort, b.TLSMode, createdBy)
 			if errors.Is(derr, store.ErrDuplicate) {
 				warnings = append(warnings, fmt.Sprintf("project %q: domain %q is already mapped on this instance, skipped", pm.Slug, dm.Domain))
 				continue

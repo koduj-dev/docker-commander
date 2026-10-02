@@ -18,6 +18,11 @@ All notable changes to Docker Commander are documented here. The format follows
   that couldn't be parsed was read as "all rules off", so every deploy went
   through unchecked. Deploys now refuse and say to save the rules again; the
   Policy rules page still opens so that can be done.
+- **A recovery bundle's domain mappings get the same checks as the UI.** The
+  import only checked the TLS mode, so a bundle could map Docker Commander's own
+  admin hostname (the embedded proxy would then serve it to a container), an
+  invalid hostname, a missing service or an out-of-range port. Such rows are
+  now skipped with a warning.
 - **The Docker-socket policy check now catches a socket reached through a parent
   directory.** Binding `/`, `/var/run`, `/run` or a rootless `/run/user/<uid>`
   gives the container the socket, but only the `docker.sock` paths themselves were

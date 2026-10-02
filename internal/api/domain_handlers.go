@@ -93,7 +93,7 @@ func (s *Server) handleCreateDomainMapping(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	b.Domain = strings.ToLower(strings.TrimSpace(b.Domain))
-	if msg, ok := s.validateDomainMapping(r, p, b); !ok {
+	if msg, ok := s.validateDomainMapping(r.Context(), p, b); !ok {
 		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
@@ -157,7 +157,7 @@ func (s *Server) handleUpdateDomainMapping(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	b.Domain = existing.Domain
-	if msg, ok := s.validateDomainMapping(r, p, b); !ok {
+	if msg, ok := s.validateDomainMapping(r.Context(), p, b); !ok {
 		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
@@ -215,7 +215,7 @@ func (s *Server) handleDeleteDomainMapping(w http.ResponseWriter, r *http.Reques
 // target port, and — best-effort, only when the compose CLI is actually
 // available — that Service names a real service in the project's current
 // compose config. Returns (errorMessage, false) on the first failure.
-func (s *Server) validateDomainMapping(r *http.Request, p *store.Project, b domainMappingBody) (string, bool) {
+func (s *Server) validateDomainMapping(ctx context.Context, p *store.Project, b domainMappingBody) (string, bool) {
 	if !validFQDN(b.Domain) {
 		return "domain must be a valid FQDN (e.g. app.example.com); wildcards and IP literals aren't accepted", false
 	}
@@ -236,7 +236,7 @@ func (s *Server) validateDomainMapping(r *http.Request, p *store.Project, b doma
 	if !validDomainTLSModes[b.TLSMode] {
 		return "tlsMode must be one of: acme", false
 	}
-	services, err := s.resolvedComposeServices(r.Context(), p)
+	services, err := s.resolvedComposeServices(ctx, p)
 	if err != nil {
 		return "", true // best-effort: can't verify the service exists, don't block on it
 	}
