@@ -134,10 +134,39 @@ func TestClientIP_DirectLoopbackStillExempt(t *testing.T) {
 	if _, loop := runClientIP(nil, "127.0.0.1:6000", nil); !loop {
 		t.Error("a direct loopback connection should be loopback")
 	}
-	// A direct loopback peer that also sends a spoofed XFF: with no trusted
-	// proxies the header is ignored, so it stays loopback (it really is local).
-	if _, loop := runClientIP(nil, "[::1]:6000", []string{"8.8.8.8"}); !loop {
-		t.Error("direct ::1 should remain loopback; untrusted XFF is ignored")
+}
+
+// PENTEST: a reverse proxy on the same machine that isn't listed in
+// DC_TRUSTED_PROXIES connects from loopback, so every request it forwards from
+// the internet used to qualify for the localhost 2FA exemption. This assertion
+// used to be the opposite ("direct ::1 with an X-Forwarded-For stays loopback"),
+// which is exactly that request. A browser on the machine never sends these
+// headers; a proxy does. Any of them disqualifies the request.
+func TestPentestLoopbackWithForwardingHeadersIsNotExempt(t *testing.T) {
+	for _, h := range forwardingHeaders {
+		s := &Server{cfg: config.Config{}}
+		var loop bool
+		handler := s.clientIP(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			loop = isLoopback(r)
+		}))
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "127.0.0.1:6000"
+		req.Header.Set(h, "203.0.113.7")
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+		if loop {
+			t.Errorf("SECURITY: a loopback request carrying %s (a local, unlisted proxy) qualifies for the 2FA exemption", h)
+		}
+		// Present but empty counts too: Header.Get can't tell it from absent.
+		empty := httptest.NewRequest("GET", "/", nil)
+		empty.RemoteAddr = "127.0.0.1:6000"
+		empty.Header[http.CanonicalHeaderKey(h)] = []string{""}
+		handler.ServeHTTP(httptest.NewRecorder(), empty)
+		if loop {
+			t.Errorf("SECURITY: a loopback request with an EMPTY %s header qualifies for the 2FA exemption", h)
+		}
+	}
+	if _, loop := runClientIP(nil, "[::1]:6000", []string{"8.8.8.8"}); loop {
+		t.Error("SECURITY: ::1 with an X-Forwarded-For (a local, unlisted proxy) qualifies for the 2FA exemption")
 	}
 }
 
