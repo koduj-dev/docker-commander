@@ -351,8 +351,8 @@ All notable changes to Docker Commander are documented here. The format follows
   host, backup jobs their job's host, host settings and alert acknowledgements
   that host, and everything that talks to Docker the daemon it reached, including
   an MCP call refused before it got there. Something spanning several hosts (a
-  maintenance window for more than one host, acknowledging all alerts) is shown
-  only to readers who see every host. Entries written before 1.7.0 can't be
+  maintenance window for more than one host, acknowledging all alerts across
+  hosts) is shown only to readers who see every host. Entries written before 1.7.0 can't be
   corrected and keep showing no host.
 - **A busy host can no longer empty a scoped reader's audit log.** The host
   scope is applied in the query, before the limit; it used to be applied to the

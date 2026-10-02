@@ -307,9 +307,15 @@ func (s *Server) handleAckAllAlertEvents(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusInternalServerError, "could not acknowledge")
 		return
 	}
-	// Spans every host the caller can see, so it is shown only to readers who see
-	// them all: the count alone tells how busy hosts outside a reader's scope are.
-	s.auditOn(r, store.AuditHostSeveral, "alert.ack-all", strconv.FormatInt(n, 10), "")
+	// Filtered to one host (?host=, which the UI sends whenever a host is
+	// selected), it is about that host. Unfiltered it spans every host the caller
+	// can see, so it is shown only to readers who see them all: the count alone
+	// tells how busy hosts outside a reader's scope are.
+	auditHost := store.AuditHostSeveral
+	if aq.HostID != nil {
+		auditHost = s.daemonHost(r.Context(), *aq.HostID)
+	}
+	s.auditOn(r, auditHost, "alert.ack-all", strconv.FormatInt(n, 10), "")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "acknowledged": n})
 }
 
