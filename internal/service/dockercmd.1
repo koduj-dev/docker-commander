@@ -224,6 +224,10 @@ variables mirror the options above:
 .BR DC_METRICS_TOKEN ,
 .BR DC_TLS_CERT ,
 .BR DC_TLS_KEY ,
+.BR DC_ACME_DOMAINS ,
+.BR DC_ACME_EMAIL ,
+.BR DC_ACME_CACHE_DIR ,
+.BR DC_ACME_DIRECTORY_URL ,
 .BR DC_MCP_ENABLED ,
 .BR DC_MCP_PUBLIC_URL ,
 .BR DC_REDIS_ADDR ,
@@ -232,7 +236,14 @@ variables mirror the options above:
 .BR DC_METRICS_RETENTION ,
 .BR DC_METRICS_INTERVAL ,
 .BR DC_PPROF ,
+.BR DC_PROXY_ENABLED ,
+.BR DC_PROXY_ACME_CACHE_DIR ,
+.BR DC_DEPLOY_SILENCE_GRACE ,
 .BR DC_TRUSTED_PROXIES .
+.B DC_REDIS_DB
+has no flag, and
+.B \-session-ttl
+has no variable.
 .SH FILES
 .TP
 .I /etc/docker-commander/commander.conf
@@ -242,7 +253,9 @@ or
 .BR DC_CONFIG ).
 .TP
 .I ~/.config/docker-commander/
-Default data directory (database + secrets) for a foreground run.
+Default data directory (database + secrets) for a foreground run on Linux; on
+macOS it is
+.IR "~/Library/Application Support/docker-commander/" .
 .TP
 .I /var/lib/dockercmd/
 Data directory used by the installed systemd service.

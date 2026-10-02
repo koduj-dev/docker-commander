@@ -201,7 +201,7 @@ func Load() (Config, error) {
 	flag.StringVar(&c.RedisPassword, "redis-password", lookup("DC_REDIS_PASSWORD"), "Redis password")
 	retention := flag.Duration("metrics-retention", envDuration("DC_METRICS_RETENTION", 6*time.Hour), "how long to keep metric history")
 	interval := flag.Duration("metrics-interval", envDuration("DC_METRICS_INTERVAL", 15*time.Second), "how often to sample container stats (raise on hosts with many containers)")
-	flag.BoolVar(&c.PProf, "pprof", lookup("DC_PPROF") == "1", "expose net/http/pprof under /debug/pprof (loopback only; for debugging)")
+	flag.BoolVar(&c.PProf, "pprof", lookup("DC_PPROF") == "1", "expose net/http/pprof on a dedicated loopback listener, 127.0.0.1:6060 (for debugging)")
 	deploySilence := flag.Duration("deploy-silence-grace", envDuration("DC_DEPLOY_SILENCE_GRACE", 3*time.Minute), "automatically silence alert delivery for a project for this long after a successful deploy (0 disables)")
 	trustedProxies := flag.String("trusted-proxies", lookup("DC_TRUSTED_PROXIES"), "comma-separated reverse-proxy IPs/CIDRs whose X-Forwarded-For is trusted (empty = trust none; use the real peer)")
 	flag.Parse()
