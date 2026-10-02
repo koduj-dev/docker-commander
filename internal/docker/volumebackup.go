@@ -97,8 +97,13 @@ func (m *Manager) RunBackupJob(ctx context.Context, hostID int64, image, command
 
 	resp, err := cli.ContainerCreate(cctx, client.ContainerCreateOptions{
 		Config: &container.Config{
-			Image:  image,
-			Cmd:    []string{"sh", "-c", command},
+			Image: image,
+			// The command replaces the image's ENTRYPOINT, not just its CMD. Backup
+			// images usually have one that runs the tool itself (restic/restic's
+			// runs `restic "$@"`), so setting only Cmd ran `restic sh -c "…"`, which
+			// restic rejects, and every run failed.
+			Entrypoint: []string{"sh", "-c"},
+			Cmd:        []string{command},
 			Env:    envList,
 			Labels: map[string]string{backupJobLabel: "1"},
 		},

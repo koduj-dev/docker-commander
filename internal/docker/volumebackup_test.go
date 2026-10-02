@@ -1,6 +1,8 @@
 package docker
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"strings"
 	"testing"
@@ -219,5 +221,46 @@ func TestProjectVolumeNames_ScopedToLabel(t *testing.T) {
 	}
 	if len(names) != 1 || names[0] != mine.Name {
 		t.Fatalf("ProjectVolumeNames = %v, want only [%s]", names, mine.Name)
+	}
+}
+
+// The command runs in place of the image's ENTRYPOINT. Backup tool images have
+// one that runs the tool itself (restic/restic's runs `restic "$@"`); with only
+// the CMD set, every run of such an image failed. The image built here has an
+// entrypoint that always fails, so the command only succeeds if it replaced it.
+func TestRunBackupJob_ReplacesTheImagesEntrypoint(t *testing.T) {
+	m, ctx := newManager(t)
+	ensureImage(ctx, t, m)
+
+	const tag = "dctest-backup-entrypoint:latest"
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	dockerfile := []byte("FROM " + testImage + "\nENTRYPOINT [\"/bin/false\"]\n")
+	if err := tw.WriteHeader(&tar.Header{Name: "Dockerfile", Mode: 0o644, Size: int64(len(dockerfile))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(dockerfile); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.BuildImage(ctx, 0, &buf, BuildOptions{Tags: []string{tag}}, func(BuildMessage) {}); err != nil {
+		t.Fatalf("build test image: %v", err)
+	}
+	cli, err := m.Client(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = cli.ImageRemove(context.Background(), tag, client.ImageRemoveOptions{Force: true})
+	})
+
+	output, exitCode, err := m.RunBackupJob(ctx, 0, tag, "echo ran-the-command", nil, nil, time.Minute)
+	if err != nil {
+		t.Fatalf("RunBackupJob: %v", err)
+	}
+	if exitCode != 0 || !strings.Contains(output, "ran-the-command") {
+		t.Fatalf("the image's ENTRYPOINT ran instead of the command: exit %d, output %q", exitCode, output)
 	}
 }
