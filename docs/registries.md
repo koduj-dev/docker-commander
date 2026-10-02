@@ -18,6 +18,9 @@ credential is picked by the host part of the reference.
 password, not your account password. Then push from [Images](images.md) to a
 target like `youruser/app:tag`.
 
+**Deploy a project with private images.** Add the registry here; deploys use the
+credential automatically. See [Deploys](#deploys) for the one exception.
+
 **Change a token that expired.** A stored credential can't be edited. Delete it
 and add it again with the new token.
 
@@ -48,10 +51,26 @@ so a `docker.io` entry also matches `nginx` or `user/app`.
 - A local insecure registry on `localhost` works over plain HTTP: the daemon
   allows that by default.
 
-> **Project and stack deploys don't use these credentials.** A deploy runs
-> `docker compose`, which logs in with the server's own Docker config
-> (`DOCKER_CONFIG`, `/var/lib/dockercmd/.docker` on a packaged install). For a
-> compose file with private images, run `docker login` for that config on the
-> server, or pull the images on [Images](images.md) first. A normal deploy only
-> pulls images that are missing. A deploy with **Pull** always asks the registry,
-> so it needs the server-side login.
+### Deploys
+Project deploys, revision restores, MCP deploys and stack redeploys on the local
+daemon use these credentials too. A deploy runs `docker compose`, which reads
+credentials from the Docker CLI config, so each run gets a private temporary
+config: the server's own config with the stored credentials laid over it. It is
+deleted when the run ends.
+
+- **The stored credential wins.** For a registry stored here, it takes
+  precedence over the server's own `docker login`, a credential helper, or a
+  `DOCKER_AUTH_CONFIG` entry for the same registry. Logins for other registries
+  keep working.
+- **Two entries for one registry:** the oldest is used, here and on the Images
+  page alike.
+- **A broken entry doesn't stop a deploy.** A credential that can't be decrypted,
+  or a server Docker config that can't be read, is skipped, and the deploy
+  output says so.
+
+> **Exception: CLI stacks on an SSH host.** Redeploying a stack that was started
+> with the `docker compose` CLI on an [SSH host](hosts.md) runs compose on that
+> host itself. It pulls with that host's own `docker login`, and the redeploy
+> doesn't copy the stored credentials there. Its output starts with a note
+> saying so. A [project](projects.md) deployed to the same host does use them,
+> because its compose runs on the Docker Commander server.

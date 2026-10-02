@@ -24,6 +24,9 @@ password but not the second factor: change the password. Treat any
 **See who changed the configuration.** Search for `settings.update`,
 `ldap.configure`, `smtp.configure`, `retention.update` or `policy.rules.update`.
 
+**See what happened on one server.** Type the host's name into the search. The
+**Host** column names the server each action reached.
+
 **See what AI clients have done.** Search for `mcp.`. Changes a client makes
 through [MCP](mcp.md) are recorded under that prefix, as are token changes. What
 it only reads is not.
@@ -34,13 +37,19 @@ is 30 days.
 
 ## The page
 
-The newest **1000** entries, newest first, with search (user, action, target or
-IP) and paging. Columns are time, user, action, target and IP.
+The newest **1000** entries you may see, newest first, with search and paging.
+Columns are time, user, action, target, **host** and IP. An entry's **detail**
+(how a sign-in happened, which profiles a deploy used…) is shown under its
+target. The search covers user, action, target, detail, host name and IP.
 
-Each entry also stores an optional **detail** and the **Docker host** the action
-targeted (0 = the local daemon). The host is recorded because a
-[host-scoped](users.md#limiting-a-role-to-specific-hosts) action only makes sense
-with the *where* next to the *what*.
+The **Host** column is the Docker host the action reached:
+
+| Shows | Means |
+|---|---|
+| a host name | The action ran on that host. The local daemon is shown by its own name too. |
+| `#id` | A host you can't see, or one deleted since. Its name isn't shown. |
+| `several hosts` | Something spanning more than one host, or all of them: a maintenance window for several hosts, acknowledging all alerts across hosts. |
+| `—` | An action with no host, such as a settings change. Entries from before 1.7.0 also show this for the local daemon. |
 
 Read-only views (listing, inspecting, streaming) are not audited. Only changes and
 security-relevant operations are, which keeps the log useful.
@@ -137,12 +146,20 @@ in the log.
 
 ### Technical notes
 
-- **Host scope.** A user whose roles are limited to some hosts doesn't see
-  entries for other hosts. Entries with no host (host 0) are visible to everyone
-  with the audit section. The filter is applied after the newest 1000 are loaded,
-  so a scoped user may see fewer.
+- **Host scope.** A reader whose roles are limited to some hosts sees only
+  entries for those hosts, the local daemon (always in reach) and actions with no
+  host. Entries about **several hosts** are shown only to readers who see every
+  host. The scope is applied in the query, before the 1000-entry limit, so a busy
+  host you can't see never pushes your own entries out. The MCP `recent_audit`
+  tool applies the same scope, narrowed further by the token's own hosts.
+- **How the host is known.** It is the host the action actually reached, with
+  "no host chosen" resolved to the concrete default. A project action names the
+  project's host, a backup job its job's host, a host setting that host. An MCP
+  call aimed at a remote host names it even when it was refused before it got
+  there. Entries written before 1.7.0 recorded the local daemon, project actions
+  and MCP actions without a host; they can't be corrected.
 - **Who can read it.** The audit log is its own section. **Viewer** includes it
   read-only; **Operator** does not (see [Users & roles](users.md)).
 - **Older entries.** The page loads only the newest 1000. The API,
   `GET /api/audit`, takes `limit` (up to 1000) and `before` (an entry id) to page
-  further back. It also returns the detail and host of each entry.
+  further back. Each entry carries `hostId`: `0` for no host, `-1` for several.

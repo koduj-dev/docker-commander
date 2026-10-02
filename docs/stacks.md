@@ -68,7 +68,10 @@ steps, so you can leave a half-finished edit on disk without restarting anything
 - **SSH hosts run `docker compose` on the host itself.** Managed Projects differ:
   there the CLI runs on the Docker Commander machine and only tunnels the API. So
   the host needs the Compose plugin, and the SSH user needs write access to the
-  compose file.
+  compose file. It also pulls private images with that host's own
+  `docker login`: credentials stored under [Registries](registries.md#deploys)
+  aren't copied to the host, and the redeploy output says so. On the local daemon
+  a redeploy uses them.
 - **Plain-TCP hosts stay read-only**, since there is no filesystem to reach. So
   does a stack whose containers carry no `working_dir` label. The viewer says
   which.

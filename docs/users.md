@@ -65,6 +65,14 @@ editable copy, as with [project templates](projects.md#managing-templates).
 | **Viewer** | Every section, read-only. |
 | **Operator** | Day-to-day work, writable: containers, projects, images, volumes, networks, topology, logs, events, alerts, diagnostics. Not hosts, registries or the audit log. Those are authority over the installation itself. |
 
+> **Write access to Containers or Projects is full trust in the server.** Access
+> to a Docker daemon is equivalent to root on its machine: whoever can start a
+> container or deploy a project can run a privileged one and read that machine's
+> files. The local daemon is in every role's reach, even a role limited to other
+> hosts, so on a typical install this includes the Docker Commander server
+> itself, its data dir and encryption key. Give these grants only to people you
+> would give root on the server.
+
 Manage roles on the **Roles** tab. Each card shows the role's grants, how many
 accounts hold it, whether it is limited to specific hosts, and whether it is
 built in or yours. The editor shows all fourteen sections, each set to **—**

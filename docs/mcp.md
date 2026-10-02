@@ -243,7 +243,7 @@ rate limited. A token's section subset narrows this list; its host subset decide
 | `system_info` | dashboard | R | Engine and host facts: versions, OS/kernel, drivers, counts |
 | `metrics_history` | dashboard | R | Historical CPU%/memory% for one container (authorized against the container's host) |
 | `recent_events` | events | R | Recent Docker daemon events on a host |
-| `recent_audit` | audit | R | Recent audit entries — most tokens will not have this section |
+| `recent_audit` | audit | R | Recent audit entries, limited to the hosts the token and its owner may see — most tokens will not have this section |
 | `list_alerts` | alerts | R | Alert history with the UI's filters |
 | `active_alert_conditions` | alerts | R | What is over threshold **right now**, and for how long |
 | `list_alert_rules` | alerts | R | Rules and thresholds; channels, never recipients or webhook URLs |
