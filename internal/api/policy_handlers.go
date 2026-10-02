@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -15,13 +16,18 @@ import (
 // configured mode (off/warn/block), defaulting an unset rule to "off".
 func (s *Server) handleGetPolicyRules(w http.ResponseWriter, r *http.Request) {
 	modes, err := s.store.PolicyRuleModes(r.Context())
-	if err != nil {
+	corrupt := errors.Is(err, store.ErrPolicyRulesCorrupt)
+	if err != nil && !corrupt {
 		writeErr(w, http.StatusInternalServerError, "could not load policy rules")
 		return
 	}
+	// A corrupt stored value is shown as every rule off, flagged, so the admin
+	// can open the page and save it again. Deploys meanwhile refuse to run
+	// (evaluateDeployPolicy), rather than treat it as "no rules".
 	writeJSON(w, http.StatusOK, map[string]any{
-		"rules": store.PolicyRuleIDs,
-		"modes": modes,
+		"rules":   store.PolicyRuleIDs,
+		"modes":   modes,
+		"corrupt": corrupt,
 	})
 }
 
@@ -67,6 +73,9 @@ func (s *Server) evaluateDeployPolicy(ctx context.Context, slug, dir string, pro
 	modes, err := s.store.PolicyRuleModes(ctx)
 	if err != nil {
 		log.Printf("policy check: load policy rules for %q: %v", slug, err)
+		if errors.Is(err, store.ErrPolicyRulesCorrupt) {
+			return nil, nil, fmt.Errorf("policy check: %w; open Settings → Policy rules and save them again", err)
+		}
 		return nil, nil, fmt.Errorf("policy check: could not load policy rules: %w", err)
 	}
 	anyEnabled := false

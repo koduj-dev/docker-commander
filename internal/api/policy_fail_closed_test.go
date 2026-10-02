@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite" // same CGO-free driver the store package uses
@@ -192,5 +193,43 @@ func TestMCPDeployProject_PolicyCheckFailureRefusesDeploy(t *testing.T) {
 	}
 	if n := runningServiceCount(t, slug, "web"); n != 0 {
 		t.Errorf("SECURITY: the container ran despite a failed policy check via MCP (%d running)", n)
+	}
+}
+
+// PENTEST: a stored policy value that can't be parsed used to read as "every rule
+// off", so every deploy went through unchecked on a configuration nobody chose.
+// It must refuse instead, and say how to recover. The rules page still opens,
+// flagged, so the admin can save them again, which repairs it.
+func TestPolicyRulesFailClosedWhenTheStoredValueIsCorrupt(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	srv := &Server{store: st}
+	ctx := context.Background()
+	if err := st.SetSetting(ctx, "policy_rule_modes", "{not json"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = srv.evaluateDeployPolicy(ctx, "app", "/nonexistent", nil, nil, nil)
+	if err == nil {
+		t.Fatal("SECURITY: a deploy went ahead while the stored policy rules were unreadable")
+	}
+	if !strings.Contains(err.Error(), "save them again") {
+		t.Errorf("the refusal doesn't say how to recover: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	srv.handleGetPolicyRules(w, httptest.NewRequest("GET", "/api/policy-rules", nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"corrupt":true`) {
+		t.Fatalf("the rules page should open and flag the corrupt value: %d %s", w.Code, w.Body.String())
+	}
+
+	if err := st.SetPolicyRuleModes(ctx, map[string]string{"latest_tag": "warn"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.PolicyRuleModes(ctx); err != nil {
+		t.Fatalf("saving the rules again should repair the stored value: %v", err)
 	}
 }

@@ -14,6 +14,10 @@ All notable changes to Docker Commander are documented here. The format follows
   forwarding header (`X-Forwarded-For`, `Forwarded`, `X-Real-IP`, `Via`, …) now
   counts as remote. A proxy that adds none of these can't be detected: list it
   in `DC_TRUSTED_PROXIES`, or keep the exemption off behind a proxy.
+- **Unreadable policy rules no longer switch every check off.** A stored value
+  that couldn't be parsed was read as "all rules off", so every deploy went
+  through unchecked. Deploys now refuse and say to save the rules again; the
+  Policy rules page still opens so that can be done.
 - **The Docker-socket policy check now catches a socket reached through a parent
   directory.** Binding `/`, `/var/run`, `/run` or a rootless `/run/user/<uid>`
   gives the container the socket, but only the `docker.sock` paths themselves were
