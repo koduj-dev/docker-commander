@@ -167,7 +167,7 @@ func TestAutoApply_SuccessRecordsUpdateAuditsAndRestarts(t *testing.T) {
 	if err != nil || last == nil || last.Version != "1.0.1" {
 		t.Errorf("expected LastAutoUpdate to record version 1.0.1, got %+v (err=%v)", last, err)
 	}
-	entries, err := st.RecentAudit(t.Context(), 10, 0)
+	entries, err := st.RecentAudit(t.Context(), 10, 0, nil, true)
 	if err != nil || len(entries) == 0 || entries[0].Action != "update.apply" || entries[0].Username != "system" {
 		t.Errorf("expected a system-attributed update.apply audit entry, got %+v (err=%v)", entries, err)
 	}

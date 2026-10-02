@@ -342,6 +342,54 @@ All notable changes to Docker Commander are documented here. The format follows
   on Windows) rather than just failing.
 
 ### Fixed
+- **`dockercmd --backup` no longer writes to what it backs up.** It opens the
+  database read-only and without migrations. A data dir with no database is now
+  refused instead of backed up as a new empty one (which happened with
+  `sudo dockercmd --backup` on a packaged install without `--data-dir`), and a file
+  that isn't a Docker Commander database is refused and left untouched.
+- **The systemd service can listen on port 443.** The unit grants
+  `CAP_NET_BIND_SERVICE`, which HTTPS via Let's Encrypt on 443 needs. Packages
+  (.deb/.rpm) get the new unit on upgrade. An install made with
+  `--install-service` keeps its old unit until you run
+  `sudo dockercmd --install-service` again and then
+  `sudo systemctl restart dockercmd`.
+- **Sections granted through a role show up in the menu.** The menu read only
+  the account's own sections, so a page reachable through a role had no menu
+  entry. The section picker for a new MCP token had the same gap.
+- **Deploys pull private images with the credentials stored under Registries.**
+  Project deploys, revision restores, MCP deploys and stack redeploys on the
+  local daemon now give `docker compose` a temporary Docker config with those
+  credentials (private to the server user, deleted when the run ends). Before,
+  compose only had the server user's own `docker login`. Your existing Docker
+  config is kept, and a stored credential takes precedence over a credential
+  helper or `DOCKER_AUTH_CONFIG` entry for the same registry. A stored
+  credential that can't be decrypted, or a Docker config that can't be read, no
+  longer stops the deploy: it is skipped and named in the deploy output.
+  **Exception:** a CLI stack on an SSH host runs `docker compose` on that host,
+  which keeps using that host's own `docker login`; the redeploy doesn't copy
+  the stored credentials there, and its output says so.
+- **The Audit log shows each entry's detail and host.** Both were recorded and
+  returned by the API but never displayed, so the page couldn't say how a
+  sign-in happened or on which server a container was stopped. The search now
+  covers them too. A host the account can't see is shown by its id.
+- **Audit entries record the host an action really reached.** An action on the
+  local daemon (the default, with no host chosen) used to be recorded with no
+  host at all, and so did every project action and every action taken through
+  MCP, even on a remote host. Entries with no host are shown to every reader of
+  the audit log, so a reader limited to some hosts could see deploys and MCP
+  actions on hosts outside their scope. Project actions now name the project's
+  host, backup jobs their job's host, host settings and alert acknowledgements
+  that host, and everything that talks to Docker the daemon it reached, including
+  an MCP call refused before it got there. Something spanning several hosts (a
+  maintenance window for more than one host, acknowledging all alerts across
+  hosts) is shown only to readers who see every host. Entries written before 1.7.0 can't be
+  corrected and keep showing no host.
+- **A busy host can no longer empty a scoped reader's audit log.** The host
+  scope is applied in the query, before the limit; it used to be applied to the
+  newest 1,000 entries, so a reader limited to host A could get an empty list
+  after 1,000 actions on host B.
+- **The MCP `recent_audit` tool is limited to the hosts the caller may see.** It
+  returned every host's entries to any holder of the audit section.
 - **`dockercmd --backup` includes the project revision snapshots**
   (`project-revisions/`). Before, a restored database could list a revision whose
   snapshot was missing. Revision numbers are now assigned in a transaction, so two

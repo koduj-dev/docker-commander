@@ -199,7 +199,13 @@ func (s *Server) userView(r *http.Request, u *store.User) map[string]any {
 }
 
 // effectiveSections is the set of menu sections a user may access: the globally
-// enabled sections, intersected with the user's grant (admins get them all).
+// enabled sections, intersected with the user's effective grants (admins get
+// them all).
+//
+// The grants are the same ones checkAccess enforces: the account's own sections
+// plus every role it holds. Reading only the account's own list hid any section
+// that came from a role, so the server let the user in while the menu never
+// showed the way there.
 func (s *Server) effectiveSections(ctx context.Context, u *store.User) []string {
 	disabled, _ := s.store.DisabledSections(ctx)
 	enabled := make([]string, 0, len(store.Sections))
@@ -212,8 +218,12 @@ func (s *Server) effectiveSections(ctx context.Context, u *store.User) []string 
 		return enabled
 	}
 	out := make([]string, 0, len(enabled))
+	grants, err := s.store.EffectiveGrants(ctx, u)
+	if err != nil {
+		return out // fail closed: an empty menu, never a wider one
+	}
 	for _, sec := range enabled {
-		if contains(u.Sections, sec) {
+		if grants[sec].Granted {
 			out = append(out, sec)
 		}
 	}

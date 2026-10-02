@@ -77,6 +77,7 @@ func (s *Server) Handler() http.Handler {
 	}
 
 	r.Route("/api", func(r chi.Router) {
+		r.Use(withAuditHost) // lets audit() name the Docker host a request acted on
 		// Public auth endpoints (no session required).
 		r.Group(func(r chi.Router) {
 			r.Get("/auth/status", s.handleAuthStatus)
@@ -532,8 +533,36 @@ func (s *Server) resolveHostID(r *http.Request) (int64, error) {
 	return 0, nil
 }
 
+// withAuditHost gives every API request a recorder that docker.Manager.Client
+// fills in with the host the request actually reached.
+func withAuditHost(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx, _ := docker.WithHostRecorder(r.Context())
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
 // audit records an action, ignoring failures (best-effort).
+//
+// The host is the one the request reached: whatever docker.Manager.Client
+// connected to, with "no host given" already resolved to the concrete default.
+// A request that never reached a daemon falls back to its ?host=, and to 0,
+// "no host", when there is none. Actions on something with a host of its own
+// that isn't reached through Client (a project deployed by the compose CLI, a
+// host being edited) name it with auditOn instead.
+//
+// The host is what scopes who may read the entry (handleAudit), so 0 must mean
+// "no host" and nothing else: before, the local daemon was recorded as 0 too.
 func (s *Server) audit(r *http.Request, action, target, detail string) {
+	hostID, ok := docker.HostRecorderFrom(r.Context()).Host()
+	if !ok {
+		hostID, _ = hostParam(r)
+	}
+	s.auditOn(r, hostID, action, target, detail)
+}
+
+// auditOn is audit with the host given explicitly.
+func (s *Server) auditOn(r *http.Request, hostID int64, action, target, detail string) {
 	var uid int64
 	var uname string
 	if c, ok := auth.ClaimsFrom(r.Context()); ok {
@@ -541,9 +570,27 @@ func (s *Server) audit(r *http.Request, action, target, detail string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	hostID, _ := hostParam(r) // 0 when the route names no host
 	_ = s.store.Audit(ctx, store.AuditEntry{
 		UserID: uid, Username: uname, Action: action, Target: target,
 		Detail: detail, IP: r.RemoteAddr, HostID: hostID,
 	})
+}
+
+// daemonHost turns a host reference where 0 means "the local daemon" (a
+// project's target, for instance) into the local host's own id, so an audit
+// entry never confuses it with "no host".
+func (s *Server) daemonHost(ctx context.Context, hostID int64) int64 {
+	if hostID > 0 {
+		return hostID
+	}
+	id, err := s.store.LocalHostID(ctx)
+	if err != nil {
+		return 0
+	}
+	return id
+}
+
+// auditProject records an action on a project under the host it deploys to.
+func (s *Server) auditProject(r *http.Request, p *store.Project, action, detail string) {
+	s.auditOn(r, s.daemonHost(r.Context(), p.HostID), action, p.Slug, detail)
 }

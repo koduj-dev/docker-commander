@@ -61,6 +61,7 @@ func (m *Manager) Client(ctx context.Context, hostID int64) (*client.Client, err
 		}
 		hostID = id
 	}
+	recordHost(ctx, hostID)
 
 	m.mu.Lock()
 	if c, ok := m.clients[hostID]; ok {

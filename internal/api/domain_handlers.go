@@ -106,7 +106,7 @@ func (s *Server) handleCreateDomainMapping(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusInternalServerError, "could not create domain mapping")
 		return
 	}
-	s.audit(r, "project.domain.create", p.Slug, b.Domain)
+	s.auditProject(r, p, "project.domain.create", b.Domain)
 	writeJSON(w, http.StatusOK, map[string]int64{"id": id})
 }
 
@@ -170,7 +170,7 @@ func (s *Server) handleUpdateDomainMapping(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusInternalServerError, "could not update domain mapping")
 		return
 	}
-	s.audit(r, "project.domain.update", p.Slug, existing.Domain)
+	s.auditProject(r, p, "project.domain.update", existing.Domain)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -205,7 +205,7 @@ func (s *Server) handleDeleteDomainMapping(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusInternalServerError, "could not delete domain mapping")
 		return
 	}
-	s.audit(r, "project.domain.delete", p.Slug, domain)
+	s.auditProject(r, p, "project.domain.delete", domain)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
