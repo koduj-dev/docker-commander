@@ -358,7 +358,8 @@ func (h *handler) scanImage(ctx context.Context, req *mcpsdk.CallToolRequest, in
 	// A scan is gated as a WRITE, matching the REST route. It shells out to Trivy
 	// and pulls the image if absent, so it is real work on the host rather than a
 	// lookup — a read-only token must not be able to trigger it.
-	if _, err := h.authorize(ctx, req, "images", true, in.HostID); err != nil {
+	p, err := h.authorize(ctx, req, "images", true, in.HostID)
+	if err != nil {
 		return nil, scanImageOut{}, err
 	}
 	if !docker.ValidImageRef(in.Ref) {
@@ -388,6 +389,10 @@ func (h *handler) scanImage(ctx context.Context, req *mcpsdk.CallToolRequest, in
 	defer cleanup()
 
 	res, err := docker.ScanImage(ctx, env, in.Ref)
+	// Audited like the REST scan: it pulls the image if it's missing and runs
+	// Trivy on the host. Trivy is a CLI, not a Docker client call, so the host
+	// is named here rather than recorded by docker.Manager.Client.
+	h.auditOn(p, h.daemonHost(ctx, in.HostID), "mcp.image.scan", in.Ref, outcome(err))
 	if err != nil {
 		return nil, scanImageOut{Available: true, Error: err.Error()}, nil
 	}

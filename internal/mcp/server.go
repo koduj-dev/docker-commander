@@ -407,6 +407,18 @@ func (h *handler) projectDaemonHost(ctx context.Context, projectID int64) int64 
 	return id
 }
 
+// daemonHost names a Docker host where 0 means the local daemon: that host, or
+// the local host's own id, so an audit entry doesn't read as "no host".
+func (h *handler) daemonHost(ctx context.Context, hostID int64) int64 {
+	if hostID > 0 {
+		return hostID
+	}
+	if id, err := h.deps.Store.LocalHostID(ctx); err == nil {
+		return id
+	}
+	return 0
+}
+
 // withHostRecorder gives every MCP request a recorder for audit to read.
 func withHostRecorder(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
