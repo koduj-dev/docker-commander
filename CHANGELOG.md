@@ -384,6 +384,10 @@ All notable changes to Docker Commander are documented here. The format follows
 - **Building an image uses the credentials stored under Registries**, so a
   Dockerfile whose `FROM` is a private image builds. The Build dialog sent no
   credentials, and such a build failed even with the registry stored.
+- **The Windows service keeps a log.** It wrote to a console the service doesn't
+  have, so its log was lost, while the installer pointed at the Event Viewer,
+  where nothing was written. It now writes `dockercmd.log` in the data dir,
+  rotated at 10 MiB.
 - **`dockercmd --backup` no longer writes to what it backs up.** It opens the
   database read-only and without migrations. A data dir with no database is now
   refused instead of backed up as a new empty one (which happened with

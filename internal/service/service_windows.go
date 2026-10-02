@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -186,7 +187,7 @@ func Install(w io.Writer) error {
 	}
 
 	fmt.Fprintln(w, "\nService installed and started.")
-	fmt.Fprintln(w, "   Status: dockercmd --service-status   (logs: Event Viewer -> Windows Logs -> Application)")
+	fmt.Fprintf(w, "   Status: dockercmd --service-status   (log: %s)\n", winLogPath())
 	fmt.Fprintf(w, "   Data dir: %s\n", dataDir)
 	fmt.Fprintln(w, "   Listen address + TLS come from your config (DC_HOST/DC_PORT/DC_TLS_*). Then create the admin account in the UI.")
 	return nil
@@ -249,7 +250,7 @@ func Status(w io.Writer) error {
 	if st.State == svc.Running && st.ProcessId != 0 {
 		fmt.Fprintf(w, "  PID: %d\n", st.ProcessId)
 	}
-	fmt.Fprintln(w, "  Logs: Event Viewer -> Windows Logs -> Application (source \"dockercmd\")")
+	fmt.Fprintf(w, "  Log: %s\n", winLogPath())
 	return nil
 }
 
@@ -462,6 +463,18 @@ func (h windowsHandler) Execute(_ []string, r <-chan svc.ChangeRequest, statusCh
 // RunWindowsService runs `run` under SCM control until the SCM asks the
 // service to stop, at which point run's context is cancelled. Call only when
 // IsWindowsService() is true; it blocks for the lifetime of the service.
+//
+// A service has no console, so the log goes to winLogPath instead of stderr,
+// where the SCM would discard it. That file lives in the data dir, whose ACL
+// Install restricts to SYSTEM and Administrators, because the log names clients
+// and hosts. If it can't be opened the service still runs, unlogged.
 func RunWindowsService(run func(ctx context.Context) error) error {
+	if l, err := openRotatingLog(winLogPath(), serviceLogMax); err == nil {
+		log.SetOutput(l)
+		defer l.Close()
+	}
 	return svc.Run(winServiceName, windowsHandler{run: run})
 }
+
+// winLogPath is where the service writes its log.
+func winLogPath() string { return filepath.Join(winDataDir(), "dockercmd.log") }

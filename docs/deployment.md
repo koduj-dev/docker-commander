@@ -195,9 +195,9 @@ automatically (`KeepAlive`); logs go to `~/Library/Logs/dockercmd.log`.
 (SCM)** service: it copies itself to
 `%ProgramFiles%\docker-commander\dockercmd.exe`, creates the service (start
 type Automatic, delayed auto-start, with SCM recovery actions to restart on
-crash) and starts it. This needs an elevated (Administrator) prompt. Logs go to
-the **Event Viewer** (Windows Logs → Application, source `dockercmd`); data
-lives under `%ProgramData%\docker-commander\data`.
+crash) and starts it. This needs an elevated (Administrator) prompt. Data lives
+under `%ProgramData%\docker-commander\data`, and the log is `dockercmd.log` in
+that folder (10 MiB, then one older copy as `dockercmd.log.1`).
 
 `install-windows.ps1` remains as a dependency-free alternative: it registers a
 **Scheduled Task** instead, which starts at boot (or `-AtLogon`, if Docker
