@@ -209,6 +209,7 @@ func TestPentestReadOnlyRoleBlocksGetWrites(t *testing.T) {
 		Sections: []store.RoleSection{
 			{Section: "containers", Write: false},
 			{Section: "images", Write: false},
+			{Section: "volumes", Write: false},
 		},
 	})
 	if err != nil {
@@ -226,6 +227,11 @@ func TestPentestReadOnlyRoleBlocksGetWrites(t *testing.T) {
 		"/api/images/pull",
 		"/api/images/push",
 		"/api/images/scan",
+		// Raw content downloads: a read grant must not hand over the bytes.
+		"/api/containers/abc/export",
+		"/api/containers/abc/files/download",
+		"/api/volumes/data/files/download",
+		"/api/images/save",
 	} {
 		r := httptest.NewRequest("GET", p, nil)
 		if !isWriteRequest(r) {
