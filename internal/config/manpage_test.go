@@ -47,3 +47,43 @@ func TestManPageDocumentsAllFlags(t *testing.T) {
 		}
 	}
 }
+
+// envVar matches an environment variable name as config.go spells it.
+var envVar = regexp.MustCompile(`"(DC_[A-Z][A-Z0-9_]*)"`)
+
+// TestDocsListAllEnvVars fails if a DC_* variable read in config.go is missing
+// from the man page, the example config or the README table, the three places an
+// operator looks a setting up. DC_DEV is left out of the example config on
+// purpose: it is not something to set on a real install.
+func TestDocsListAllEnvVars(t *testing.T) {
+	src, err := os.ReadFile("config.go")
+	if err != nil {
+		t.Fatalf("read config.go: %v", err)
+	}
+	docs := map[string]string{}
+	for _, p := range []string{"../../deploy/dockercmd.1", "../../deploy/commander.conf.example", "../../README.md"} {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("read %s: %v", p, err)
+		}
+		docs[p] = string(b)
+	}
+	names := map[string]bool{}
+	for _, m := range envVar.FindAllStringSubmatch(string(src), -1) {
+		names[m[1]] = true
+	}
+	if len(names) < 20 {
+		t.Fatalf("found only %d DC_* variables in config.go — has the regex drifted?", len(names))
+	}
+	for name := range names {
+		re := regexp.MustCompile(`\b` + name + `\b`)
+		for p, doc := range docs {
+			if name == "DC_DEV" && p == "../../deploy/commander.conf.example" {
+				continue
+			}
+			if !re.MatchString(doc) {
+				t.Errorf("%s is read in config.go but not documented in %s", name, p)
+			}
+		}
+	}
+}
