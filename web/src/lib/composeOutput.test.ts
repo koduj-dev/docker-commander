@@ -32,4 +32,11 @@ describe("composeOutputText", () => {
   it("prefers output over error when both are present", () => {
     expect(composeOutputText({ output: "ok", error: "ignored" })).toBe("ok");
   });
+
+  it("says why a deploy was refused when the policy check couldn't run", () => {
+    // e.g. unreadable policy rules: the user needs the recovery step, not "(no output)".
+    const text = composeOutputText({ policy: { error: "the stored policy rules are unreadable; open Settings → Policy rules and save them again" } });
+    expect(text).toContain("Refused:");
+    expect(text).toContain("save them again");
+  });
 });

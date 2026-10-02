@@ -146,6 +146,15 @@ func (s *Server) policyCheckOrRefuse(r *http.Request, p *store.Project, dir stri
 		default:
 			s.auditProject(r, p, "project.deploy.policy_check_failed", err.Error())
 		}
+		// The detail stays in the audit entry: a compose error can quote values
+		// from the environment. Unreadable rules are the exception, with a fixed
+		// message the user can act on.
+		if errors.Is(err, store.ErrPolicyRulesCorrupt) {
+			return map[string]any{"ok": false, "policy": map[string]any{
+				"error": "the stored policy rules are unreadable; open Settings → Policy rules and save them again",
+				"code":  "rules_corrupt",
+			}}, true
+		}
 		return map[string]any{"ok": false, "policy": map[string]any{"error": "policy check failed; refusing to deploy for safety"}}, true
 	}
 

@@ -73,6 +73,11 @@ func (s *Store) PolicyRuleModes(ctx context.Context) (map[string]string, error) 
 		// on a value nobody chose. The caller decides; the deploy check refuses.
 		return out, fmt.Errorf("%w: %v", ErrPolicyRulesCorrupt, err)
 	}
+	if stored == nil {
+		// JSON null unmarshals cleanly into a nil map. Saved rules are always an
+		// object, so null is just as unreadable as a parse error.
+		return out, fmt.Errorf("%w: stored value is null", ErrPolicyRulesCorrupt)
+	}
 	for id, mode := range stored {
 		if validPolicyRuleID(id) && validPolicyMode(mode) {
 			out[id] = mode

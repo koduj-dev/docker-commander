@@ -31,6 +31,7 @@ export function PolicyRules({ embedded = false }: { embedded?: boolean }) {
   const [modes, setModes] = useState<Record<string, PolicyMode>>({});
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState(false);
+  const [corrupt, setCorrupt] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -39,6 +40,7 @@ export function PolicyRules({ embedded = false }: { embedded?: boolean }) {
     api.policyRules().then((r) => {
       setRules(r.rules);
       setModes(r.modes);
+      setCorrupt(!!r.corrupt);
       setLoaded(true);
     }).catch(() => { setLoaded(true); setLoadError(true); });
   }, []);
@@ -48,6 +50,7 @@ export function PolicyRules({ embedded = false }: { embedded?: boolean }) {
     setBusy(true); setMsg(null);
     try {
       await api.setPolicyRules(modes);
+      setCorrupt(false);
       setMsg({ ok: true, text: "Saved." });
     } catch (e) {
       setMsg({ ok: false, text: e instanceof Error ? `Save failed: ${e.message}` : "Save failed" });
@@ -82,6 +85,12 @@ export function PolicyRules({ embedded = false }: { embedded?: boolean }) {
           operator to confirm before the deploy runs. <b>Block</b> refuses the deploy outright —
           the only way past it is changing the rule&apos;s mode here.
         </p>
+        {corrupt && (
+          <div role="alert" className="text-sm text-danger bg-danger/10 border border-danger/30 rounded-md p-3">
+            The stored policy rules couldn&apos;t be read, so every deploy is refused for safety.
+            Choose the mode for each rule below and click <b>Save policy rules</b> to replace them.
+          </div>
+        )}
         <div className="card divide-y divide-border">
           {rules.map((rule) => {
             const info = RULE_INFO[rule];

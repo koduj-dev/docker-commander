@@ -4,6 +4,10 @@ export type ComposeRunResult = {
   error?: string;
   /** Set by a remote deploy that copied bind-mounted paths into seeded volumes. */
   note?: string;
+  /** Set when the deploy-time policy check itself couldn't run and the deploy
+   * was refused for safety; `error` then says why, e.g. how to fix unreadable
+   * rules. */
+  policy?: { error?: string };
 };
 
 /**
@@ -19,6 +23,6 @@ export type ComposeRunResult = {
  * the logic was duplicated once and the editor silently dropped the note.
  */
 export function composeOutputText(r: ComposeRunResult): string {
-  const body = r.output || r.error || "(no output)";
+  const body = r.output || r.error || (r.policy?.error ? `Refused: ${r.policy.error}` : "") || "(no output)";
   return r.note ? `${r.note}\n\n${body}` : body;
 }

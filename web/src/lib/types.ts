@@ -86,6 +86,8 @@ export type PolicyMode = "off" | "warn" | "block";
 export interface PolicyRules {
   rules: PolicyRuleId[];
   modes: Record<string, PolicyMode>;
+  /** The stored rules couldn't be read. Deploys are refused until they are saved again. */
+  corrupt?: boolean;
 }
 
 export interface PolicyViolation {
