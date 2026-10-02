@@ -377,6 +377,9 @@ All notable changes to Docker Commander are documented here. The format follows
   reach, including the ones Projects deploy, which bypassed the project's
   revisions and policy checks. Such a stack now opens read-only with a note to
   use Projects.
+- **Building an image uses the credentials stored under Registries**, so a
+  Dockerfile whose `FROM` is a private image builds. The Build dialog sent no
+  credentials, and such a build failed even with the registry stored.
 - **`dockercmd --backup` no longer writes to what it backs up.** It opens the
   database read-only and without migrations. A data dir with no database is now
   refused instead of backed up as a new empty one (which happened with
