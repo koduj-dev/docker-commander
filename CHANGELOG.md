@@ -349,6 +349,9 @@ All notable changes to Docker Commander are documented here. The format follows
   `--install-service` keeps its old unit until you run
   `sudo dockercmd --install-service` again and then
   `sudo systemctl restart dockercmd`.
+- **Sections granted through a role show up in the menu.** The menu read only
+  the account's own sections, so a page reachable through a role had no menu
+  entry. The section picker for a new MCP token had the same gap.
 - **`dockercmd --backup` includes the project revision snapshots**
   (`project-revisions/`). Before, a restored database could list a revision whose
   snapshot was missing. Revision numbers are now assigned in a transaction, so two
