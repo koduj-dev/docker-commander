@@ -338,6 +338,32 @@ All notable changes to Docker Commander are documented here. The format follows
   on Windows) rather than just failing.
 
 ### Fixed
+- **`dockercmd --backup` no longer writes to what it backs up.** It opens the
+  database read-only and without migrations. A data dir with no database is now
+  refused instead of backed up as a new empty one (which happened with
+  `sudo dockercmd --backup` on a packaged install without `--data-dir`), and a file
+  that isn't a Docker Commander database is refused and left untouched.
+- **The systemd service can listen on port 443.** The unit grants
+  `CAP_NET_BIND_SERVICE`, which HTTPS via Let's Encrypt on 443 needs. Packages
+  (.deb/.rpm) get the new unit on upgrade. An install made with
+  `--install-service` keeps its old unit until you run
+  `sudo dockercmd --install-service` again and then
+  `sudo systemctl restart dockercmd`.
+- **Sections granted through a role show up in the menu.** The menu read only
+  the account's own sections, so a page reachable through a role had no menu
+  entry. The section picker for a new MCP token had the same gap.
+- **Deploys pull private images with the credentials stored under Registries.**
+  Project deploys, revision restores, MCP deploys and stack redeploys on the
+  local daemon now give `docker compose` a temporary Docker config with those
+  credentials (private to the server user, deleted when the run ends). Before,
+  compose only had the server user's own `docker login`. Your existing Docker
+  config is kept, and a stored credential takes precedence over a credential
+  helper or `DOCKER_AUTH_CONFIG` entry for the same registry. A stored
+  credential that can't be decrypted, or a Docker config that can't be read, no
+  longer stops the deploy: it is skipped and named in the deploy output.
+  **Exception:** a CLI stack on an SSH host runs `docker compose` on that host,
+  which keeps using that host's own `docker login`; the redeploy doesn't copy
+  the stored credentials there, and its output says so.
 - **The Audit log shows each entry's detail and host.** Both were recorded and
   returned by the API but never displayed, so the page couldn't say how a
   sign-in happened or on which server a container was stopped. The search now

@@ -85,7 +85,7 @@ func (s *Store) AuthByID(ctx context.Context, id int64) (*RegistryAuth, error) {
 func (s *Store) AuthForHost(ctx context.Context, host string) (*RegistryAuth, error) {
 	host = NormalizeRegistryHost(host)
 	return s.scanAuth(s.db.QueryRowContext(ctx, `
-		SELECT address, username, secret_enc FROM registries WHERE address = ? LIMIT 1`, host))
+		SELECT address, username, secret_enc FROM registries WHERE address = ? ORDER BY id LIMIT 1`, host))
 }
 
 // scanAuth decrypts a credential row.
@@ -135,4 +135,50 @@ func NormalizeRegistryHost(host string) string {
 		return "docker.io"
 	}
 	return host
+}
+
+// AllRegistryAuths returns every stored credential, decrypted, for handing to a
+// `docker compose` run. They come oldest first: when two entries share a
+// registry, the oldest one is the one used, here and in AuthForHost alike.
+//
+// A row that can't be decrypted is skipped and named in skipped, rather than
+// failing every deploy: one broken entry must not stop projects that never use
+// that registry. The caller shows the names, so a later 401 has an explanation.
+func (s *Store) AllRegistryAuths(ctx context.Context) (auths []RegistryAuth, skipped []string, err error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT address, username, secret_enc FROM registries ORDER BY id`)
+	if err != nil {
+		return nil, nil, err
+	}
+	type row struct{ address, username, enc string }
+	var raw []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.address, &r.username, &r.enc); err != nil {
+			rows.Close()
+			return nil, nil, err
+		}
+		raw = append(raw, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	auths = make([]RegistryAuth, 0, len(raw))
+	for _, r := range raw {
+		a := RegistryAuth{Address: r.address, Username: r.username}
+		if r.enc != "" {
+			if s.cipher == nil {
+				skipped = append(skipped, r.address)
+				continue
+			}
+			pw, err := s.cipher.Decrypt(r.enc)
+			if err != nil {
+				skipped = append(skipped, r.address)
+				continue
+			}
+			a.Password = pw
+		}
+		auths = append(auths, a)
+	}
+	return auths, skipped, nil
 }
