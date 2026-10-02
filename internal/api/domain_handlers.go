@@ -93,7 +93,7 @@ func (s *Server) handleCreateDomainMapping(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	b.Domain = strings.ToLower(strings.TrimSpace(b.Domain))
-	if msg, ok := s.validateDomainMapping(r, p, b); !ok {
+	if msg, ok := s.validateDomainMapping(r.Context(), p, b); !ok {
 		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
@@ -157,7 +157,7 @@ func (s *Server) handleUpdateDomainMapping(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	b.Domain = existing.Domain
-	if msg, ok := s.validateDomainMapping(r, p, b); !ok {
+	if msg, ok := s.validateDomainMapping(r.Context(), p, b); !ok {
 		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
@@ -215,7 +215,20 @@ func (s *Server) handleDeleteDomainMapping(w http.ResponseWriter, r *http.Reques
 // target port, and — best-effort, only when the compose CLI is actually
 // available — that Service names a real service in the project's current
 // compose config. Returns (errorMessage, false) on the first failure.
-func (s *Server) validateDomainMapping(r *http.Request, p *store.Project, b domainMappingBody) (string, bool) {
+func (s *Server) validateDomainMapping(ctx context.Context, p *store.Project, b domainMappingBody) (string, bool) {
+	if msg, ok := s.checkDomainMappingFields(b); !ok {
+		return msg, false
+	}
+	services, err := s.resolvedComposeServices(ctx, p)
+	if err != nil {
+		return "", true // best-effort: can't verify the service exists, don't block on it
+	}
+	return mappedServiceExists(b, services)
+}
+
+// checkDomainMappingFields is every check of a mapping that doesn't need the
+// project's compose file.
+func (s *Server) checkDomainMappingFields(b domainMappingBody) (string, bool) {
 	if !validFQDN(b.Domain) {
 		return "domain must be a valid FQDN (e.g. app.example.com); wildcards and IP literals aren't accepted", false
 	}
@@ -236,10 +249,11 @@ func (s *Server) validateDomainMapping(r *http.Request, p *store.Project, b doma
 	if !validDomainTLSModes[b.TLSMode] {
 		return "tlsMode must be one of: acme", false
 	}
-	services, err := s.resolvedComposeServices(r.Context(), p)
-	if err != nil {
-		return "", true // best-effort: can't verify the service exists, don't block on it
-	}
+	return "", true
+}
+
+// mappedServiceExists checks that the mapping's service is one of services.
+func mappedServiceExists(b domainMappingBody, services []docker.ServiceSpec) (string, bool) {
 	for _, svc := range services {
 		if svc.Name == b.Service {
 			return "", true
@@ -261,19 +275,24 @@ func (s *Server) resolvedComposeServices(ctx context.Context, p *store.Project) 
 	if !docker.ComposeAvailable(ctx) {
 		return nil, errors.New("the `docker compose` CLI is not available on the host running Docker Commander")
 	}
-	dir := s.projectRoot(p.ID)
 	_, masked, _, err := s.projectSecretEnvs(ctx, p.ID)
 	if err != nil {
 		return nil, err
 	}
-	profiles, err := docker.ComposeProfilesEnv(ctx, dir, p.Slug, masked)
+	return composeServicesIn(ctx, s.projectRoot(p.ID), p.Slug, masked)
+}
+
+// composeServicesIn resolves the services of the compose project in dir, every
+// profile enabled, with env for interpolation.
+func composeServicesIn(ctx context.Context, dir, slug string, env []string) ([]docker.ServiceSpec, error) {
+	profiles, err := docker.ComposeProfilesEnv(ctx, dir, slug, env)
 	if err != nil {
 		// No profiles to enumerate is not fatal on its own — a compose file
 		// with none declared, or a transient CLI hiccup — fall through and
 		// resolve with the default (no-profile) set rather than failing outright.
 		profiles = nil
 	}
-	cfgJSON, err := docker.ComposeConfigJSONFiles(ctx, dir, p.Slug, profiles, masked, nil)
+	cfgJSON, err := docker.ComposeConfigJSONFiles(ctx, dir, slug, profiles, env, nil)
 	if err != nil {
 		return nil, err
 	}
