@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -32,17 +33,53 @@ func (s *Store) Audit(ctx context.Context, e AuditEntry) error {
 	return err
 }
 
+// AuditHostSeveral is the host of an audit entry about something that spans
+// more than one host, or every host (a maintenance window, for instance). One
+// host id can't say "these hosts", so such an entry is shown only to readers
+// who may see every host: the safe side, since showing it to anyone narrower
+// could disclose a host they are kept away from.
+const AuditHostSeveral int64 = -1
+
+// AuditHostOf is the audit host for something scoped to hostIDs: that host when
+// there is exactly one (the local daemon by its own id, never 0), otherwise
+// AuditHostSeveral. An empty list means every host.
+func (s *Store) AuditHostOf(ctx context.Context, hostIDs []int64) int64 {
+	if len(hostIDs) != 1 {
+		return AuditHostSeveral
+	}
+	if s.NormalizeHostID(ctx, hostIDs[0]) != 0 {
+		return hostIDs[0]
+	}
+	if local, err := s.LocalHostID(ctx); err == nil {
+		return local
+	}
+	return AuditHostSeveral
+}
+
 // RecentAudit returns the most recent audit entries, newest first. When before
 // is > 0, only entries older than that id are returned (cursor pagination).
-func (s *Store) RecentAudit(ctx context.Context, limit int, before int64) ([]AuditEntry, error) {
+//
+// Unless allHosts, only entries whose host is in hostIDs are returned. The scope
+// is applied in the query, before the limit: filtering a fetched page instead
+// let a busy host the reader can't see push every entry they may see out of it.
+func (s *Store) RecentAudit(ctx context.Context, limit int, before int64, hostIDs []int64, allHosts bool) ([]AuditEntry, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 200
 	}
-	query := `SELECT id, user_id, username, action, target, detail, ip, host_id, created_at FROM audit_log`
+	query := `SELECT id, user_id, username, action, target, detail, ip, host_id, created_at FROM audit_log WHERE 1 = 1`
 	args := []any{}
 	if before > 0 {
-		query += ` WHERE id < ?`
+		query += ` AND id < ?`
 		args = append(args, before)
+	}
+	if !allHosts {
+		if len(hostIDs) == 0 {
+			return []AuditEntry{}, nil
+		}
+		query += ` AND host_id IN (?` + strings.Repeat(`, ?`, len(hostIDs)-1) + `)`
+		for _, id := range hostIDs {
+			args = append(args, id)
+		}
 	}
 	query += ` ORDER BY id DESC LIMIT ?`
 	args = append(args, limit)

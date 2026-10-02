@@ -127,7 +127,7 @@ func TestPolicyCheckOrRefuse_RefusesAndAuditsOnCheckFailure(t *testing.T) {
 				t.Errorf("expected {ok:false, ...}, got %+v", resp)
 			}
 
-			entries, err := st.RecentAudit(context.Background(), 50, 0)
+			entries, err := st.RecentAudit(context.Background(), 50, 0, nil, true)
 			if err != nil {
 				t.Fatal(err)
 			}

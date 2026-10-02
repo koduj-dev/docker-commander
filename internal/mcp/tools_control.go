@@ -111,7 +111,7 @@ func (h *handler) deployProject(ctx context.Context, req *mcpsdk.CallToolRequest
 	}
 	out, derr := h.deps.DeployProject(ctx, in.ProjectID, in.Profiles, in.ConfirmPolicyWarnings)
 	res := actionResult{OK: derr == nil, Action: "deploy", Target: projectTarget(in.ProjectID), Output: out}
-	h.audit(p, "mcp.project.deploy", res.Target, outcome(derr))
+	h.auditOn(p, h.projectDaemonHost(ctx, in.ProjectID), "mcp.project.deploy", res.Target, outcome(derr))
 	if derr != nil {
 		res.Output = combineErr(out, derr) // surface compose output to the model, not a bare error
 	}
@@ -134,7 +134,7 @@ func (h *handler) downProject(ctx context.Context, req *mcpsdk.CallToolRequest, 
 	}
 	out, derr := h.deps.DownProject(ctx, in.ProjectID)
 	res := actionResult{OK: derr == nil, Action: "down", Target: projectTarget(in.ProjectID), Output: out}
-	h.audit(p, "mcp.project.down", res.Target, outcome(derr))
+	h.auditOn(p, h.projectDaemonHost(ctx, in.ProjectID), "mcp.project.down", res.Target, outcome(derr))
 	if derr != nil {
 		res.Output = combineErr(out, derr)
 	}
@@ -209,7 +209,7 @@ func (h *handler) containerActionTool(action string) mcpsdk.ToolHandlerFor[conta
 		// Audit the attempt and its outcome (the security model leans on the
 		// audit log, so failed/attempted actions are recorded too).
 		err = h.deps.Docker.ContainerAction(ctx, in.HostID, in.ContainerID, action)
-		h.audit(p, "mcp.container."+action, in.ContainerID, outcome(err))
+		h.audit(ctx, p, "mcp.container."+action, in.ContainerID, outcome(err))
 		if err != nil {
 			return nil, actionResult{}, err
 		}

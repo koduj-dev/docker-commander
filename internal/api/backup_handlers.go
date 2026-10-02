@@ -109,7 +109,7 @@ func (s *Server) handleCreateBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "could not create backup job")
 		return
 	}
-	s.audit(r, "backup_job.create", b.Name, b.Scope)
+	s.auditOn(r, s.backupJobHost(r.Context(), id), "backup_job.create", b.Name, b.Scope)
 	writeJSON(w, http.StatusOK, map[string]int64{"id": id})
 }
 
@@ -132,7 +132,7 @@ func (s *Server) handleUpdateBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "could not update backup job")
 		return
 	}
-	s.audit(r, "backup_job.update", b.Name, b.Scope)
+	s.auditOn(r, s.backupJobHost(r.Context(), id), "backup_job.update", b.Name, b.Scope)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -150,20 +150,21 @@ func (s *Server) handleSetBackupJobEnabled(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if body.Enabled {
-		s.audit(r, "backup_job.enable", chi.URLParam(r, "id"), "")
+		s.auditOn(r, s.backupJobHost(r.Context(), id), "backup_job.enable", chi.URLParam(r, "id"), "")
 	} else {
-		s.audit(r, "backup_job.disable", chi.URLParam(r, "id"), "")
+		s.auditOn(r, s.backupJobHost(r.Context(), id), "backup_job.disable", chi.URLParam(r, "id"), "")
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleDeleteBackupJob(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	hostID := s.backupJobHost(r.Context(), id) // before it's gone
 	if err := s.store.DeleteBackupJob(r.Context(), id); err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not delete backup job")
 		return
 	}
-	s.audit(r, "backup_job.delete", chi.URLParam(r, "id"), "")
+	s.auditOn(r, hostID, "backup_job.delete", chi.URLParam(r, "id"), "")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -187,7 +188,7 @@ func (s *Server) handleRunBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.audit(r, "backup_job.run", chi.URLParam(r, "id"), "")
+	s.auditOn(r, s.backupJobHost(r.Context(), id), "backup_job.run", chi.URLParam(r, "id"), "")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -202,4 +203,23 @@ func (s *Server) handleListBackupRuns(w http.ResponseWriter, r *http.Request) {
 		runs = []store.BackupRun{}
 	}
 	writeJSON(w, http.StatusOK, runs)
+}
+
+// backupJobHost is the Docker host a backup job works on, by the same rule the
+// scheduler uses: a volume job's own host, a project job's project host. 0 when
+// the job can't be read (it was just deleted, say).
+func (s *Server) backupJobHost(ctx context.Context, id int64) int64 {
+	job, err := s.store.BackupJobByID(ctx, id)
+	if err != nil {
+		return 0
+	}
+	hostID := job.HostID
+	if job.Scope == store.BackupScopeProject {
+		p, err := s.store.ProjectByID(ctx, job.ProjectID)
+		if err != nil {
+			return 0
+		}
+		hostID = p.HostID
+	}
+	return s.daemonHost(ctx, hostID)
 }

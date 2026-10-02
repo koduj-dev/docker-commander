@@ -809,7 +809,11 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 		limit = v
 	}
 	before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
-	entries, err := s.store.RecentAudit(r.Context(), limit, before)
+	// The reader's host scope goes into the query, ahead of the limit; see
+	// RecentAudit. visibleHostIDs includes 0 (entries with no host) and the local
+	// daemon by both of its names.
+	ids, all := s.visibleHostIDs(r)
+	entries, err := s.store.RecentAudit(r.Context(), limit, before, ids, all)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not read audit log")
 		return

@@ -183,7 +183,7 @@ func TestRateLimitTripIsAuditedOncePerEpisode(t *testing.T) {
 	re := reqFor(p).Extra
 
 	trips := func() int {
-		entries, err := h.deps.Store.RecentAudit(ctx, 500, 0)
+		entries, err := h.deps.Store.RecentAudit(ctx, 500, 0, nil, true)
 		if err != nil {
 			t.Fatalf("read audit: %v", err)
 		}

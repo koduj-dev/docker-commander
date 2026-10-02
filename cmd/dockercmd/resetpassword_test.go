@@ -200,7 +200,7 @@ func TestResetPasswordIsAudited(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entries, err := st.RecentAudit(context.Background(), 10, 0)
+	entries, err := st.RecentAudit(context.Background(), 10, 0, nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}

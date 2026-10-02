@@ -551,6 +551,6 @@ func (s *Server) handleRestoreRevision(w http.ResponseWriter, r *http.Request) {
 		reason = "restored from revision " + strconv.Itoa(n)
 	}
 	s.captureRevision(r.Context(), p, rev.Profiles, out, reason, currentUsername(r))
-	s.audit(r, "project.revision.restore", p.Slug, strconv.Itoa(n))
+	s.auditProject(r, p, "project.revision.restore", strconv.Itoa(n))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out, "note": note})
 }

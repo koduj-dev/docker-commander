@@ -364,6 +364,28 @@ All notable changes to Docker Commander are documented here. The format follows
   **Exception:** a CLI stack on an SSH host runs `docker compose` on that host,
   which keeps using that host's own `docker login`; the redeploy doesn't copy
   the stored credentials there, and its output says so.
+- **The Audit log shows each entry's detail and host.** Both were recorded and
+  returned by the API but never displayed, so the page couldn't say how a
+  sign-in happened or on which server a container was stopped. The search now
+  covers them too. A host the account can't see is shown by its id.
+- **Audit entries record the host an action really reached.** An action on the
+  local daemon (the default, with no host chosen) used to be recorded with no
+  host at all, and so did every project action and every action taken through
+  MCP, even on a remote host. Entries with no host are shown to every reader of
+  the audit log, so a reader limited to some hosts could see deploys and MCP
+  actions on hosts outside their scope. Project actions now name the project's
+  host, backup jobs their job's host, host settings and alert acknowledgements
+  that host, and everything that talks to Docker the daemon it reached, including
+  an MCP call refused before it got there. Something spanning several hosts (a
+  maintenance window for more than one host, acknowledging all alerts across
+  hosts) is shown only to readers who see every host. Entries written before 1.7.0 can't be
+  corrected and keep showing no host.
+- **A busy host can no longer empty a scoped reader's audit log.** The host
+  scope is applied in the query, before the limit; it used to be applied to the
+  newest 1,000 entries, so a reader limited to host A could get an empty list
+  after 1,000 actions on host B.
+- **The MCP `recent_audit` tool is limited to the hosts the caller may see.** It
+  returned every host's entries to any holder of the audit section.
 - **`dockercmd --backup` includes the project revision snapshots**
   (`project-revisions/`). Before, a restored database could list a revision whose
   snapshot was missing. Revision numbers are now assigned in a transaction, so two
