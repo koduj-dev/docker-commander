@@ -352,6 +352,18 @@ All notable changes to Docker Commander are documented here. The format follows
 - **Sections granted through a role show up in the menu.** The menu read only
   the account's own sections, so a page reachable through a role had no menu
   entry. The section picker for a new MCP token had the same gap.
+- **Deploys pull private images with the credentials stored under Registries.**
+  Project deploys, revision restores, MCP deploys and stack redeploys on the
+  local daemon now give `docker compose` a temporary Docker config with those
+  credentials (private to the server user, deleted when the run ends). Before,
+  compose only had the server user's own `docker login`. Your existing Docker
+  config is kept, and a stored credential takes precedence over a credential
+  helper or `DOCKER_AUTH_CONFIG` entry for the same registry. A stored
+  credential that can't be decrypted, or a Docker config that can't be read, no
+  longer stops the deploy: it is skipped and named in the deploy output.
+  **Exception:** a CLI stack on an SSH host runs `docker compose` on that host,
+  which keeps using that host's own `docker login`; the redeploy doesn't copy
+  the stored credentials there, and its output says so.
 - **`dockercmd --backup` includes the project revision snapshots**
   (`project-revisions/`). Before, a restored database could list a revision whose
   snapshot was missing. Revision numbers are now assigned in a transaction, so two

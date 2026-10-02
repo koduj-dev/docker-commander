@@ -1519,7 +1519,31 @@ func (s *Server) projectDeployEnv(ctx context.Context, p *store.Project, dir str
 		return nil, nil, "", func() {}, nil, serr
 	}
 	env = append(env, real...)
+	// Credentials stored under Registries, so `compose` can pull private images.
+	// This runs for every target host: even for a remote one, the compose CLI runs
+	// here and hands the credentials to the remote daemon.
+	regEnv, regCleanup, warnings, rerr := s.composeRegistryEnv(ctx)
+	if rerr != nil {
+		cleanup()
+		return nil, nil, "", func() {}, nil, rerr
+	}
+	hostCleanup := cleanup
+	cleanup = func() { regCleanup(); hostCleanup() }
+	env = append(env, regEnv...)
+	for _, w := range warnings {
+		if note != "" {
+			note += "\n"
+		}
+		note += w
+	}
 	return env, files, note, cleanup, seed, nil
+}
+
+// composeRegistryEnv is the `docker compose` env that makes it log in with the
+// credentials stored under Registries, plus warnings for the deploy's output.
+// See docker.ComposeRegistryEnv.
+func (s *Server) composeRegistryEnv(ctx context.Context) ([]string, func(), []string, error) {
+	return docker.RegistryEnvFromStore(ctx, s.store)
 }
 
 func (s *Server) projectDeployEnvBase(ctx context.Context, p *store.Project, dir string, profiles []string) (env, files []string, note string, cleanup func(), seed func(context.Context) error, err error) {
