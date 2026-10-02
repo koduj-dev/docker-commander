@@ -133,9 +133,9 @@ func (s *Server) policyCheckOrRefuse(r *http.Request, p *store.Project, dir stri
 	if err != nil {
 		switch kind {
 		case policyKindRestore:
-			s.audit(r, "project.revision.restore.policy_check_failed", p.Slug, err.Error())
+			s.auditProject(r, p, "project.revision.restore.policy_check_failed", err.Error())
 		default:
-			s.audit(r, "project.deploy.policy_check_failed", p.Slug, err.Error())
+			s.auditProject(r, p, "project.deploy.policy_check_failed", err.Error())
 		}
 		return map[string]any{"ok": false, "policy": map[string]any{"error": "policy check failed; refusing to deploy for safety"}}, true
 	}
@@ -143,9 +143,9 @@ func (s *Server) policyCheckOrRefuse(r *http.Request, p *store.Project, dir stri
 	if len(blocked) > 0 {
 		switch kind {
 		case policyKindRestore:
-			s.audit(r, "project.revision.restore.policy_block", p.Slug, policyViolationSummary(blocked))
+			s.auditProject(r, p, "project.revision.restore.policy_block", policyViolationSummary(blocked))
 		default:
-			s.audit(r, "project.deploy.policy_block", p.Slug, policyViolationSummary(blocked))
+			s.auditProject(r, p, "project.deploy.policy_block", policyViolationSummary(blocked))
 		}
 		return map[string]any{"ok": false, "policy": map[string]any{"blocked": blocked}}, true
 	}
@@ -155,9 +155,9 @@ func (s *Server) policyCheckOrRefuse(r *http.Request, p *store.Project, dir stri
 	if len(warned) > 0 {
 		switch kind {
 		case policyKindRestore:
-			s.audit(r, "project.revision.restore.policy_warn_ack", p.Slug, policyViolationSummary(warned))
+			s.auditProject(r, p, "project.revision.restore.policy_warn_ack", policyViolationSummary(warned))
 		default:
-			s.audit(r, "project.deploy.policy_warn_ack", p.Slug, policyViolationSummary(warned))
+			s.auditProject(r, p, "project.deploy.policy_warn_ack", policyViolationSummary(warned))
 		}
 	}
 	return nil, false

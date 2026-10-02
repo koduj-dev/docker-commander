@@ -151,11 +151,11 @@ func (h *handler) stackActionTool(action string) func(context.Context, *mcpsdk.C
 func (h *handler) runStackAction(ctx context.Context, p *principal, hostID int64, project, action string, ids []string) (stackActionOut, error) {
 	if len(ids) == 0 {
 		err := fmt.Errorf("no containers found for stack %q", project)
-		h.audit(p, "mcp.stack."+action, project, outcome(err))
+		h.audit(ctx, p, "mcp.stack."+action, project, outcome(err))
 		return stackActionOut{}, err
 	}
 	if err := h.chargeAdditionalContainers(p, len(ids)); err != nil {
-		h.audit(p, "mcp.stack."+action, project, outcome(err))
+		h.audit(ctx, p, "mcp.stack."+action, project, outcome(err))
 		return stackActionOut{}, err
 	}
 	// StackActionOnIDs, not StackAction: acting on the EXACT ids already
@@ -166,7 +166,7 @@ func (h *handler) runStackAction(ctx context.Context, p *principal, hostID int64
 	derr := h.deps.Docker.StackActionOnIDs(ctx, hostID, ids, action)
 	// Audited whether it worked or not: an attempted stop that failed is
 	// exactly the kind of thing someone will later want to find.
-	h.audit(p, "mcp.stack."+action, project, outcome(derr))
+	h.audit(ctx, p, "mcp.stack."+action, project, outcome(derr))
 	if derr != nil {
 		return stackActionOut{}, derr
 	}
@@ -248,7 +248,7 @@ func (h *handler) chargeAdditionalContainers(p *principal, n int) error {
 	ok, firstTrip := h.limiter.reserve(p.user.ID, extra)
 	if !ok {
 		if firstTrip {
-			h.audit(p, "mcp.ratelimit", "containers", "control rate limit reached via MCP; changes refused")
+			h.auditOn(p, 0, "mcp.ratelimit", "containers", "control rate limit reached via MCP; changes refused")
 		}
 		return errControlRateLimited()
 	}
@@ -282,11 +282,11 @@ func (h *handler) stackContainersActionTool(action string) func(context.Context,
 			// the same guard again at the Docker layer) does any Docker work.
 			derr := fmt.Errorf(
 				"container_ids lists %q more than once; each container may appear only once per call", dup)
-			h.audit(p, "mcp.stack."+action, in.Project, outcome(derr))
+			h.audit(ctx, p, "mcp.stack."+action, in.Project, outcome(derr))
 			return nil, stackContainersActionOut{}, derr
 		}
 		if err := h.chargeAdditionalContainers(p, len(in.ContainerIDs)); err != nil {
-			h.audit(p, "mcp.stack."+action, in.Project, outcome(err))
+			h.audit(ctx, p, "mcp.stack."+action, in.Project, outcome(err))
 			return nil, stackContainersActionOut{}, err
 		}
 
@@ -296,12 +296,12 @@ func (h *handler) stackContainersActionTool(action string) func(context.Context,
 			// belong to the stack, most likely. Audited the same way a failed
 			// whole-stack action is: an attempt was made even though nothing ran,
 			// and that is exactly the kind of thing worth finding later.
-			h.audit(p, "mcp.stack."+action, in.Project, outcome(derr))
+			h.audit(ctx, p, "mcp.stack."+action, in.Project, outcome(derr))
 			return nil, stackContainersActionOut{}, derr
 		}
 
 		// Membership held, so every id was actually attempted.
-		ok := h.auditStackContainerResults(p, action, results)
+		ok := h.auditStackContainerResults(ctx, p, action, results)
 		return nil, stackContainersActionOut{OK: ok, Project: in.Project, Action: action, Results: results}, nil
 	}
 }
@@ -316,14 +316,14 @@ func (h *handler) stackContainersActionTool(action string) func(context.Context,
 // Split out from stackContainersActionTool so the audit fan-out can be
 // exercised directly against a synthetic result set, without going through a
 // live Docker daemon to produce a mixed success/failure batch.
-func (h *handler) auditStackContainerResults(p *principal, action string, results []docker.BulkActionResult) bool {
+func (h *handler) auditStackContainerResults(ctx context.Context, p *principal, action string, results []docker.BulkActionResult) bool {
 	ok := true
 	for _, r := range results {
 		if r.OK {
-			h.audit(p, "mcp.container."+action, r.ID, outcome(nil))
+			h.audit(ctx, p, "mcp.container."+action, r.ID, outcome(nil))
 		} else {
 			ok = false
-			h.audit(p, "mcp.container."+action, r.ID, outcome(errors.New(r.Error)))
+			h.audit(ctx, p, "mcp.container."+action, r.ID, outcome(errors.New(r.Error)))
 		}
 	}
 	return ok

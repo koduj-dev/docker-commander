@@ -73,7 +73,7 @@ func (s *Server) handleCreateProjectSecret(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusInternalServerError, "could not create secret")
 		return
 	}
-	s.audit(r, "project.secret.create", p.Slug, b.Name)
+	s.auditProject(r, p, "project.secret.create", b.Name)
 	writeJSON(w, http.StatusOK, map[string]int64{"id": id})
 }
 
@@ -105,7 +105,7 @@ func (s *Server) handleUpdateProjectSecret(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusInternalServerError, "could not update secret")
 		return
 	}
-	s.audit(r, "project.secret.update", p.Slug, name)
+	s.auditProject(r, p, "project.secret.update", name)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -125,6 +125,6 @@ func (s *Server) handleDeleteProjectSecret(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusInternalServerError, "could not delete secret")
 		return
 	}
-	s.audit(r, "project.secret.delete", p.Slug, name)
+	s.auditProject(r, p, "project.secret.delete", name)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

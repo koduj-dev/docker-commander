@@ -54,7 +54,7 @@ func (s *Server) handleCreateHost(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "could not create host")
 		return
 	}
-	s.audit(r, "host.create", b.Name, b.Kind+" "+b.Address)
+	s.auditOn(r, id, "host.create", b.Name, b.Kind+" "+b.Address)
 	writeJSON(w, http.StatusOK, map[string]int64{"id": id})
 }
 
@@ -111,7 +111,7 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, "could not update host")
 			return
 		}
-		s.audit(r, "host.update", chi.URLParam(r, "id"), *b.AlertEmail)
+		s.auditOn(r, hostIDParam(r), "host.update", chi.URLParam(r, "id"), *b.AlertEmail)
 	}
 	if b.Disabled != nil {
 		if err := s.store.SetHostDisabled(r.Context(), id, *b.Disabled); err != nil {
@@ -140,7 +140,7 @@ func (s *Server) handleDeleteHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.docker.Disconnect(id)
-	s.audit(r, "host.delete", chi.URLParam(r, "id"), "")
+	s.auditOn(r, hostIDParam(r), "host.delete", chi.URLParam(r, "id"), "")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -221,6 +221,12 @@ func (s *Server) handleTrustHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.docker.Disconnect(id) // force reconnect with the freshly pinned key
-	s.audit(r, "host.trust", chi.URLParam(r, "id"), fingerprint)
+	s.auditOn(r, hostIDParam(r), "host.trust", chi.URLParam(r, "id"), fingerprint)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "fingerprint": fingerprint})
+}
+
+// hostIDParam is the {id} of a /hosts/{id} route: the host the action is about.
+func hostIDParam(r *http.Request) int64 {
+	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	return id
 }

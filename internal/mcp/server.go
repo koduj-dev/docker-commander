@@ -178,7 +178,7 @@ func (d Deps) Handlers() (mcpHandler, metadataHandler http.Handler) {
 
 	gated := auth.RequireBearerToken(h.verifyToken, &auth.RequireBearerTokenOptions{
 		ResourceMetadataURL: d.MetadataURL,
-	})(streamable)
+	})(withHostRecorder(streamable))
 
 	meta := auth.ProtectedResourceMetadataHandler(&oauthex.ProtectedResourceMetadata{
 		Resource:               d.ResourceURL,
@@ -349,7 +349,7 @@ func (h *handler) authorizeExtra(ctx context.Context, re *mcpsdk.RequestExtra, s
 				// Hitting the ceiling is not normal operation. Whatever caused it —
 				// a model in a loop or someone using a stolen token — this is the
 				// line an operator needs to find afterwards.
-				h.audit(p, "mcp.ratelimit", section, "control rate limit reached via MCP; changes refused")
+				h.audit(ctx, p, "mcp.ratelimit", section, "control rate limit reached via MCP; changes refused")
 			}
 			return nil, errControlRateLimited()
 		}
@@ -364,12 +364,47 @@ func (h *handler) authorize(ctx context.Context, req *mcpsdk.CallToolRequest, se
 }
 
 // audit records a mutating tool call under the acting user. Best-effort.
-func (h *handler) audit(p *principal, action, target, detail string) {
+//
+// The host is the one the call reached: docker.Manager.Client records it in the
+// request's recorder (installed by withHostRecorder). The host scopes who may
+// read the entry, so a call that reached no daemon is recorded with 0, "no host".
+func (h *handler) audit(ctx context.Context, p *principal, action, target, detail string) {
+	hostID, _ := docker.HostRecorderFrom(ctx).Host()
+	h.auditOn(p, hostID, action, target, detail)
+}
+
+// auditOn is audit with the host given explicitly.
+func (h *handler) auditOn(p *principal, hostID int64, action, target, detail string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_ = h.deps.Store.Audit(ctx, store.AuditEntry{
 		UserID: p.user.ID, Username: p.user.Username,
-		Action: action, Target: target, Detail: detail, IP: p.ip,
+		Action: action, Target: target, Detail: detail, IP: p.ip, HostID: hostID,
+	})
+}
+
+// projectDaemonHost is the host a project deploys to, with the local daemon (a
+// project HostID of 0) named by its own id so the entry doesn't read as hostless.
+func (h *handler) projectDaemonHost(ctx context.Context, projectID int64) int64 {
+	proj, err := h.deps.Store.ProjectByID(ctx, projectID)
+	if err != nil {
+		return 0
+	}
+	if proj.HostID > 0 {
+		return proj.HostID
+	}
+	id, err := h.deps.Store.LocalHostID(ctx)
+	if err != nil {
+		return 0
+	}
+	return id
+}
+
+// withHostRecorder gives every MCP request a recorder for audit to read.
+func withHostRecorder(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx, _ := docker.WithHostRecorder(r.Context())
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

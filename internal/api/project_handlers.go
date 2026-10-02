@@ -238,7 +238,7 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.audit(r, "project.create", slug, "")
+	s.auditOn(r, s.daemonHost(r.Context(), body.HostID), "project.create", slug, "")
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "slug": slug})
 }
 
@@ -284,7 +284,7 @@ func (s *Server) handleImportProject(w http.ResponseWriter, r *http.Request) {
 
 	count := extractZipToDir(zr, root)
 
-	s.audit(r, "project.import", slug, "")
+	s.auditOn(r, s.daemonHost(r.Context(), 0), "project.import", slug, "") // imports land on the local daemon
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "slug": slug, "files": count})
 }
 
@@ -359,7 +359,7 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "compose down failed: " + derr.Error(), "output": out})
 			return
 		}
-		s.audit(r, "project.down", p.Slug, "force-delete")
+		s.auditProject(r, p, "project.down", "force-delete")
 	}
 
 	// Seeded volumes on the target host are the project's data, so they are only
@@ -379,7 +379,7 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 			volumeErr = rerr.Error()
 		}
 		if len(removedVolumes) > 0 {
-			s.audit(r, "project.seed_volumes.remove", p.Slug, strings.Join(removedVolumes, ","))
+			s.auditProject(r, p, "project.seed_volumes.remove", strings.Join(removedVolumes, ","))
 		}
 	}
 
@@ -401,7 +401,7 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.audit(r, "project.delete", p.Slug, "")
+	s.auditProject(r, p, "project.delete", "")
 	resp := map[string]any{"ok": true, "removedVolumes": removedVolumes}
 	if volumeErr != "" {
 		resp["volumeError"] = volumeErr
@@ -539,7 +539,7 @@ func (s *Server) handleWriteProjectFile(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	_ = s.store.TouchProject(r.Context(), p.ID)
-	s.audit(r, "project.file.write", p.Slug, body.Name)
+	s.auditProject(r, p, "project.file.write", body.Name)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -583,7 +583,7 @@ func (s *Server) handleUploadProjectFileRaw(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	_ = s.store.TouchProject(r.Context(), p.ID)
-	s.audit(r, "project.file.upload", p.Slug, name)
+	s.auditProject(r, p, "project.file.upload", name)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "bytes": len(data)})
 }
 
@@ -611,7 +611,7 @@ func (s *Server) handleDownloadProjectFile(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusBadRequest, "not a file")
 		return
 	}
-	s.audit(r, "project.file.download", p.Slug, name)
+	s.auditProject(r, p, "project.file.download", name)
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+headerFilename(filepath.Base(full))+"\"")
 	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
@@ -645,7 +645,7 @@ func (s *Server) handleDeleteProjectFile(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	_ = s.store.TouchProject(r.Context(), p.ID)
-	s.audit(r, "project.file.delete", p.Slug, r.URL.Query().Get("path"))
+	s.auditProject(r, p, "project.file.delete", r.URL.Query().Get("path"))
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -671,7 +671,7 @@ func (s *Server) handleMakeProjectDir(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.audit(r, "project.dir.create", p.Slug, body.Name)
+	s.auditProject(r, p, "project.dir.create", body.Name)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -746,7 +746,11 @@ func (s *Server) handleRenameProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.audit(r, "project.rename", p.Slug, name)
+	// Logged under the host the project lives on from now on. Bringing it down
+	// on the old host is its own entry (project.down), under the old host.
+	moved := *p
+	moved.HostID = body.HostID
+	s.auditProject(r, &moved, "project.rename", name)
 	if body.HostID != p.HostID {
 		detail := "host " + strconv.FormatInt(p.HostID, 10) + " → " + strconv.FormatInt(body.HostID, 10)
 		if teardown != nil {
@@ -754,11 +758,11 @@ func (s *Server) handleRenameProject(w http.ResponseWriter, r *http.Request) {
 		} else {
 			detail += " (old host left running)"
 		}
-		s.audit(r, "project.retarget", p.Slug, detail)
+		s.auditProject(r, &moved, "project.retarget", detail)
 	}
 	if body.AllowRemoteHostPaths != p.AllowRemoteHostPaths {
 		// Audited separately: this one changes what the project may mount.
-		s.audit(r, "project.remote_host_paths", p.Slug, boolWord(body.AllowRemoteHostPaths))
+		s.auditProject(r, &moved, "project.remote_host_paths", boolWord(body.AllowRemoteHostPaths))
 	}
 	out := map[string]any{"ok": true}
 	if teardown != nil {
@@ -808,7 +812,7 @@ func (s *Server) tearDownOnHost(r *http.Request, p *store.Project, hostID int64)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", strings.TrimSpace(out), err)
 	}
-	s.audit(r, "project.down", p.Slug, "retarget from host "+strconv.FormatInt(hostID, 10))
+	s.auditOn(r, s.daemonHost(r.Context(), hostID), "project.down", p.Slug, "retarget from host "+strconv.FormatInt(hostID, 10))
 
 	res := &teardownResult{output: out}
 	if hostID != 0 {
@@ -818,7 +822,7 @@ func (s *Server) tearDownOnHost(r *http.Request, p *store.Project, hostID int64)
 			res.volumeErr = rerr.Error()
 		}
 		if len(removed) > 0 {
-			s.audit(r, "project.seed_volumes.remove", p.Slug, strings.Join(removed, ","))
+			s.auditProject(r, p, "project.seed_volumes.remove", strings.Join(removed, ","))
 		}
 	}
 	return res, nil
@@ -915,7 +919,7 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 		log.Printf("project deploy: persist last deployed profiles for %q: %v", p.Slug, err)
 	}
 	s.captureRevision(r.Context(), p, body.Profiles, out, body.Reason, currentUsername(r))
-	s.audit(r, "project.deploy", p.Slug, strings.Join(body.Profiles, ","))
+	s.auditProject(r, p, "project.deploy", strings.Join(body.Profiles, ","))
 	s.autoSilenceForDeploy(r.Context(), p)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out, "note": note})
 }
@@ -1074,7 +1078,7 @@ func (s *Server) handleIgnoreDrift(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.audit(r, "project.drift.ignore", p.Slug, body.Service+":"+body.Kind)
+	s.auditProject(r, p, "project.drift.ignore", body.Service+":"+body.Kind)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -1094,7 +1098,7 @@ func (s *Server) handleUnignoreDrift(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.audit(r, "project.drift.unignore", p.Slug, body.Service+":"+body.Kind)
+	s.auditProject(r, p, "project.drift.unignore", body.Service+":"+body.Kind)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -1331,7 +1335,7 @@ func (s *Server) runProjectCompose(w http.ResponseWriter, r *http.Request, fn fu
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "output": out})
 		return
 	}
-	s.audit(r, "project."+action, p.Slug, "")
+	s.auditProject(r, p, "project."+action, "")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out})
 }
 

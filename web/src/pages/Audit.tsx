@@ -9,9 +9,10 @@ import { useListControls, SearchBar, Pager } from "../components/ListControls";
 // gets the same search + prev/next pagination as the other lists.
 const RECENT = 1000;
 
-// hostLabel names the host an entry targeted. 0 means the action has no host.
-// An id missing from the list is a host this account can't see or one that was
-// deleted since; it is shown by id rather than guessed at.
+// hostLabel names the host an entry reached. 0 means the action has no host
+// (entries written before 1.7.0 also used 0 for the local daemon). An id missing
+// from the list is a host this account can't see or one deleted since; it is
+// shown by id rather than guessed at.
 export function hostLabel(id: number, names: Map<number, string>): string {
   if (!id) return "—";
   return names.get(id) ?? `#${id}`;
@@ -77,7 +78,12 @@ export function Audit() {
                         <span className="font-mono text-xs text-muted">{e.target}</span>
                         {e.detail && <div className="text-xs text-muted/80 mt-0.5 break-words">{e.detail}</div>}
                       </td>
-                      <td className="px-4 py-2.5 hidden md:table-cell text-muted whitespace-nowrap">{hostLabel(e.hostId, names)}</td>
+                      <td
+                        className="px-4 py-2.5 hidden md:table-cell text-muted whitespace-nowrap"
+                        title={e.hostId ? undefined : "No host. Entries from before 1.7.0 show this for the local daemon too."}
+                      >
+                        {hostLabel(e.hostId, names)}
+                      </td>
                       <td className="px-4 py-2.5 hidden md:table-cell text-muted">{e.ip}</td>
                     </tr>
                   ))}

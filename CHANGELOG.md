@@ -342,6 +342,15 @@ All notable changes to Docker Commander are documented here. The format follows
   returned by the API but never displayed, so the page couldn't say how a
   sign-in happened or on which server a container was stopped. The search now
   covers them too. A host the account can't see is shown by its id.
+- **Audit entries record the host an action really reached.** An action on the
+  local daemon (the default, with no host chosen) used to be recorded with no
+  host at all, and so did every project action and every action taken through
+  MCP, even on a remote host. Entries with no host are shown to every reader of
+  the audit log, so a reader limited to some hosts could see deploys and MCP
+  actions on hosts outside their scope. Project actions now name the project's
+  host, backup jobs their job's host, host settings that host, and everything
+  that talks to Docker the daemon it reached. Entries written before 1.7.0
+  can't be corrected and keep showing no host.
 - **`dockercmd --backup` includes the project revision snapshots**
   (`project-revisions/`). Before, a restored database could list a revision whose
   snapshot was missing. Revision numbers are now assigned in a transaction, so two

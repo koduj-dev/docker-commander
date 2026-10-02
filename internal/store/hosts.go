@@ -211,3 +211,13 @@ func (s *Store) NormalizeHostID(ctx context.Context, id int64) int64 {
 	}
 	return id
 }
+
+// LocalHostID returns the id of the local daemon's host row.
+func (s *Store) LocalHostID(ctx context.Context) (int64, error) {
+	var id int64
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM hosts WHERE kind = 'local' ORDER BY id LIMIT 1`).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return id, err
+}

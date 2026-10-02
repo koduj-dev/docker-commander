@@ -215,7 +215,7 @@ func (h *handler) acknowledgeAlert(ctx context.Context, req *mcpsdk.CallToolRequ
 	if err := h.deps.Store.AckAlertEvent(ctx, in.ID, p.user.Username); err != nil {
 		return nil, ackAlertOut{}, err
 	}
-	h.audit(p, "mcp.alert.ack", strconv.FormatInt(in.ID, 10), "")
+	h.audit(ctx, p, "mcp.alert.ack", strconv.FormatInt(in.ID, 10), "")
 	return nil, ackAlertOut{OK: true}, nil
 }
 
