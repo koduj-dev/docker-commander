@@ -199,12 +199,21 @@ func wantsMakeCerts() (yes bool, hosts []string) {
 
 // makeCerts generates a self-signed cert + key into <data-dir>/tls and prints
 // how to serve HTTPS with it.
+//
+// The data dir is --data-dir when given, else the usual resolution. Like
+// --backup, this path never reads the config file, so without honouring the
+// flag `sudo dockercmd --make-certs` on a packaged install wrote into root's own
+// config dir instead of /var/lib/dockercmd.
 func makeCerts(hosts []string) error {
 	certPEM, keyPEM, err := tlscert.GenerateSelfSigned(hosts)
 	if err != nil {
 		return err
 	}
-	dir := filepath.Join(config.ResolveDataDir(), "tls")
+	dataDir := flagValue("-data-dir", "--data-dir")
+	if dataDir == "" {
+		dataDir = config.ResolveDataDir()
+	}
+	dir := filepath.Join(dataDir, "tls")
 	certPath, keyPath, err := tlscert.WriteCertPair(dir, certPEM, keyPEM)
 	if err != nil {
 		return err
@@ -214,6 +223,11 @@ func makeCerts(hosts []string) error {
 	fmt.Printf("  cert: %s\n  key:  %s  (mode 0600)\n\n", certPath, keyPath)
 	fmt.Printf("Serve HTTPS with it:\n  DC_TLS_CERT=%s DC_TLS_KEY=%s dockercmd\n", certPath, keyPath)
 	fmt.Println("  (or the -tls-cert / -tls-key flags). It's self-signed, so clients warn until they trust it.")
+	if os.Geteuid() == 0 {
+		// The key is written 0600 and owned by root; a service running as its own
+		// user can't read it until it owns the files.
+		fmt.Printf("\nWritten as root. If the server runs as another user (the packaged service runs as dockercmd):\n  chown -R dockercmd: %s\n", dir)
+	}
 	return nil
 }
 
