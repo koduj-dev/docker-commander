@@ -345,6 +345,10 @@ All notable changes to Docker Commander are documented here. The format follows
   on Windows) rather than just failing.
 
 ### Fixed
+- **Backup jobs work with images that have an `ENTRYPOINT`, such as
+  `restic/restic`.** The command replaced only the image's CMD, so restic's
+  entrypoint ran `restic sh -c "…"` and every run of the default image failed.
+  The command now replaces the entrypoint and runs as `sh -c <command>`.
 - **`dockercmd --backup` no longer writes to what it backs up.** It opens the
   database read-only and without migrations. A data dir with no database is now
   refused instead of backed up as a new empty one (which happened with
