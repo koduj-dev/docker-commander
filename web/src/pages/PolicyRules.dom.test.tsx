@@ -118,4 +118,19 @@ describe("PolicyRules", () => {
     await act(async () => retry!.click());
     expect(saveButton()).toBeTruthy();
   });
+
+  it("warns when the stored rules are unreadable, and clears it once saved", async () => {
+    policyRules.mockResolvedValue({
+      rules: ["privileged"], modes: { privileged: "off" }, corrupt: true,
+    });
+    act(() => root.unmount());
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<MemoryRouter><PolicyRules /></MemoryRouter>);
+    });
+    const alert = () => container.querySelector('[role="alert"]');
+    expect(alert()?.textContent).toContain("every deploy is refused");
+    await act(async () => saveButton().click());
+    expect(alert()).toBeNull();
+  });
 });

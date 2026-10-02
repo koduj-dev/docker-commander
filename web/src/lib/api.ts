@@ -610,7 +610,7 @@ export const api = {
   diffRevision: (id: number, rev: number, against: string) =>
     req<DeployPreview>("GET", `/api/projects/${id}/revisions/${rev}/diff?against=${encodeURIComponent(against)}`),
   restoreRevision: (id: number, rev: number, reason?: string) =>
-    req<{ ok: boolean; output?: string; error?: string; note?: string }>(
+    req<{ ok: boolean; output?: string; error?: string; note?: string; policy?: { error?: string; code?: string } }>(
       "POST", `/api/projects/${id}/revisions/${rev}/restore`, { reason: reason || "" },
     ),
   // Project secrets: named values referenced from the compose file via plain
@@ -648,7 +648,7 @@ export const api = {
     req<{
       ok: boolean; output?: string; error?: string; note?: string;
       needsConfirmation?: boolean;
-      policy?: { blocked?: PolicyViolation[]; warnings?: PolicyViolation[] };
+      policy?: { blocked?: PolicyViolation[]; warnings?: PolicyViolation[]; error?: string; code?: string };
     }>(
       "POST", `/api/projects/${id}/deploy`,
       { profiles, pull: opts?.pull ?? false, confirmPolicyWarnings: opts?.confirmPolicyWarnings ?? false },

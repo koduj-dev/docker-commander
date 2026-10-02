@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite" // same CGO-free driver the store package uses
@@ -192,5 +194,85 @@ func TestMCPDeployProject_PolicyCheckFailureRefusesDeploy(t *testing.T) {
 	}
 	if n := runningServiceCount(t, slug, "web"); n != 0 {
 		t.Errorf("SECURITY: the container ran despite a failed policy check via MCP (%d running)", n)
+	}
+}
+
+// PENTEST: a stored policy value that can't be parsed used to read as "every rule
+// off", so every deploy went through unchecked on a configuration nobody chose.
+// It must refuse instead, and say how to recover. The rules page still opens,
+// flagged, so the admin can save them again, which repairs it.
+func TestPolicyRulesFailClosedWhenTheStoredValueIsCorrupt(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	srv := &Server{store: st}
+	ctx := context.Background()
+	if err := st.SetSetting(ctx, "policy_rule_modes", "{not json"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = srv.evaluateDeployPolicy(ctx, "app", "/nonexistent", nil, nil, nil)
+	if err == nil {
+		t.Fatal("SECURITY: a deploy went ahead while the stored policy rules were unreadable")
+	}
+	if !strings.Contains(err.Error(), "save them again") {
+		t.Errorf("the refusal doesn't say how to recover: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	srv.handleGetPolicyRules(w, httptest.NewRequest("GET", "/api/policy-rules", nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"corrupt":true`) {
+		t.Fatalf("the rules page should open and flag the corrupt value: %d %s", w.Code, w.Body.String())
+	}
+
+	if err := st.SetPolicyRuleModes(ctx, map[string]string{"latest_tag": "warn"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.PolicyRuleModes(ctx); err != nil {
+		t.Fatalf("saving the rules again should repair the stored value: %v", err)
+	}
+}
+
+// JSON null parses into a nil map, which read as "every rule off" with no error.
+// It is as unreadable as any other corrupt value.
+func TestPolicyRulesNullIsCorrupt(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	if err := st.SetSetting(ctx, "policy_rule_modes", "null"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.PolicyRuleModes(ctx); !errors.Is(err, store.ErrPolicyRulesCorrupt) {
+		t.Fatalf("SECURITY: a stored null was accepted as \"every rule off\": %v", err)
+	}
+}
+
+// A deploy refused for unreadable rules tells the user how to recover, through
+// the response the UI shows, with a code it can key on. Any other policy-check
+// failure keeps the generic message.
+func TestPolicyRefusalForCorruptRulesSaysHowToRecover(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	srv := &Server{store: st}
+	if err := st.SetSetting(context.Background(), "policy_rule_modes", "{not json"); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("POST", "/api/projects/1/deploy", nil)
+	resp, refused := srv.policyCheckOrRefuse(r, &store.Project{ID: 1, Slug: "app"}, "/nonexistent", nil, nil, nil, false, policyKindDeploy)
+	if !refused {
+		t.Fatal("SECURITY: the deploy was not refused")
+	}
+	pol, _ := resp["policy"].(map[string]any)
+	msg, _ := pol["error"].(string)
+	if pol["code"] != "rules_corrupt" || !strings.Contains(msg, "save them again") {
+		t.Fatalf("the refusal doesn't carry the recovery hint: %+v", resp)
 	}
 }

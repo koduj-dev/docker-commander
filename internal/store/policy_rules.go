@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 )
 
 // PolicyRuleIDs are the deploy-time policy checks a mode can be set for.
@@ -43,6 +45,10 @@ func validPolicyMode(mode string) bool {
 	return false
 }
 
+// ErrPolicyRulesCorrupt means the stored policy rules can't be read. Saving the
+// rules again replaces the stored value.
+var ErrPolicyRulesCorrupt = errors.New("the stored policy rules are unreadable")
+
 // PolicyRuleModes returns the configured mode for every known rule, defaulting
 // an unset rule to "off". This engine is opt-in: most existing compose files
 // have no healthcheck or resource limits, so defaulting even to "warn" would
@@ -63,7 +69,14 @@ func (s *Store) PolicyRuleModes(ctx context.Context) (map[string]string, error) 
 	}
 	var stored map[string]string
 	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
-		return out, nil
+		// Not "every rule off": that would let every deploy through unchecked
+		// on a value nobody chose. The caller decides; the deploy check refuses.
+		return out, fmt.Errorf("%w: %v", ErrPolicyRulesCorrupt, err)
+	}
+	if stored == nil {
+		// JSON null unmarshals cleanly into a nil map. Saved rules are always an
+		// object, so null is just as unreadable as a parse error.
+		return out, fmt.Errorf("%w: stored value is null", ErrPolicyRulesCorrupt)
 	}
 	for id, mode := range stored {
 		if validPolicyRuleID(id) && validPolicyMode(mode) {
