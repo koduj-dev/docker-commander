@@ -64,6 +64,9 @@ var ungatedRoutes = map[string]string{
 	// Writes the CALLER's own alert address, taken from their session claims —
 	// it cannot touch another account (TestPentestSetMyEmail_OnlyAffectsTheCaller).
 	"/api/auth/me/email": "own alert address",
+	// Changes the CALLER's own password, taken from their session claims, and
+	// needs the current one (TestChangeOwnPassword).
+	"/api/auth/me/password": "own password; requires the current one",
 	// Reads only the caller's own roles and grants
 	// (TestPentestMyAccess_OnlyOwnData).
 	"/api/auth/me/access": "own permissions overview",

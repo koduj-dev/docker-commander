@@ -112,6 +112,8 @@ func (s *Server) Handler() http.Handler {
 			// Own alert address + own permission overview: self-service, and both
 			// read/write nothing but the signed-in account.
 			r.Put("/auth/me/email", s.handleSetMyEmail)
+			// Own password: needs the current one, and ends every other session.
+			r.Put("/auth/me/password", s.handleChangeMyPassword)
 			r.Get("/auth/me/access", s.handleMyAccess)
 			r.Post("/auth/totp/setup", s.handleTOTPSetup)
 			r.Post("/auth/totp/enable", s.handleTOTPEnable)

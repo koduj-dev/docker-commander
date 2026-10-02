@@ -482,6 +482,50 @@ func (s *Server) handleSetMyEmail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// handleChangeMyPassword changes the signed-in account's own password. It needs
+// the current one, ends every other session and moves this one onto a new token.
+// Ungated like the rest of /auth/me: it can only ever change the caller's account.
+func (s *Server) handleChangeMyPassword(w http.ResponseWriter, r *http.Request) {
+	c, ok := auth.ClaimsFrom(r.Context())
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	u, err := s.store.UserByID(r.Context(), c.UserID)
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var b struct {
+		Current  string `json:"current"`
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &b); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	res, err := s.auth.ChangeOwnPassword(r.Context(), auth.StepUpKey(u.ID, c.ID), u, b.Current, b.Password, sessionInfo(r))
+	switch {
+	case err == nil:
+	case errors.Is(err, auth.ErrDirectoryPassword), errors.Is(err, auth.ErrWeakPassword):
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	case errors.Is(err, auth.ErrRateLimited):
+		writeErr(w, http.StatusTooManyRequests, err.Error())
+		return
+	case errors.Is(err, auth.ErrInvalidCreds):
+		s.audit(r, "auth.password.change.denied", u.Username, "wrong current password")
+		writeErr(w, http.StatusForbidden, "your current password is not right")
+		return
+	default:
+		writeErr(w, http.StatusInternalServerError, "could not change the password")
+		return
+	}
+	s.audit(r, "auth.password.change", u.Username, "other sessions ended")
+	s.setSessionCookie(w, r, res.Token, res.ExpiresAt)
+	writeJSON(w, http.StatusOK, s.loginResponse(r, res))
+}
+
 // validEmail is a deliberately loose check: exactly one @, something either side,
 // a dot in the domain, and no spaces. Anything stricter rejects addresses that are
 // perfectly deliverable, and the real proof is the Send test button.

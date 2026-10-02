@@ -22,6 +22,10 @@ All notable changes to Docker Commander are documented here. The format follows
   project directory, secrets included, and were left on disk.
 
 ### Added
+- **Change your own password** (`PUT /api/auth/me/password`). It needs the current
+  password, ends every other session and keeps you signed in on the device that
+  made the change. Directory (LDAP) accounts change theirs in the directory. The
+  Profile screen for it follows.
 - **Resources page** (Observability → Resources). CPU, memory and network per
   container and per stack, refreshed every 5 s. A Network tab with the top talkers
   as an average rate over a window. A Disk tab with the size of every image,
