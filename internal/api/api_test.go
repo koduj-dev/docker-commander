@@ -71,6 +71,16 @@ func TestIsWriteRequest(t *testing.T) {
 	}
 	if !w(http.MethodGet, "/api/containers/x/exec") || !w(http.MethodGet, "/api/images/pull") {
 		t.Error("exec/pull GETs are writes")
+	} // Raw content downloads are writes; configuration exports are not.
+	for _, p := range []string{"/api/containers/x/export", "/api/containers/x/files/download", "/api/volumes/v/files/download", "/api/images/save"} {
+		if !w(http.MethodGet, p) {
+			t.Errorf("GET %s hands over raw content and must count as a write", p)
+		}
+	}
+	for _, p := range []string{"/api/alert-rules/export", "/api/projects/1/download", "/api/projects/1/files/raw", "/api/containers/x/files"} {
+		if w(http.MethodGet, p) {
+			t.Errorf("GET %s is a read", p)
+		}
 	}
 }
 
