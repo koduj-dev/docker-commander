@@ -303,6 +303,10 @@ All notable changes to Docker Commander are documented here. The format follows
   config is only resolved for evaluation once at least one rule is enabled.
 
 ### Changed
+- **The user manual reads more plainly.** The pages now have a *Common tasks*
+  section with short recipes for what people actually do there, followed by a
+  tighter reference. Several statements that no longer matched the app were corrected
+  along the way, and the Troubleshooting page has its own chapter.
 - **Menu.** Policy rules, MCP Admin and Recovery bundle are now tabs in Settings
   (`/settings?tab=policy|mcp|recovery`). Backup jobs moved to Storage, next to
   Volumes. The old `/policy-rules`, `/mcp-admin` and `/recovery` URLs no longer

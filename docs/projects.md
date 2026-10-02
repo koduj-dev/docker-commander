@@ -2,344 +2,347 @@
 
 [← Manual index](README.md)
 
+A project is a Compose folder that Docker Commander stores and edits for you: a
+compose file plus its sidecar files (configs copied into containers, `.sh`
+scripts, init files). Deploying it runs the real `docker compose` CLI, so the
+full Compose feature set works: `depends_on`, profiles, `build:`, `configs`,
+init containers. A deployed project also appears on [Stacks](stacks.md), which
+handles its lifecycle and "view compose".
+
 ![Projects](images/projects.png)
 
-A **Project** is a managed Compose *folder*: a compose file plus its sidecar
-files (configs copied into containers, `.sh` scripts, init files, …) that Docker
-Commander stores and edits for you, then deploys by running the real
-**`docker compose` CLI** on the host. Because it uses the CLI, you get the full
-Compose feature set — `depends_on`, profiles, `build:`, `configs`, init
-containers — for free. A deployed project also appears on the
-[Stacks](stacks.md) page, where its lifecycle and "view compose" live.
+## Common tasks
 
-> **The Compose CLI runs where Docker Commander runs; the daemon it talks to can
-> be anywhere.** A project targets the **local** daemon by default, or any host
-> you've added under [Hosts](hosts.md) — the CLI is pointed at it with
-> `DOCKER_HOST` (plus the host's TLS certs, or `ssh://`). A project's target host
-> is its own setting and does **not** follow the sidebar host switcher. See
-> [Deploying to a remote host](#deploying-to-a-remote-host).
->
-> Deploy/Down are disabled (with a note) if the `docker compose` CLI isn't
-> installed **on the Docker Commander machine** — that is the one place it has to
-> exist, whichever daemon you deploy to.
->
-> Running under **systemd** and Deploy/Down are disabled even though
-> `docker compose` works in your shell? It's the `ProtectHome=true` hardening —
-> see the fix in [Deployment → Running as a service](deployment.md#running-as-a-service).
+**Start a new app from a template.** Click **New project**, pick a preset such
+as **Nginx + Postgres + Adminer**, and fill in its variables. Blank fields fall
+back to a default, and secret fields can be generated for you. A preview of the
+resulting `compose.yml` shows next to the form before anything is created.
+
+**Check what a deploy will change.** Save, then click **Preview** in the editor.
+It compares the saved files with what is running, lists each service that would
+change, and marks the ones that will be **recreated**.
+
+**Roll back a bad deploy.** In the editor, click **History**, find the last good
+revision with **Diff vs current**, then click **Restore**. Images that had a
+recorded digest are pinned to it, so a moved tag can't bring back something
+different. Locally built images are restored by reference only.
+Named volumes are not touched, so data changes such as a database migration are
+not undone.
+
+**Keep a password out of the compose file.** Click the lock icon on the project
+card, add a secret, and write `${DB_PASSWORD}` in the compose file. The value is
+supplied only at deploy time and never written to disk.
+
+**Deploy to another server.** In the project's **Settings** (pencil), pick the
+target host. Bind-mounted files from the project folder are copied there on each
+deploy, so editing them later needs a redeploy. Paths outside the folder are
+refused unless **Allow host paths** is ticked. See
+[Deploying to a remote host](#deploying-to-a-remote-host).
+
+**Put a service on a domain.** Click the globe icon and map `app.example.com`
+to service `web`, port `8080`. Traffic is routed only when an admin has enabled
+the embedded proxy (which needs ACME mode), and only for projects on the local
+daemon. Otherwise the
+mapping is just stored. See [Domains](#domains).
+
+**Copy a project to another instance.** Download it as a `.zip` from the editor
+header, then use **New project → Import .zip** there. Secrets are not files, so
+they are not in the `.zip`. A [recovery bundle](recovery.md) can carry them, and
+the domain mappings, too.
+
+## Where it runs
+
+- The `docker compose` CLI runs on the Docker Commander machine. The daemon it
+  talks to can be anywhere: the **local** daemon (default) or any host added
+  under [Hosts](hosts.md). The CLI is pointed at it with `DOCKER_HOST`, plus the
+  host's TLS certs or an `ssh://` address.
+- The target host is the project's own setting. It does **not** follow the
+  sidebar host switcher.
+- Deploy and Down are disabled, with a note, when the CLI is missing **on the
+  Docker Commander machine**. That is the only place it has to exist.
+- Under **systemd**, Deploy/Down disabled although `docker compose` works in
+  your shell? That is the `ProtectHome=true` hardening. See the fix in
+  [Deployment → Running as a service](deployment.md#running-as-a-service).
 
 ## Creating a project
 
 ![New project](images/project_new.png)
 
-Give the project a name, pick the **host to deploy to** (the local daemon or any
-host you've added), then choose how to scaffold it. An identifier — the *slug* —
-is derived from the name, lowercased with diacritics transliterated. The files are
-always rendered and written **server-side**:
+Give the project a name, pick the **host to deploy to**, then choose how to
+scaffold it. The identifier (the *slug*) is derived from the name, lowercased,
+with diacritics transliterated. Files are always rendered and written on the
+server. A **live read-only preview** of the `compose.yml` renders next to the
+form.
 
-- **Template** — start from a ready-made preset (e.g. **Nginx — static site**,
-  **Nginx + Postgres + Adminer**, **LEMP** (Nginx + PHP + MySQL), **Node +
-  Postgres + Redis**), or **Empty** for a bare starter `compose.yml`. Presets can
-  declare **variables** (ports, database names, passwords) you fill in on a small
-  form; blank fields fall back to a default, and `secret` ones can be
-  auto-generated.
-- **Builder** (the *skládačka*) — tick the service blocks you want — **Nginx**,
-  **PHP-FPM**, **Node**, **Postgres**, **MySQL**, **Redis**, **Adminer** — and
-  they're merged into one `compose.yml` you can edit afterwards. Add your own with
-  **Custom service…** (name, service key, the service YAML, optional named
-  volumes); it's saved and reappears in the builder. Under **Shared definitions**
-  you can also include reusable **top-level YAML anchors** (e.g.
-  `x-pg-common: &pg-common …`) — emitted above `services:` so a cluster of
-  services can share one definition (security, cert mounts, …) and merge it with
-  `<<: *pg-common`. Built-ins (Service defaults, Secured Postgres) ship in, and
-  you can save your own with **Custom definition…**.
-- **Import** — choose a `.zip` to import an existing project folder (files are
-  written through the same path sandbox).
+| Mode | What you get |
+|---|---|
+| **Template** | A preset: **Nginx — static site**, **Nginx + Postgres + Adminer**, **LEMP** (Nginx + PHP + MySQL), **Node + Postgres + Redis**, or **Empty** for a bare starter `compose.yml`. Presets can declare **variables** (ports, database names, passwords) on a small form. Blank fields fall back to a default, and `secret` ones can be auto-generated. |
+| **Builder** | Tick service blocks (**Nginx**, **PHP-FPM**, **Node**, **Postgres**, **MySQL**, **Redis**, **Adminer**). They are merged into one `compose.yml` you can edit afterwards. |
+| **Import .zip** | An existing project folder, written through the same path sandbox. |
 
-As you pick a template or builder blocks, a **live read-only preview** of the
-resulting `compose.yml` renders alongside the form, so you see what you'll get
-before creating the project.
+In the builder, **Custom service…** adds your own block (name, service key,
+service YAML, optional named volumes). It is saved and reappears in the builder.
+**Shared definitions** are reusable top-level YAML anchors such as
+`x-pg-common: &pg-common …`. They are emitted above `services:`, so several
+services can share one definition (security, cert mounts) and merge it with
+`<<: *pg-common`. Tick **Merge** on a service in the **Services** tab to inject
+it. **Service defaults** and **Secured Postgres** are built in; save your own
+with **Custom definition…**.
 
-**Save as preset** — the editor's 🗎 button snapshots the open project's files
-into a reusable preset that then shows up under **Template** (and on the
-Templates page). Built-in presets and blocks are read-only; the ones you save are
-yours to edit or remove.
+**Save as preset.** The editor's preset button saves the open project's files as
+a preset, listed under **Template** and on the Templates page. Built-in presets
+and blocks ship with the binary and are read-only. Yours live in the data
+directory and can be edited or removed.
 
-> Built-in presets/blocks ship with the binary; saved ones live in the data dir.
-> A future catalog source could pull presets from a remote API.
+Reference sidecar files relative to the project folder
+(`./html:/usr/share/nginx/html`), so they land in the containers exactly as the
+CLI would mount them.
 
 ## Managing templates
 
 ![Templates](images/templates.png)
 
-The **Templates** page (sidebar, under the Projects permission) is where your
-presets and builder blocks live:
+The **Templates** page (sidebar, Projects permission) holds your presets and
+builder blocks. Built-in items open read-only so you can inspect them. Only the
+ones you save are editable.
 
-- **Presets** — edit a saved preset's files in the same multi-file editor,
-  rename it / change its description, download it as a `.zip`, or delete it.
-  Built-in presets open read-only so you can inspect what they scaffold.
-- **Service blocks** — create a block, edit an existing one (name, service key,
-  the service YAML, named volumes), or delete it; built-in blocks are read-only.
-  Blocks you add here (and via the builder's **Custom service…**) appear in the
-  builder.
-- **Shared definitions** — create/edit/delete top-level YAML anchors (see the
-  Builder above); built-in ones are read-only. They appear in the builder's
-  **Shared definitions** list.
-
-Built-in presets/blocks can't be modified; only the ones you save are editable.
+| Section | What you can do |
+|---|---|
+| **Presets** | Edit a saved preset's files in the multi-file editor, rename it or change its description, download it as a `.zip`, or delete it. |
+| **Service blocks** | Create, edit (name, service key, service YAML, named volumes) or delete a block. Blocks added here or via **Custom service…** appear in the builder. |
+| **Shared definitions** | Create, edit or delete top-level YAML anchors. They appear in the builder's **Shared definitions** list. |
 
 ## The editor
 
 ![Project editor](images/project_editor.png)
 
-A modal with a **file tree** on the left and a **CodeMirror** editor on the
-right, with syntax highlighting for YAML, JSON, shell, Dockerfiles and
-`.conf` / `.env` files.
+A file tree on the left and a code editor on the right, with highlighting for
+YAML, JSON, shell, Dockerfiles and `.conf`/`.env` files. The header holds
+**Save as preset**, **Secrets**, **Download** (whole project as `.zip`),
+**Preview**, **History**, **Deploy/Redeploy** and **Down**.
 
-- **New file / New folder / Upload** create inside the **current folder** —
-  click a folder (or open a file) to set it as the target; the toolbar shows
-  where new items land, with an × to go back to the project root. Upload accepts
-  binary/data files too (shown download-only in the tree).
-- **Save** writes the open file; an unsaved-changes dot marks edits.
-- **Image autocomplete** — on a compose `image:` line, suggestions appear for
-  repository names (your locally-pulled images first, then a Docker Hub search)
-  and, once you type a `:`, for that repo's tags (local tags + Docker Hub). The
-  Create-container form's image field offers the same. It's best-effort —
-  offline you still get your local images. For a host you've added under
-  [Registries](registries.md), tag suggestions also come from that **private
-  registry's** API (using its stored credentials); hosts you haven't configured
-  are never contacted.
-- **Compose autocomplete** — in a Compose file you also get schema-aware
-  suggestions: top-level keys, service keys (at the right indent), nested
-  `build` / `healthcheck` / `deploy` / `logging` keys, and known enum values
-  (e.g. `restart:` → `always` / `unless-stopped`). Press <kbd>Ctrl</kbd>+<kbd>Space</kbd>
-  to pop the list on a blank line. It's a typing aid, not a validator — the
-  authoritative check is still `docker compose config` (the inline diagnostics).
-- **Download** a single file (next to *Save*) or the **whole project as a
-  `.zip`** (editor header).
-- **Profiles** — if the compose file defines `profiles`, a toggle bar lets you
-  pick which ones to enable; the selection is remembered and applied on deploy.
-  The bar also shows **Deployed with: …**, the profiles actually used on the
-  last successful deploy — separate from the toggle chips above it, which are
-  only what's *selected for the next deploy*. The **Summary** panel (below)
-  badges each service against that deployed set, so a service excluded by it
-  reads **"Not in active profile"** rather than "Stopped".
+- **New file**, **New folder** and **Upload** create items in the current
+  folder. Click a folder, or open a file, to make it the target. The toolbar
+  shows where new items land, with an × to go back to the project root. Upload
+  accepts binary and data files too, shown as download-only in the tree.
+- **Save** writes the open file; a dot marks unsaved changes. **Download** next
+  to it saves the single file.
+- **Image autocomplete.** On a compose `image:` line you get repository names:
+  local images first, then a Docker Hub search. After a `:` you get that
+  repository's tags, local and from Docker Hub. The Create-container form does
+  the same. It is best-effort; offline you still get local images. For a
+  registry added under [Registries](registries.md), tags also come from that
+  **private registry's** API, with its stored credentials. Registries you
+  haven't configured are never contacted.
+- **Compose autocomplete.** Schema-aware suggestions for top-level keys, service
+  keys at the right indent, nested `build`/`healthcheck`/`deploy`/`logging`
+  keys, and known values (`restart:` → `always`/`unless-stopped`).
+  <kbd>Ctrl</kbd>+<kbd>Space</kbd> opens the list on a blank line. It is a
+  typing aid, not a validator; the real check is `docker compose config`.
+- **Profiles.** When the compose file defines `profiles`, a toggle bar picks
+  which to enable. The choice is remembered and applied on deploy. **Deployed
+  with: …** shows the profiles used on the last successful deploy; the chips
+  only show what is *selected for the next deploy*.
 
-### Validation (live, while you edit)
-Validation runs on the **unsaved** buffer (no save needed) and shows results as
-**inline diagnostics** underlined on the relevant line, plus an at-a-glance
-status chip:
+### Validation
 
-- **Compose files** — `docker compose config` (the real deploy parser, so YAML
-  anchors, merge keys `<<`, `${VAR}` interpolation and `extends`/`include`
-  resolve as at `up` time). Unset-variable **warnings** are surfaced too.
-- **Dockerfiles** — `docker build --check` (BuildKit's linter; no build runs).
-- **YAML / JSON / `.env`** — instant client-side syntax lint.
+Validation runs on the **unsaved** buffer. Problems are underlined on the line,
+and a status chip sums them up.
 
-On the compose file, two extra actions sit in the editor toolbar:
+| File | Checked with |
+|---|---|
+| Compose files | `docker compose config`, the parser deploy uses. Anchors, merge keys `<<`, `${VAR}` interpolation and `extends`/`include` resolve as at `up` time. Unset-variable **warnings** are shown too. |
+| Dockerfiles | `docker build --check`, BuildKit's linter. No build runs. |
+| YAML, JSON, `.env` | Instant syntax lint in the browser. |
 
-- **Resolved** — the fully-flattened compose (anchors / interpolation / extends
-  resolved) — exactly what `docker compose up` deploys.
-- **Summary** — an overview of services, published ports and volumes, with a
-  **duplicate-host-port** check and a per-service **state badge** (Running /
-  Partial / Stopped / **Not in active profile** / Not deployed) computed
-  against the project's live containers and the profiles actually deployed.
+On a compose file, two more buttons appear:
+- **Resolved** shows the fully flattened compose (anchors, interpolation,
+  `extends` resolved), exactly what `docker compose up` deploys.
+- **Summary** lists services, published ports and volumes, checks for
+  **duplicate host ports**, and badges each service Running, Partial, Stopped,
+  **Not in active profile** or Not deployed. Badges compare against the live
+  containers and the profiles actually deployed, so a service those profiles
+  leave out reads "Not in active profile", not "Stopped".
 
 ## Lifecycle
-- **Deploy / Redeploy** — runs `docker compose up -d --build` (with the selected
-  profiles) **on the project's target host**. Redeploy re-applies after edits.
-  The combined output is shown.
 
-  `--build` is what makes *"what's in the editor is what runs"* true for a
-  project with a `build:` section. Plain `up -d` builds a service only when its
-  image is **missing**, so without it the second deploy after editing a
-  Dockerfile — or any file in its build context — would silently keep running the
-  old image and report nothing worse than `Container Running`. It is a no-op for
-  services that only pull an image, so an image-only project pays nothing for it.
-  Callers that would rather not re-send a large context can `POST` the deploy
-  with `{"build": false}`.
-- **Down** — `docker compose down` on the target host (available once deployed).
-- **Settings** — changes the display name and the **target host**; the slug /
-  compose project name stays fixed, so deployments remain stable.
-- **Delete** — refuses while the project is deployed (offers to bring it down
-  first); deleting the last file offers to delete the now-empty project.
+| Action | What it does |
+|---|---|
+| **Deploy / Redeploy** | `docker compose up -d --build` with the selected profiles, **on the target host**. Redeploy re-applies after edits. The combined output is shown. Private images are pulled with the credentials stored under [Registries](registries.md#deploys), on any target host. |
+| **Preview** | Compares the files with what is running, per service, and flags changes that recreate a container. |
+| **History** | Every successful deploy as a revision: time, author, profiles, images. **Diff vs current** or **Restore**. |
+| **Down** | `docker compose down` on the target host. Available once deployed. |
+| **Settings** | Display name and **target host**. The slug (the Compose project name) stays fixed, so deployments remain stable. |
+| **Delete** | Refused while deployed; it offers to bring the project down first. Deleting the last file offers to delete the empty project. |
+
+Restarting the containers without re-applying files is done on
+[Stacks](stacks.md). Deploys and restores are checked against
+[Policy rules](policy-rules.md).
+
+**Drift.** In Preview, a change you have reviewed can be marked **Ignore**. It
+stops counting as drift but stays visible, and **Unignore** reverses it. The
+next deploy clears all ignores. **Reconcile now** deploys to apply the changes.
+
+**Restore** overwrites the project files with the revision's and redeploys with
+its profiles. Unsaved editor edits are lost. Images with a recorded digest are
+pinned to it. Named volumes are never touched. If any step fails, including the
+deploy, the previous files are put back. The restore becomes a new revision, so
+history only grows forward. The newest 50 revisions per project are kept by
+default ([Settings](settings.md), [Limits](limits.md)).
+
+### Why `--build`
+
+`--build` makes "what's in the editor is what runs" true for a project with a
+`build:` section. Plain `up -d` builds only when the image is **missing**. So
+after editing a Dockerfile, or any file in its build context, the next deploy
+would keep the old image and report only `Container Running`. Services that only
+pull an image are unaffected, so image-only projects pay nothing. API callers
+that don't want to re-send a large context can `POST` the deploy with
+`{"build": false}`.
 
 ## Secrets
 
-Named values — `DB_PASSWORD`, `API_TOKEN`, and so on — referenced from the
-compose file exactly like any other environment variable: `${NAME}`. Docker
-Commander supplies the value as a process environment variable at deploy
-time only; it is never written to `.env` or any file on disk, so it can
-never end up in a revision snapshot.
+Named values such as `DB_PASSWORD` or `API_TOKEN`, used in the compose file like
+any environment variable: `${NAME}`. Open them with the lock icon on the project
+card or in the editor header.
 
-A secret's value is encrypted at rest and can only be **replaced**, never
-read back — the "Secrets" panel (the lock icon on a project's card) never
-shows it again after it's saved, the same convention as a registry
-credential. Deleting a secret is immediate; any compose service still
-referencing it will fail to resolve on the next deploy.
-
-Everywhere a resolved compose value would normally be displayed — the
-Resolved tab, the deploy preview, a revision diff — a secret's value is
-shown as a redacted `secret:<fingerprint>` placeholder instead. The same
-value always produces the same fingerprint and a different value a
-different one, so you can still see *that* something changed without ever
-seeing *what*. This redaction matches by the secret's **value**, not by which
-env var it's assigned to, so it still applies if a compose service maps it to
-a differently-named variable (`DATABASE_PASSWORD: ${DB_PASSWORD}`).
-
-One limitation worth knowing: redaction only covers what is *currently* one
-of the project's secrets. A container already running with a value from a
-secret that was since deleted or changed keeps showing that stale value in
-a preview/diff — Docker Commander no longer has anything to compare it
-against. This narrows what Docker Commander's own screens expose; it doesn't
-change what anyone with direct `docker inspect`/exec access to that host
-could already see.
-
-RBAC follows the project's own "projects" section grants: a read grant can
-list a project's secret names, a write grant is required to add, replace or
-delete one — there is no separate secrets-specific permission.
+- The value is passed as a process environment variable at deploy time only.
+  It is never written to `.env` or any file, so it never ends up in a revision
+  snapshot.
+- It is encrypted at rest and can only be **replaced**, never read back, like a
+  registry credential.
+- Deleting a secret is immediate. A service still referencing it fails to
+  resolve on the next deploy.
+- Wherever a resolved value would be shown (Resolved, the deploy preview, a
+  revision diff), it is replaced by `secret:<fingerprint>`. The same value
+  always gives the same fingerprint and a different value a different one, so
+  you see *that* something changed, not *what*.
+- Redaction matches the **value**, not the variable name, so it still works for
+  `DATABASE_PASSWORD: ${DB_PASSWORD}`.
+- It only covers the project's *current* secrets. A container still running
+  with the value of a since deleted or changed secret shows that stale value in
+  a preview or diff, as there is nothing left to compare it with.
+- This limits what Docker Commander's screens show. It doesn't change what
+  anyone with direct `docker inspect` or exec access to the host can see.
 
 ## Domains
 
-The "Domains" panel (the globe icon on a project's card) records that a
-domain should route to one of the project's services — `app.example.com` →
-service `web`, port `8080`.
-
-**Whether that mapping actually routes traffic depends on the embedded
-reverse proxy**, which is opt-in and has real limits:
+The **Domains** panel (globe icon on a project card) records that a domain
+should route to one of the project's services: `app.example.com` → service
+`web`, port `8080`. Without the embedded reverse proxy, it only stores intent
+and has no effect on traffic. With the proxy, these limits apply:
 
 - **Off by default.** An admin enables it with `DC_PROXY_ENABLED=1`
-  (`-proxy-enabled`) — it's a second public-facing surface distinct from the
-  admin UI/API, so it's a conscious choice, not a default.
-- **Requires ACME mode already active for Docker Commander's own admin
-  domain** (`-acme-domains`/`DC_ACME_DOMAINS`). The proxy shares that same
-  listener, SNI-dispatched between the admin UI and every mapped domain — it
-  does not open a second port, and does not work with a static
-  `-tls-cert`/`-tls-key` pair or no TLS at all. If the proxy is enabled
-  without ACME mode, the server logs that clearly and starts normally
-  otherwise — the admin UI is never affected.
-- **Local-host projects only.** A mapping for a project targeting a remote
-  host (see [Deploying to a remote host](#deploying-to-a-remote-host) below)
-  is recorded exactly the same as any other, but the proxy will never serve
-  it or request a certificate for it — remote-host reachability is a later
-  phase. A domain whose project has no live, running match for its mapped
-  service+port (stopped, redeployed without that service, or a `TargetPort`
-  nothing actually publishes) gets a clean `502` rather than serving stale
-  or unrelated content.
-- **Assumes Docker Commander shares a network namespace with the Docker
-  daemon it manages.** The proxy dials a container's *published host port*
-  directly — correct when Docker Commander runs on bare metal/a VM next to
-  the daemon it's managing (the common case), but **not** when Docker
-  Commander itself runs containerized per [Option D](../README.md#option-d--docker)
-  *without* `--network host`: a container's published port lives in the
-  *host's* network namespace, which Docker Commander's own container can't
-  reach via `127.0.0.1`. If the "local" daemon is explicitly remote (a
-  `DOCKER_HOST=tcp://…` pointed elsewhere), the proxy detects that and
-  refuses cleanly rather than guessing; the containerized-but-same-machine
-  case isn't detectable the same way and isn't handled yet — a later phase.
+  (`-proxy-enabled`). It is a second public-facing surface, separate from the
+  admin UI and API, so it is a conscious choice.
+- **Needs ACME mode** for Docker Commander's own admin domain
+  (`-acme-domains`/`DC_ACME_DOMAINS`). The proxy shares that listener, and SNI
+  picks between the admin UI and each mapped domain. No second port is opened.
+  It doesn't work with a static `-tls-cert`/`-tls-key` pair or without TLS.
+  Enabled without ACME, the server logs that clearly and starts normally; the
+  admin UI is never affected.
+- **Local-host projects only.** A mapping for a project on a
+  [remote host](#deploying-to-a-remote-host) is recorded, but never served and
+  never gets a certificate.
+- **A clean `502`** when the project has no running container for the mapped
+  service and port (stopped, redeployed without that service, or a port nothing
+  publishes), instead of stale or unrelated content.
+- **Same network namespace as the daemon.** The proxy connects to a container's
+  *published host port* directly. That works when Docker Commander runs on bare
+  metal or a VM next to the daemon, the common case. It does **not** work when
+  Docker Commander runs in a container per
+  [Option D](../README.md#option-d--docker) *without* `--network host`, since
+  the published port lives in the host's namespace. If the "local" daemon is
+  really remote (`DOCKER_HOST=tcp://…` elsewhere), the proxy detects it and
+  refuses. The containerized-on-the-same-machine case can't be detected that way
+  and is not handled.
 
-See [Deployment](deployment.md) for the full flag reference. Without the
-proxy enabled, this panel behaves exactly as it always has: it only stores
-intent, and saving a mapping has no effect on traffic.
+See [Deployment](deployment.md) for the full flag reference.
 
-A domain must be a real, fully-qualified hostname — no wildcards, no bare
-hostnames, no IP addresses — and can only ever be mapped once across the
-whole instance (two projects can't both claim `app.example.com`, matched
-case-insensitively: `App.Example.com` and `app.example.com` are the same
-hostname). Internationalized domains using punycode (`xn--…`) are accepted.
-A domain also can't be the same as Docker Commander's own configured admin
-domain. When the `docker compose` CLI is available, the target service must
-actually exist in the project's current compose file — resolved with every
-declared profile enabled, so a service gated behind `profiles:` is still
-offered and accepted, not just the ones active by default; the target port
-isn't otherwise validated, since a container can listen on a port its
-compose file never declares.
-
-Once created, a mapping's **service and port can be edited** (the pencil
-icon); the domain itself is immutable — delete and recreate the mapping to
-repoint a hostname elsewhere.
-
-RBAC follows the project's own "projects" section grants, same as secrets
-above. A project's domain mappings travel with it in the portable recovery
-bundle, the same as its secrets and images. On import a mapping is held to
-the same rule as one created in the UI: only the `acme` TLS mode exists in
-this phase, so a bundle row carrying any other value is skipped with a
-warning rather than restored.
+**Mapping rules.**
+- A real, fully qualified hostname: no wildcards, bare hostnames or IP
+  addresses. Punycode (`xn--…`) is accepted.
+- Mapped only once per instance, compared case-insensitively
+  (`App.Example.com` is `app.example.com`), and never Docker Commander's own
+  admin domain.
+- When the `docker compose` CLI is available, the service must exist in the
+  current compose file, resolved with every profile enabled, so a service behind
+  `profiles:` is accepted. The port is not validated, since a container can
+  listen on a port its compose file never declares.
+- **Service and port can be edited** (pencil icon). The domain can't; delete and
+  recreate the mapping to point a hostname elsewhere.
+- Mappings travel with the project in the [recovery bundle](recovery.md), like
+  secrets and images. On import they follow the same rules as in the UI. Only
+  the `acme` TLS mode exists, so a row with any other value is skipped with a
+  warning.
 
 ## Deploying to a remote host
-A project can target the **local daemon** (default) or any **remote host** you've
-added under [Hosts](hosts.md) — pick it when creating the project or via its
-**Settings**. Deploy/down/restart then run `docker compose` against that host's
-daemon (over TCP, with the host's TLS certs, or SSH).
+
+A project can target the **local daemon** (default) or any **remote host** added
+under [Hosts](hosts.md), chosen at creation or in **Settings**. Deploy, down and
+restart then run `docker compose` against that daemon, over TCP with the host's
+TLS certs, or over SSH.
 
 ### Bind mounts on a remote host
-A remote daemon can't see files inside Docker Commander's own data dir, so a
-bind mount can't be handed to it as-is. On a remote deploy each bind mount whose
-source lives **inside the project folder** (e.g. `./html:/usr/share/nginx/html`,
-`./nginx.conf:/etc/nginx/nginx.conf`) is therefore **copied to a named volume on
-that host** and the mount is repointed at it. Sidecar configs and scripts work on
-a remote host the same way they do locally, with three things worth knowing:
 
-- **It's a snapshot, not a live mount.** The files are copied at deploy time.
-  Editing them in the project afterwards needs a **redeploy**, and writes made
-  inside the container stay in the volume on the remote host — they don't flow
-  back into the project files. (A local deploy still mounts the folder directly,
-  so there it *is* live.)
-- **Only paths inside the project folder are shipped.** A bind mount pointing
-  outside it (`/etc/localtime`, `/var/run/docker.sock`, anything reached via a
-  symlink out of the folder) names a path on the *remote* host, so it's
-  **refused** with a message listing the offending mounts rather than mounted
-  blind. If that is genuinely what you want, tick **Allow host paths** in the
-  project's Settings: those mounts are then taken from the remote host's own
-  filesystem, with whatever they hold there, and nothing is copied. The deploy
-  output names them every time. Enabling it needs **write access to the Hosts
-  section** — it is authority over the host, not over the project — and is
-  recorded in the [audit log](audit.md).
-- The seeded volumes are named `dcseed-<project>-<hash>` and are labelled with
-  the project, so they're easy to spot on the [Volumes](volumes.md) page. Like
-  any named volume they **survive a `down`**. **Deleting the project offers to
-  remove them** — it lists them and asks, since they hold data; declining keeps
-  them for a later redeploy.
+A remote daemon can't see Docker Commander's data directory. So each bind mount
+whose source is **inside the project folder** (`./html:/usr/share/nginx/html`,
+`./nginx.conf:/etc/nginx/nginx.conf`) is **copied to a named volume on that
+host**, and the mount points at the volume. Sidecar files then work as locally,
+with three differences:
 
-**Changing a deployed project's target host** offers to bring it down on the host
-it is leaving — ticked by default, because "change the host" usually means *move*,
-not *run a second copy*. What goes: the stack's containers are stopped and removed
-there, and the volumes **seeded** for its bind mounts are deleted. **Named volumes
-holding your data are left alone**, and nothing is started on the new host — deploy
-it when you are ready.
+- **A snapshot, not a live mount.** Files are copied at deploy time, so edits
+  need a **redeploy**. Writes inside the container stay in the remote volume and
+  don't flow back. A local deploy mounts the folder directly, so there it *is*
+  live.
+- **Only paths inside the project folder are shipped.** A mount pointing outside
+  it (`/etc/localtime`, `/var/run/docker.sock`, or anything reached through a
+  symlink out of the folder) names a path on the *remote* host, so the deploy
+  refuses it and lists the offending mounts. If that is what you want, tick
+  **Allow host paths** in Settings: those mounts use the remote host's own
+  files, nothing is copied, and the deploy output names them every time. This
+  needs **write access to Hosts**, since it is authority over the host, not the
+  project, and is recorded in the [audit log](audit.md).
+- **Seeded volumes** are named `dcseed-<project>-<hash>` and labelled with the
+  project, so they are easy to find on [Volumes](volumes.md). They **survive a
+  `down`**. **Deleting the project offers to remove them**, listing them first
+  since they hold data. Decline to keep them for a later redeploy.
 
-Untick it and the old copy keeps running while this page shows only the new host,
-so you have two live deployments. That is a legitimate thing to want; it is just no
-longer what happens by accident.
-
-> If the teardown fails — the old host is unreachable, say — the project is **not**
-> moved. Leaving a running stack on a host the app no longer points at is the same
-> problem, only invisible.
+**Changing a deployed project's host** offers to bring it down on the old host,
+ticked by default, because changing the host usually means *moving* it. Its
+containers are stopped and removed there, and its **seeded** volumes deleted.
+**Named volumes holding your data are left alone.** Nothing starts on the new
+host until you deploy. Untick it and the old copy keeps running while this page shows only the
+new host: two live deployments, which can be legitimate but no longer happens by
+accident. If the teardown fails, say the old host is unreachable, the project is
+**not** moved, because a stack on a host the app no longer points at is the same
+problem, only invisible.
 
 ### `build:` contexts on a remote host
 
-A project that builds its own image works against a remote daemon without any
-extra setup, and it's worth knowing *why*, because it is not the same mechanism as
+Building on a remote daemon needs no extra setup, and works differently from
 bind mounts:
 
-- A **build context is uploaded by Docker itself.** The build API takes the
-  context as a tar stream from the machine running the CLI, so the remote daemon
-  receives your local `./app` folder even though it can't see your filesystem. The
-  image is built **on the remote host** and exists only there.
-- A **bind mount is not uploaded by anything**, which is why Docker Commander
-  seeds it into a volume on the target host and repoints it with a generated
-  override (above).
+- **Docker uploads a build context itself**, as a tar stream from the machine
+  running the CLI. The remote daemon gets your local `./app` folder even though
+  it can't see your filesystem. The image is built **on the remote host** and
+  exists only there.
+- **Nothing uploads a bind mount**, which is why Docker Commander seeds it into
+  a volume and repoints it with a generated override.
+- Both work in one deploy. A redeploy rebuilds the image from the edited context
+  and copies the seeded files again.
+- The build runs on the **target host's** architecture and daemon. A project
+  that builds on your amd64 laptop can fail on an arm64 host; the error appears
+  in the deploy output.
 
-The two combine in one deploy — a project can build an image *and* mount sidecar
-configs — and a redeploy refreshes both: the image is rebuilt from the edited
-context, and the seeded files are re-copied.
+## Permissions
 
-One consequence worth remembering: the build runs on the **target host's**
-architecture and daemon. A project that builds fine on your amd64 laptop can fail
-on an arm64 host, and the error comes back in the deploy output.
+Secrets and domain mappings follow the project's **Projects** section grants.
+A read grant lists secret names; adding, replacing or deleting a secret, or
+changing a mapping, needs a write grant. There is no separate secrets
+permission. **Allow host paths** also needs write access to **Hosts**. See
+[Users & roles](users.md).
 
-## Tips
-- Sidecar files are referenced from the compose file relative to the project
-  folder (e.g. `./html:/usr/share/nginx/html`), so configs/scripts land inside
-  the containers exactly as the CLI would mount them.
-- Restarting a deployed project's containers (without re-applying files) is
-  available on the [Stacks](stacks.md) page.
+Deploying is full trust in the server: a compose file can run a privileged
+container on the local daemon, which every role can reach. See the note under
+[Roles](users.md#roles).
