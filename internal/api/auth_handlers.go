@@ -258,8 +258,15 @@ func contains(list []string, v string) bool {
 // all leaves every remote request looking loopback, since the peer is the local
 // proxy. So a proxied request never qualifies, whatever the address says —
 // "skip 2FA on localhost" has to mean the machine itself.
+//
+// "A proxy we were told about" is not enough to know a proxy is there: a proxy on
+// the same machine that isn't listed in DC_TRUSTED_PROXIES connects from
+// 127.0.0.1 like a local browser. What gives it away is that proxies add
+// forwarding headers and browsers never do, so a loopback request carrying any
+// of them is treated as proxied. A proxy that sends none can't be told apart at
+// all; the docs say to list it, or to keep the exemption off behind a proxy.
 func isLoopback(r *http.Request) bool {
-	if viaTrustedProxy(r) {
+	if viaTrustedProxy(r) || hasForwardingHeaders(r) {
 		return false
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -268,6 +275,23 @@ func isLoopback(r *http.Request) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// forwardingHeaders are the headers a reverse proxy adds and a browser never
+// sends on its own.
+var forwardingHeaders = []string{
+	"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto",
+	"X-Forwarded-Server", "X-Real-Ip", "Via",
+}
+
+// hasForwardingHeaders reports whether the request carries any of them.
+func hasForwardingHeaders(r *http.Request) bool {
+	for _, h := range forwardingHeaders {
+		if r.Header.Get(h) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // sessionInfo describes the client for the session list the account later reads

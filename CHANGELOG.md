@@ -7,6 +7,13 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [1.7.0] — 2026-09-21
 
 ### Security
+- **The localhost 2FA exemption no longer reaches through a local reverse
+  proxy that isn't in `DC_TRUSTED_PROXIES`.** Such a proxy connects from
+  127.0.0.1, so with the exemption on, every request it relayed from the
+  internet skipped the second factor. A loopback request that carries a proxy's
+  forwarding header (`X-Forwarded-For`, `Forwarded`, `X-Real-IP`, `Via`, …) now
+  counts as remote. A proxy that adds none of these can't be detected: list it
+  in `DC_TRUSTED_PROXIES`, or keep the exemption off behind a proxy.
 - **The Docker-socket policy check now catches a socket reached through a parent
   directory.** Binding `/`, `/var/run`, `/run` or a rootless `/run/user/<uid>`
   gives the container the socket, but only the `docker.sock` paths themselves were
