@@ -358,6 +358,10 @@ All notable changes to Docker Commander are documented here. The format follows
   `restic/restic`.** The command replaced only the image's CMD, so restic's
   entrypoint ran `restic sh -c "…"` and every run of the default image failed.
   The command now replaces the entrypoint and runs as `sh -c <command>`.
+- **`dockercmd --make-certs` honours `--data-dir`.** It wrote into the default
+  data dir, which under `sudo` on a packaged install is root's own config dir,
+  not `/var/lib/dockercmd`. Run as root, it now also prints the `chown` the
+  service user needs to read the key.
 - **`dockercmd --backup` no longer writes to what it backs up.** It opens the
   database read-only and without migrations. A data dir with no database is now
   refused instead of backed up as a new empty one (which happened with
