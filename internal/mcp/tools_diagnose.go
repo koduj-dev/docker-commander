@@ -285,10 +285,13 @@ type runDiagnosticsOut struct {
 // the host-network checks run commands on the target host to inspect it,
 // the same active-action category the REST API write-gates for /stats/ports.
 func (h *handler) runDiagnostics(ctx context.Context, req *mcpsdk.CallToolRequest, in runDiagnosticsInput) (*mcpsdk.CallToolResult, runDiagnosticsOut, error) {
-	if _, err := h.authorize(ctx, req, "diagnostics", true, in.HostID); err != nil {
+	p, err := h.authorize(ctx, req, "diagnostics", true, in.HostID)
+	if err != nil {
 		return nil, runDiagnosticsOut{}, err
 	}
 	report, err := h.deps.Docker.RunDiagnostics(ctx, in.HostID)
+	// Audited like the REST run: on remote hosts it runs commands over SSH.
+	h.audit(ctx, p, "mcp.diagnostics.run", "", outcome(err))
 	if err != nil {
 		return nil, runDiagnosticsOut{}, err
 	}

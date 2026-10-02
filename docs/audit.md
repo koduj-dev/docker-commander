@@ -43,7 +43,7 @@ against a username they guessed.
 
 ## Every action, by area
 
-All **181** of them, generated from the source and kept in step with it by a
+All **183** of them, generated from the source and kept in step with it by a
 test: an audited action with no entry here fails the build, and an entry the code
 never writes fails it too. The `auth.*` table above explains the ones worth reading
 when something feels wrong; this is the complete set, for looking up what you found
@@ -101,7 +101,7 @@ in the log.
 
 **Email** — `smtp.configure`
 
-**MCP (AI-tool access)** — `mcp.admin.oauth_client.delete`, `mcp.admin.session.revoke`, `mcp.admin.token.revoke`, `mcp.alert.ack`, `mcp.container.restart`, `mcp.container.start`, `mcp.container.stop`, `mcp.maintenance_window.create`, `mcp.maintenance_window.end`, `mcp.oauth.authorize`, `mcp.project.deploy`, `mcp.project.down`, `mcp.ratelimit`, `mcp.session.revoke`, `mcp.stack.restart`, `mcp.stack.start`, `mcp.stack.stop`, `mcp.token.create`, `mcp.token.revoke`, `mcp.token_policy.update`
+**MCP (AI-tool access)** — `mcp.admin.oauth_client.delete`, `mcp.admin.session.revoke`, `mcp.admin.token.revoke`, `mcp.alert.ack`, `mcp.container.restart`, `mcp.container.start`, `mcp.container.stop`, `mcp.diagnostics.run`, `mcp.image.scan`, `mcp.maintenance_window.create`, `mcp.maintenance_window.end`, `mcp.oauth.authorize`, `mcp.project.deploy`, `mcp.project.down`, `mcp.ratelimit`, `mcp.session.revoke`, `mcp.stack.restart`, `mcp.stack.start`, `mcp.stack.stop`, `mcp.token.create`, `mcp.token.revoke`, `mcp.token_policy.update`
 
 **Self-update** — `update.apply`, `update.restart`
 

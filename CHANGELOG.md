@@ -362,6 +362,10 @@ All notable changes to Docker Commander are documented here. The format follows
   data dir, which under `sudo` on a packaged install is root's own config dir,
   not `/var/lib/dockercmd`. Run as root, it now also prints the `chown` the
   service user needs to read the key.
+- **MCP `scan_image` and `run_diagnostics` are audited**, as `mcp.image.scan`
+  and `mcp.diagnostics.run`, like their REST counterparts. Both are writes (a
+  scan pulls the image and runs Trivy; diagnostics run commands over SSH) but
+  left no audit entry over MCP.
 - **`dockercmd --backup` no longer writes to what it backs up.** It opens the
   database read-only and without migrations. A data dir with no database is now
   refused instead of backed up as a new empty one (which happened with
