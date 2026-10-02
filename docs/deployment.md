@@ -16,8 +16,7 @@ the admin account. Packages and other OSes: [Running as a service](#running-as-a
 
 **Serve HTTPS with Let's Encrypt.** On a public host with no proxy in front, set
 `DC_ACME_DOMAINS=docker.example.com`, listen on `0.0.0.0:443` and restart. DNS must
-already point at the host. The service runs as an unprivileged user that can't use
-port 443 by default, so allow it first (see [HTTPS](#https), option A2).
+already point at the host. Details and requirements: [HTTPS](#https), option A2.
 
 **Run it behind nginx or Caddy.** Keep `DC_HOST=127.0.0.1`, proxy with WebSocket
 headers, and set `DC_TRUSTED_PROXIES` to the proxy's address so rate limits and
@@ -204,7 +203,9 @@ Then create the admin account in the UI, at the address from your config
 `install-linux.sh` also seeds `/etc/docker-commander/commander.conf` (only if
 absent) and creates the `/var/lib/dockercmd` data dir. The
 [hardened unit](../deploy/dockercmd.service) runs with `NoNewPrivileges`,
-`ProtectSystem=strict`, `ProtectHome=true` and a private `StateDirectory`.
+`ProtectSystem=strict`, `ProtectHome=true` and a private `StateDirectory`. Its
+one capability is `CAP_NET_BIND_SERVICE`, so it can listen on 443; processes it
+starts (`docker`, `docker compose`, `ssh`) inherit it too.
 
 <details>
 <summary>Manual steps (what the installer does)</summary>
@@ -340,14 +341,11 @@ DC_ACME_EMAIL=ops@example.com
 
 - `DC_ACME_DOMAINS` must be public **hostnames** the CA can verify, not IP
   addresses, and their DNS must already point at this host.
-- **On a service install, allow the port first.** The unit runs as the
-  unprivileged `dockercmd` user, which can't listen below port 1024. Run
-  `sudo systemctl edit dockercmd`, add the lines below, then restart:
-
-  ```ini
-  [Service]
-  AmbientCapabilities=CAP_NET_BIND_SERVICE
-  ```
+- **Port 443 under the service.** The unit runs as the unprivileged `dockercmd`
+  user and grants it `CAP_NET_BIND_SERVICE`, the one capability needed to listen
+  below port 1024. Packages pick the unit up on upgrade. An install made with
+  `--install-service` before 1.7.0 has an older unit without it: run
+  `sudo dockercmd --install-service` again, then `sudo systemctl restart dockercmd`.
 - The port must be **directly** reachable from the internet on 443. The
   `tls-alpn-01` challenge is answered inside the TLS handshake, so no port-80
   listener is needed, but a proxy that terminates TLS itself would intercept it.
@@ -492,7 +490,10 @@ echo "$PASS" | dockercmd --backup /var/backups/dc.tar.gz --passphrase   # for cr
 ```
 
 Like `--reset-password`, these don't read the config file. On a packaged install,
-add `--data-dir /var/lib/dockercmd`.
+add `--data-dir /var/lib/dockercmd`. If the data dir holds no database, or a file
+that isn't a Docker Commander database, `--backup` refuses and says so, rather
+than backing up an empty one. It opens the database read-only and never changes
+it.
 
 The backup is taken through a live database connection (`VACUUM INTO`), so it is
 **safe while the server runs**. Copying the `.db` file yourself is not: the

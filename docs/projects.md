@@ -168,7 +168,7 @@ On a compose file, two more buttons appear:
 
 | Action | What it does |
 |---|---|
-| **Deploy / Redeploy** | `docker compose up -d --build` with the selected profiles, **on the target host**. Redeploy re-applies after edits. The combined output is shown. |
+| **Deploy / Redeploy** | `docker compose up -d --build` with the selected profiles, **on the target host**. Redeploy re-applies after edits. The combined output is shown. Private images are pulled with the credentials stored under [Registries](registries.md#deploys), on any target host. |
 | **Preview** | Compares the files with what is running, per service, and flags changes that recreate a container. |
 | **History** | Every successful deploy as a revision: time, author, profiles, images. **Diff vs current** or **Restore**. |
 | **Down** | `docker compose down` on the target host. Available once deployed. |
@@ -342,3 +342,7 @@ A read grant lists secret names; adding, replacing or deleting a secret, or
 changing a mapping, needs a write grant. There is no separate secrets
 permission. **Allow host paths** also needs write access to **Hosts**. See
 [Users & roles](users.md).
+
+Deploying is full trust in the server: a compose file can run a privileged
+container on the local daemon, which every role can reach. See the note under
+[Roles](users.md#roles).
