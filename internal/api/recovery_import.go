@@ -530,6 +530,15 @@ func (s *Server) applyRecoveryBundle(ctx context.Context, m *recoveryManifest, z
 			os.RemoveAll(staging)
 			continue
 		}
+		// The services a domain mapping may name, resolved with the same
+		// stand-ins. Not with the project's restored secrets, as the API does:
+		// a secret the export left out is never restored, so a compose file
+		// requiring it wouldn't resolve, and an unverified mapping would get in.
+		var importServices []docker.ServiceSpec
+		var servicesErr error
+		if len(pm.DomainMappings) > 0 {
+			importServices, servicesErr = composeServicesIn(ctx, staging, pm.Slug, validateEnv)
+		}
 
 		id, cerr := s.store.CreateProject(ctx, &store.Project{
 			Name: pm.Name, Slug: pm.Slug, ComposeFile: pm.ComposeFile, HostID: targetHostID,
@@ -570,7 +579,6 @@ func (s *Server) applyRecoveryBundle(ctx context.Context, m *recoveryManifest, z
 		// the destination (another project, or this bundle importing twice) is
 		// a real conflict, not something to silently drop — same "skip with a
 		// warning" treatment collisions get everywhere else in this import.
-		created, _ := s.store.ProjectByID(ctx, id)
 		for _, dm := range pm.DomainMappings {
 			// A bundle is not the API, but it gets the API's checks: a valid
 			// hostname, never the admin's own domain (the proxy would hijack it),
@@ -580,10 +588,17 @@ func (s *Server) applyRecoveryBundle(ctx context.Context, m *recoveryManifest, z
 				Domain: strings.ToLower(strings.TrimSpace(dm.Domain)), Service: dm.Service,
 				TargetPort: dm.TargetPort, TLSMode: dm.TLSMode,
 			}
-			if created == nil {
-				created = &store.Project{ID: id, Slug: pm.Slug, ComposeFile: pm.ComposeFile, HostID: targetHostID}
+			msg, ok := s.checkDomainMappingFields(b)
+			if ok {
+				// Strict, unlike the API: the import has just resolved the
+				// compose file, so a failure here is not a missing CLI.
+				if servicesErr != nil {
+					msg, ok = "could not check its service: "+servicesErr.Error(), false
+				} else {
+					msg, ok = mappedServiceExists(b, importServices)
+				}
 			}
-			if msg, ok := s.validateDomainMapping(ctx, created, b); !ok {
+			if !ok {
 				warnings = append(warnings, fmt.Sprintf("project %q: domain %q skipped: %s", pm.Slug, dm.Domain, msg))
 				continue
 			}
