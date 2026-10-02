@@ -241,14 +241,7 @@ func runBackupAction(action, file string, wantPassphrase bool) error {
 
 	switch action {
 	case "backup":
-		// Snapshot through a live connection so the WAL is accounted for. This is
-		// safe with the server running.
-		st, err := store.Open(filepath.Join(dataDir, "docker-commander.db"))
-		if err != nil {
-			return err
-		}
-		defer st.Close()
-		rep, err := backup.Create(dataDir, file, storeBackuper{st}, passphrase)
+		rep, err := backupDataDir(dataDir, file, passphrase)
 		if err != nil {
 			return err
 		}
@@ -288,6 +281,26 @@ type storeBackuper struct{ st *store.Store }
 
 func (b storeBackuper) BackupTo(path string) error {
 	return b.st.BackupTo(context.Background(), path)
+}
+
+// backupDataDir snapshots dataDir into file. The database is opened read-only
+// through a live connection, so the WAL is accounted for and the server can keep
+// running. A data dir with no Docker Commander database is refused rather than
+// backed up as an empty one: like --reset-password, this path never reads the
+// config file, so `sudo dockercmd --backup` on a packaged install lands in
+// root's own config dir unless --data-dir says otherwise.
+func backupDataDir(dataDir, file, passphrase string) (*backup.Report, error) {
+	db := filepath.Join(dataDir, "docker-commander.db")
+	st, err := store.OpenSnapshotSource(db)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil, fmt.Errorf("no database at %s — point at the right one with --data-dir "+
+			"(a packaged install uses /var/lib/dockercmd)", db)
+	case err != nil:
+		return nil, fmt.Errorf("cannot back up %s: %w", db, err)
+	}
+	defer st.Close()
+	return backup.Create(dataDir, file, storeBackuper{st}, passphrase)
 }
 
 // flagValue returns the value following one of the given flag names, supporting

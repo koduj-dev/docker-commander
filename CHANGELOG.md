@@ -338,6 +338,17 @@ All notable changes to Docker Commander are documented here. The format follows
   on Windows) rather than just failing.
 
 ### Fixed
+- **`dockercmd --backup` no longer writes to what it backs up.** It opens the
+  database read-only and without migrations. A data dir with no database is now
+  refused instead of backed up as a new empty one (which happened with
+  `sudo dockercmd --backup` on a packaged install without `--data-dir`), and a file
+  that isn't a Docker Commander database is refused and left untouched.
+- **The systemd service can listen on port 443.** The unit grants
+  `CAP_NET_BIND_SERVICE`, which HTTPS via Let's Encrypt on 443 needs. Packages
+  (.deb/.rpm) get the new unit on upgrade. An install made with
+  `--install-service` keeps its old unit until you run
+  `sudo dockercmd --install-service` again and then
+  `sudo systemctl restart dockercmd`.
 - **`dockercmd --backup` includes the project revision snapshots**
   (`project-revisions/`). Before, a restored database could list a revision whose
   snapshot was missing. Revision numbers are now assigned in a transaction, so two
