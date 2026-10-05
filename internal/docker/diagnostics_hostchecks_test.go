@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/koduj-dev/docker-commander/internal/store"
@@ -160,4 +161,27 @@ func TestCheckMTUMismatch_SkipPaths(t *testing.T) {
 			t.Errorf("status = %s, want skipped", got.Status)
 		}
 	})
+}
+
+// The MTU check compares only bridge networks that set their own MTU, and its
+// result says so: an OK must not claim every network matches when some were
+// never compared.
+func TestMTUResult(t *testing.T) {
+	iface := hostIface{Name: "eth0", MTU: 1500, IsDefault: true}
+
+	got := mtuResult([]bridgeMTU{{"a", 1500}, {"b", 0}}, iface)
+	if got.Status != CheckOK || !strings.Contains(got.Message, "1 bridge network(s) with a set MTU") ||
+		!strings.Contains(got.Message, "1 on Docker's default MTU not compared") {
+		t.Errorf("mixed: %+v", got)
+	}
+
+	got = mtuResult([]bridgeMTU{{"b", 0}}, iface)
+	if got.Status != CheckOK || !strings.Contains(got.Message, "nothing to compare") {
+		t.Errorf("none set: %+v", got)
+	}
+
+	got = mtuResult([]bridgeMTU{{"vpn", 1400}, {"a", 1500}, {"b", 0}}, iface)
+	if got.Status != CheckWarn || len(got.Details) != 1 || !strings.Contains(got.Details[0], `"vpn": MTU 1400`) {
+		t.Errorf("mismatch: %+v", got)
+	}
 }
