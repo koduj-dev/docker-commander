@@ -128,4 +128,5 @@ a **CPU & memory** view and a **Network** view.
 ## Permissions
 A **read-only** user sees the lists, charts, logs and metadata, but every action
 is blocked. That includes **Export**, file downloads and the **Console**, which
-need **write** access. See [Users & roles](users.md).
+need **write** access. **Export** and the download buttons aren't shown without
+it. See [Users & roles](users.md).

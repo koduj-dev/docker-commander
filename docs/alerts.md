@@ -258,9 +258,10 @@ end and delete, so "why was this silenced?" stays answerable.
 - **End early** stops it but keeps the record. Neither End nor Delete undoes
   suppression that already happened.
 - **Windows are history.** Nothing deletes them automatically, including the
-  `auto: <project> deploy` ones. **Delete** works on a window that hasn't
-  started yet or is already over. A running window (or an open recurring
-  series) has to be ended first; the API refuses with `409`.
+  `auto: <project> deploy` ones. Finished windows sit under **Past windows**,
+  50 at a time. **Delete** is offered on a window that hasn't started yet or is
+  already over. A running window (or an open recurring series) has to be ended
+  first; the API refuses with `409`.
 - **A closed window can't be edited.** Once ended early or past its end (a
   series: its end date), Edit and End disappear and the API refuses an edit
   with `409`.

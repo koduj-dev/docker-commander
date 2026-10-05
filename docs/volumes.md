@@ -57,7 +57,7 @@ a moment before it would have succeeded.
 
 Uploads follow the same [limits](limits.md#uploads-and-files) as container files.
 Read-only access to Volumes lists files but can't download, upload or delete
-them.
+them; the download buttons aren't shown.
 
 ### How it works
 A named volume has no path reachable through the Docker API. So **Browse files**

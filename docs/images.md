@@ -101,5 +101,6 @@ Container filesystems are exported from the [container detail](containers.md).
 Pull, push, scan and **Save** need **write** access to Images. Scan only
 reads, but it starts a heavy process and contacts outside servers, so a
 read-only account can't launch it. Save hands over the image's full contents,
-which read access doesn't cover. [Bulk pull](containers.md#the-list) also needs access to
+which read access doesn't cover, so its button isn't shown without write.
+[Bulk pull](containers.md#the-list) also needs access to
 Containers.
