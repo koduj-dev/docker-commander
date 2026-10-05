@@ -743,14 +743,14 @@ func humanBytes(b uint64) string {
 	if f < unit {
 		return sprintf("%d B", b)
 	}
-	units := []string{"KB", "MB", "GB", "TB", "PB"}
+	units := []string{"KiB", "MiB", "GiB", "TiB", "PiB"}
 	for _, u := range units {
 		f /= unit
 		if f < unit {
 			return sprintf("%.1f %s", f, u)
 		}
 	}
-	return sprintf("%.1f EB", f)
+	return sprintf("%.1f EiB", f)
 }
 
 // humanDuration renders how long a condition held.
