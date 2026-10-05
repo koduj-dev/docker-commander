@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "./auth/AuthContext";
+import { mustEnrol2FA } from "./auth/enrolment";
 import { Spinner } from "./components/ui";
 import { Shell } from "./layout/Shell";
 import { Setup } from "./pages/Setup";
@@ -46,7 +47,7 @@ export default function App() {
 
   // 2FA enrollment gate — enforced unless this connection is exempt (the admin
   // allowed password-only login from localhost).
-  if (user.mfaEnforced && !user.totpEnabled) return <Enroll2FA />;
+  if (mustEnrol2FA(user)) return <Enroll2FA />;
 
   return (
     <Shell>

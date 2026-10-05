@@ -364,6 +364,10 @@ All notable changes to Docker Commander are documented here. The format follows
   on Windows) rather than just failing.
 
 ### Fixed
+- **An account whose only second factor is a passkey is no longer sent to the
+  authenticator enrolment screen at every sign-in.** The gate checked for an
+  authenticator app only, so with 2FA enforced such an account couldn't reach the
+  app without pairing one.
 - **An account whose only second factor is a passkey can add another one.** The
   Security tab asked for the password only when an authenticator app was paired,
   while the server asks whenever any second factor is, so adding a factor was
