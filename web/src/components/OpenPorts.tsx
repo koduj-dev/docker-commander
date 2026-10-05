@@ -3,30 +3,8 @@ import { Radar, Loader2, Lock } from "lucide-react";
 import { api } from "../lib/api";
 import { getHostId } from "../lib/host";
 import type { HostPortProbe } from "../lib/types";
-
-type Cached = { rows: HostPortProbe[]; at: number };
-
-// Scan results are cached per host (published ports rarely change between
-// restarts), so revisiting the dashboard shows the last scan instead of
-// re-probing every time. Persisted in localStorage so it survives reloads.
-function cacheKey(): string {
-  return `dc.portscan.${getHostId() ?? "local"}`;
-}
-function readCache(): Cached | null {
-  try {
-    const raw = localStorage.getItem(cacheKey());
-    return raw ? (JSON.parse(raw) as Cached) : null;
-  } catch {
-    return null;
-  }
-}
-function writeCache(rows: HostPortProbe[]) {
-  try {
-    localStorage.setItem(cacheKey(), JSON.stringify({ rows, at: Date.now() }));
-  } catch {
-    /* quota / private mode — ignore */
-  }
-}
+import { readScan, writeScan } from "../lib/portscanCache";
+import { useAuth } from "../auth/AuthContext";
 
 // OpenPorts is a host-wide map of published ports across all running
 // containers, with active service detection. It scans on demand (probing every
@@ -40,13 +18,17 @@ export function OpenPorts({ tick = 0 }: { tick?: number }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
+  const { user } = useAuth();
+  const userId = user?.id;
+
   useEffect(() => {
-    const c = readCache();
+    if (userId == null) return;
+    const c = readScan(userId, getHostId());
     if (c) {
       setRows(c.rows);
       setScannedAt(c.at);
     }
-  }, []);
+  }, [userId]);
 
   // Track which containers are currently running; refresh on lifecycle events.
   useEffect(() => {
@@ -65,7 +47,7 @@ export function OpenPorts({ tick = 0 }: { tick?: number }) {
       const r = (await api.hostPorts()) ?? [];
       setRows(r);
       setScannedAt(Date.now());
-      writeCache(r);
+      if (userId != null) writeScan(userId, getHostId(), r);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "scan failed");
     } finally {

@@ -16,12 +16,15 @@ import { Terminal } from "../components/Terminal";
 import { InspectModal } from "../components/InspectModal";
 import { triggerDownload } from "../components/LoadModal";
 import { FileBrowser } from "../components/FileBrowser";
+import { useCanWrite } from "../auth/access";
 
 const MAX_SAMPLES = 60;
 const MAX_LOGS = 2000;
 
 export function ContainerDetail() {
   const { id = "" } = useParams();
+  // Export and file downloads hand over the container's content: write access.
+  const canDownload = useCanWrite("containers");
   const [detail, setDetail] = useState<Detail | null>(null);
   const [samples, setSamples] = useState<StatsSample[]>([]);
   const [logs, setLogs] = useState<LogLine[]>([]);
@@ -101,7 +104,7 @@ export function ContainerDetail() {
         <div className="flex items-center gap-2">
           <button className="btn-ghost" onClick={() => setCommitOpen(true)} title="Commit to a new image"><Camera className="h-4 w-4" /> Commit</button>
           <button className="btn-ghost" onClick={() => setSettingsOpen(true)} title="Rename / limits / restart policy"><Settings className="h-4 w-4" /></button>
-          <button className="btn-ghost" onClick={() => triggerDownload(api.exportContainerUrl(id))} title="Export filesystem (download tar)"><Download className="h-4 w-4" /> Export</button>
+          {canDownload && <button className="btn-ghost" onClick={() => triggerDownload(api.exportContainerUrl(id))} title="Export filesystem (download tar)"><Download className="h-4 w-4" /> Export</button>}
           <button className="btn-ghost" onClick={() => setInspecting(true)}><FileSearch className="h-4 w-4" /> Inspect</button>
           {running ? (
             <>
@@ -140,7 +143,7 @@ export function ContainerDetail() {
         {tab === "logs" && <LogViewer lines={logs} />}
         {tab === "console" && (running ? <Terminal containerId={id} /> : <div className="text-sm text-muted">Container is not running — start it to open a shell.</div>)}
         {tab === "processes" && (running ? <ProcessTable id={id} /> : <div className="text-sm text-muted">Container is not running — no processes.</div>)}
-        {tab === "files" && (running ? <FileBrowser fs={fileApiForContainer(id)} /> : <div className="text-sm text-muted">Container is not running — start it to browse its filesystem.</div>)}
+        {tab === "files" && (running ? <FileBrowser fs={fileApiForContainer(id)} canDownload={canDownload} /> : <div className="text-sm text-muted">Container is not running — start it to browse its filesystem.</div>)}
         {tab === "changes" && <DiffList id={id} />}
         {tab === "env" && <EnvList env={detail.env ?? []} />}
       </div>

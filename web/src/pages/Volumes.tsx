@@ -10,6 +10,7 @@ import { InspectModal } from "../components/InspectModal";
 import { FileBrowser } from "../components/FileBrowser";
 import { useDialogs } from "../components/Dialog";
 import { useListControls, SearchBar, Pager, type StatusOption } from "../components/ListControls";
+import { useCanWrite } from "../auth/access";
 
 const VOLUME_STATUSES: StatusOption<VolumeSummary>[] = [
   { value: "all", label: "All volumes" },
@@ -40,6 +41,8 @@ export function Volumes() {
   const [pruning, setPruning] = useState(false);
   const [inspect, setInspect] = useState<VolumeSummary | null>(null);
   const [browse, setBrowse] = useState<VolumeSummary | null>(null);
+  // Downloading a volume's files hands them over: write access to Volumes.
+  const canDownloadFiles = useCanWrite("volumes");
   const [showForm, setShowForm] = useState(false);
   // Indexed by volume name, for the small backup-status badge below. Fetching
   // fails silently (403) for a non-admin, since backup jobs are admin-only —
@@ -185,7 +188,7 @@ export function Volumes() {
               <span className="text-xs text-muted">— volume files</span>
               <button className="btn-ghost px-2 py-1.5 ml-auto" title="Close" onClick={closeBrowse}><X className="h-4 w-4" /></button>
             </div>
-            <FileBrowser fs={fileApiForVolume(browse.name)} />
+            <FileBrowser fs={fileApiForVolume(browse.name)} canDownload={canDownloadFiles} />
           </div>
         </div>
       )}
