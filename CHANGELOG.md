@@ -378,6 +378,8 @@ All notable changes to Docker Commander are documented here. The format follows
   `deploy_project` and `down_project` check a second scope (the alert's or the
   project's host) and spent a unit for each check, so they used up the 30-a-minute
   ceiling twice as fast.
+- **Alert messages label sizes in binary units** (`KiB`, `MiB`, `GiB`). They were
+  counted in 1024s but labelled `KB`/`MB`/`GB`.
 - **Backup jobs work with images that have an `ENTRYPOINT`, such as
   `restic/restic`.** The command replaced only the image's CMD, so restic's
   entrypoint ran `restic sh -c "…"` and every run of the default image failed.
