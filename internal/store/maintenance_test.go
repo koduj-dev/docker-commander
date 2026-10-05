@@ -310,53 +310,46 @@ func TestMaintenanceWindowCRUD(t *testing.T) {
 	}
 }
 
-// TestPruneOldMaintenanceWindowsOnlyRemovesOldFinishedOneOffs is the fix for
-// unbounded growth: every successful deploy creates a new auto-silence
-// window (see api.autoSilenceForDeploy) and nothing else ever deletes them.
-// Pruning must be selective — a recurring series has no "it's over" moment
-// the way a one-off window's EndsAt does, and a recent one-off (even an
-// already-expired one) is still worth keeping as an audit record for a
-// while.
-func TestPruneOldMaintenanceWindowsOnlyRemovesOldFinishedOneOffs(t *testing.T) {
+// The maintenance log reads only the windows that could be active, plus the ones
+// it saw active last time. Finished windows are kept as history (one per deploy
+// at least), and the log runs every 30 seconds, so it must not read them all.
+func TestMaintenanceWindowsForLogSkipsHistory(t *testing.T) {
 	st, uid := maintenanceStore(t)
 	ctx := context.Background()
 	now := time.Now()
+	mk := func(w MaintenanceWindow) int64 {
+		t.Helper()
+		w.Reason, w.AuthorID = "r", uid
+		id, err := st.CreateMaintenanceWindow(ctx, &w)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	old := mk(MaintenanceWindow{Name: "old", StartsAt: now.Add(-40 * 24 * time.Hour), EndsAt: now.Add(-39 * 24 * time.Hour)})
+	justEnded := mk(MaintenanceWindow{Name: "just ended", StartsAt: now.Add(-2 * time.Hour), EndsAt: now.Add(-time.Minute)})
+	running := mk(MaintenanceWindow{Name: "running", StartsAt: now.Add(-time.Hour), EndsAt: now.Add(time.Hour)})
+	weekly := mk(MaintenanceWindow{Name: "weekly", Recurring: true, StartsAt: now.Add(-40 * 24 * time.Hour),
+		Weekdays: []time.Weekday{time.Sunday}, TimeOfDay: "02:00", DurationMin: 60})
 
-	old, err := st.CreateMaintenanceWindow(ctx, &MaintenanceWindow{
-		Name: "old auto-silence", Reason: "r", AuthorID: uid,
-		StartsAt: now.Add(-40 * 24 * time.Hour), EndsAt: now.Add(-31 * 24 * time.Hour),
-	})
+	got, err := st.MaintenanceWindowsForLog(ctx, now, []int64{justEnded, 9999})
 	if err != nil {
 		t.Fatal(err)
 	}
-	recent, err := st.CreateMaintenanceWindow(ctx, &MaintenanceWindow{
-		Name: "recent auto-silence", Reason: "r", AuthorID: uid,
-		StartsAt: now.Add(-2 * time.Hour), EndsAt: now.Add(-time.Hour),
-	})
-	if err != nil {
-		t.Fatal(err)
+	ids := map[int64]bool{}
+	for _, w := range got {
+		ids[w.ID] = true
 	}
-	recurring, err := st.CreateMaintenanceWindow(ctx, &MaintenanceWindow{
-		Name: "weekly", Reason: "r", AuthorID: uid, Recurring: true,
-		StartsAt: now.Add(-40 * 24 * time.Hour),
-		Weekdays: []time.Weekday{time.Sunday}, TimeOfDay: "02:00", DurationMin: 60,
-	})
-	if err != nil {
-		t.Fatal(err)
+	if ids[old] {
+		t.Error("an old finished window was read: the log would scan the whole history")
 	}
-
-	if err := st.PruneOldMaintenanceWindows(ctx, 30*24*time.Hour); err != nil {
-		t.Fatal(err)
+	for name, id := range map[string]int64{"running": running, "weekly": weekly, "just ended (asked for)": justEnded} {
+		if !ids[id] {
+			t.Errorf("%s window missing", name)
+		}
 	}
-
-	if _, err := st.MaintenanceWindowByID(ctx, old); err != ErrNotFound {
-		t.Errorf("the old finished one-off window should have been pruned, err=%v", err)
-	}
-	if _, err := st.MaintenanceWindowByID(ctx, recent); err != nil {
-		t.Errorf("a recent one-off window should NOT be pruned yet: %v", err)
-	}
-	if _, err := st.MaintenanceWindowByID(ctx, recurring); err != nil {
-		t.Errorf("a recurring window should never be pruned by this: %v", err)
+	if len(got) != 3 {
+		t.Errorf("got %d windows, want 3 (a removed id is skipped)", len(got))
 	}
 }
 
