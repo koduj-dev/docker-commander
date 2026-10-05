@@ -30,7 +30,11 @@ func (m *Monitor) maintenanceLogLoop(ctx context.Context) {
 	first := true
 	for {
 		wctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		windows, err := m.store.ListMaintenanceWindows(wctx)
+		ids := make([]int64, 0, len(known))
+		for id := range known {
+			ids = append(ids, id)
+		}
+		windows, err := m.store.MaintenanceWindowsForLog(wctx, time.Now(), ids)
 		cancel()
 		if err != nil {
 			log.Printf("monitor: list maintenance windows: %v", err)

@@ -188,3 +188,56 @@ func TestCreateMaintenanceWindowNormalizesTheLocalHostAlias(t *testing.T) {
 		t.Errorf("the real local host id should be normalized to the 0 alias when stored, got %v", windows[0].HostIDs)
 	}
 }
+
+// Maintenance windows are history. One can be deleted while it is only a plan,
+// or once it is over; a running one has to be ended first, so a window that
+// silenced alerts always leaves its record behind until someone removes it on
+// purpose.
+func TestDeleteMaintenanceWindowOnlyBeforeOrAfter(t *testing.T) {
+	srv, st, uid := newMaintenanceServer(t)
+	now := time.Now()
+	mk := func(w store.MaintenanceWindow) int64 {
+		t.Helper()
+		w.Reason, w.AuthorID = "r", uid
+		id, err := st.CreateMaintenanceWindow(t.Context(), &w)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	del := func(id int64) int {
+		r := httptest.NewRequest("DELETE", "/api/maintenance-windows/"+itoa(id), nil).WithContext(ctxAs(uid, "admin"))
+		r = withURLParam(r, "id", itoa(id))
+		w := httptest.NewRecorder()
+		srv.handleDeleteMaintenanceWindow(w, r)
+		return w.Code
+	}
+
+	running := mk(store.MaintenanceWindow{Name: "running", StartsAt: now.Add(-time.Minute), EndsAt: now.Add(time.Hour)})
+	series := mk(store.MaintenanceWindow{Name: "series", Recurring: true, StartsAt: now.Add(-24 * time.Hour),
+		Weekdays: []time.Weekday{time.Sunday}, TimeOfDay: "02:00", DurationMin: 60})
+	for name, id := range map[string]int64{"a running window": running, "an open recurring series": series} {
+		if code := del(id); code != http.StatusConflict {
+			t.Errorf("deleting %s → %d, want 409", name, code)
+		}
+		if _, err := st.MaintenanceWindowByID(t.Context(), id); err != nil {
+			t.Errorf("%s was deleted anyway: %v", name, err)
+		}
+	}
+
+	scheduled := mk(store.MaintenanceWindow{Name: "scheduled", StartsAt: now.Add(time.Hour), EndsAt: now.Add(2 * time.Hour)})
+	expired := mk(store.MaintenanceWindow{Name: "expired", StartsAt: now.Add(-2 * time.Hour), EndsAt: now.Add(-time.Hour)})
+	for name, id := range map[string]int64{"a scheduled window": scheduled, "an expired window": expired} {
+		if code := del(id); code != http.StatusOK {
+			t.Errorf("deleting %s → %d, want 200", name, code)
+		}
+	}
+
+	// Ending a running window is what makes it deletable.
+	if err := st.EndMaintenanceWindow(t.Context(), running); err != nil {
+		t.Fatal(err)
+	}
+	if code := del(running); code != http.StatusOK {
+		t.Errorf("deleting a window after ending it → %d, want 200", code)
+	}
+}

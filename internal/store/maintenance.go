@@ -257,6 +257,37 @@ func (s *Store) activeCandidateMaintenanceWindows(ctx context.Context, now time.
 	return out, rows.Err()
 }
 
+// MaintenanceWindowsForLog returns the windows the maintenance log has to look
+// at: every one that could be active at now, plus the ones in ids (those it saw
+// active last time, so it can tell "ended", "ended early" and "removed" apart).
+//
+// Not ListMaintenanceWindows: finished windows are kept as history, one per
+// deploy at least, and the log runs every 30 seconds.
+func (s *Store) MaintenanceWindowsForLog(ctx context.Context, now time.Time, ids []int64) ([]MaintenanceWindow, error) {
+	cands, err := s.activeCandidateMaintenanceWindows(ctx, now)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[int64]bool, len(cands))
+	for _, w := range cands {
+		seen[w.ID] = true
+	}
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		w, err := s.MaintenanceWindowByID(ctx, id)
+		if errors.Is(err, ErrNotFound) {
+			continue // removed; the log says so
+		}
+		if err != nil {
+			return nil, err
+		}
+		cands = append(cands, *w)
+	}
+	return cands, nil
+}
+
 // FindActiveMaintenanceWindow returns the first window (if any) that is both
 // Active at now and Matches the given event scope — the single call the
 // alert engine needs to decide whether to suppress a delivery.
@@ -346,21 +377,6 @@ func (s *Store) DeleteMaintenanceWindow(ctx context.Context, id int64) error {
 		return err
 	}
 	return rowsAffectedOrNotFound(res)
-}
-
-// PruneOldMaintenanceWindows deletes ONE-OFF windows whose EndsAt is more
-// than olderThan in the past. Every successful deploy creates a new
-// auto-silence window (see api.autoSilenceForDeploy) and nothing else ever
-// removes them, so without this the table — and the list every caller
-// re-authorizes against — grows without bound. Recurring windows are left
-// alone: a recurring series has no single "it's over" moment the way a
-// one-off window's EndsAt does.
-func (s *Store) PruneOldMaintenanceWindows(ctx context.Context, olderThan time.Duration) error {
-	cutoff := time.Now().Add(-olderThan).UTC().Format(time.RFC3339)
-	_, err := s.db.ExecContext(ctx, `
-		DELETE FROM maintenance_windows
-		WHERE recurring = 0 AND ends_at != '' AND ends_at < ?`, cutoff)
-	return err
 }
 
 func rowsAffectedOrNotFound(res sql.Result) error {

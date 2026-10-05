@@ -402,6 +402,14 @@ func (s *Server) handleDeleteMaintenanceWindow(w http.ResponseWriter, r *http.Re
 		writeErr(w, http.StatusNotFound, "maintenance window not found")
 		return
 	}
+	// Windows are the record of when alerts were silenced, so one can go only
+	// while it is still just a plan (not started) or once it is over. A window
+	// that is running is ended first: deleting it would silence alerts and then
+	// leave no trace that it did.
+	if now := time.Now(); !now.Before(win.StartsAt) && !win.Closed(now) {
+		writeErr(w, http.StatusConflict, "this maintenance window is in progress; end it first, then delete it")
+		return
+	}
 	if err := s.store.DeleteMaintenanceWindow(r.Context(), id); err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not delete maintenance window")
 		return

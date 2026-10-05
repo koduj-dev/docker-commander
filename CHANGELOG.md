@@ -188,6 +188,8 @@ All notable changes to Docker Commander are documented here. The format follows
   noise, not a fresh incident. Manage windows from the new **Maintenance**
   tab on the Alerts page, or via MCP (`list_maintenance_windows`,
   `create_maintenance_window`, `end_maintenance_window`).
+  Windows are kept as history, never pruned. One can be deleted while it is
+  only scheduled or once it is over; a running window has to be ended first.
 - **Volume backup jobs.** A trigger-and-status wrapper around your own backup
   command (restic, borg, or anything else already pointed at its own
   repository) — not a backup engine of our own: no repositories, retention
