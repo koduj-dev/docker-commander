@@ -4,6 +4,12 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [1.6.6] — 2026-10-05
+
+### Changed
+- Routine Go and npm dependency updates (minor/patch only), including
+  `modernc.org/sqlite` 1.60.1 and `go-webauthn/webauthn`.
+
 ## [1.6.5] — 2026-09-18
 
 ### Changed
@@ -1993,6 +1999,7 @@ Initial release: a single CGO-free Go binary with an embedded React UI.
   per-section permissions / read-only, feature flags, audit log, optional LDAP;
   secrets encrypted at rest.
 
+[1.6.6]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.6
 [1.6.5]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.5
 [1.6.4]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.4
 [1.6.3]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.3
