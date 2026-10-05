@@ -57,7 +57,7 @@ afterEach(() => { act(() => root.unmount()); container.remove(); vi.clearAllMock
 describe("StacksTab", () => {
   it("shows running stacks by default, biggest memory first, without the stopped one", () => {
     expect(names()).toEqual(["shop", "blog"]);
-    expect(container.textContent).toContain("6.0 GB");
+    expect(container.textContent).toContain("6.0 GiB");
     expect(container.textContent).toContain("2/2");
   });
 
@@ -65,7 +65,7 @@ describe("StacksTab", () => {
     expect(container.textContent).not.toContain("shop-db");
     await act(async () => (container.querySelector("tbody tr") as HTMLElement).click());
     expect(container.textContent).toContain("shop-db");
-    expect(container.textContent).toContain("4.0 GB");
+    expect(container.textContent).toContain("4.0 GiB");
   });
 
   it("the disclosure is a real button that exposes its state and toggles exactly once", async () => {

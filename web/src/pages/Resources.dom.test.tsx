@@ -19,7 +19,7 @@ const GB = 1024 ** 3;
 const u = (name: string, cpuPercent: number, memBytes: number): ResourceUsage => ({
   id: `id-${name}`, name, cpuPercent, memBytes, memPercent: (memBytes / (16 * GB)) * 100, netRxRate: 1000, netTxRate: 500,
 });
-// 8 cores, 16 GB host. db: 25% of host = 2 cores, 4 GB. web: 5% = 0.4 cores, 1 GB.
+// 8 cores, 16 GiB host. db: 25% of host = 2 cores, 4 GiB. web: 5% = 0.4 cores, 1 GiB.
 const emptyTalkers = { window: "5m", metric: "total", containers: [], total: 0 };
 const overview: ResourceOverview = { cpus: 8, memTotal: 16 * GB, containers: [u("web", 5, GB), u("db", 25, 4 * GB)] };
 
@@ -59,9 +59,9 @@ describe("Resources page", () => {
   it("shows absolute cores and bytes, not just percentages", () => {
     const text = container.textContent ?? "";
     expect(text).toContain("2.00 cores"); // db: 25% of 8 cores
-    expect(text).toContain("4.0 GB");
+    expect(text).toContain("4.0 GiB");
     expect(text).toContain("of 8"); // total cores in the KPI
-    expect(text).toContain("5.0 GB"); // summed memory
+    expect(text).toContain("5.0 GiB"); // summed memory
   });
 
   it("defaults to memory descending", () => {

@@ -52,7 +52,7 @@ describe("DiskTab", () => {
   it("ranks images with unique and total size, marks unused, and never shows an image total", () => {
     const text = container.textContent ?? "";
     expect(text).toContain("big:1");
-    expect(text).toContain("2.0 GB"); // unique
+    expect(text).toContain("2.0 GiB"); // unique
     expect(text).toContain("unused");
     expect(text).toContain("unknown"); // the image whose shared size wasn't computed
     expect(text).toContain("(untagged)");
@@ -64,7 +64,7 @@ describe("DiskTab", () => {
     expect(text).toContain("nfs-vol");
     expect(text).toContain("unknown");
     expect(text).toContain("1 unknown");
-    expect(text).toContain("4.0 GB");
+    expect(text).toContain("4.0 GiB");
   });
 
   it("Refresh asks the server for a fresh report", async () => {
@@ -122,7 +122,7 @@ describe("DiskTab", () => {
   it("shows Docker's reclaimable estimate, with what it consists of, and says it is a lower bound", () => {
     const text = container.textContent ?? "";
     expect(text).toContain("Reclaimable");
-    expect(text).toContain("3.0 GB"); // the total
+    expect(text).toContain("3.0 GiB"); // the total
     expect(text).toContain("what a prune would free");
     expect(text).toContain("lower bound");
     expect(text).toContain("1 unused"); // exactly one of the two images has 0 containers

@@ -217,7 +217,7 @@ function ProcessTable({ id }: { id: string }) {
   );
 }
 
-// DiffList shows filesystem changes since the container started (docker diff).
+// DiffList shows filesystem changes compared with the image (docker diff).
 function DiffList({ id }: { id: string }) {
   const [diff, setDiff] = useState<DiffEntry[] | null>(null);
   const [error, setError] = useState("");
@@ -227,7 +227,7 @@ function DiffList({ id }: { id: string }) {
 
   if (error) return <div className="text-sm text-danger">{error}</div>;
   if (!diff) return <div className="flex items-center gap-2 text-muted text-sm"><Spinner className="h-4 w-4" /> Loading…</div>;
-  if (diff.length === 0) return <div className="text-sm text-muted">No filesystem changes since the container started.</div>;
+  if (diff.length === 0) return <div className="text-sm text-muted">No filesystem changes compared with the image.</div>;
 
   const mark = { added: { c: "text-ok", s: "A" }, modified: { c: "text-warn", s: "C" }, deleted: { c: "text-danger", s: "D" }, unknown: { c: "text-muted", s: "?" } } as const;
   return (
@@ -417,7 +417,7 @@ function SettingsModal({ detail, onClose, onDone }: { detail: Detail; onClose: (
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
-              <label className="label">Memory (MB)</label>
+              <label className="label">Memory (MiB)</label>
               <input className="input" type="number" min="0" value={memoryMb} onChange={(e) => setMemoryMb(e.target.value)} placeholder="unchanged" />
             </div>
             <div>
@@ -431,7 +431,7 @@ function SettingsModal({ detail, onClose, onDone }: { detail: Detail; onClose: (
               </select>
             </div>
           </div>
-          <p className="text-[11px] text-muted">Limits left blank are sent as 0 (unlimited). Restart policy "(unchanged)" leaves it as-is.</p>
+          <p className="text-[11px] text-muted">Limits left blank stay as they are. Restart policy "(unchanged)" leaves it as-is.</p>
           {err && <p className="text-sm text-danger break-all">{err}</p>}
         </div>
         <div className="flex justify-end gap-2 p-4 border-t border-border">

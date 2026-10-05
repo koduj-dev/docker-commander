@@ -7,7 +7,7 @@ import { DialogProvider } from "../components/Dialog";
 import type { AlertRule, Webhook } from "../lib/types";
 
 // Two new rule shapes added for NEXT.md's "network alerting" item: a
-// throughput metric on the existing resource-rule type (entered as MB/s,
+// throughput metric on the existing resource-rule type (entered as MiB/s,
 // stored as bytes/s), and a brand new "network" rule type that fires on a
 // cumulative counter's INCREASE over a window rather than its absolute
 // value. Both are exercised through the real form, not by hand-building the
@@ -130,11 +130,11 @@ describe("network alert rules", () => {
     expect(body.config).not.toHaveProperty("op");
   });
 
-  it("converts a network throughput threshold from MB/s to bytes/s", async () => {
+  it("converts a network throughput threshold from MiB/s to bytes/s", async () => {
     typeInto(inputForLabel("Rule name"), "RX spike");
     setSelect(selectWithOption("resource"), "resource");
     setSelect(selectWithOption("netrx_rate"), "netrx_rate");
-    typeInto(inputForLabel("Threshold (MB/s)"), "10");
+    typeInto(inputForLabel("Threshold (MiB/s)"), "10");
 
     await submit();
 

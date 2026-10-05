@@ -97,7 +97,7 @@ export function CreateContainerModal({ onClose, onDone }: { onClose: () => void;
               </select>
             </div>
             <div>
-              <label className="label">Memory limit (MB)</label>
+              <label className="label">Memory limit (MiB)</label>
               <input className="input" type="number" min="0" value={memoryMb} onChange={(e) => setMemoryMb(e.target.value)} placeholder="0 = unlimited" />
             </div>
             <div>
