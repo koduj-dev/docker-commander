@@ -140,24 +140,48 @@ func (m *Manager) checkMTUMismatch(ctx context.Context, hostID int64, nets []Net
 		return CheckResult{ID: id, Name: name, Status: CheckSkipped, Message: "Could not reach the Docker daemon to inspect network options"}
 	}
 
-	var details []string
+	var bridges []bridgeMTU
 	for _, n := range nets {
 		res, err := cli.NetworkInspect(ctx, n.ID, client.NetworkInspectOptions{})
 		full := res.Network
 		if err != nil || full.Driver != "bridge" {
 			continue
 		}
-		raw, ok := full.Options["com.docker.network.driver.mtu"]
-		if !ok {
+		b := bridgeMTU{name: n.Name}
+		if raw, ok := full.Options["com.docker.network.driver.mtu"]; ok {
+			if _, err := fmt.Sscanf(raw, "%d", &b.mtu); err != nil {
+				b.mtu = 0
+			}
+		}
+		bridges = append(bridges, b)
+	}
+	return mtuResult(bridges, *defaultIface)
+}
+
+// bridgeMTU is a bridge network and the MTU set on it; 0 when none is set (or it
+// doesn't parse), which leaves Docker's default in place.
+type bridgeMTU struct {
+	name string
+	mtu  int
+}
+
+// mtuResult compares the bridge networks that set their own MTU with the host's
+// default interface. A network on Docker's default MTU is not compared: what
+// that default is isn't visible here, so the result says so rather than
+// counting it as a match.
+func mtuResult(bridges []bridgeMTU, iface hostIface) CheckResult {
+	const id, name = "mtu_mismatch", "MTU mismatch"
+	var details []string
+	compared, unset := 0, 0
+	for _, b := range bridges {
+		if b.mtu == 0 {
+			unset++
 			continue
 		}
-		var netMTU int
-		if _, err := fmt.Sscanf(raw, "%d", &netMTU); err != nil || netMTU == 0 {
-			continue
-		}
-		if netMTU != defaultIface.MTU {
+		compared++
+		if b.mtu != iface.MTU {
 			details = append(details, fmt.Sprintf("network %q: MTU %d, host interface %q: MTU %d",
-				n.Name, netMTU, defaultIface.Name, defaultIface.MTU))
+				b.name, b.mtu, iface.Name, iface.MTU))
 		}
 	}
 	sort.Strings(details)
@@ -168,7 +192,14 @@ func (m *Manager) checkMTUMismatch(ctx context.Context, hostID int64, nets []Net
 			Details: details,
 		}
 	}
-	return CheckResult{ID: id, Name: name, Status: CheckOK, Message: "Every bridge network's MTU matches the host's default interface"}
+	msg := fmt.Sprintf("%d bridge network(s) with a set MTU match the host's default interface", compared)
+	if compared == 0 {
+		msg = "No bridge network sets its own MTU, so there is nothing to compare"
+	}
+	if unset > 0 && compared > 0 {
+		msg += fmt.Sprintf("; %d on Docker's default MTU not compared", unset)
+	}
+	return CheckResult{ID: id, Name: name, Status: CheckOK, Message: msg}
 }
 
 // checkDiskSpace flags a host running low on free space where Docker actually

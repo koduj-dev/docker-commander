@@ -374,6 +374,9 @@ All notable changes to Docker Commander are documented here. The format follows
   on Windows) rather than just failing.
 
 ### Fixed
+- **The MTU check says what it compared.** It compares only bridge networks that
+  set their own MTU, but its OK result said every bridge network matched. It now
+  counts the ones it compared and the ones left on Docker's default.
 - **An account whose only second factor is a passkey is no longer sent to the
   authenticator enrolment screen at every sign-in.** The gate checked for an
   authenticator app only, so with 2FA enforced such an account couldn't reach the
