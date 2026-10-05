@@ -121,6 +121,10 @@ function AccountTab({ onSaved }: { onSaved: () => Promise<void> }) {
         </div>
       </div>
 
+      {/* Only for a password this app owns (an allowlist, as on the server): a
+          directory account changes it in the directory. */}
+      {(!user?.authSource || user.authSource === "local") && <PasswordCard onChanged={onSaved} />}
+
       <form onSubmit={save} className="card p-5 space-y-3">
         <div className="flex items-center gap-2 font-medium"><Mail className="h-4 w-4 text-accent" /> Alert e-mail</div>
         <input className="input" type="email" value={email} placeholder="you@example.com"
@@ -141,6 +145,73 @@ function AccountTab({ onSaved }: { onSaved: () => Promise<void> }) {
   );
 }
 
+// PasswordCard changes the account's own password. The server checks the current
+// one, ends every other session and moves this one onto a new cookie, so the
+// page keeps working without a new sign-in.
+function PasswordCard({ onChanged }: { onChanged: () => Promise<void> }) {
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [again, setAgain] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const mismatch = again !== "" && again !== next;
+  const tooShort = next !== "" && next.length < MIN_PASSWORD_LENGTH;
+  const canSave = !!current && next.length >= MIN_PASSWORD_LENGTH && next === again && !busy;
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canSave) return;
+    setBusy(true); setMsg(null);
+    try {
+      await api.changeMyPassword(current, next);
+      setCurrent(""); setNext(""); setAgain("");
+      await onChanged();
+      setMsg({ ok: true, text: "Password changed. Every other session has been signed out." });
+    } catch (err) {
+      setMsg({ ok: false, text: err instanceof Error ? err.message : "could not change the password" });
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <form onSubmit={save} className="card p-5 space-y-3">
+      <div className="flex items-center gap-2 font-medium"><KeyRound className="h-4 w-4 text-accent" /> Password</div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className="space-y-1">
+          <label className="label" htmlFor="pw-current">Current password</label>
+          <input id="pw-current" className="input" type="password" autoComplete="current-password"
+            value={current} onChange={(e) => setCurrent(e.target.value)} />
+        </div>
+        <div className="space-y-1">
+          <label className="label" htmlFor="pw-new">New password</label>
+          <input id="pw-new" className="input" type="password" autoComplete="new-password"
+            value={next} onChange={(e) => setNext(e.target.value)} />
+        </div>
+        <div className="space-y-1">
+          <label className="label" htmlFor="pw-again">New password again</label>
+          <input id="pw-again" className="input" type="password" autoComplete="new-password"
+            value={again} onChange={(e) => setAgain(e.target.value)} />
+        </div>
+      </div>
+      <p className="text-xs text-muted">
+        At least {MIN_PASSWORD_LENGTH} characters. Changing it signs out every other session of this
+        account; this one stays signed in.
+      </p>
+      {tooShort && <p className="text-sm text-warn">The new password is shorter than {MIN_PASSWORD_LENGTH} characters.</p>}
+      {mismatch && <p className="text-sm text-warn">The two new passwords don&apos;t match.</p>}
+      {msg && <p className={clsx("text-sm", msg.ok ? "text-ok" : "text-danger")}>{msg.text}</p>}
+      <div className="flex justify-end">
+        <button className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40" disabled={!canSave}>
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Change password
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// MIN_PASSWORD_LENGTH mirrors auth.MinPasswordLength; the server enforces it.
+const MIN_PASSWORD_LENGTH = 10;
+
 // SecurityTab shows 2FA status and pairs a new authenticator. Starting the flow is
 // safe: the new secret is held aside server-side and only replaces the working one
 // once a code from the new device is accepted, so abandoning this leaves the
@@ -157,6 +228,11 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
   const [factorsErr, setFactorsErr] = useState("");
   const [passkeys, setPasskeys] = useState<{ available: boolean; reason: string } | null>(null);
   const [passkeyBusy, setPasskeyBusy] = useState(false);
+  // Once the account has any second factor (an authenticator app OR a passkey),
+  // adding another needs the password: the server's rule. Keyed on mfaEnabled,
+  // not totpEnabled, or an account with only a passkey got no password field and
+  // a refusal it couldn't answer.
+  const stepUp = !!user?.mfaEnabled || (factors?.length ?? 0) > 0;
 
   const loadFactors = useCallback(() => {
     setFactorsErr("");
@@ -179,7 +255,7 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
     try {
       // The password is required exactly when pairing anything else is: once the
       // account already has a second factor.
-      const options = await api.passkeyRegisterBegin(user?.totpEnabled || (factors?.length ?? 0) > 0 ? password : undefined);
+      const options = await api.passkeyRegisterBegin(stepUp ? password : undefined);
       const credential = await createPasskey(options);
       await api.passkeyRegisterFinish(deviceName.trim() || "Passkey", credential);
       setPassword(""); setDeviceName("");
@@ -197,7 +273,7 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
     try {
       // Adding an authenticator while one already works is a step-up, so the
       // server asks for the password; a first enrolment has nothing to protect.
-      setEnr(await api.totpSetup(user?.totpEnabled ? password : undefined));
+      setEnr(await api.totpSetup(stepUp ? password : undefined));
       setCode(""); setPassword("");
     } catch (e) {
       setMsg({ ok: false, text: e instanceof Error ? e.message : "could not start" });
@@ -227,7 +303,7 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
       <div className="card p-5 space-y-3">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 font-medium"><ShieldCheck className="h-4 w-4 text-accent" /> Two-factor authentication</div>
-          {user?.totpEnabled
+          {user?.mfaEnabled
             ? <span className="inline-flex items-center gap-1 text-sm text-ok"><Check className="h-3.5 w-3.5" /> enabled</span>
             : <span className="text-sm text-warn">not set up</span>}
         </div>
@@ -247,7 +323,7 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
           // (for removing), and two unlabelled boxes stacked together is how you
           // type the right password into the wrong form.
           <form className="space-y-1.5 border-t border-border pt-3" onSubmit={start}>
-            {user?.totpEnabled && (
+            {stepUp && (
               <div className="max-w-xs space-y-1">
                 <label className="label" htmlFor="repair-password">Your password</label>
                 <input
@@ -263,9 +339,9 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
             )}
             <button className="btn-ghost px-3 py-1.5 text-sm" type="submit" disabled={busy === "start"}>
               {busy === "start" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-              {user?.totpEnabled ? "Add an authenticator" : "Set up 2FA"}
+              {stepUp ? "Add an authenticator" : "Set up 2FA"}
             </button>
-            {user?.totpEnabled && (
+            {stepUp && (
               <p className="text-xs text-muted">
                 Your password is required because this changes what it takes to sign in as you —
                 a stolen session alone must not be able to do it. Everything you already have
@@ -321,7 +397,7 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
                 </div>
               </div>
             </div>
-            {user?.totpEnabled && (
+            {stepUp && (
               <p className="text-xs text-warn">
                 Nothing has changed yet, and nothing you already have paired will change. Cancel and
                 this device simply never gets added.
@@ -352,6 +428,7 @@ function SecurityTab({ onChanged }: { onChanged: () => Promise<void> }) {
 // nowhere to look. IP and browser are shown for that reason and no other — this
 // is the account's own view, never an administrator's.
 function SessionsCard() {
+  const { user } = useAuth();
   const [sessions, setSessions] = useState<Session[] | null>(null);
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState("");
@@ -451,8 +528,15 @@ function SessionsCard() {
 
       <div className="flex items-center justify-between gap-3 border-t border-border pt-3">
         <p className="text-xs text-muted max-w-md">
-          If something here isn&apos;t you, sign it out and <strong className="text-text">change your password</strong> —
-          that ends every session at once, including the one you missed.
+          {user?.authSource === "ldap" ? (
+            // A change made in the directory never reaches the sessions here, so
+            // signing them out is a step of its own.
+            <>If something here isn&apos;t you, sign out every other session and <strong className="text-text">change
+              your password in your directory</strong> — a change there doesn&apos;t end the sessions here.</>
+          ) : (
+            <>If something here isn&apos;t you, <strong className="text-text">change your password</strong> on the
+              Account tab — that ends every other session at once, including any you missed.</>
+          )}
         </p>
         {others > 0 && (
           <button className="btn-ghost px-3 py-1.5 text-sm shrink-0" onClick={revokeOthers} disabled={busy !== ""}>

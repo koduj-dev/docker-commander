@@ -260,6 +260,10 @@ export const api = {
   logout: () => req<{ ok: boolean }>("POST", "/api/auth/logout"),
   // Own alert address. Self-service: it only ever affects this account's alerts.
   setMyEmail: (email: string) => req<{ ok: boolean }>("PUT", "/api/auth/me/email", { email }),
+  // Own password: needs the current one; ends every other session and re-issues
+  // this one's cookie.
+  changeMyPassword: (current: string, password: string) =>
+    req<unknown>("PUT", "/api/auth/me/password", { current, password }),
   // The caller's own roles and resulting grants, for the profile page.
   myAccess: () => req<MyAccess>("GET", "/api/auth/me/access"),
 

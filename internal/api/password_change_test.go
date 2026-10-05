@@ -112,26 +112,32 @@ func TestChangeOwnPassword_WeakNewPasswordRefused(t *testing.T) {
 }
 
 func TestChangeOwnPassword_DirectoryAccountRefused(t *testing.T) {
-	admin := rbacFixture(t)
-	me := loginWithRoles(t, admin, "changer", true, nil, nil)
-	u, err := admin.st.UserByUsername(context.Background(), "changer")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := admin.st.SetAuthSource(context.Background(), u.ID, "ldap"); err != nil {
-		t.Fatal(err)
-	}
+	// Not just "ldap": only a password stored here may be changed here, so any
+	// other source is refused too.
+	for _, source := range []string{"ldap", "oidc"} {
+		t.Run(source, func(t *testing.T) {
+			admin := rbacFixture(t)
+			me := loginWithRoles(t, admin, "changer", true, nil, nil)
+			u, err := admin.st.UserByUsername(context.Background(), "changer")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := admin.st.SetAuthSource(context.Background(), u.ID, source); err != nil {
+				t.Fatal(err)
+			}
 
-	code, resp := changePassword(me, "restricted123", "brand-new-pass")
-	if code != http.StatusBadRequest || !strings.Contains(resp["error"].(string), "directory") {
-		t.Fatalf("directory account: %d %v, want 400 pointing at the directory", code, resp)
-	}
-	after, err := admin.st.UserByID(context.Background(), u.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if after.PasswordHash != u.PasswordHash {
-		t.Error("a directory account's stored hash was replaced")
+			code, resp := changePassword(me, "restricted123", "brand-new-pass")
+			if code != http.StatusBadRequest || !strings.Contains(resp["error"].(string), "directory") {
+				t.Fatalf("%s account: %d %v, want 400 pointing at the directory", source, code, resp)
+			}
+			after, err := admin.st.UserByID(context.Background(), u.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after.PasswordHash != u.PasswordHash {
+				t.Errorf("a %s account's stored hash was replaced", source)
+			}
+		})
 	}
 }
 
