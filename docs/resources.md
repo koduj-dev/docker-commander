@@ -77,8 +77,10 @@ with a note *Showing 50 of N — narrow the filter to find one outside this list
 
 The figure is an **average rate over the window**, not a current sample and not
 a total. Docker only gives counters that grow from container start. The rate is
-the growth between the first and last stored sample in the window, divided by
-the time between them. A counter that drops (container recreated) adds nothing.
+the sum of every increase between consecutive stored samples in the window,
+divided by the time from the first sample to the last. A step where the counter
+drops (a restart reset it) adds nothing, so traffic on both sides of a restart
+still counts.
 
 - A container needs at least two stored samples in the window, or it is left
   out. If none qualify, the tab says *Not enough history yet*. Wait a few minutes

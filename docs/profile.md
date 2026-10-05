@@ -76,7 +76,10 @@ Adding one leaves the others working. There is no "replace".
 
 A passkey is the other kind of second factor. **Add a passkey** uses what this
 device already has: a fingerprint, a face, a PIN or a plugged-in security key.
-The private key never leaves the device's secure hardware.
+The private key stays with the authenticator: Docker Commander only ever gets
+signatures. A security key keeps it in hardware; a synced passkey (iCloud
+Keychain, Google Password Manager) moves it between your devices through that
+service.
 
 It is stronger than a code in two ways. There is nothing to type, so nothing to
 read out to someone on the phone. And the signature is bound to this site's

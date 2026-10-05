@@ -159,9 +159,9 @@ Each is gated by its section, per token and user.
   subnets (with each other and with the host's real interfaces), a bridge MTU that
   doesn't match the host's default interface, duplicate port bindings, log drivers
   without rotation, low free disk where Docker stores its data, dangling
-  networks/volumes. Each check reports ok/warn/fail/skipped. The host-network and
-  disk checks report **skipped**, not a guess, when the host can't be probed (no
-  SSH access, or a plain-TCP connection with no shell).
+  networks/volumes. Each check reports ok/warn/fail/skipped. The host-network,
+  MTU and disk checks report **skipped**, not a guess, when the host can't be
+  probed (no SSH access, or a plain-TCP connection with no shell).
 
 The first three are read-only and bounded, so an assistant can answer "what's it
 doing?" and "what changed?" without `exec`. `run_diagnostics` is **write-gated**
