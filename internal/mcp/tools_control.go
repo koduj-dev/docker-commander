@@ -72,7 +72,7 @@ func (h *handler) listManagedProjects(ctx context.Context, req *mcpsdk.CallToolR
 		if !seen {
 			// Memoised per host: projects cluster onto a few hosts, and each miss
 			// costs a grants lookup.
-			ok = h.authorizeHost(ctx, req, "projects", false, p.HostID) == nil
+			ok = h.recheckHost(ctx, req, "projects", false, p.HostID) == nil
 			reachable[p.HostID] = ok
 		}
 		if ok {
@@ -151,10 +151,10 @@ func (h *handler) authorizeProjectHost(ctx context.Context, req *mcpsdk.CallTool
 	if err != nil {
 		return errInvalidProject
 	}
-	return h.authorizeHost(ctx, req, "projects", write, proj.HostID)
+	return h.recheckHost(ctx, req, "projects", write, proj.HostID)
 }
 
-// authorizeHost gates a section against a specific Docker host. Reaching a
+// recheckHost gates a section against a specific Docker host. Reaching a
 // remote host needs the "hosts" section too, matching the REST rule in
 // api.requireHostAccess.
 //
@@ -162,7 +162,10 @@ func (h *handler) authorizeProjectHost(ctx context.Context, req *mcpsdk.CallTool
 // times this rule has been missed, it was missed by a caller that did not know
 // it existed, and a rule spelled out in several places is a rule that will
 // eventually be spelled out in only most of them.
-func (h *handler) authorizeHost(ctx context.Context, req *mcpsdk.CallToolRequest, section string, write bool, hostID int64) error {
+//
+// It spends no rate-limit unit (it is recheck, not authorize): every caller has
+// already authorized the operation itself, and that charged it.
+func (h *handler) recheckHost(ctx context.Context, req *mcpsdk.CallToolRequest, section string, write bool, hostID int64) error {
 	// The "hosts" requirement is what the local daemon is exempt from — it is
 	// always in scope. The SECTION check is not optional for it. Returning early
 	// on host 0 would make this helper safe only because today's callers happen
@@ -173,8 +176,7 @@ func (h *handler) authorizeHost(ctx context.Context, req *mcpsdk.CallToolRequest
 			return err
 		}
 	}
-	_, err := h.authorize(ctx, req, section, write, hostID)
-	return err
+	return h.recheck(ctx, req, section, write, hostID)
 }
 
 func projectTarget(id int64) string { return "project#" + strconv.FormatInt(id, 10) }

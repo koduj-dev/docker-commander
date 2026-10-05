@@ -209,7 +209,7 @@ func (h *handler) acknowledgeAlert(ctx context.Context, req *mcpsdk.CallToolRequ
 	// missing alert and an out-of-reach one, so this cannot be used to discover
 	// which ids exist elsewhere.
 	hostID, herr := h.deps.Store.AlertEventHost(ctx, in.ID)
-	if herr != nil || mustAuthorize(h.authorize(ctx, req, "alerts", true, hostID)) != nil {
+	if herr != nil || h.recheck(ctx, req, "alerts", true, hostID) != nil {
 		return nil, ackAlertOut{}, errNoSuchAlert
 	}
 	if err := h.deps.Store.AckAlertEvent(ctx, in.ID, p.user.Username); err != nil {

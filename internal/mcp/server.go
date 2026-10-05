@@ -317,6 +317,12 @@ func principalFromExtra(re *mcpsdk.RequestExtra) *principal {
 // token can only reduce rights) and then the live user RBAC. It returns the
 // principal so write tools can audit under the acting user.
 func (h *handler) authorizeExtra(ctx context.Context, re *mcpsdk.RequestExtra, section string, write bool, hostID int64) (*principal, error) {
+	return h.authorizeCharged(ctx, re, section, write, hostID, write)
+}
+
+// authorizeCharged is authorizeExtra with the rate-limit charge made explicit.
+// charge is only ever true for a write; see recheck for when it is false.
+func (h *handler) authorizeCharged(ctx context.Context, re *mcpsdk.RequestExtra, section string, write bool, hostID int64, charge bool) (*principal, error) {
 	// A tool aimed at a remote host names it in the audit even when it fails
 	// before reaching Docker (a rate limit, a bad argument): an entry with no
 	// host is shown to every reader of the audit log. The local daemon needs no
@@ -346,10 +352,10 @@ func (h *handler) authorizeExtra(ctx context.Context, re *mcpsdk.RequestExtra, s
 	// impersonating, and the refusals it collected would look like a rate limit
 	// rather than the authorization failures they are.
 	//
-	// Charged per authorization, so an operation that authorizes twice (a project
-	// on a remote host checks "projects" again against that host) spends two
-	// units. That errs toward caution, which is the right direction for a ceiling.
-	if write {
+	// One unit per operation. An operation that checks a second scope after its
+	// first authorize (the project's own host, the alert's own host) does that
+	// with recheck, which charges nothing: the ceiling counts changes, not checks.
+	if write && charge {
 		ok, firstTrip := h.limiter.allow(p.user.ID)
 		if !ok {
 			if firstTrip {
@@ -362,6 +368,15 @@ func (h *handler) authorizeExtra(ctx context.Context, re *mcpsdk.RequestExtra, s
 		}
 	}
 	return p, nil
+}
+
+// recheck runs every permission check of authorize but spends no rate-limit
+// unit. For a second scope check inside an operation whose first authorize
+// already charged it. Never the only gate of a write: that one must be
+// authorize, or the write is not rate limited at all.
+func (h *handler) recheck(ctx context.Context, req *mcpsdk.CallToolRequest, section string, write bool, hostID int64) error {
+	_, err := h.authorizeCharged(ctx, req.Extra, section, write, hostID, false)
+	return err
 }
 
 // authorize gates a tool call. Thin wrapper over authorizeExtra. hostID is the
