@@ -301,6 +301,7 @@ On/off variables are on only for exactly `1` (`DC_DEV`, `DC_MCP_ENABLED`,
 | `-metrics-retention` | `DC_METRICS_RETENTION` | `6h`               | History retention (e.g. `30m`, `24h`). |
 | `-metrics-interval`  | `DC_METRICS_INTERVAL`  | `15s`              | How often container stats are sampled; raise it on hosts with many containers. |
 | `-deploy-silence-grace` | `DC_DEPLOY_SILENCE_GRACE` | `3m`         | Hold back a project's alert deliveries this long after a successful deploy; `0` disables. |
+| `-log-file`          | `DC_LOG_FILE`          | (stderr)           | Write the log to this file instead, rotated at 10 MiB with one older copy (`<file>.1`). |
 | `-pprof`             | `DC_PPROF=1`           | off                | Go profiling on a dedicated loopback listener, `127.0.0.1:6060`. |
 | `-update-check`      | `DC_UPDATE_CHECK`      | on                 | Check GitHub for newer releases; `0` disables. |
 | `-trusted-proxies`   | `DC_TRUSTED_PROXIES`   | (none)             | Reverse-proxy IPs/CIDRs whose `X-Forwarded-For` may be trusted. The client IP keys rate limits, the localhost 2FA exemption and audit records — **set it behind a proxy**, and never to a range you don't control. |

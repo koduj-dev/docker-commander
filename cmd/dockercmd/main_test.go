@@ -9,6 +9,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -406,5 +407,33 @@ func TestMakeCertsHintsQuotePaths(t *testing.T) {
 		if want := "chown -R dockercmd: -- " + shQuote(dir); chownHint(dir) != want {
 			t.Errorf("chownHint(%q) = %q, want %q", dir, chownHint(dir), want)
 		}
+	}
+}
+
+// -log-file sends the log to the file; a file that can't be opened stops the
+// start instead of leaving the log nowhere.
+func TestUseLogFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dockercmd.log")
+	restore, err := useLogFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log.Print("hello from the test")
+	restore()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "hello from the test") {
+		t.Errorf("log line not in the file: %q", b)
+	}
+
+	if _, err := useLogFile(filepath.Join(t.TempDir(), "missing", "dir", "x.log")); err == nil {
+		t.Error("an unopenable log file was accepted; the log would go nowhere")
+	}
+	if restore, err := useLogFile(""); err != nil {
+		t.Errorf("no -log-file: %v", err)
+	} else {
+		restore()
 	}
 }

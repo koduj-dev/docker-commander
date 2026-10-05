@@ -492,6 +492,26 @@ func run() error {
 	return runServer(shutdownCtx)
 }
 
+// useLogFile sends the standard logger to path (-log-file), and returns what
+// restores and closes it. An empty path changes nothing. Asked for explicitly,
+// so a file that can't be opened stops the start rather than letting the server
+// run on with its log going nowhere anyone looks.
+func useLogFile(path string) (func(), error) {
+	if path == "" {
+		return func() {}, nil
+	}
+	lf, err := service.OpenLogFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("open log file: %w", err)
+	}
+	prev := log.Writer()
+	log.SetOutput(lf)
+	return func() {
+		log.SetOutput(prev)
+		_ = lf.Close()
+	}, nil
+}
+
 // runServer loads config, opens the store and serves the API + embedded UI
 // until shutdownCtx is cancelled. shutdownCtx comes from an OS signal in the
 // normal/systemd/launchd path, or from the Windows SCM's Stop/Shutdown request
@@ -502,6 +522,12 @@ func runServer(shutdownCtx context.Context) error {
 		return err
 	}
 	cfg.Version = version // expose the build version to the API/UI
+
+	closeLog, err := useLogFile(cfg.LogFile)
+	if err != nil {
+		return err
+	}
+	defer closeLog()
 
 	st, err := store.Open(cfg.DBPath())
 	if err != nil {

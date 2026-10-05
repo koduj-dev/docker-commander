@@ -81,7 +81,10 @@ Copy-Item -Force $BinPath $exe
 Write-Host "==> Installed $exe"
 
 # --- register the scheduled task --------------------------------------------
-$action   = New-ScheduledTaskAction -Execute $exe -Argument "-data-dir `"$DataDir`""
+# A task's output goes nowhere, so the log goes to a file in the data dir (the
+# same place the native service writes it), rotated at 10 MiB.
+$logFile  = Join-Path $DataDir 'dockercmd.log'
+$action   = New-ScheduledTaskAction -Execute $exe -Argument "-data-dir `"$DataDir`" -log-file `"$logFile`""
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
   -DontStopIfGoingOnBatteries -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
   -ExecutionTimeLimit ([TimeSpan]::Zero)
@@ -106,6 +109,7 @@ Write-Host ""
 Write-Host "OK Done. Task '$TaskName' is $state."
 Write-Host "   Listen address + TLS come from DC_HOST/DC_PORT/DC_TLS_* (default 127.0.0.1:8470);"
 Write-Host "   create the admin account in the UI on first visit."
+Write-Host "   Log:     $logFile"
 Write-Host "   Stop:    Stop-ScheduledTask -TaskName $TaskName"
 Write-Host "   Remove:  Unregister-ScheduledTask -TaskName $TaskName -Confirm:`$false"
 Write-Host ""
