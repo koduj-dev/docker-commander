@@ -76,7 +76,7 @@ is evaluated with the same values (resource metric *of one core*, 30 seconds).
 
 Older rules keep the *of one core* meaning, so nothing changes under them.
 Messages state their basis with absolute values:
-`MEM 3.0 GB / 5.0 GB (61.9% of limit) > 5% for 30s`.
+`MEM 3.0 GiB / 5.0 GiB (61.9% of limit) > 5% for 30s`.
 
 **The two network rules answer different questions.**
 

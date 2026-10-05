@@ -96,7 +96,7 @@ A live table with quick actions per row. Click a name to open its detail page.
   instead of blanking the section.
 - **Why the network panel is not a pie.** A pie claims "parts of a whole", and the
   only whole available is whatever happens to be moving. One container at 100% of
-  2 KB/s would look exactly like one at 100% of 800 MB/s.
+  2 KiB/s would look exactly like one at 100% of 800 MiB/s.
 - **Why Top talkers uses a 5-minute average.** Throughput is bursty, so a
   ranking from one live sample reorders itself every few seconds.
 - **Several networks.** A container on more than one Docker network has its

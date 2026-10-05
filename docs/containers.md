@@ -66,7 +66,7 @@ stopped one has **Start**. Click a name to open the detail page.
 
 **Create container** covers the common `docker run` options: image (required),
 name, command, ports (`host:container[/proto]` per line), env (`KEY=VALUE` per
-line), volumes (`src:dst[:ro]` per line), restart policy, memory limit (MB),
+line), volumes (`src:dst[:ro]` per line), restart policy, memory limit (MiB),
 CPUs, and whether to start it now. For anything you'll run again, a
 [project](projects.md) is better: its setup is saved in a compose file.
 
