@@ -43,7 +43,7 @@ var errNoSuchAlert = errors.New("no such alert, or it belongs to a host outside 
 // plain predicate.
 //
 // Alerts are checked against the alert's host with the "alerts" section ALONE —
-// deliberately not through authorizeHost, which additionally demands "hosts".
+// deliberately not through recheckHost, which additionally demands "hosts".
 // That extra requirement is right for projects, where reaching a remote host
 // means acting on it, and wrong here: a user whose alerts grant is scoped to a
 // remote host already sees those alerts in the feed without holding "hosts", so

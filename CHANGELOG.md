@@ -372,6 +372,10 @@ All notable changes to Docker Commander are documented here. The format follows
   Security tab asked for the password only when an authenticator app was paired,
   while the server asks whenever any second factor is, so adding a factor was
   refused with no field to type the password in.
+- **An MCP write spends one unit of the control rate limit.** `acknowledge_alert`,
+  `deploy_project` and `down_project` check a second scope (the alert's or the
+  project's host) and spent a unit for each check, so they used up the 30-a-minute
+  ceiling twice as fast.
 - **Backup jobs work with images that have an `ENTRYPOINT`, such as
   `restic/restic`.** The command replaced only the image's CMD, so restic's
   entrypoint ran `restic sh -c "…"` and every run of the default image failed.
