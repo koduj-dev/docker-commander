@@ -186,10 +186,11 @@ func (s *Service) SetPassword(ctx context.Context, userID int64, password string
 	return s.store.BumpSessionEpoch(ctx, userID)
 }
 
-// ErrDirectoryPassword is returned when a directory (LDAP) account tries to
-// change its password here. The directory checks that password, so a hash stored
-// here would never be read and the change would do nothing.
-var ErrDirectoryPassword = errors.New("auth: this account's password is managed by the directory (LDAP); change it there")
+// ErrDirectoryPassword is returned when an account whose password this app does
+// not own (an LDAP account) tries to change it here. The directory checks that
+// password, so a hash stored here would never be read and the change would do
+// nothing.
+var ErrDirectoryPassword = errors.New("auth: this account's password is managed by your directory; change it there")
 
 // ChangeOwnPassword is SetPassword for the account holder, who proves the current
 // password first. Changing it ends every session of the account, the one asking
@@ -200,7 +201,9 @@ var ErrDirectoryPassword = errors.New("auth: this account's password is managed 
 // reason VerifyUserPassword gives. A weak new password is refused before that,
 // so a typo in the new one doesn't spend the budget.
 func (s *Service) ChangeOwnPassword(ctx context.Context, rlKey string, u *store.User, current, password string, info SessionInfo) (*LoginResult, error) {
-	if u.AuthSource == "ldap" {
+	// An allowlist, like the passwordless switch: only a password stored here can
+	// be changed here, whatever other sources appear later.
+	if u.AuthSource != "" && u.AuthSource != "local" {
 		return nil, ErrDirectoryPassword
 	}
 	if len(password) < MinPasswordLength {

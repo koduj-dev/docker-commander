@@ -44,10 +44,10 @@ All notable changes to Docker Commander are documented here. The format follows
   project directory, secrets included, and were left on disk.
 
 ### Added
-- **Change your own password** (`PUT /api/auth/me/password`). It needs the current
-  password, ends every other session and keeps you signed in on the device that
-  made the change. Directory (LDAP) accounts change theirs in the directory. The
-  Profile screen for it follows.
+- **Change your own password** in *Profile → Account* (`PUT /api/auth/me/password`).
+  It needs the current password, ends every other session and keeps you signed in
+  on the device that made the change. Directory (LDAP) accounts change theirs in
+  the directory.
 - **Resources page** (Observability → Resources). CPU, memory and network per
   container and per stack, refreshed every 5 s. A Network tab with the top talkers
   as an average rate over a window. A Disk tab with the size of every image,
@@ -364,6 +364,14 @@ All notable changes to Docker Commander are documented here. The format follows
   on Windows) rather than just failing.
 
 ### Fixed
+- **An account whose only second factor is a passkey is no longer sent to the
+  authenticator enrolment screen at every sign-in.** The gate checked for an
+  authenticator app only, so with 2FA enforced such an account couldn't reach the
+  app without pairing one.
+- **An account whose only second factor is a passkey can add another one.** The
+  Security tab asked for the password only when an authenticator app was paired,
+  while the server asks whenever any second factor is, so adding a factor was
+  refused with no field to type the password in.
 - **Backup jobs work with images that have an `ENTRYPOINT`, such as
   `restic/restic`.** The command replaced only the image's CMD, so restic's
   entrypoint ran `restic sh -c "…"` and every run of the default image failed.
