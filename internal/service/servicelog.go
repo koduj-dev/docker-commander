@@ -1,6 +1,7 @@
 package service
 
 import (
+	"io"
 	"os"
 	"sync"
 )
@@ -18,6 +19,12 @@ type rotatingLog struct {
 	max  int64
 	f    *os.File
 	size int64
+}
+
+// OpenLogFile opens path as a log that rotates at 10 MiB, keeping one older
+// copy as path+".1". For -log-file.
+func OpenLogFile(path string) (io.WriteCloser, error) {
+	return openRotatingLog(path, serviceLogMax)
 }
 
 func openRotatingLog(path string, max int64) (*rotatingLog, error) {

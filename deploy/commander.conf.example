@@ -81,6 +81,10 @@ DC_DATA_DIR=/var/lib/dockercmd
 # for this long, so the restarts a deploy causes don't page anyone. 0 disables.
 # DC_DEPLOY_SILENCE_GRACE=3m
 
+# Optional: write the log to a file instead of stderr, rotated at 10 MiB with
+# one older copy kept as <file>.1. Under systemd the journal already has it.
+# DC_LOG_FILE=/var/log/dockercmd.log
+
 # Optional: expose Go's net/http/pprof for CPU/allocation/goroutine profiling.
 # Served on a dedicated loopback listener (127.0.0.1:6060), never off-box. Off
 # by default; tunnel in over SSH to use it. See docs/deployment.md.

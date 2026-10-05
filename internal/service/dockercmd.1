@@ -190,6 +190,11 @@ How often to sample container stats; raise on hosts with many containers
 (default
 .BR 15s ).
 .TP
+.BI \-log-file " path"
+Write the log to this file instead of stderr. It is rotated at 10 MiB, and one
+older copy is kept as
+.IR path .1.
+.TP
 .B \-pprof
 Expose Go's net/http/pprof on a loopback-only listener
 .RB ( 127.0.0.1:6060 )
@@ -236,6 +241,7 @@ variables mirror the options above:
 .BR DC_METRICS_RETENTION ,
 .BR DC_METRICS_INTERVAL ,
 .BR DC_PPROF ,
+.BR DC_LOG_FILE ,
 .BR DC_PROXY_ENABLED ,
 .BR DC_PROXY_ACME_CACHE_DIR ,
 .BR DC_DEPLOY_SILENCE_GRACE ,
