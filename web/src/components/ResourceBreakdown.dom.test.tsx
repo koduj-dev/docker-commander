@@ -13,7 +13,7 @@ const GB = 1024 ** 3;
 const u = (i: number): ResourceUsage => ({
   id: `c${i}`, name: `svc-${String(i).padStart(2, "0")}`, cpuPercent: 1, memBytes: i * GB, memPercent: (i * GB / (64 * GB)) * 100, netRxRate: 0, netTxRate: 0,
 });
-// 16 cores, 64 GB host; 12 containers at 1% CPU each (12% of the host = 1.92 cores).
+// 16 cores, 64 GiB host; 12 containers at 1% CPU each (12% of the host = 1.92 cores).
 const many: ResourceOverview = { cpus: 16, memTotal: 64 * GB, containers: Array.from({ length: 12 }, (_, i) => u(i % 8 + 1)).map((c, i) => ({ ...c, id: `c${i}`, name: `svc-${String(i).padStart(2, "0")}` })) };
 
 let container: HTMLDivElement;
@@ -38,7 +38,7 @@ describe("ResourceBreakdown absolute figures", () => {
   it("puts the absolute totals in the CPU and memory titles, not only shares", () => {
     const text = container.textContent ?? "";
     expect(text).toContain("CPU · 1.92 of 16 cores");
-    expect(text).toContain("of 64.0 GB");
+    expect(text).toContain("of 64.0 GiB");
   });
 
   it("caps the consumers table at 10 rows and says how many there are", () => {

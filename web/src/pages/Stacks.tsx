@@ -382,7 +382,8 @@ export function Stacks() {
 
         <p className="text-xs text-muted">
           Stacks are discovered from the <code>com.docker.compose.project</code> label, so groups started with the{" "}
-          <strong>docker&nbsp;compose</strong> CLI appear here too. Deploying a stack from a compose file is coming next.
+          <strong>docker&nbsp;compose</strong> CLI appear here too. To deploy a new one from a compose file, create a project in{" "}
+          <strong>Projects</strong>.
         </p>
       </div>
 

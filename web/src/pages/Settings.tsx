@@ -88,7 +88,7 @@ export function Settings() {
           <div className="space-y-4 max-w-2xl">
             <div className="card p-5 space-y-3">
               <div className="flex items-center gap-2 font-medium"><LayoutGrid className="h-4 w-4 text-accent" /> Enabled features</div>
-              <p className="text-xs text-muted">Turn off whole sections the team doesn&apos;t need. Disabled sections are hidden from the menu and their APIs are blocked for everyone.</p>
+              <p className="text-xs text-muted">Turn off whole sections the team doesn&apos;t need. Disabled sections are hidden from everyone&apos;s menu, and their APIs are blocked for everyone except admins.</p>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-1.5">
                 {all.map((s) => {
                   const enabled = !disabled.has(s);

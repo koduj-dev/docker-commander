@@ -73,7 +73,7 @@ describe("RetentionSettings", () => {
     expect(input("revisionsKeep").value).toBe("50");
     expect(container.textContent).toContain("1,234 stored");
     expect(container.textContent).toContain("oldest 2026-06-01");
-    expect(container.textContent).toContain("5.0 MB");
+    expect(container.textContent).toContain("5.0 MiB");
     expect(container.textContent).toContain("Nothing has been purged yet");
   });
 

@@ -377,6 +377,15 @@ All notable changes to Docker Commander are documented here. The format follows
 - **The MTU check says what it compared.** It compares only bridge networks that
   set their own MTU, but its OK result said every bridge network matched. It now
   counts the ones it compared and the ones left on Docker's default.
+- **Sizes in the UI are labelled in binary units** (`KiB`, `MiB`, `GiB`), like the
+  alert messages; they were counted in 1024s but labelled `KB`/`MB`/`GB`. The
+  memory fields and a network rule's threshold now say `MiB` and `MiB/s`.
+- **UI text that said the wrong thing:** the Features tab now says disabled
+  sections stay reachable for admins; the container **Changes** tab compares with
+  the image, not "since start"; blank limits in container **Settings** stay as
+  they are rather than being "sent as 0 (unlimited)"; Stacks no longer promises
+  compose deploys "coming next"; the *diagnostics* section is labelled
+  **Troubleshooting** in the permission lists.
 - **An account whose only second factor is a passkey is no longer sent to the
   authenticator enrolment screen at every sign-in.** The gate checked for an
   authenticator app only, so with 2FA enforced such an account couldn't reach the

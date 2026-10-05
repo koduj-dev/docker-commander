@@ -16,7 +16,7 @@ import { getPref, setPref } from "../lib/prefs";
 
 // Metric names understood by a resource rule. "cpu" is Docker's own
 // one-core-is-100% figure; "cpu_total" normalises it across the host's cores.
-// netrx_rate/nettx_rate are bytes/s, entered here as MB/s (same convention as
+// netrx_rate/nettx_rate are bytes/s, entered here as MiB/s (same convention as
 // the memory-limit field elsewhere) and converted in buildConfig().
 type Metric = "cpu" | "cpu_total" | "mem" | "netrx_rate" | "nettx_rate";
 const isRateMetric = (m: Metric) => m === "netrx_rate" || m === "nettx_rate";
@@ -744,7 +744,7 @@ function RuleForm({ hooks, existing, onDone }: { hooks: Webhook[]; existing?: Al
   const [events, setEvents] = useState<Set<string>>(new Set((cfg.events as string[]) ?? ["die"]));
   const [metric, setMetric] = useState<Metric>((cfg.metric as Metric) ?? "cpu");
   const [op, setOp] = useState<">" | "<">((cfg.op as ">" | "<") ?? ">");
-  // A rate metric's threshold is stored in bytes/s but edited here as MB/s.
+  // A rate metric's threshold is stored in bytes/s but edited here as MiB/s.
   const [threshold, setThreshold] = useState(() => {
     const raw = (cfg.threshold as number) ?? 80;
     return isRateMetric((cfg.metric as Metric) ?? "cpu") ? raw / (1024 * 1024) : raw;
@@ -869,7 +869,7 @@ function RuleForm({ hooks, existing, onDone }: { hooks: Webhook[]; existing?: Al
             </select>
           </div>
           <div>
-            <label className="label">{isRateMetric(metric) ? "Threshold (MB/s)" : "Threshold %"}</label>
+            <label className="label">{isRateMetric(metric) ? "Threshold (MiB/s)" : "Threshold %"}</label>
             <input className="input" type="number" value={threshold} onChange={(e) => setThreshold(+e.target.value)} />
           </div>
           <div>

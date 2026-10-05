@@ -5,9 +5,9 @@ describe("bytes / rate", () => {
   it("formats ordinary sizes", () => {
     expect(bytes(0)).toBe("0 B");
     expect(bytes(512)).toBe("512 B");
-    expect(bytes(1536)).toBe("1.5 KB");
-    expect(bytes(5 * 1024 ** 3)).toBe("5.0 GB");
-    expect(rate(2 * 1024 ** 2)).toBe("2.0 MB/s");
+    expect(bytes(1536)).toBe("1.5 KiB");
+    expect(bytes(5 * 1024 ** 3)).toBe("5.0 GiB");
+    expect(rate(2 * 1024 ** 2)).toBe("2.0 MiB/s");
   });
 
   // Regression: a sub-byte rate (idle container, 0.8 B/s) has a negative log,
@@ -27,7 +27,7 @@ describe("bytes / rate", () => {
   });
 
   it("clamps past the largest unit instead of overflowing the table", () => {
-    expect(bytes(5 * 1024 ** 5)).toBe("5120.0 TB");
+    expect(bytes(5 * 1024 ** 5)).toBe("5120.0 TiB");
     expect(bytes(5 * 1024 ** 5)).not.toContain("undefined");
   });
 });
