@@ -13,12 +13,13 @@ pulled by something else), use [Events](events.md).
 **Find who stopped a container.** Search for the container's id: the target is
 the id, not the name, and the first 12 characters are enough. Look for
 `container.stop` or `container.kill`, or `mcp.container.stop` if an AI client did
-it. A container stopped with its stack shows as `stack.stop` or `project.down`,
+it. For the `mcp.container.*` actions the target is whatever the client passed,
+which may be a name or a short id. A container stopped with its stack shows as `stack.stop` or `project.down`,
 with the stack or project as the target.
 
 **Check a sign-in you don't recognise.** Search for `auth.`. Every completed
 sign-in is an `auth.login`. A run of `auth.2fa.failed` means someone has the
-password but not the second factor: change the password. Treat any
+password but not the second factor: change the password (*Profile → Account*). Treat any
 `auth.passkey.cloned` as serious.
 
 **See who changed the configuration.** Search for `settings.update`,
@@ -64,7 +65,7 @@ The `auth.*` actions are the ones to read when something feels wrong.
 | `auth.login` | A completed sign-in. The detail says how: `password only`, `password + 2fa`, `password + passkey`, or `passkey (passwordless)`. |
 | `auth.login.failed` | A sign-in that got as far as a **valid signature** and was then refused: a passkey that did not verify the user, or an account that has not enabled passwordless sign-in. |
 | `auth.2fa.failed` | A rejected second factor. |
-| `auth.2fa.enable` / `auth.2fa.repair.denied` | An authenticator paired / a pairing refused for a wrong password. |
+| `auth.2fa.enable` / `auth.2fa.repair.denied` | An authenticator paired / a pairing refused: a wrong password, or an enrolment started before the account got its current second factor. |
 | `auth.2fa.remove` / `auth.2fa.remove.denied` | An authenticator unpaired / an unpairing refused. Removing one needs the password, and the last one can't be removed at all. |
 | `auth.password.change` / `auth.password.change.denied` | Own password changed from *Profile → Account*, which ends every other session / a change refused for a wrong current password. |
 | `auth.session.revoke` | A signed-in session was ended from *Profile → Security*. |

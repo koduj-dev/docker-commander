@@ -11,7 +11,8 @@ which network. For a container's own traffic, open its
 ## Common tasks
 
 **Let two containers talk to each other.** Create a network, or open an existing
-one, and click **Connect** for each container. Containers on the same
+one, click **Connect**, pick a container and click **Connect** again. Repeat for
+the other container. Containers on the same
 user-defined network can reach each other.
 
 **Find a container's IP.** Open the network and look at the **List** view. It
@@ -35,8 +36,9 @@ elsewhere.
 
 - **Create** (header): a user-defined network with a name, a **driver** (default
   `bridge`), an optional **subnet** and **gateway**, and two flags. **Internal**
-  means no external connectivity. **Attachable** lets containers outside a
-  compose stack join.
+  means no external connectivity. **Attachable** (on by default) lets standalone
+  containers join a swarm overlay network; bridge networks accept any container
+  either way.
 - **Prune unused** (header): removes every network not used by any container.
 
 ### Network detail
@@ -50,7 +52,7 @@ or a **graph** (toggle, top-right).
 |---|---|
 | **List** (default) | A compact table: state, image, stack, **published ports** and the container's **IP** on this network, with a **disconnect** per row. |
 | **Graph** | The network and its containers as an interactive diagram, drawn like the Topology page. |
-| **Connect** | Attaches any container not already on the network. |
+| **Connect** | Opens a picker that attaches one container not yet on the network. Hidden when every container is already attached. |
 | **Inspect** | Docker's raw JSON. |
 | **Remove** | Deletes the network. Predefined networks (`bridge`, `host`, `none`) can't be removed. |
 

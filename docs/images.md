@@ -30,13 +30,13 @@ image's scan, not just this one. **Show ignored** brings it back with an
 **Load** the tar on the other host. Tags are preserved.
 
 **Push to a private registry.** Add its credentials in
-[Registries](registries.md) first; building from a private registry needs them
-too. Then **Push** with a registry-qualified target.
+[Registries](registries.md) first. Then **Push** with a registry-qualified
+target. A build whose `FROM` is a private image uses the same credentials.
 
 ## The list
 Each image shows its tags, short id, size and age, with badges for **in use**
-(referenced by a container) and **dangling** (untagged). Filter by **in use,
-unused or all**, search by tag or id, and paginate. **In use** is checked
+(referenced by a container) and **dangling** (untagged). Filter by **In use**,
+**Unused** or **All images**, search by tag or id, and paginate. **In use** is checked
 against existing containers, so you know before removing. Use **force** only when
 you're sure.
 
@@ -74,6 +74,10 @@ Set one or more tags, an optional Dockerfile path, **build args** (one
 `KEY=VALUE` per line), and **No cache** to rebuild every layer. The daemon's
 build output streams live.
 
+The build sends every credential stored under [Registries](registries.md), so a
+private base image (`FROM ghcr.io/…`) is pulled with it. A stored credential
+that can't be decrypted is skipped, with a warning line in the build output.
+
 Build args reach the daemon as `--build-arg` and can be recorded in the image's
 history, so they are the wrong place for secrets.
 
@@ -89,12 +93,13 @@ the target's host.
 |---|---|
 | **Save** | Downloads one image as a `docker save` tar. |
 | **Load** | Uploads a `docker save` archive to restore images. Tags are preserved. |
-| **Import** | Uploads a filesystem tarball and tags it as a new image. |
+| **Import** | The **Import** mode of the **Load** dialog. Uploads a filesystem tarball and tags it with the **Target reference** you enter. |
 
 Container filesystems are exported from the [container detail](containers.md).
 
 ## Permissions
-Pull, push and scan need **write** access to Images. Scan only reads, but it
-starts a heavy process and contacts outside servers, so a read-only account
-can't launch it. [Bulk pull](containers.md#the-list) also needs access to
+Pull, push, scan and **Save** need **write** access to Images. Scan only
+reads, but it starts a heavy process and contacts outside servers, so a
+read-only account can't launch it. Save hands over the image's full contents,
+which read access doesn't cover. [Bulk pull](containers.md#the-list) also needs access to
 Containers.

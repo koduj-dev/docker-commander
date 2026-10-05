@@ -51,8 +51,9 @@ back it up with a [backup job](backup-jobs.md).
 
 **Limits:** 500 projects. Per project, 100 files of up to 1 MiB each; larger
 files are skipped and symbolic links are not followed. 1 GiB of project files in
-total. Import rejects more than 5,000 hosts, registries, alert rules or
-webhooks.
+total: a bigger export fails whole (`413`). Import refuses a bundle with more than
+1 GiB or 20,000 project files, or more than 5,000 hosts, registries, alert rules
+or webhooks, before writing anything.
 
 ## Export
 - **Include secrets** adds host TLS keys, registry passwords, webhook URLs,
@@ -74,8 +75,8 @@ UI exports all projects; the API can export a subset with `projectIds`.
      one was recorded;
    - volumes missing on the target;
    - projects whose host is neither in the bundle nor already configured;
-   - a warning if the bundle has no secrets, so registry passwords and host TLS
-     keys must be re-entered.
+   - a warning if the bundle has no secrets but carries hosts or registries, so
+     registry passwords and host TLS keys must be re-entered.
 3. **Import** is enabled only while the file, passphrase and target host match
    the last check. Change one and check again. A confirmation follows.
 
@@ -86,7 +87,8 @@ What import does:
 
 - **Nothing is overwritten.** Hosts, registries, webhooks and alert rules match
   by name, projects by slug. Existing items are skipped with a warning, so
-  importing twice creates no duplicates.
+  importing twice creates no duplicates. An existing webhook is reused without a
+  warning, and imported rules link to it.
 - **Projects are created, not deployed.** Files are checked with Compose first;
   a project that fails the check is skipped with a warning.
 - **Hosts match by name** across the bundle and the configured hosts. A project
@@ -94,8 +96,10 @@ What import does:
   missing host gives a warning.
 - **Secrets** are restored only if the bundle has the value. Otherwise you get a
   warning; add the secret before deploying.
-- **Domain mappings** are restored. A domain already mapped, or an unsupported
-  TLS mode, is skipped with a warning.
+- **Domain mappings** are restored with the same checks as in the UI: a valid
+  hostname, not the admin UI's own domain, a service that exists in the compose
+  file, a port from 1 to 65535, TLS mode `acme`. A mapping that fails one, or a
+  domain already mapped, is skipped with a warning.
 - **Alert rules** are recreated with their recipients and linked to webhooks by
   name.
 
@@ -103,11 +107,13 @@ The summary lists what was created, then every warning.
 
 ## Safety and audit
 - The `/api/recovery/*` API is admin-only and can't be granted per section.
-- A wrong passphrase and a missing one give the same error, "passphrase
-  required".
+- A missing passphrase gives "this archive is encrypted; a passphrase is
+  required". A wrong one gives "could not decrypt — wrong passphrase, or the
+  archive was modified".
 - A recovery bundle can't be restored as a full backup, and the reverse.
-- Import rejects unknown manifest fields, unsupported versions, paths that leave
-  the project folder, and a disabled target host.
+- Import rejects unknown manifest fields, unsupported versions and a disabled
+  target host. Project files whose path leaves the project folder are skipped
+  without a warning.
 - The [audit log](audit.md) records `recovery.export` (number of projects,
   whether secrets were included), `recovery.inspect` and `recovery.import`
   (projects created, host, registry and rule counts).

@@ -37,14 +37,16 @@ scoped to the project or host, with a duration and a reason. Alerts are still
 recorded; only webhook and e-mail stay quiet. Deploys open a short window on
 their own.
 
-**Check that an alert reached anyone.** Click the row's **Delivery** cell to
-see every webhook call and e-mail with its outcome. Temporary failures are
+**Check that an alert reached anyone.** Click the alert's row to see every
+webhook call and e-mail with its outcome. Temporary failures are
 retried up to 5 times.
 
 ## Rules
 
 Tabs: **Feed** (fired alerts), **Rules**, **Webhooks**, **Maintenance**. Rules
 can be created, edited, enabled/disabled, deleted, exported and imported.
+Webhooks can only be added and deleted; to change one, add a new one and switch
+the rules over.
 
 | Type | Fires when |
 |---|---|
@@ -58,6 +60,12 @@ Each rule has a **target** (container-name substring; blank or `*` = all), a
 **severity**, a **cooldown** (the re-notify interval: how long a condition stays
 quiet while still true), and optional **webhook** and **e-mail** delivery.
 
+A new rule starts at severity *warning* and a 60-second cooldown. The type
+fields start at: resource **CPU % (of one core)** above `80` for `30` seconds;
+restart `3` within `60` seconds; network an increase of `1` within `300`
+seconds. A rule created over the API or by import with these fields left out
+is evaluated with the same values (resource metric *of one core*, 30 seconds).
+
 **What the percentages mean:**
 
 | Metric | Meaning |
@@ -68,13 +76,14 @@ quiet while still true), and optional **webhook** and **e-mail** delivery.
 
 Older rules keep the *of one core* meaning, so nothing changes under them.
 Messages state their basis with absolute values:
-`MEM 3.0 GB / 5.0 GB (61.9% of limit) > 5%`.
+`MEM 3.0 GB / 5.0 GB (61.9% of limit) > 5% for 30s`.
 
 **The two network rules answer different questions.**
 
 - `resource` on **RX/TX rate**: a plain threshold, "is the rate above or below
   *N* MB/s for *N* seconds". It reads the same live per-poll rate the dashboard
-  shows. Entered in MB/s, stored as bytes/s.
+  shows. Entered in MB/s, stored as bytes/s; the conversion uses 1024 × 1024, so
+  the unit is really MiB/s.
 - `network` on **drops/errors**: fires on the **increase** within a window,
   never the absolute counter. Drops that have sat at a high total since last
   month are not an incident; packets being lost right now are. Drops and errors
@@ -167,8 +176,8 @@ recipient configured anywhere** all show here as failures.
 - **Only the webhook's name and host are stored**, never the full URL, which
   often carries a token. This record is readable by anyone with the alerts
   section.
-- **Response bodies are truncated** to about 500 characters, so a remote server
-  can't write unbounded text into the database.
+- **Response bodies are truncated** to 500 bytes before they are stored, so a
+  remote server can't write unbounded text into the database.
 
 **Retries.** Transient failures are retried; configuration problems are not.
 
@@ -219,7 +228,8 @@ A window stops **delivery** (webhook and e-mail) for planned work. Alerts still
 different: the engine doesn't watch it at all.
 
 **Scope.** Blank means no restriction, so an all-blank window silences
-everything.
+everything. A blank **Hosts** field needs access to all hosts: a user limited
+to some hosts must pick hosts, or the window is refused.
 
 | Field | Matches |
 |---|---|
@@ -232,7 +242,7 @@ everything.
 **Schedule.** **One-off** starts now or at a set time, for a duration.
 **Recurring** runs weekly on chosen weekdays at a time of day, for a duration,
 in the timezone of the browser that created it. An optional end date stops the
-series; otherwise it recurs indefinitely.
+series; otherwise it recurs indefinitely. One occurrence lasts at most 24 hours.
 
 Every window records a **reason** and an **author**, audited on create, update,
 end and delete, so "why was this silenced?" stays answerable.
@@ -241,12 +251,18 @@ end and delete, so "why was this silenced?" stays answerable.
   silenced flag. `repeat` rows are not stored but go to the
   [process log](#system-log).
 - **After it ends**, a condition that is still true is delivered as `firing` at
-  the next check, since nobody was told. One already delivered before the
-  window gets its next repeat after the normal cooldown.
+  the next check, since nobody was told. This needs a rule cooldown above 0;
+  with a cooldown of 0 the silenced condition stays undelivered until it
+  changes. One already delivered before the window gets its next repeat after
+  the normal cooldown.
 - **End early** stops it but keeps the record. **Delete** removes it. Neither
   undoes suppression that already happened.
+- **Finished one-off windows are deleted automatically** 30 days after their
+  scheduled end (also when ended early), including every `auto: <project>
+  deploy` window. Recurring series are kept.
 - **A closed window can't be edited.** Once ended early or past its end (a
-  series: its end date), Edit and End disappear and the API returns `409`.
+  series: its end date), Edit and End disappear and the API refuses an edit
+  with `409`.
   Delete still works. A series past its end date shows *Expired*.
 
 **Deploys silence themselves.** A deploy opens a window for the project's host
@@ -259,7 +275,7 @@ They show on the Maintenance tab as `auto: <project> deploy`.
 - **Host reachability.** An **unreachable** Docker daemon raises a *critical*
   `host` alert, and its recovery an *info* one. See
   [Hosts → Reachability monitoring](hosts.md#reachability-monitoring).
-- **Newer images.** Each project's running services are checked on a schedule
+- **Newer images.** Each project's running services are checked every 6 hours
   against what the registry reports for their compose tag (the deploy preview's
   check). A new digest raises one *info* `image_update` alert, not one per
   check. Detection only, nothing is deployed. See [Projects](projects.md).
@@ -272,6 +288,10 @@ validates each again. Webhooks are referenced **by name**; URLs, headers and
 secrets are never exported. A rule is re-linked only to a local webhook of the
 same name, otherwise it is imported without one and the skipped link is
 reported. Create the webhook, then edit the rule to attach it.
+
+A bundle holds at most 1000 rules. Names and targets may be up to 200
+characters and a rule's config up to 16 KiB. A cooldown above 24 hours is cut
+to 24 hours on import.
 
 ## Prometheus
 
@@ -295,9 +315,10 @@ resolve, so no `for:` window is needed.
 ## From an AI tool
 
 With the [MCP server](mcp.md) enabled, an assistant can read the history
-(`list_alerts`, same filters), what is over threshold now
-(`active_alert_conditions`), the rules (`list_alert_rules`) and delivery
-(`alert_delivery`, by **channel**, never recipient or URL), and
+(`list_alerts`, filtered by severity, kind, host, container, rule or text; up to
+200 at a time), what is over threshold now (`active_alert_conditions`), the
+rules (`list_alert_rules`) and delivery (`alert_delivery`: a webhook's name and
+host, never its URL, or the e-mail recipients), and
 `acknowledge_alert`, attributed like any acknowledgement. It can also run
 `list_maintenance_windows`, `create_maintenance_window` (starts now, for a
 duration) and `end_maintenance_window`. Editing a window is UI/REST only.
@@ -312,8 +333,10 @@ Everything follows the caller's permissions and host scope.
   and kept in history, but `/metrics` has CPU and memory only.
 - **`cpu_percent` was never host-relative**, though its help text once said so.
   Read that way it is four times too high on a four-core host.
-- **`/metrics` ignores host scope.** It is guarded by `DC_METRICS_TOKEN`, not a
-  user session, so a scrape sees every host.
+- **`/metrics` ignores host scope.** It needs no user session, so a scrape sees
+  every host. Set `DC_METRICS_TOKEN` to require a token, sent as
+  `Authorization: Bearer <token>` or `?token=<token>`; without one the endpoint
+  is open.
 
 ### Top talkers and rate rules
 

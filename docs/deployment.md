@@ -54,9 +54,9 @@ Users, settings, projects and keys come across as they were. See
 
 Nearly every option is a flag with a `DC_*` environment-variable equivalent and can
 live in a config file. Two exceptions: **`-session-ttl`** (how long a sign-in lasts,
-default **12h**) is flag-only, and `DC_REDIS_DB` is environment-only.
-[`deploy/commander.conf.example`](../deploy/commander.conf.example) has the full
-list. The key ones:
+default **12h**) is flag-only, and `DC_REDIS_DB` has no flag (environment or config
+file only). [`deploy/commander.conf.example`](../deploy/commander.conf.example) lists
+every key, and `dockercmd --help` every flag. The key ones:
 
 | Env | Default | Purpose |
 |-----|---------|---------|
@@ -65,21 +65,29 @@ list. The key ones:
 | `DC_ADDR` | (unset) | legacy full `host:port`; overrides `DC_HOST`/`DC_PORT` if set |
 | `DC_TLS_CERT` / `DC_TLS_KEY` | (off) | PEM cert + key paths; set both to serve **HTTPS** directly |
 | `DC_ACME_DOMAINS` | (off) | comma-separated public hostname(s): serve **HTTPS** via automatic ACME/Let's Encrypt certificates instead of a static pair — see [HTTPS](#https) |
+| `DC_ACME_EMAIL` / `DC_ACME_CACHE_DIR` / `DC_ACME_DIRECTORY_URL` | (unset) / `<data-dir>/acme` / Let's Encrypt | ACME contact, certificate cache and CA directory — see [HTTPS](#https), option A2 |
 | `DC_PROXY_ENABLED` | (off) | enable the embedded **per-container reverse proxy** for `domain_mappings` (local-host projects only; requires `DC_ACME_DOMAINS`) — see [Projects → Domains](projects.md#domains) |
 | `DC_PROXY_ACME_CACHE_DIR` | `<data-dir>/proxy-acme` | cache dir for the proxy's own ACME certificate/account state, kept separate from `DC_ACME_CACHE_DIR` |
 | `DC_MCP_ENABLED` | (off) | enable the remote **MCP** server for AI tools (off by default; serve behind HTTPS) — see [MCP](mcp.md) |
 | `DC_MCP_PUBLIC_URL` | (unset) | externally reachable base URL (`https://host`) — required for the MCP **OAuth** flow (bearer tokens work without it) |
 | `DC_DATA_DIR` | OS config dir | SQLite DB + signing/encryption keys |
-| `DC_METRICS_TOKEN` | (open) | bearer token guarding `/metrics` |
+| `DC_METRICS_TOKEN` | (open) | token guarding `/metrics`, sent as a Bearer header or `?token=` |
 | `DC_REDIS_ADDR` | (memory) | Redis for metric history; empty keeps the in-memory ring buffer |
 | `DC_REDIS_PASSWORD` | (empty) | Redis password, if the server requires auth |
 | `DC_REDIS_DB` | `0` | Redis database index |
 | `DC_METRICS_RETENTION` | `6h` | history retention |
-| `DC_METRICS_INTERVAL` | `15s` | how often the monitor samples every running container's stats — **raise it** (e.g. `30s`/`60s`) on a host with many containers if the sampling sweep is costly |
+| `DC_METRICS_INTERVAL` | `15s` | how often the monitor samples every running container's stats — **raise it** (e.g. `30s`/`60s`) on a host with many containers if the sampling sweep is costly; `0` or less means `15s` |
 | `DC_TRUSTED_PROXIES` | (none) | comma-separated reverse-proxy IPs/CIDRs whose `X-Forwarded-For` is trusted for the real client IP — **set this when behind a proxy** (see below) |
 | `DC_UPDATE_CHECK` | `1` | check GitHub Releases for a newer version (admin banner); set `0` to disable the outbound call |
 | `DC_SELF_UPDATE` | `1` | allow admins to apply an update from the web UI (the one-tap "Update & restart"); set `0` to keep the banner but forbid web-triggered self-replacement |
 | `DC_PPROF` | (off) | serve Go's `net/http/pprof` on a **dedicated `127.0.0.1:6060`** listener for profiling; off in normal operation |
+| `DC_DEPLOY_SILENCE_GRACE` | `3m` | silence alert delivery for a project this long after a successful deploy; `0` disables — see [Alerts](alerts.md) |
+| `DC_DEV` | (off) | development mode: serves the API only (no embedded UI; run the Vite dev server) and allows cross-origin requests from the dev server. Not for production |
+
+**On/off values.** `DC_DEV`, `DC_MCP_ENABLED`, `DC_PROXY_ENABLED` and `DC_PPROF` are on
+only for exactly `1`; `true` or `yes` leaves them off. `DC_UPDATE_CHECK` and
+`DC_SELF_UPDATE` are off only for exactly `0`. A port, number or duration that doesn't
+parse (e.g. `DC_METRICS_RETENTION=1d`) silently falls back to the default.
 
 The Docker connection honours `DOCKER_HOST` / `DOCKER_CERT_PATH`.
 
@@ -153,8 +161,9 @@ sudo dockercmd --uninstall-service     # stop + remove (keeps the data dir)
 Uninstall keeps the data dir (and on Linux the service user), so a reinstall keeps
 the database and keys. Installing also adds a **`man dockercmd`** page (under
 `/usr/local/share/man/man1/`). `dockercmd --help` (or `-h`) prints the full usage:
-the **standalone actions** (`--version`, `--self-upgrade`, `--install-service` /
-`--uninstall-service` / `--service-status`) and every option with its default.
+the **standalone actions** (`--version`, `--make-certs`, `--self-upgrade`, `--backup`,
+`--restore`, `--reset-password`, `--install-service` / `--uninstall-service` /
+`--service-status`) and every option with its default.
 `dockercmd --version` (or `dockercmd version`) prints the build version.
 
 ### Debian / Ubuntu & Fedora packages (.deb / .rpm)
@@ -246,8 +255,9 @@ the log is `dockercmd.log` in that folder (rotated at 10 MiB, one older copy kep
 
 `install-windows.ps1` is a dependency-free alternative that registers a **Scheduled
 Task**. It starts at boot (or `-AtLogon`, if Docker Desktop only runs under your
-account) and restarts on failure. Use it if you'd rather not run as SYSTEM or want
-to read exactly what gets installed. It keeps **no log**: the task's output goes
+account) and restarts on failure. By default the task runs as SYSTEM; `-AtLogon`
+runs it as your account instead. Use it if you want to read exactly what gets
+installed. It keeps **no log**: the task's output goes
 nowhere, so use the native service when you need one. Wrapping the exe with
 [NSSM](https://nssm.cc) or WinSW still works, but is no longer needed for a real
 service.
@@ -294,8 +304,12 @@ Every **fired alert** is also a structured log line, so failures show in your lo
 pipeline, not only in the app:
 
 ```
-alert severity=critical rule="db down" host="prod-1" container="postgres" message="container event: die"
+alert kind=firing severity=critical rule="db down" host="prod-1" container="postgres" message="container event: die"
 ```
+
+An alert silenced by a maintenance window ends with `silenced=true
+maintenance_window=… window_name=…`. Host-reachability alerts have no `kind` or
+`container`.
 
 To forward to **syslog** (rsyslog/syslog-ng → SIEM), set `ForwardToSyslog=yes` in
 `/etc/systemd/journald.conf` and restart `systemd-journald`. Entries are tagged
@@ -323,8 +337,11 @@ the key readable only by the service user.
 
 For a quick **self-signed** cert (LAN/internal) without `openssl`, run
 `dockercmd --make-certs [hostnames…]`. It writes `cert.pem` + `key.pem` (key mode
-0600) to `<data-dir>/tls/`, covering localhost plus the hosts you list, and prints
-the `DC_TLS_CERT` / `DC_TLS_KEY` to set. Clients warn until they trust it.
+0600) to `<data-dir>/tls/`, covering localhost plus the hosts you list, valid about
+13 months, and prints the `DC_TLS_CERT` / `DC_TLS_KEY` to set. Like `--backup` it
+doesn't read the config file: on a packaged install add `--data-dir /var/lib/dockercmd`.
+Run as root, it also prints the `chown` that hands the files to the service user.
+Clients warn until they trust the certificate.
 
 ### A2 — automatic HTTPS via ACME (Let's Encrypt)
 
@@ -398,16 +415,21 @@ location / {
 - Both are believed **only** from an address in `DC_TRUSTED_PROXIES`, so set that
   too.
 
-The **localhost 2FA exemption never applies to a proxied request**, whatever
-address it resolves to: a proxy can't vouch that someone is at the machine. You can
-keep the setting on for local use without it leaking through the proxy. See
-[Settings](settings.md).
+The **localhost 2FA exemption doesn't apply to a proxied request**: a proxy can't
+vouch that someone is at the machine. A request counts as proxied when its peer is
+listed in `DC_TRUSTED_PROXIES`, or when it carries any forwarding header
+(`Forwarded`, `X-Forwarded-For`/`-Host`/`-Proto`/`-Server`, `X-Real-Ip`, `Via`),
+even an empty one. A local proxy that is not listed and adds none of those headers
+makes every client look local, so behind a proxy set `DC_TRUSTED_PROXIES` or turn
+the exemption off. See [Settings](settings.md).
 
 ## Self-update
 
 Docker Commander compares the running build with the latest **GitHub Release** and
-shows admins an **"update available"** banner. The check runs server-side and is
-cached. Set `DC_UPDATE_CHECK=0` to disable the outbound call on air-gapped hosts.
+shows admins an **"update available"** banner with a **View release** link. Its
+close button hides it until a newer release comes out. The check runs server-side
+and is cached. Set `DC_UPDATE_CHECK=0` to disable the outbound call on air-gapped
+hosts.
 
 **One-tap update (web UI).** An admin clicks **Update & restart** on the banner. It
 downloads the release for your OS/arch, **verifies its SHA-256** (fail-closed: never
@@ -455,8 +477,8 @@ sudo dockercmd --data-dir /var/lib/dockercmd --reset-password admin   # packaged
 dockercmd --reset-password admin                                     # running it yourself
 ```
 
-- **`--data-dir` matters on a packaged install.** The service reads its path from
-  `/etc/docker-commander/commander.conf`; standalone actions don't, so without it
+- **`--data-dir` matters on a packaged install.** The service gets its path from
+  `-data-dir` in its systemd unit; standalone actions don't, so without it
   the command looks in *your* config directory. It refuses to create a database
   rather than answer "no such account" from an empty one.
 - It prompts at the terminal; the password is never an argument, so it stays out
@@ -477,11 +499,16 @@ accordingly.
 
 ## Backup & restore
 
-Everything an installation needs lives in the **data dir**: the SQLite database
-plus `projects/`, `project-templates/` and `project-revisions/` (the file snapshot
-of every deploy revision). Both secret keys, the session signing secret and the
-at-rest encryption key, are rows *inside the database*. A backup is therefore
-self-contained and restores onto a fresh machine as-is.
+A backup holds the SQLite database plus `projects/`, `project-templates/` and
+`project-revisions/` (the file snapshot of every deploy revision) from the **data
+dir**. Both secret keys, the session signing secret and the at-rest encryption key,
+are rows *inside the database*. A backup is therefore self-contained and restores
+onto a fresh machine as-is.
+
+Nothing else in the data dir goes in. Left out on purpose: `tls/` (from
+`--make-certs`, so run it again) and the ACME caches `acme/` and `proxy-acme/`. On a
+new machine ACME therefore requests fresh certificates, which counts against the
+CA's rate limits.
 
 ```bash
 dockercmd --backup /var/backups/dc-$(date +%F).tar.gz               # plain

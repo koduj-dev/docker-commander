@@ -9,19 +9,29 @@ The first run, signing in, and where things are. To install on a server, see
 
 1. Start the binary (`./dockercmd`) and open <http://127.0.0.1:8470>.
 2. **Create the admin account.** The first account is always an `admin`. On the
-   same screen, choose **Enable now** for 2FA or **Skip for now**. Skipping leaves
-   localhost password-only, which is handy on a local or dev box.
+   same screen, choose **Enable now** for 2FA or **Skip for now**. Skipping turns
+   on the localhost 2FA exemption for every account, so sign-ins from the machine
+   itself need only a password. Handy on a local or dev box.
 3. **If you enabled 2FA,** scan the QR code with an authenticator app (Google
    Authenticator, Aegis, 1Password…) and enter the 6-digit code to confirm.
 
 From then on you sign in with username, password and the current code.
+
+**New accounts** that an admin created, and LDAP accounts, have no second factor
+yet. At their first sign-in they must pair an authenticator app before anything
+else opens: scan the QR code, or type the secret shown under **Or enter this
+secret manually**, then enter a code and click **Confirm & enable**. The
+localhost exemption skips this step for sign-ins from the machine itself.
 
 ![Sign in](images/login.png)
 
 A **passkey** is the other kind of second factor. You pair it later under
 *Profile → Security*. If the account has one, the second step offers it next to
 the code box. If the account has *only* a passkey, the code box is not shown,
-since it could never be filled in.
+since it could never be filled in. If you turned on passkey sign-in for your
+account, click **Sign in with a passkey** under the password form instead of
+typing a password. The button shows only where the browser and the address
+support passkeys.
 
 ![Two-factor step](images/login_2fa.png)
 
@@ -32,8 +42,9 @@ switches off the localhost exemption in [Settings](settings.md). Everyone then
 needs a second factor, also on localhost.
 
 **Deploy your first app.** Open [Projects](projects.md), click **New project**,
-give it a name, and pick a **Template** (for example *Nginx — static site*).
-Then click **Deploy**. The running containers show up in [Stacks](stacks.md) and
+fill in **Project name**, pick a **Template** (for example *Nginx — static
+site*) and click **Create**. Then click **Deploy** in the editor that opens.
+The running containers show up in [Stacks](stacks.md) and
 [Containers](containers.md).
 
 **Manage another Docker machine.** Add it under [Hosts](hosts.md) (TCP+TLS or

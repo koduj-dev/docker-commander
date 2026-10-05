@@ -9,9 +9,10 @@ To see your own access or manage your own sign-in, use [Your profile](profile.md
 
 ## Common tasks
 
-**Give a colleague read-only access to one host's containers.** On **Roles**,
-click **New role**, set **Containers** to **read** and pick that host under
-**Hosts**. Then create the user on **Accounts** and assign the role. Don't also
+**Give a colleague read-only access to one remote host's containers.** On
+**Roles**, click **New role**, set **Containers** to **read** and pick that host
+under **Hosts**. Then create the user on **Accounts** and assign the role. The
+local daemon is always in scope too (see below). Don't also
 tick Containers among the account's own sections: those carry no host scope and
 would reach every host.
 
@@ -38,7 +39,7 @@ another account's 2FA, so they still need their authenticator or passkey.
 | Type | Access |
 |---|---|
 | **admin** | Everything, plus administration: users, roles, settings, all hosts. |
-| **user** | Only what you grant. Can be marked **read-only** for the whole account: it can view, but every change (start/stop, exec, upload, delete, create…) is blocked. |
+| **user** | Only what you grant. Can be marked **read-only** for the whole account: it can view, but every change (start/stop, exec, upload, delete, create…) is blocked. So are the reads that hand over raw content or act on the network: container export, file downloads from containers and volumes, image save, pull, push, vulnerability and port scans. |
 
 ## Managing accounts
 
@@ -50,6 +51,16 @@ another account's 2FA, so they still need their authenticator or passkey.
 - **Reset password**: set a new password. All of the user's sessions end.
 - **Delete**: you can't delete your own account or the last admin. You also
   can't demote the last admin.
+
+The account list shows each account's type (**admin**, **read-only**, **user**, or
+**user · view only** when nothing it holds grants write) and, on wide screens, a
+**2FA** column: **enabled** (authenticator app), **passkey** (passkey only) or
+**off**.
+
+**New accounts must set up 2FA.** An account you create, or an LDAP account on
+first sign-in, has no second factor. Unless the localhost 2FA exemption applies,
+its first sign-in goes straight to **Enable two-factor authentication**: scan the
+QR code (or enter the secret by hand) and confirm with a code.
 
 ## Roles
 
@@ -63,7 +74,7 @@ editable copy, as with [project templates](projects.md#managing-templates).
 | Role | Grants |
 |---|---|
 | **Viewer** | Every section, read-only. |
-| **Operator** | Day-to-day work, writable: containers, projects, images, volumes, networks, topology, logs, events, alerts, diagnostics. Not hosts, registries or the audit log. Those are authority over the installation itself. |
+| **Operator** | Day-to-day work, writable: dashboard, containers, projects, images, volumes, networks, topology, logs, events, alerts, diagnostics. Not hosts, registries or the audit log. Those are authority over the installation itself. |
 
 > **Write access to Containers or Projects is full trust in the server.** Access
 > to a Docker daemon is equivalent to root on its machine: whoever can start a
@@ -135,7 +146,8 @@ longer exists**. Deleting a role then drops its members to a known baseline
   normal "not entitled" case, and a baseline there would give a role to every
   account in the directory that can sign in. The fallback covers a *broken*
   mapping, not an *absent* one.
-- It doesn't stack on top of a mapping that resolves fine.
+- It is added only when at least one mapped role no longer exists, next to the
+  mapped roles that still do. If every mapped role exists, no fallback is added.
 - The built-in roles can't be deleted. Neither can the role currently set as the
   fallback; point the fallback elsewhere first.
 

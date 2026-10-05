@@ -32,12 +32,14 @@ claude mcp add --transport http docker-commander \
 
 **Connect Claude Desktop, claude.ai or Cursor.** Needs `DC_MCP_PUBLIC_URL`. In the
 client, add a custom connector / remote MCP server pointing at
-`https://<your-host>/mcp`. A browser opens: sign in to Docker Commander as usual and
-approve the consent screen, choosing **full** or **read-only** access.
+`https://<your-host>/mcp`. A browser opens on the consent screen; pick **Allow full
+access** or **Allow read-only**. Sign in to Docker Commander in that browser first:
+without a session the page only says **Sign in first**, and you retry the
+connection from the tool after signing in.
 
 **Let an AI tool look but not touch.** Mark the token **read-only** (or pick
-read-only on the OAuth consent screen). Restrict it to a few sections or hosts if
-it only needs those, e.g. to review how your stacks are wired.
+read-only on the OAuth consent screen). Restrict it to a few sections if it only
+needs those, e.g. to review how your stacks are wired.
 
 **A token is lost or leaked.** The secret can't be recovered. **Revoke** it on
 MCP Access (it stops working immediately) and create a new one.
@@ -69,14 +71,17 @@ embedded), with no hint the feature exists.
 | Client | Auth | Notes |
 |--------|------|-------|
 | **Claude Code**, scripts, Cursor (header mode) | **Bearer API token** | Simplest. Create one on the **MCP Access** page. |
-| **Claude Desktop**, claude.ai, Cursor (connector) | **OAuth 2.1** | Needs `DC_MCP_PUBLIC_URL`. You log in in the browser and approve a consent screen. |
+| **Claude Desktop**, claude.ai, Cursor (connector) | **OAuth 2.1** | Needs `DC_MCP_PUBLIC_URL`. You approve a consent screen in a browser where you are signed in. |
 
 ### Bearer API tokens (the MCP Access page)
 
 Open **MCP Access** in the sidebar. Each user manages **their own** tokens.
 
-- Each token has a **name**, an optional **expiry**, and can be restricted to a
-  **subset of your sections**, a **subset of Docker hosts**, and/or **read-only**.
+- Each token has a **name**, an **expiry**, and can be restricted to a **subset of
+  your sections** and/or **read-only**.
+- A token can also be limited to a **subset of Docker hosts**, but only through
+  the REST API (`hostIds` on `POST /api/mcp/tokens`). The page has no host picker
+  and its cards don't show a host limit.
 - Narrowing only subtracts. A token can't reach a section or host its owner can't.
   The owner's live permissions are re-checked on **every call**, so if a role is
   scoped down, older tokens lose that access at once.
@@ -84,17 +89,22 @@ Open **MCP Access** in the sidebar. Each user manages **their own** tokens.
 - The secret is shown **once** (only a hash is stored). The page also gives a
   ready-to-paste `claude mcp add` command.
 - Revoke a token anytime. It stops working immediately.
+- Expired tokens drop off this list and off MCP Admin.
 
 ### OAuth (Claude Desktop / Cursor connector)
 
 The client discovers the authorization server, **registers itself** (dynamic
-client registration) and opens a browser to Docker Commander. You sign in and
-approve **full** or **read-only** access. Docker Commander never sees a password
-here; it reuses your existing login session.
+client registration) and opens a browser to Docker Commander's consent page,
+where you approve **full** or **read-only** access. The page reuses your existing
+login session, so you must already be signed in there; if not, it says **Sign in
+first** and you retry from the tool. The AI client never sees your password.
 
 It is a standard, self-contained **OAuth 2.1** server: PKCE, exact redirect
 matching, audience-bound short-lived access tokens, rotating refresh tokens. No
-external identity provider is required.
+external identity provider is required. An authorization code is valid for 60
+seconds, a refresh token for 30 days. A client may register at most 5 redirect
+URIs, and registration and the token endpoint are limited to 30 requests a minute
+per IP.
 
 ### Admin overview (the MCP Admin page)
 
@@ -141,8 +151,8 @@ Each is gated by its section, per token and user.
 **Diagnostics**, the questions that otherwise push you to open a shell:
 
 - **container_processes**: what is running inside a container (`docker top`).
-- **container_changes**: files added, modified or deleted since it started
-  (`docker diff`). Paths only, never contents.
+- **container_changes**: files added, modified or deleted compared with its
+  image (`docker diff`). Paths only, never contents.
 - **search_logs**: a string or regex **across** the containers on a host, for when
   you don't know which one to look at.
 - **run_diagnostics**: sanity checks against a host. Overlapping Docker network
@@ -160,8 +170,9 @@ rather than reading Docker's own records.
 
 **Alerting:**
 
-- **list_alerts**: alert history, with the UI's filters (severity, lifecycle kind,
-  container, rule, message text).
+- **list_alerts**: alert history, filtered by severity, lifecycle kind, host,
+  container, rule and message text. Unlike the feed, it has no *unacknowledged
+  only*, no repeat hiding and no sort.
 - **active_alert_conditions**: what is over threshold *right now*, and for how
   long. Use this one when diagnosing: `list_alerts` answers "what happened", and
   can report a problem that fixed itself an hour ago.
@@ -211,16 +222,22 @@ Two related **reads**:
   hosts outside the caller's scope are dropped rather than erroring, since a
   project names its host and listing it would disclose that host's workloads.
 
-The server also exposes MCP **resources** (container inventory and compose files
-as attachable context) and **prompts** (curated workflows like *diagnose an
-unhealthy container* or *guided safe redeploy*).
+The server also exposes MCP **resources**, data a client can attach as context:
+
+- `dc://inventory/containers`: the container list as JSON (needs **containers**).
+- `dc://compose/{project}`: a stack's compose file, by the name `list_projects` gives (needs **projects**).
+
+Both read the default (local) host only. And three **prompts**, canned workflows
+that steer the model to the tools above: `diagnose_container` (argument
+`container`), `resource_hogs` (no argument; default host) and `safe_redeploy`
+(argument `project`).
 
 ### The whole tool list
 
 Every tool, the **section** that gates it, and whether it is a read or a
 **write**. Writes are refused for a read-only token or user, and are audited and
-rate limited. A token's section subset narrows this list; its host subset decides
-*where* each tool may act.
+rate limited. A token's section subset narrows this list; its host subset (set
+over the REST API) decides *where* each tool may act.
 
 | Tool | Section | R/W | What it does |
 |---|---|---|---|
@@ -230,7 +247,7 @@ rate limited. A token's section subset narrows this list; its host subset decide
 | `container_logs` | logs | R | The tail of one container's logs, size-capped |
 | `search_logs` | logs | R | A substring or regex **across** the containers on a host |
 | `container_processes` | containers | R | What is running inside a container (`docker top`) |
-| `container_changes` | containers | R | Files added/modified/deleted since it started (`docker diff`) — paths only |
+| `container_changes` | containers | R | Files added/modified/deleted compared with the image (`docker diff`) — paths only |
 | `run_diagnostics` | diagnostics | W | Sanity-check battery for a host: network overlaps (incl. vs. host interfaces), MTU mismatch, duplicate ports, log rotation, disk space, dangling resources |
 | `list_images` | images | R | Images on a host: tags, size, age, whether in use |
 | `list_volumes` | volumes | R | Volumes and who mounts them — never their contents |
@@ -244,7 +261,7 @@ rate limited. A token's section subset narrows this list; its host subset decide
 | `metrics_history` | dashboard | R | Historical CPU%/memory% for one container (authorized against the container's host) |
 | `recent_events` | events | R | Recent Docker daemon events on a host |
 | `recent_audit` | audit | R | Recent audit entries, limited to the hosts the token and its owner may see — most tokens will not have this section |
-| `list_alerts` | alerts | R | Alert history with the UI's filters |
+| `list_alerts` | alerts | R | Alert history, filtered by severity, kind, host, container, rule or text |
 | `active_alert_conditions` | alerts | R | What is over threshold **right now**, and for how long |
 | `list_alert_rules` | alerts | R | Rules and thresholds; channels, never recipients or webhook URLs |
 | `alert_delivery` | alerts | R | Whether an alert reached anyone (authorized against the alert's host) |
@@ -256,7 +273,19 @@ rate limited. A token's section subset narrows this list; its host subset decide
 | `start_stack` / `stop_stack` / `restart_stack` | containers | **W** | A whole Compose stack by project name |
 | `restart_stack_containers` / `stop_stack_containers` | containers | **W** | Up to 10 of one stack's own containers, membership verified server-side |
 | `scan_image` | images | **W** | Trivy scan — a write because it shells out and may pull the image |
-| `deploy_project` / `down_project` | projects (+ `hosts` for a remote target) | **W** | `docker compose up -d --build` / `down` on a managed project |
+| `deploy_project` / `down_project` | projects (+ `hosts` for a remote target) | **W** | `docker compose up -d --build` / `down` on a managed project. `deploy_project` also takes `profiles` and `confirm_policy_warnings` (see [Policy rules](policy-rules.md)) |
+
+Output is capped so a tool can't become a bulk-export channel:
+
+| Tool | Default | Cap |
+|---|---|---|
+| `container_logs` | 200 lines | 1000 lines and 64 KiB of text |
+| `search_logs` | 500 lines per container | 2000 lines per container, 200 matches, a 200-character pattern |
+| `container_changes` | | 500 entries |
+| `list_alerts`, `recent_audit` | 50 entries | 200 |
+| `recent_events` | 30 minutes, 100 events | 360 minutes, 500 events |
+| `scan_image` | | 100 findings (the severity summary still counts all) |
+| `restart_stack_containers` / `stop_stack_containers` | | 10 container ids |
 
 `host_id` defaults to the local host when omitted. Tools that take a **record id**
 instead (a project, an alert, a container's metrics) resolve that record's host and
@@ -299,8 +328,10 @@ authorize against it; see the security model below.
   attributes are omitted from tool output; logs are size-capped.
 - **Off by default, behind HTTPS.** Access tokens are signed with a key used only
   for MCP, separate from the login session secret.
-- **Audited.** Every **control** call (start/stop/restart, deploy/down) is written
-  to the [audit log](audit.md) under your account.
+- **Audited.** Every write that runs is written to the [audit log](audit.md)
+  under your account, failures included: container and stack start/stop/restart,
+  deploy/down, alert acknowledgements, maintenance windows created or ended,
+  image scans (`mcp.image.scan`) and diagnostics runs (`mcp.diagnostics.run`).
 - **Changes are rate limited**: at most 30 per minute per user, burst of 30 (see
   below).
 
@@ -330,9 +361,12 @@ authorize against it; see the security model below.
 - **Whole-stack calls are charged per container.** `start_stack`/`stop_stack`/
   `restart_stack` spend one unit per container the stack has, resolved before the
   action runs. A 30-container stack costs 30, the same as 30 single calls.
-- **Charging is reserve-or-refuse.** A batch that doesn't fit is refused whole and
-  spends nothing. A batch larger than the burst can never fit, and the refusal says
-  so instead of "wait and retry".
+- **Some calls cost two units.** `deploy_project`, `down_project` and
+  `acknowledge_alert` check the write permission twice (once more against the
+  project's or alert's host), and each check spends a unit.
+- **Charging is reserve-or-refuse.** A batch that doesn't fit is refused whole;
+  nothing runs and only the call's own unit is spent. A batch larger than the
+  burst can never fit, and the refusal says so instead of "wait and retry".
 - **No race with deploys.** The action runs on exactly the container ids the charge
   was sized for, not a re-resolved list. A container that joins the project
   mid-call (a concurrent deploy) is neither charged for nor touched.

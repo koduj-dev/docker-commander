@@ -2,15 +2,17 @@
 
 [← Manual index](README.md)
 
-Credentials that let Docker Commander **pull private images** and **push**. The
-pulling and pushing itself happens on [Images](images.md).
+Credentials that let Docker Commander **pull private images**, **push**, and
+**build** from a private base image. The pulling, pushing and building itself
+happens on [Images](images.md).
 
 ![Registries](images/registries.png)
 
 ## Common tasks
 
-**Pull from a private registry.** Click **Add registry**, enter the registry
-host (e.g. `ghcr.io`), your username and a token, and click **Test**. Then pull
+**Pull from a private registry.** Click **Add registry**, enter a name, the
+registry host (e.g. `ghcr.io`), your username and a token, and save with **Add
+registry**. Click **Test** on the new card. Then pull
 the full reference, e.g. `ghcr.io/owner/app:tag`, on [Images](images.md). The
 credential is picked by the host part of the reference.
 
@@ -26,8 +28,8 @@ and add it again with the new token.
 
 ## Adding a registry
 
-- **Name**: a label.
-- **Address**: the registry host, e.g. `docker.io` (Docker Hub), `ghcr.io`,
+- **Name**: a label. Required.
+- **Address (registry host)**: required. The registry host, e.g. `docker.io` (Docker Hub), `ghcr.io`,
   `registry.example.com`, `localhost:5000`.
 - **Username** and **Password / token**.
 
@@ -39,7 +41,9 @@ success or the error. That is the way to check it.
 ## How it's used
 
 When you [pull](images.md) or [push](images.md), the credential is matched by
-the **registry host** of the image reference. Docker Hub aliases are normalised,
+the **registry host** of the image reference. An image
+[build](images.md#build) sends every stored credential, and the daemon picks the
+one for each `FROM` image's registry. Docker Hub aliases are normalised,
 so a `docker.io` entry also matches `nginx` or `user/app`.
 
 - A pull with no matching credential runs anonymously.

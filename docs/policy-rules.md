@@ -52,8 +52,9 @@ Rules are checked per service, so two offending services give two violations.
 | **Block** | **"Deploy blocked by policy"**. Nothing starts and there is no per-deploy override. Fix the project or have an admin change the mode. |
 
 Pick a mode per rule and press **Save policy rules**. If the current rules fail
-to load, the page shows an error and saving is disabled. If every rule is Off,
-deploys skip the check.
+to load, the page shows an error and saving is disabled. If the stored rules are
+unreadable (corrupt), the page shows a banner, every rule as Off, and lets you save;
+saving replaces them. If every rule is Off, deploys skip the check.
 
 The check runs before anything changes. On a remote host no files are shipped
 until it passes. On a restore no project files are replaced.
@@ -72,7 +73,10 @@ Docker Commander, containers already running when you change a rule, and the
 read-only deploy preview.
 
 ## If the check itself fails
-- If the stored rules can't be read, the deploy is refused.
+- If the stored rules can't be loaded, the deploy is refused. If they are
+  unreadable (corrupt, including a stored `null`), every deploy is refused with
+  "the stored policy rules are unreadable; open Settings → Policy rules and save
+  them again" until an admin saves them.
 - If the Compose model can't be resolved and any rule is on Block, the deploy is
   refused with "policy check failed; refusing to deploy for safety".
 - If it can't be resolved and every active rule is Warn, the failure is logged

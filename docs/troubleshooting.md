@@ -37,7 +37,7 @@ bindings** shows which running containers already hold the port.
 | **Docker network subnet overlap** | Two Docker networks use overlapping subnets (fail). |
 | **Docker network vs. host network overlap** | A Docker network overlaps a real, non-Docker interface on the host (fail). |
 | **MTU mismatch** | A bridge network's MTU differs from the host's default-route interface (warning). |
-| **Duplicate port bindings** | The same host port is bound by more than one running container (fail), or published on more than one host IP (warning). |
+| **Duplicate port bindings** | The same host port and protocol on the same host IP is bound by more than one running container (fail), or the same port is published on more than one host IP (warning). |
 | **Log rotation** | A running container logs with `json-file` and has no `max-size` (warning). Other log drivers manage their own rotation. |
 | **Host disk space** | Free space at Docker's data directory is below 15 % (warning) or 5 % (fail). |
 | **Dangling networks & volumes** | Unused networks or volumes exist (warning). |

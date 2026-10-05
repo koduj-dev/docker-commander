@@ -7,7 +7,8 @@ compose file plus its sidecar files (configs copied into containers, `.sh`
 scripts, init files). Deploying it runs the real `docker compose` CLI, so the
 full Compose feature set works: `depends_on`, profiles, `build:`, `configs`,
 init containers. A deployed project also appears on [Stacks](stacks.md), which
-handles its lifecycle and "view compose".
+handles its lifecycle and "view compose". Its compose file opens read-only
+there; edit and deploy it here.
 
 ![Projects](images/projects.png)
 
@@ -68,26 +69,38 @@ the domain mappings, too.
 
 ![New project](images/project_new.png)
 
-Give the project a name, pick the **host to deploy to**, then choose how to
-scaffold it. The identifier (the *slug*) is derived from the name, lowercased,
-with diacritics transliterated. Files are always rendered and written on the
-server. A **live read-only preview** of the `compose.yml` renders next to the
-form.
+Enter a **Project name**, pick the **host to deploy to**, then choose how to
+scaffold it and click **Create** (**Import** for a `.zip`). The editor opens;
+**Deploy** is there. The identifier (the *slug*) is derived from the name,
+lowercased, with diacritics transliterated. Files are always rendered and
+written on the server. Once you pick a preset (not **Empty**) or builder items,
+a **live read-only preview** of the `compose.yml` renders next to the form, on
+wider screens, marked **valid**, **warnings** or **invalid**.
 
 | Mode | What you get |
 |---|---|
 | **Template** | A preset: **Nginx — static site**, **Nginx + Postgres + Adminer**, **LEMP** (Nginx + PHP + MySQL), **Node + Postgres + Redis**, or **Empty** for a bare starter `compose.yml`. Presets can declare **variables** (ports, database names, passwords) on a small form. Blank fields fall back to a default, and `secret` ones can be auto-generated. |
-| **Builder** | Tick service blocks (**Nginx**, **PHP-FPM**, **Node**, **Postgres**, **MySQL**, **Redis**, **Adminer**). They are merged into one `compose.yml` you can edit afterwards. |
+| **Builder** | Click service blocks (**Nginx (static web)**, **PHP-FPM**, **Node.js**, **PostgreSQL**, **MySQL**, **Redis**, **Adminer**) to add them. Click a block again to add another copy, for a cluster. They are merged into one `compose.yml` you can edit afterwards. |
 | **Import .zip** | An existing project folder, written through the same path sandbox. |
 
-In the builder, **Custom service…** adds your own block (name, service key,
-service YAML, optional named volumes). It is saved and reappears in the builder.
-**Shared definitions** are reusable top-level YAML anchors such as
-`x-pg-common: &pg-common …`. They are emitted above `services:`, so several
-services can share one definition (security, cert mounts) and merge it with
-`<<: *pg-common`. Tick **Merge** on a service in the **Services** tab to inject
-it. **Service defaults** and **Secured Postgres** are built in; save your own
-with **Custom definition…**.
+The builder has three tabs:
+
+- **Services**: each added block gets an editable **service key**, which must
+  be unique and non-empty, and its own remove button. **Custom service…** adds
+  your own block (name, service key, service YAML, optional named volumes). It
+  is saved and reappears in the builder.
+- **Shared defs**: reusable top-level YAML anchors such as
+  `x-pg-common: &pg-common …`. They are emitted above `services:`, so several
+  services can share one definition (security, cert mounts) and merge it with
+  `<<: *pg-common`. Click one to include it, then click its name next to
+  **Merge:** on a service in the **Services** tab to inject it. **Service
+  defaults** and **Secured Postgres** are built in; save your own with
+  **Custom definition…**.
+- **Variables**: the values the added blocks declare, such as ports, the
+  database name and password. Blank fields fall back to a default; a blank
+  password field is generated.
+
+Your own presets and definitions have a delete button right in this dialog.
 
 **Save as preset.** The editor's preset button saves the open project's files as
 a preset, listed under **Template** and on the Templates page. Built-in presets
@@ -103,14 +116,16 @@ CLI would mount them.
 ![Templates](images/templates.png)
 
 The **Templates** page (sidebar, Projects permission) holds your presets and
-builder blocks. Built-in items open read-only so you can inspect them. Only the
-ones you save are editable.
+builder blocks. Built-in items open read-only so you can inspect them. Every
+item, built-in or yours, has a **Duplicate** (copy icon) button that asks for a
+name and saves an editable copy. Only your own items can be edited or
+deleted.
 
 | Section | What you can do |
 |---|---|
 | **Presets** | Edit a saved preset's files in the multi-file editor, rename it or change its description, download it as a `.zip`, or delete it. |
 | **Service blocks** | Create, edit (name, service key, service YAML, named volumes) or delete a block. Blocks added here or via **Custom service…** appear in the builder. |
-| **Shared definitions** | Create, edit or delete top-level YAML anchors. They appear in the builder's **Shared definitions** list. |
+| **Shared definitions** | Create, edit or delete top-level YAML anchors. They appear in the builder's **Shared defs** tab. |
 
 ## The editor
 
@@ -146,8 +161,9 @@ YAML, JSON, shell, Dockerfiles and `.conf`/`.env` files. The header holds
 
 ### Validation
 
-Validation runs on the **unsaved** buffer. Problems are underlined on the line,
-and a status chip sums them up.
+Validation runs on the **unsaved** buffer. Problems are underlined on the line.
+For compose files and Dockerfiles a status chip sums them up; those checks need
+the `docker compose` CLI.
 
 | File | Checked with |
 |---|---|
@@ -172,7 +188,7 @@ On a compose file, two more buttons appear:
 | **Preview** | Compares the files with what is running, per service, and flags changes that recreate a container. |
 | **History** | Every successful deploy as a revision: time, author, profiles, images. **Diff vs current** or **Restore**. |
 | **Down** | `docker compose down` on the target host. Available once deployed. |
-| **Settings** | Display name and **target host**. The slug (the Compose project name) stays fixed, so deployments remain stable. |
+| **Settings** | Display name, **target host** and, for a remote host, **Allow host paths**. Changing a deployed project's host adds **Bring it down on … first**. The slug (the Compose project name) stays fixed, so deployments remain stable. |
 | **Delete** | Refused while deployed; it offers to bring the project down first. Deleting the last file offers to delete the empty project. |
 
 Restarting the containers without re-applying files is done on
@@ -181,12 +197,15 @@ Restarting the containers without re-applying files is done on
 
 **Drift.** In Preview, a change you have reviewed can be marked **Ignore**. It
 stops counting as drift but stays visible, and **Unignore** reverses it. The
-next deploy clears all ignores. **Reconcile now** deploys to apply the changes.
+next deploy clears all ignores. **Reconcile now** deploys with a forced
+re-pull (`--pull always`), so a tag whose registry digest moved is fetched
+again.
 
 **Restore** overwrites the project files with the revision's and redeploys with
 its profiles. Unsaved editor edits are lost. Images with a recorded digest are
 pinned to it. Named volumes are never touched. If any step fails, including the
-deploy, the previous files are put back. The restore becomes a new revision, so
+deploy, the previous project files are put back. On a remote host the seeded
+volumes keep the revision's files. The restore becomes a new revision, so
 history only grows forward. The newest 50 revisions per project are kept by
 default ([Settings](settings.md), [Limits](limits.md)).
 
@@ -267,14 +286,16 @@ See [Deployment](deployment.md) for the full flag reference.
   admin domain.
 - When the `docker compose` CLI is available, the service must exist in the
   current compose file, resolved with every profile enabled, so a service behind
-  `profiles:` is accepted. The port is not validated, since a container can
-  listen on a port its compose file never declares.
+  `profiles:` is accepted. The port is the container port. It isn't checked
+  against the compose file, but the proxy only routes to it when it is
+  published (`ports:`); otherwise it answers `502`.
 - **Service and port can be edited** (pencil icon). The domain can't; delete and
   recreate the mapping to point a hostname elsewhere.
 - Mappings travel with the project in the [recovery bundle](recovery.md), like
-  secrets and images. On import they follow the same rules as in the UI. Only
-  the `acme` TLS mode exists, so a row with any other value is skipped with a
-  warning.
+  secrets and images. On import they get the same checks as in the UI (valid
+  hostname, not the admin domain, the service exists, port 1–65535, TLS mode
+  `acme`). A mapping that fails one, or whose service can't be checked, is
+  skipped with a warning.
 
 ## Deploying to a remote host
 
@@ -340,7 +361,9 @@ bind mounts:
 Secrets and domain mappings follow the project's **Projects** section grants.
 A read grant lists secret names; adding, replacing or deleting a secret, or
 changing a mapping, needs a write grant. There is no separate secrets
-permission. **Allow host paths** also needs write access to **Hosts**. See
+permission. Choosing a remote host, and deploying, bringing down or restoring
+a project there, also needs read access to **Hosts** for that host. **Allow
+host paths** needs write access to **Hosts**. See
 [Users & roles](users.md).
 
 Deploying is full trust in the server: a compose file can run a privileged

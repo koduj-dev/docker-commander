@@ -14,8 +14,8 @@ a single container are lost on the next redeploy.
 ## Common tasks
 
 **A container stopped responding.** Click **Restart**. If it still hangs, use
-**Kill**: it sends `SIGKILL`, so the process cannot clean up and unsaved data is
-lost. That's why it asks first.
+**Kill** in its row on the Containers list: it sends `SIGKILL`, so the process
+cannot clean up and unsaved data is lost. That's why it asks first.
 
 **It keeps restarting.** Open it and check **Restart count** on Overview. The
 **Logs** tab usually shows why in the last lines before each restart. If the
@@ -33,9 +33,10 @@ redeploy undoes it.
 only downloads the images. The containers switch to them once you **redeploy**
 the stack or project. A plain restart keeps the old image.
 
-**Copy files in or out.** Use the **Files** tab: download a file or a folder (as
-`.tar`), upload files, or upload a `.zip`/`.tar`/`.tar.gz` and unpack it in
-place.
+**Copy files in or out.** Use the **Files** tab: download a file, or the current
+folder with **Dir** (as `.tar`). **Upload** sends one file at a time; **Extract**
+uploads a `.zip`/`.tar`/`.tar.gz` and unpacks it in place. The tab needs a
+running container. For a stopped one, use **Export**.
 
 **What is really listening on this port?** On Overview, click **Probe**. It
 connects and identifies the service, which helps when it isn't on its usual port.
@@ -47,8 +48,9 @@ too, or the next build loses the change.
 ## The list
 
 Filter by state, search by name, image, id or state, and pick a page size
-(10–100). Each row has **Start**, **Stop**, **Restart**, **Pause/Unpause** and
-**Kill**. Click a name to open the detail page.
+(10–100). The row buttons depend on the state: a running container has
+**Restart**, **Pause**, **Stop** and **Kill**; a paused one has **Unpause**; a
+stopped one has **Start**. Click a name to open the detail page.
 
 **Bulk actions.** Tick rows (the header checkbox selects the current page) to get
 **Start**, **Restart**, **Stop** and **Pull**.
@@ -77,19 +79,21 @@ a **CPU & memory** view and a **Network** view.
 
 | Button | What it does |
 |---|---|
-| **Commit** | Saves the container's filesystem as a new image. |
+| **Commit** | Saves the container's filesystem as a new image, with an optional **Comment**. |
 | **Settings** | Rename; change memory/CPU limits and restart policy while running. |
 | **Export** | Downloads the whole filesystem as a `.tar`. |
-| **Inspect** | Docker's raw JSON for the container. |
+| **Inspect** | Docker's raw JSON for the container, with a line filter and **Copy JSON**. |
+| **Restart** / **Stop** | Shown while the container runs. |
+| **Start** | Shown while it is stopped. |
 
 | Tab | Shows |
 |---|---|
 | **Overview** | Status, health, restart count and policy, command, networks, ports, mounts. |
-| **Logs** | Live `stdout`/`stderr`. To search many containers, use [Logs](logs.md). |
-| **Console** | A shell inside the container. Needs `/bin/sh` in the image. |
-| **Processes** | `docker top`, refreshed periodically. |
+| **Logs** | Live output, with a text filter and **stdout** / **stderr** toggles. To search many containers, use [Logs](logs.md). |
+| **Console** | A shell inside the container. Needs a running container and `/bin/sh` in the image. |
+| **Processes** | `docker top`, refreshed periodically. Needs a running container. |
 | **Files** | Browse, create folders, upload, download, delete. |
-| **Changes** | Files added, changed or deleted since start (`docker diff`). |
+| **Changes** | Files added, changed or deleted compared with the image (`docker diff`). |
 | **Env** | Environment variables. |
 
 ### Technical notes
@@ -97,11 +101,10 @@ a **CPU & memory** view and a **Network** view.
   same value, so the container gets no extra swap. Docker would otherwise reject
   the change when an existing swap limit is lower.
 - **Probe.** Without it, a port shows a guess from its number. Probe connects to
-  published **TCP** ports and recognises SSH, HTTP(S), TLS, SMTP, POP3, IMAP,
-  FTP, DNS, NTP, syslog, SNMP, Redis, Memcached, MongoDB, MySQL/MariaDB,
-  PostgreSQL, MSSQL, AMQP and Elasticsearch, or shows the raw banner. UDP ports
-  keep the guess and nothing connects to them, since UDP services often don't
-  answer an unknown client. On an
+  published **TCP** ports and recognises SSH, HTTP(S), TLS, SMTP, FTP, POP3,
+  IMAP, MySQL/MariaDB and Redis, or shows the raw banner. Other services keep
+  the guess from the port number. UDP ports keep the guess and nothing connects
+  to them, since UDP services often don't answer an unknown client. On an
   [SSH host](hosts.md) the probe goes through the SSH connection. It only
   connects to your own hosts.
 - **Files.** Transfers work like `docker cp`. Listing, creating and deleting run
@@ -114,7 +117,7 @@ a **CPU & memory** view and a **Network** view.
 - Docker only reports counters that grow from container start, so the chart
   shows the rate calculated from them. History stores the
   counters and calculates the rate on read, so old windows stay correct. A
-  recreated container restarts its counters, which shows as a gap, not a spike.
+  restart resets the counters, which shows as a dip to zero, not a spike.
 - Under the chart are the totals since the container started: received and
   sent, with packets, **dropped** and **errors**. Dropped and errors are normally
   zero, and when they aren't, they're often the only sign of a network problem.
@@ -123,5 +126,6 @@ a **CPU & memory** view and a **Network** view.
   [network detail](networks.md), where that is known.
 
 ## Permissions
-A **read-only** user sees everything here, but all actions are blocked. See
-[Users & roles](users.md).
+A **read-only** user sees the lists, charts, logs and metadata, but every action
+is blocked. That includes **Export**, file downloads and the **Console**, which
+need **write** access. See [Users & roles](users.md).

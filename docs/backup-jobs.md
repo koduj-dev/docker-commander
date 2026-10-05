@@ -17,14 +17,20 @@ Docker Commander mounts the data, runs the command and records the result.
 ## Common tasks
 
 **Nightly restic backup of a volume.** Click **New job**, choose *Single
-volume*, pick the host and type the volume name. Set the image to
-`restic/restic`, the command to `restic backup /data`, and the schedule to
-`1440` minutes. Put `RESTIC_REPOSITORY`, `RESTIC_PASSWORD` and the storage
-credentials in **Environment**. Then press **Run now** once and read the output.
+volume*, pick the host and type the volume name. Keep the pre-filled image
+`restic/restic`, set the command to `restic backup --host myapp /data`, and the
+schedule to `1440` minutes. Put `RESTIC_REPOSITORY`, `RESTIC_PASSWORD` and the
+storage credentials in **Environment**. Then press **Run now** once and read the
+output.
 
-**Back up a whole project.** Choose *Project*. Every named volume of the project
-is mounted under `/data/<volume name>`, so `restic backup /data` covers all of
-them.
+- restic does not create the repository. If it is new, set the command to
+  `restic init` for one **Run now**, then switch it to the backup command.
+- Each run is a new container with a random hostname. `--host` keeps the
+  snapshots under one name, so restic finds the previous snapshot.
+
+**Back up a whole project.** Choose *Project (all its volumes)*. Every named
+volume of the project is mounted under `/data/<full volume name>` (for example
+`/data/myproj_db`), so `restic backup /data` covers all of them.
 
 **See why the last run failed.** Hover the red **failed** badge for the error,
 or click it to open **Run history** with the full output and exit code.
@@ -40,14 +46,15 @@ Each run starts a short-lived helper container on the job's host:
 
 1. The image is pulled if the host doesn't have it.
 2. The container starts with the volume(s) mounted and your environment set, and
-   runs `sh -c "<command>"`. The image needs `sh`.
+   runs `sh -c "<command>"`. This replaces the image's own entrypoint, so the
+   image needs `sh`. `restic/restic` has it.
 3. Docker Commander waits for the exit, saves stdout and stderr, and removes the
    container, also after a failure or timeout.
 
 | Scope | Runs on | Mounted |
 |-------|---------|---------|
 | **Single volume** | the host you pick (`local` or remote) | the volume at `/data` |
-| **Project (all its volumes)** | the project's host | each named volume Compose created for the project, at `/data/<volume name>` |
+| **Project (all its volumes)** | the project's host | each named volume Compose created for the project, at `/data/<full volume name>` |
 
 A project's volumes are found by the `com.docker.compose.project` label. The
 host is looked up on every run, so a moved project is followed. A project with
@@ -61,10 +68,11 @@ these show in the run history.
 **New job** asks for:
 
 - **Job name**.
-- **Scope**: *Single volume* (host and volume name) or *Project*.
+- **Scope**: *Single volume* (host and volume name) or *Project (all its
+  volumes)*.
 - **Schedule (minutes, 0 = manual only)**.
-- **Helper image**, for example `restic/restic`.
-- **Command**, for example `restic backup /data`.
+- **Helper image**, pre-filled with `restic/restic`.
+- **Command (runs as `sh -c`)**, for example `restic backup /data`.
 - **Environment**: one `KEY=VALUE` per line, for credentials. Lines without `=`
   are ignored.
 
@@ -98,7 +106,8 @@ Each row shows the name, the target (`volume:<name> @ <host>` or
 `project:<name>`), the schedule, the last run, the enabled toggle, and **Run
 now**, **Run history & logs**, **Edit** and **Delete**. The last-run badge reads
 **never run**, **ok** or **failed**; **ok** and **failed** open the run
-history.
+history. The same status shows as a **backup: …** badge on the volume's row in
+[Volumes](volumes.md) and on the project's card in [Projects](projects.md).
 
 **Run history** lists each run with result, start time, duration, trigger and
 exit code. The newest is expanded; click another to expand it. An expanded run
@@ -123,8 +132,9 @@ endpoint. They can't be granted to other roles.
 
 The [audit log](audit.md) records `backup_job.create`, `backup_job.update`,
 `backup_job.enable`, `backup_job.disable`, `backup_job.delete` and
-`backup_job.run` (a **Run now**). Scheduled runs are not audited; they are in
-the run history. Environment values are never audited.
+`backup_job.run` (a **Run now** whose command ran, whatever its exit code). A
+**Run now** that ends in an error (pull, helper start, timeout, too many jobs
+running) and scheduled runs are not audited; they are in the run history. Environment values are never audited.
 
 ### Technical notes
 - The helper is labelled `dc.backupjob=1`. It has no extra privileges and no

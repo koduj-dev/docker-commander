@@ -31,14 +31,18 @@ directory admins.
 **Get alerts by e-mail.** On **Email**, set the relay and the From/To addresses
 and click **Send test**. For a relay on port 465, tick **Implicit TLS**.
 
-**Install patch releases automatically.** On **Security**, turn on self-update
-auto-apply and set the granularity to **patch only**.
+**Install patch releases automatically.** On **Security**, tick **Automatically
+apply new releases** and set **Granularity** to **Patch only (1.2.x)**.
 
 ## Features
 
 Turn whole menu sections **on or off for everyone**. A disabled section is hidden
 from the menu and its API, including the matching [MCP](mcp.md) tools, is blocked
 for non-admins.
+
+The sections are Dashboard, Containers, Projects, Images, Volumes, Networks,
+Topology, Logs, Events, Alerts, Hosts, Registries, Audit log and Troubleshooting.
+The same list is what [Users & roles](users.md) grants per user.
 
 ## Security
 
@@ -48,13 +52,16 @@ By default **2FA is mandatory** for every login. With this on, connections from
 **loopback** (`127.0.0.1` / `::1`) sign in with a password only. They skip both
 the enrollment step and the code. Remote connections always need 2FA.
 
-- It applies only to a **direct** loopback connection. A request through a
-  reverse proxy never qualifies, even if it resolves to `127.0.0.1`: a proxy on
-  the same machine is itself loopback, and a forwarded header is only a claim. So
-  the exemption can't leak through a proxy, and a proxy can't use it.
+- It applies only to a **direct** loopback connection. A request doesn't qualify
+  if its peer is a proxy listed in `DC_TRUSTED_PROXIES`, or if it carries any
+  forwarding header (`Forwarded`, `X-Forwarded-*`, `X-Real-Ip`, `Via`), even an
+  empty one.
+- A local proxy that is not listed and adds none of those headers makes every
+  client look local. Behind a proxy, set `DC_TRUSTED_PROXIES` or leave this off.
+  See [Deployment](deployment.md#b--reverse-proxy-recommended-for-anything-non-trivial).
 - Good for a personal or local install. Leave it off on shared servers.
-- It is the same toggle the **first-run setup** flips when you choose *"Skip 2FA
-  for now"*. You can change it here later.
+- It is the same toggle the **first-run setup** flips when you choose **Skip for
+  now**. You can change it here later.
 
 ### MCP token lifetime
 
@@ -182,8 +189,9 @@ is used in plain text, not refused. On an untrusted network, use implicit TLS.
 ![Policy rules](images/settings_policy.png)
 
 Checks that run on every project deploy: privileged container, host network,
-Docker socket mount, `:latest` image, no limits, no healthcheck. Each rule is Off,
-Warn or Block. Details in [Policy rules](policy-rules.md).
+host PID namespace, Docker socket mount, `:latest` image, no limits, no
+healthcheck. Each rule is Off, Warn or Block. Details in
+[Policy rules](policy-rules.md).
 
 ## MCP Admin
 

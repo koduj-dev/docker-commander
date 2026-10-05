@@ -13,7 +13,8 @@ engine watches all of them.
 
 **Add a server over SSH.** As the OS user that runs `dockercmd`, install an SSH
 key on the server and check that `ssh user@server docker info` works without a
-password. Then click **Add host → SSH**, enter `user@server`, click **Test**,
+password. Then click **Add host**, keep the type **SSH**, enter a name and
+`user@server`, and save with **Add host**. Click **Test** on the new card,
 compare the fingerprint with the server's own and click **Trust this host**.
 The commands are under [Connecting over SSH](#connecting-over-ssh).
 
@@ -28,7 +29,7 @@ errors or unreachable alerts. Click it again when the server is back.
 
 **Send one host's alerts to a different address.** Type it into **Alert email**
 on the host card and click **Save**. It replaces the global recipient for alerts
-from that host.
+from that host, unless the alert rule lists its own recipients.
 
 **Deploys work, but the dashboard stays empty.** The remote `sshd` probably has
 `AllowTcpForwarding no`. Deploys don't need forwarding, everything else does.
@@ -43,11 +44,12 @@ See [Users & roles](users.md).
 
 | Type | Address | Credentials |
 |---|---|---|
-| **SSH** | `user@host[:port]` | The **server's own SSH agent or `~/.ssh` keys**. No key material is stored here. The Docker API is tunnelled to the remote daemon's socket over SSH. |
+| **SSH** | `user@host[:port]` | The **server's own SSH agent or `~/.ssh` keys**. No key material is stored here. The Docker API is tunnelled over SSH to `/var/run/docker.sock` on the remote host; other socket paths (rootless Docker) aren't supported. |
 | **TCP** | `tcp://host:2376` | Optional CA, client certificate and key (PEM) for TLS. |
 
 You can also set an **alert email** for the host, at creation or later on the
-host card. It overrides the global SMTP recipient for alerts from that host.
+host card. It overrides the global SMTP recipient for alerts from that host,
+but not recipients set on the alert rule itself.
 
 The remote server only needs **Docker installed and reachable**. It does **not**
 need Docker Commander. One instance talks to many Docker daemons, never to
@@ -76,16 +78,23 @@ On the **remote host**, let the SSH user reach the Docker socket:
 sudo usermod -aG docker deploy    # then reconnect so the group takes effect
 ```
 
-Then **Hosts → Add host → SSH**, address `deploy@10.0.0.42` (or
-`deploy@host:2222` for another port), **Test**, and **Trust this host** after
-verifying the fingerprint (see [SSH host keys](#ssh-host-keys)).
+Then **Hosts → Add host**, type **SSH**, a **Name**, address
+`deploy@10.0.0.42` (or `deploy@host:2222` for another port), and **Add host**.
+On the new card click **Test**, and **Trust this host** after verifying the
+fingerprint (see [SSH host keys](#ssh-host-keys)).
 
-- **Passphrase-protected key.** Make an agent available to the `dockercmd`
-  process, e.g. a systemd service with `SSH_AUTH_SOCK`, or use a dedicated key
-  without a passphrase.
+- **Which keys are used.** Keys from the agent (`SSH_AUTH_SOCK`) first, then
+  `~/.ssh/id_ed25519`, `id_rsa` and `id_ecdsa`. `~/.ssh/config` is ignored, so
+  a `Host` alias, `User`, `Port` or `IdentityFile` there has no effect: put the
+  real `user@host[:port]` in the address. The `ssh` sanity check above can pass
+  through your config while the app fails.
+
+- **Passphrase-protected key.** Key files with a passphrase are skipped. Make
+  an agent available to the `dockercmd` process, e.g. a systemd service with
+  `SSH_AUTH_SOCK`, or use a key without a passphrase.
 - **Many keys in the agent.** `sshd` may reject them all and hit `MaxAuthTries`
-  (default 6) before the right one. Prune the agent or dedicate a key to this
-  host.
+  (default 6) before the right one. Prune the agent, or give `dockercmd` an
+  agent that holds only the key it needs. There is no per-host key setting.
 - **The remote `sshd` must allow forwarding.** The tunnel is an SSH channel,
   which `sshd` gates on **`AllowTcpForwarding`**. With `no`, connections fail
   with `ssh: rejected: connect failed`. Most distributions default to `yes`;
@@ -115,9 +124,9 @@ that machine.
 1. On the remote host, enable a TLS-protected TCP listener on `:2376` and
    create a CA, server and client certificates, following Docker's guide:
    <https://docs.docker.com/engine/security/protect-access/>.
-2. In the UI: **Hosts → Add host → TCP (+TLS)**, address
-   `tcp://10.0.0.42:2376`, and paste the **CA cert**, **client cert** and
-   **client key** (PEM).
+2. In the UI: **Hosts → Add host**, type **TCP (+TLS)**, a **Name**, address
+   `tcp://10.0.0.42:2376`, and paste the **CA cert**, **Client cert** and
+   **Client key** (PEM). Save with **Add host**, then **Test** on the card.
 
 Sanity check from the Docker Commander server:
 
@@ -128,8 +137,8 @@ docker --tlsverify --tlscacert=ca.pem --tlscert=cert.pem --tlskey=key.pem \
 
 ## Switching the active host
 
-With more than one host, a **Viewing host** switcher appears at the top of the
-sidebar (it is hidden when only the local host exists). Picking a host rebinds
+With more than one enabled host, a **Viewing host** switcher appears at the top
+of the sidebar. Disabled hosts are left out of it. Picking a host rebinds
 the whole app: dashboard, containers, images, logs, stats, exec. Nothing is
 mixed across servers. The active host is shown as a badge in every page header,
 and your browser remembers the choice.
@@ -138,7 +147,7 @@ and your browser remembers the choice.
 
 | Control | What it does |
 |---|---|
-| **Info** (i) | Hardware, OS and engine: CPUs, memory, architecture, OS and kernel, Docker version, storage and logging drivers, cgroup, container and image counts. |
+| **Info** (i) | Hardware, OS and engine: hostname, CPUs, memory, architecture, OS, OS type and version, kernel, Docker version, storage and logging drivers, cgroup, live restore, root dir, container and image counts. |
 | **Test** | Probes the host, with a short timeout so an unreachable one fails fast. Reports the Docker version and running count, or the connection or host-key problem. |
 | **Power** | Disables or enables the host (remote hosts only). |
 | **Delete** | Removes the host (remote hosts only). |

@@ -34,9 +34,10 @@ have this page open.
   An invalid pattern is flagged and matches nothing, it never crashes the view.
 - **Level filters** (error, warn, info, debug, other) show or hide lines by
   detected level. `stderr` lines are highlighted.
-- **Pause** freezes the live tail. The view auto-scrolls while you are at the
-  bottom. **Clear** empties it, and **Download** saves the filtered view as a
-  `.log` file.
+- Click the **Live** badge to freeze the live tail (it then reads **Paused**);
+  click again to resume. The view auto-scrolls while you are at the bottom. The
+  X icon (**Clear**) empties it, and the download icon saves the filtered view
+  as a `.log` file.
 
 ## Structured parsing
 
@@ -58,10 +59,13 @@ the rule itself is saved on the server.
 - The view keeps the newest 3000 lines. Search, filters and Download only see
   those.
 - Levels are guessed from keywords (`error`, `fatal`, `warn`, `debug`…) and from
-  HTTP status codes in access-log lines.
+  3-digit numbers that look like HTTP status codes. Any space-separated 3-digit
+  number counts, so `took 503 ms` is shown as an error.
 - Rules use JavaScript regex syntax, since they run in the browser.
 
 ## Permissions
 
-Parse rules are shared by all users. Adding or deleting one needs write access
-to the **Logs** section. See [Users & roles](users.md).
+Viewing logs also needs read access to **Containers**: the source list and the
+log stream come from there. Parse rules are shared by all users. Adding or
+deleting one needs write access to the **Logs** section. See
+[Users & roles](users.md).

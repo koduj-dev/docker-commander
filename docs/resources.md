@@ -23,8 +23,9 @@ filter.
 **Which stack uses the most memory?** On **Stacks**, the default sort is
 **Memory**. Expand the row to see which member container is responsible.
 
-**What would a prune free?** Open **Disk** and read **Reclaimable**. Tick
-*Unused only* under **Images** or **Volumes** to see what is unused, then prune
+**What would a prune free?** Open **Disk** and read **Reclaimable**. On the
+**Images** or **Volumes** table, set the filter next to the search box to
+*Unused only* to see what is unused, then prune
 from [Images](images.md) or [Volumes](volumes.md). Disk only reports and deletes
 nothing.
 
@@ -57,8 +58,8 @@ and **Network** (received and sent, summed over running containers).
   largest first. Ties sort by name.
 - Search filters by name. **Per page** is 10, 20, 50 or 100. Both are
   remembered.
-- A container that just started or was recreated shows no network rate until it
-  has two samples.
+- A container that just started or was recreated shows `0 B/s` until it has two
+  samples.
 
 ## Network
 ![Resources — network](images/resources_network.png)
@@ -100,7 +101,8 @@ Click a row to see the member containers, largest memory first, each linking to
 its detail page. Stopped containers add nothing. A stack with nothing running
 says *No running containers*.
 
-The filter starts on **Running stacks**. **All stacks** includes stopped ones.
+The filter starts on **Running stacks** and then remembers your last choice.
+**All stacks** includes stopped ones.
 Sorting, search and paging work as on Containers. This tab also needs the
 **Containers** section (see [Access](#access)).
 

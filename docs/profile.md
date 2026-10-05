@@ -11,33 +11,44 @@ with the person icon beside *Sign out*. Other people's accounts are managed in
 
 ## Common tasks
 
-**Move to a new phone.** On **Security**, click **Add an authenticator**, enter
-your password and scan the code with the new phone. Then remove the old entry.
+**Move to a new phone.** On **Security**, enter your password, click **Add an
+authenticator** and scan the code with the new phone. Then remove the old entry.
 Pairing never revokes anything, so the old phone keeps working until you remove
 it.
 
 **Sign out a lost laptop.** On **Security**, find it in the list of sessions and
 click **Sign out**, or use **Sign out everywhere else**. Then **change your
-password**: that ends every session at once, including one you didn't spot.
+password** on **Account**: that ends every other session at once, including one
+you didn't spot. An LDAP account changes it in the directory instead, which ends
+no sessions here, so sign the others out first.
+
+**Change your password.** On **Account**, in the **Password** card, enter the
+**Current password**, the **New password** (at least 10 characters) and **New
+password again**, then click **Change password**. Every other session of your
+account is signed out; this one stays signed in. Only local accounts have this
+card.
 
 **Use a fingerprint or security key instead of codes.** Click **Add a passkey**.
 It only works over HTTPS or on `localhost`, and only under a hostname, not an IP
 address (see [Passkeys](#passkeys)).
 
 **Sign in with just the passkey.** Turn on **Sign in with a passkey alone** and
-confirm with your password. Your password keeps working as the way back in.
+confirm with your password. Then use **Sign in with a passkey** on the sign-in
+screen. Your password keeps working as the way back in. Local accounts only.
 
 **Find out why you can't see a page.** Open **Access**. It lists each section you
 can reach, on which hosts, and which grant gave it to you. If the section isn't
 there, ask an admin.
 
-**Get alert e-mails.** Set your **Alert e-mail** on the **Account** tab.
+**Get alert e-mails.** Set your **Alert e-mail** on the **Account** tab. It only
+pre-fills the recipient when e-mail is switched on for an alert rule, so you also
+need such a rule and a working [Settings → Email](settings.md#email-smtp).
 
 ## Tabs
 
 | Tab | Shows |
 |---|---|
-| **Account** | Username, account type, whether you sign in locally or through LDAP, when the account was created and last used, and your **alert e-mail**. |
+| **Account** | Username, account type, whether you sign in locally or through LDAP, when the account was created and last used, your **password** (local accounts) and your **alert e-mail**. |
 | **Security** | Your authenticators and passkeys, signing in with a passkey alone, and every session signed in as you. |
 | **Access** | Your roles and, per section, what you can do (**You can**), where (**Where**) and why (**Granted by**). |
 | **Preferences** | Whether alerts **pop up as a toast** while the app is open. |
@@ -52,7 +63,9 @@ Adding one leaves the others working. There is no "replace".
 - **Pairing and removing ask for your password.** Both change what it takes to
   sign in as you. Otherwise anyone holding one of your sessions could pair their
   own device, or remove yours one at a time. A first-time setup doesn't ask,
-  because there is nothing to protect yet.
+  because there is nothing to protect yet. Once you have any second factor, an
+  authenticator app or a passkey, the password field appears and the button reads
+  **Add an authenticator** (**Set up 2FA** before that).
 - **The last one can't be removed.** 2FA is mandatory, so an account with no
   second factor couldn't sign in, and no admin can reset it for you. Pair the
   replacement first.
@@ -101,8 +114,8 @@ Off until you turn it on in *Profile → Security*, which asks for your password
   Manager), the PIN or fingerprint can be given on any device it reaches. Your
   account then also depends on that platform account.
 - Your password still works and always will. It is your way back in if the key
-  is lost, since no admin can reset another account's second factor. LDAP
-  accounts use their directory password.
+  is lost, since no admin can reset another account's second factor.
+- Only local accounts can turn it on. LDAP accounts don't see the switch.
 
 ## Sessions
 
@@ -114,6 +127,7 @@ marked *this device*.
 - Any row can be signed out. Signing out the current row signs you out here.
 - **Sign out everywhere else** ends all the others at once.
 - If something there isn't you, sign it out **and change your password**.
+  Changing it on **Account** ends every other session.
 
 Only you see this list, for your own account. An admin view of everyone's
 sessions would be a record of when each person works and from where.
@@ -156,7 +170,8 @@ If you are the only admin and the password is gone, run
 
 - It asks for the new password at the terminal and ends every session for that
   account.
-- It leaves the second factor in place. You still need your code or passkey.
+- It leaves the second factor in place. You still need your code or passkey,
+  unless the localhost 2FA exemption is on and you sign in on the machine itself.
 - It needs access to the data directory, which already equals being an admin, so
   it grants nothing that access didn't.
 

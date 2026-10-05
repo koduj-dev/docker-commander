@@ -15,8 +15,9 @@ memory by default; click the **CPU** header to sort by CPU instead. **View all �
 opens [Resources](resources.md) with every running container.
 
 **Find who is using the network.** **Top talkers** ranks containers by their
-average traffic over the last 5 minutes. For a longer window, or received and
-sent separately, click **View all →**.
+average traffic over the last 5 minutes, with received and sent in separate
+columns. For a longer window, or to rank by received or sent alone, click
+**View all →**.
 
 **The disk is filling up.** Check the **Disk usage** tiles, then open
 [Resources → Disk](resources.md#disk) to see which images, containers and volumes
@@ -24,7 +25,8 @@ are largest and what a prune would free. Prune dangling images in
 [Images](images.md) and unused volumes in [Volumes](volumes.md). There is no
 build-cache prune in the app; run `docker builder prune` on the host.
 
-**What is listening on this host's ports?** Click **Scan** under **Open ports**.
+**What is listening on this host's ports?** Click **Scan** under **Open ports**
+(**Rescan** once there is a result).
 It connects to every published port and identifies the service. The result is
 remembered per host in your browser, so it is still there next time. Ports of
 containers that have stopped since drop out of the list.
@@ -45,7 +47,7 @@ Four tiles from `docker system df`. Each shows a size and a count.
 | **Images** | The daemon's image total and the number of images. Shared layers are counted once. |
 | **Containers (rw)** | The writable layers of all containers, and the container count. |
 | **Volumes** | The size of volumes with a known size, and the volume count. |
-| **Build cache** | The cache size and its number of records. Records the daemon marks as *shared* are left out of both. |
+| **Build cache** | The cache size and its number of records. Records the daemon marks as *shared* are left out of the size but still counted. |
 
 ## Resource usage
 The two pie charts show how the **running containers** divide up the host's CPU

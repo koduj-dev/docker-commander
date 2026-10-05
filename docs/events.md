@@ -17,8 +17,9 @@ for the next `die`, `kill` or `oom`. Destructive actions are shown in red.
 The `create`, `start` and `destroy` lines show which containers were actually
 recreated.
 
-**Spot commands run inside containers.** Filter by `exec`. The command shows
-next to the action, e.g. `exec_create: /bin/sh`.
+**Spot commands run inside containers.** Filter by `exec`. For an action such
+as `exec_create: /bin/sh`, the command (`/bin/sh`) shows at the end of the row,
+after the name.
 
 **Turn it into an alert.** Events are exactly what `state` and `restart` rules
 in [Alerts](alerts.md) fire on. Watch here to learn the pattern, then codify it
@@ -29,10 +30,12 @@ as a rule.
 - Each row shows the time, the object **type** (container, image, network,
   volume, color-coded), the **action** and the object **name**, or its short id
   when Docker reports no name.
-- An action with a colon is split into the verb and its detail, so
-  `exec_create: /bin/sh` and `health_status: unhealthy` show the part after the
-  colon next to the action.
-- **Pause** freezes the stream. **Clear** empties the view.
+- An action with a colon is split into the verb and its detail. For
+  `exec_create: /bin/sh` or `health_status: unhealthy`, the action column shows
+  the verb and the part after the colon goes at the end of the row, after the
+  name. Hover it for the full text.
+- Click the **Live** badge to freeze the stream (it then reads **Paused**);
+  click again to resume. The X icon (**Clear**) empties the view.
 - The **filter** matches type, action, name and id together, not each
   separately.
 

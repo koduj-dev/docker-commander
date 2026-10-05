@@ -16,20 +16,23 @@ yellow when only some of its containers run or one of them is unhealthy. Hover a
 service to see its full status, then click the container name to open its
 [detail page](containers.md).
 
-**Change a stack started from the CLI.** Click **View compose file**, edit it,
-click **Save**, then **Redeploy**. Redeploy uses the saved file only, so save
+**Change a stack started from the CLI.** Click the file icon (**View compose
+file**) or the file path under the stack name, edit the file, click **Save**,
+then **Redeploy**. Redeploy uses the saved file only, so save
 first. Containers whose definition changed are recreated, which means a brief
 interruption.
 
-**Undo a bad edit.** The previous version is kept beside the file as
-`<name>.dc-prev`. Copy it back on the host, then **Redeploy**.
+**Undo a bad edit.** Before saving, **Revert** drops your unsaved edits. After
+saving, the previous version is kept beside the file as `<name>.dc-prev`. Copy
+it back on the host, then **Redeploy**.
 
 **Drop a service from a stack.** Delete it from the compose file and redeploy.
 Its container keeps running, because redeploy does not remove orphans. Stop or
 remove it in [Containers](containers.md).
 
-**Tear a stack down.** Click **Remove**. It removes the containers and the
-stack's Compose networks but keeps named volumes, like `docker compose down`.
+**Tear a stack down.** Click the trash icon (**Remove stack**) and confirm. It
+removes the containers and the stack's Compose networks but keeps named volumes,
+like `docker compose down`.
 
 ## Browsing
 Each stack card shows its services and a **status light**: green when all
@@ -49,16 +52,17 @@ containers run, yellow when only some run or one is unhealthy, red when stopped.
 | Action | What it does |
 |---|---|
 | **Start / Stop / Restart** | Applied to every container in the stack. |
-| **Remove** | Force-removes the stack's containers and its Compose networks. Named volumes are kept. |
-| **View compose file** | Reads the stack's `compose.yml` from the host. **Copy** or **download** it from the viewer. |
+| **Remove stack** (trash icon) | Force-removes the stack's containers and its Compose networks. Named volumes are kept. |
+| **View compose file** (file icon) | Reads the stack's `compose.yml` from the host. **Copy** or **download** it from the viewer. |
 
 The compose file is read directly for the local daemon and over **SSH** for SSH
-hosts. Plain-TCP hosts can't reach the host filesystem.
+hosts. On plain-TCP hosts it can't be opened at all; the viewer says why.
 
 ## Editing and redeploying a CLI stack
 For a stack the app didn't create, the viewer is also an **editor**. **Save**
 writes the file back to the host. **Redeploy** applies it. They are separate
 steps, so you can leave a half-finished edit on disk without restarting anything.
+Closing the editor with unsaved edits asks you to confirm (**Discard**).
 
 - **The file is edited where it already lives.** It is not copied into a managed
   [Project](projects.md). Redeploy runs `docker compose up -d --build` in the
@@ -72,9 +76,14 @@ steps, so you can leave a half-finished edit on disk without restarting anything
   `docker login`: credentials stored under [Registries](registries.md#deploys)
   aren't copied to the host, and the redeploy output says so. On the local daemon
   a redeploy uses them.
-- **Plain-TCP hosts stay read-only**, since there is no filesystem to reach. So
-  does a stack whose containers carry no `working_dir` label. The viewer says
-  which.
+- **A Project's stack is read-only here.** For a stack that a
+  [Project](projects.md) deploys on this host, the viewer shows the file with
+  "this stack belongs to the project …; edit and deploy it in Projects", and
+  save and redeploy are refused. A change made here would skip the project's revision
+  history and policy check, and its next deploy would overwrite it.
+- **A stack whose containers carry no `working_dir` label stays read-only**, and
+  so does one whose compose file sits outside that directory. The viewer says
+  why.
 - **`--remove-orphans` is not passed.** Delete a service from the file and its
   container keeps running. Compose warns about it in the output. Removing one
   stays an explicit act.
