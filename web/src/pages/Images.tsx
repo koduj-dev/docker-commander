@@ -13,6 +13,7 @@ import { BuildModal } from "../components/BuildModal";
 import { LoadModal, triggerDownload } from "../components/LoadModal";
 import { useDialogs } from "../components/Dialog";
 import { useListControls, SearchBar, Pager, type StatusOption } from "../components/ListControls";
+import { useCanWrite } from "../auth/access";
 
 const IMAGE_STATUSES: StatusOption<ImageSummary>[] = [
   { value: "all", label: "All images" },
@@ -29,6 +30,8 @@ function matchImage(img: ImageSummary, q: string): boolean {
 }
 
 export function Images() {
+  // Save hands over the image's content, which needs write access to Images.
+  const canSave = useCanWrite("images");
   const [images, setImages] = useState<ImageSummary[] | null>(null);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [err, setErr] = useState<Record<string, string>>({});
@@ -148,7 +151,7 @@ export function Images() {
                     )}
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
-                    <button className="btn-ghost px-2 py-1" title="Save (download tar)" onClick={() => triggerDownload(api.saveImageUrl(tags[0] || img.id))}><Download className="h-4 w-4" /></button>
+                    {canSave && <button className="btn-ghost px-2 py-1" title="Save (download tar)" onClick={() => triggerDownload(api.saveImageUrl(tags[0] || img.id))}><Download className="h-4 w-4" /></button>}
                     <button className="btn-ghost px-2 py-1" title="Push to registry" onClick={() => setPush(img)}><Upload className="h-4 w-4" /></button>
                     <button className="btn-ghost px-2 py-1" title="Scan for vulnerabilities" onClick={() => setScan(img)}><ShieldAlert className="h-4 w-4" /></button>
                     <button className="btn-ghost px-2 py-1" title="Layer history" onClick={() => setHistory(img)}><History className="h-4 w-4" /></button>

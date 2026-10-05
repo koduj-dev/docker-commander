@@ -118,6 +118,19 @@ function stubBrowserTimeZone(fakeTZ: string): () => void {
   };
 }
 
+// The list loads on mount, so remount to pick up a new mock.
+async function remount() {
+  act(() => root.unmount());
+  root = createRoot(container);
+  await act(async () => root.render(<DialogProvider><MaintenanceWindows /></DialogProvider>));
+}
+
+function pastToggle(): HTMLButtonElement {
+  const b = [...container.querySelectorAll("button")].find((x) => x.textContent?.includes("Past windows"));
+  if (!b) throw new Error("no Past windows toggle");
+  return b as HTMLButtonElement;
+}
+
 function rowButton(rowText: string, title: string): HTMLButtonElement {
   const row = [...container.querySelectorAll("tr")].find((r) => r.textContent?.includes(rowText));
   if (!row) throw new Error(`row containing ${JSON.stringify(rowText)} not found`);
@@ -161,6 +174,9 @@ describe("MaintenanceWindows", () => {
   });
 
   it("deleting a window requires confirmation and only then calls the API", async () => {
+    const future = (ms: number) => new Date(Date.now() + ms).toISOString();
+    maintenanceWindows.mockResolvedValue([{ ...window1, startsAt: future(3_600_000), endsAt: future(7_200_000) }]);
+    await remount();
     await act(async () => rowButton("DB upgrade", "Delete").click());
 
     expect(deleteMaintenanceWindow).not.toHaveBeenCalled();
@@ -240,10 +256,8 @@ describe("MaintenanceWindows", () => {
       { ...window1, id: 11, name: "Ended early", ended: true },
       { ...recurringWindow, id: 12, name: "Old series", endsAt: past(3_600_000) },
     ]);
-    // The list loads on mount, so remount to pick up the new mock.
-    act(() => root.unmount());
-    root = createRoot(container);
-    await act(async () => root.render(<DialogProvider><MaintenanceWindows /></DialogProvider>));
+    await remount();
+    await act(async () => pastToggle().click());
 
     for (const name of ["Old one-off", "Ended early", "Old series"]) {
       expect(() => rowButton(name, "Edit"), `${name}: Edit`).toThrow();
@@ -384,5 +398,40 @@ describe("MaintenanceWindows — host picker without the hosts section", () => {
     await act(async () => newBtn.click());
 
     expect(container.textContent).toContain("host #7");
+  });
+});
+
+// Windows are history: one can be deleted only before it starts or once it is
+// over (the server answers 409 otherwise), and finished ones are folded away so
+// a list that grows with every deploy stays usable.
+describe("MaintenanceWindows history", () => {
+  it("offers no Delete on a running window or an open series, only End", () => {
+    for (const name of ["DB upgrade", "Nightly backup window"]) {
+      expect(() => rowButton(name, "Delete"), name).toThrow();
+      expect(rowButton(name, "End now"), name).toBeTruthy();
+    }
+  });
+
+  it("folds finished windows under a toggle, a page at a time", async () => {
+    const past = (ms: number) => new Date(Date.now() - ms).toISOString();
+    const old = Array.from({ length: 60 }, (_, i) => ({
+      ...window1, id: 100 + i, name: `Old ${i}`, startsAt: past(7_200_000), endsAt: past(3_600_000),
+    }));
+    maintenanceWindows.mockResolvedValue([window1, ...old]);
+    await remount();
+
+    expect(container.textContent).toContain("DB upgrade");
+    expect(container.textContent).not.toContain("Old 0");
+    expect(pastToggle().textContent).toContain("(60)");
+
+    await act(async () => pastToggle().click());
+    expect(container.textContent).toContain("Old 49");
+    expect(container.textContent).not.toContain("Old 50");
+
+    const more = [...container.querySelectorAll("button")].find((b) => b.textContent?.includes("more"));
+    if (!more) throw new Error("no Show more button");
+    expect(more.textContent).toContain("Show 10 more");
+    await act(async () => more.click());
+    expect(container.textContent).toContain("Old 59");
   });
 });

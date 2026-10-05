@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Plus, Trash2, Webhook as WebhookIcon, Check, CheckCheck, Pencil, Download, Upload, X , ChevronDown, ChevronUp, ChevronsUpDown, BellOff, Ban, Repeat, TrendingUp, TrendingDown} from "lucide-react";
+import { Plus, Trash2, Webhook as WebhookIcon, Check, CheckCheck, Pencil, Download, Upload, X , ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, BellOff, Ban, Repeat, TrendingUp, TrendingDown} from "lucide-react";
 import { Link } from "react-router-dom";
 import clsx from "clsx";
 import { api } from "../lib/api";
@@ -1161,6 +1161,72 @@ function windowClosed(w: MaintenanceWindow): boolean {
   return !!w.endsAt && new Date(w.endsAt).getTime() <= Date.now();
 }
 
+// A window can be deleted while it is only a plan, or once it is over. A running
+// one is ended first (the server refuses with 409), so its record of having
+// silenced alerts can't vanish while it is doing so.
+export function windowDeletable(w: MaintenanceWindow, now = Date.now()): boolean {
+  return windowClosed(w) || new Date(w.startsAt).getTime() > now;
+}
+
+const PAST_PAGE = 50;
+
+function WindowTable({ windows, scopeSummary, scheduleSummary, onEdit, onEnd, onDelete }: {
+  windows: MaintenanceWindow[];
+  scopeSummary: (w: MaintenanceWindow) => string;
+  scheduleSummary: (w: MaintenanceWindow) => string;
+  onEdit: (w: MaintenanceWindow) => void;
+  onEnd: (w: MaintenanceWindow) => void;
+  onDelete: (w: MaintenanceWindow) => void;
+}) {
+  return (
+    <div className="card overflow-hidden">
+      <table className="w-full text-sm">
+        <thead className="text-muted text-xs uppercase tracking-wide">
+          <tr className="border-b border-border">
+            <th className="text-left font-medium px-4 py-3">Name</th>
+            <th className="text-left font-medium px-4 py-3">Scope</th>
+            <th className="text-left font-medium px-4 py-3">Schedule</th>
+            <th className="text-left font-medium px-4 py-3">Status</th>
+            <th className="px-4 py-3"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {windows.map((w) => {
+            const status = windowStatus(w);
+            const closed = windowClosed(w);
+            return (
+              <tr key={w.id} className="border-b border-border/50">
+                <td className="px-4 py-2.5 font-medium">
+                  {w.name}
+                  <div className="text-xs text-muted font-normal">{w.reason}</div>
+                </td>
+                <td className="px-4 py-2.5 text-xs text-muted max-w-[260px] truncate" title={scopeSummary(w)}>{scopeSummary(w)}</td>
+                <td className="px-4 py-2.5 text-xs text-muted whitespace-nowrap">{scheduleSummary(w)}</td>
+                <td className="px-4 py-2.5">
+                  <span className={clsx("text-xs px-2 py-0.5 rounded-md font-medium", status.cls)}>{status.label}</span>
+                </td>
+                <td className="px-4 py-2.5 text-right">
+                  <div className="flex items-center justify-end gap-1">
+                    {!closed && (
+                      <button className="btn-ghost px-2 py-1" title="Edit" onClick={() => onEdit(w)}><Pencil className="h-4 w-4" /></button>
+                    )}
+                    {!closed && (
+                      <button className="btn-ghost px-2 py-1" title="End now" onClick={() => onEnd(w)}><Ban className="h-4 w-4" /></button>
+                    )}
+                    {windowDeletable(w) && (
+                      <button className="btn-ghost px-2 py-1 text-danger" title="Delete" onClick={() => onDelete(w)}><Trash2 className="h-4 w-4" /></button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function windowStatus(w: MaintenanceWindow): { label: string; cls: string } {
   if (w.ended) return { label: "Ended", cls: "bg-panel2 text-muted" };
   if (w.recurring && !windowClosed(w)) return { label: "Recurring", cls: "bg-accent/15 text-accent" };
@@ -1182,6 +1248,10 @@ export function MaintenanceWindows() {
   const [hosts, setHosts] = useState<HostOption[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<MaintenanceWindow | null>(null);
+  // Finished windows are kept as history, one per deploy at least, so they sit
+  // under a toggle, a page at a time, below the ones that still matter.
+  const [showPast, setShowPast] = useState(false);
+  const [pastShown, setPastShown] = useState(PAST_PAGE);
   const dialogs = useDialogs();
 
   const load = useCallback(() => {
@@ -1222,6 +1292,8 @@ export function MaintenanceWindows() {
   };
 
   if (!windows) return <Loading />;
+  const current = windows.filter((w) => !windowClosed(w));
+  const past = windows.filter((w) => windowClosed(w));
 
   const hostName = (id: number) => hosts.find((h) => h.id === id)?.name ?? `host #${id}`;
   const scopeSummary = (w: MaintenanceWindow): string => {
@@ -1273,49 +1345,31 @@ export function MaintenanceWindows() {
       {windows.length === 0 ? (
         <EmptyState title="No maintenance windows" hint="Create one to silence alerts during planned work." />
       ) : (
-        <div className="card overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="text-muted text-xs uppercase tracking-wide">
-              <tr className="border-b border-border">
-                <th className="text-left font-medium px-4 py-3">Name</th>
-                <th className="text-left font-medium px-4 py-3">Scope</th>
-                <th className="text-left font-medium px-4 py-3">Schedule</th>
-                <th className="text-left font-medium px-4 py-3">Status</th>
-                <th className="px-4 py-3"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {windows.map((w) => {
-                const status = windowStatus(w);
-                const closed = windowClosed(w);
-                return (
-                  <tr key={w.id} className="border-b border-border/50">
-                    <td className="px-4 py-2.5 font-medium">
-                      {w.name}
-                      <div className="text-xs text-muted font-normal">{w.reason}</div>
-                    </td>
-                    <td className="px-4 py-2.5 text-xs text-muted max-w-[260px] truncate" title={scopeSummary(w)}>{scopeSummary(w)}</td>
-                    <td className="px-4 py-2.5 text-xs text-muted whitespace-nowrap">{scheduleSummary(w)}</td>
-                    <td className="px-4 py-2.5">
-                      <span className={clsx("text-xs px-2 py-0.5 rounded-md font-medium", status.cls)}>{status.label}</span>
-                    </td>
-                    <td className="px-4 py-2.5 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        {!closed && (
-                          <button className="btn-ghost px-2 py-1" title="Edit" onClick={() => { setShowForm(false); setEditing(w); }}><Pencil className="h-4 w-4" /></button>
-                        )}
-                        {!closed && (
-                          <button className="btn-ghost px-2 py-1" title="End now" onClick={() => end(w)}><Ban className="h-4 w-4" /></button>
-                        )}
-                        <button className="btn-ghost px-2 py-1 text-danger" title="Delete" onClick={() => del(w)}><Trash2 className="h-4 w-4" /></button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <>
+          {current.length === 0 ? (
+            <p className="text-sm text-muted">No scheduled or running windows.</p>
+          ) : (
+            <WindowTable windows={current} scopeSummary={scopeSummary} scheduleSummary={scheduleSummary} onEdit={(w) => { setShowForm(false); setEditing(w); }} onEnd={end} onDelete={del} />
+          )}
+          {past.length > 0 && (
+            <div className="space-y-2">
+              <button type="button" className="btn-ghost px-2 py-1 text-sm text-muted" onClick={() => setShowPast((v) => !v)}>
+                {showPast ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                Past windows ({past.length})
+              </button>
+              {showPast && (
+                <>
+                  <WindowTable windows={past.slice(0, pastShown)} scopeSummary={scopeSummary} scheduleSummary={scheduleSummary} onEdit={() => {}} onEnd={() => {}} onDelete={del} />
+                  {past.length > pastShown && (
+                    <button type="button" className="btn-ghost px-2 py-1 text-sm" onClick={() => setPastShown((n) => n + PAST_PAGE)}>
+                      Show {Math.min(PAST_PAGE, past.length - pastShown)} more
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

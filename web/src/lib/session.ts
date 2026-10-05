@@ -1,5 +1,7 @@
 import { clearPrefs } from "./prefs";
 import { resetAlertStream } from "./alertStream";
+import { clearScans } from "./portscanCache";
+import { resetAccessCache } from "../auth/access";
 
 // Everything the browser remembers about the person who was signed in.
 //
@@ -14,4 +16,6 @@ import { resetAlertStream } from "./alertStream";
 export function clearUserState(): void {
   clearPrefs();
   resetAlertStream();
+  clearScans();
+  resetAccessCache();
 }

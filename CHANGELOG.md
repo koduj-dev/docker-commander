@@ -7,6 +7,10 @@ All notable changes to Docker Commander are documented here. The format follows
 ## [1.7.0] — 2026-09-21
 
 ### Security
+- **A port scan stays with the account that ran it.** The dashboard kept the last
+  scan in the browser per host only, so the next account to sign in on that
+  browser saw it, read-only accounts included. It is now stored per account, and
+  signing out clears every stored scan.
 - **The localhost 2FA exemption no longer reaches through a local reverse
   proxy that isn't in `DC_TRUSTED_PROXIES`.** Such a proxy connects from
   127.0.0.1, so with the exemption on, every request it relayed from the
@@ -374,6 +378,12 @@ All notable changes to Docker Commander are documented here. The format follows
   on Windows) rather than just failing.
 
 ### Fixed
+- **Download buttons follow write access.** Export, file and folder downloads and
+  image **Save** need write access since this release, and a refused download
+  opened a bare error page. They are now shown only to accounts that may use them.
+- **Maintenance windows:** **Delete** is offered only before a window starts or
+  once it is over, matching the server. Past windows are folded under **Past
+  windows**, 50 at a time, since they are now kept as history.
 - **The MTU check says what it compared.** It compares only bridge networks that
   set their own MTU, but its OK result said every bridge network matched. It now
   counts the ones it compared and the ones left on Docker's default.

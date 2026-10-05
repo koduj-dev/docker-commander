@@ -5,6 +5,8 @@ import { clearUserState } from "./session";
 const alerts = vi.hoisted(() => vi.fn());
 vi.mock("./api", () => ({ api: { alerts } }));
 vi.mock("./prefs", () => ({ clearPrefs: vi.fn() }));
+vi.mock("./portscanCache", () => ({ clearScans: vi.fn() }));
+vi.mock("../auth/access", () => ({ resetAccessCache: vi.fn() }));
 
 // Two polls: the first only establishes the baseline, the second reports what
 // arrived after it — which is what leaves per-user state behind.
@@ -69,5 +71,15 @@ describe("clearUserState", () => {
     const { clearPrefs } = await import("./prefs");
     clearUserState();
     expect(clearPrefs).toHaveBeenCalled();
+  });
+
+  // A port scan maps what listens on a host; the next account on this browser,
+  // read-only or not, must not inherit it. Nor its write access.
+  it("clears stored port scans and the cached access", async () => {
+    const { clearScans } = await import("./portscanCache");
+    const { resetAccessCache } = await import("../auth/access");
+    clearUserState();
+    expect(clearScans).toHaveBeenCalled();
+    expect(resetAccessCache).toHaveBeenCalled();
   });
 });
