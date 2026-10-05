@@ -81,9 +81,9 @@ Messages state their basis with absolute values:
 **The two network rules answer different questions.**
 
 - `resource` on **RX/TX rate**: a plain threshold, "is the rate above or below
-  *N* MB/s for *N* seconds". It reads the same live per-poll rate the dashboard
-  shows. Entered in MB/s, stored as bytes/s; the conversion uses 1024 × 1024, so
-  the unit is really MiB/s.
+  *N* MiB/s for *N* seconds". It reads the same live per-poll rate the dashboard
+  shows. Entered in MiB/s (1 MiB = 1024 × 1024 bytes), stored as bytes/s. Alert
+  messages state sizes the same way: `KiB`, `MiB`, `GiB`.
 - `network` on **drops/errors**: fires on the **increase** within a window,
   never the absolute counter. Drops that have sat at a high total since last
   month are not an incident; packets being lost right now are. Drops and errors
@@ -255,11 +255,12 @@ end and delete, so "why was this silenced?" stays answerable.
   with a cooldown of 0 the silenced condition stays undelivered until it
   changes. One already delivered before the window gets its next repeat after
   the normal cooldown.
-- **End early** stops it but keeps the record. **Delete** removes it. Neither
-  undoes suppression that already happened.
-- **Finished one-off windows are deleted automatically** 30 days after their
-  scheduled end (also when ended early), including every `auto: <project>
-  deploy` window. Recurring series are kept.
+- **End early** stops it but keeps the record. Neither End nor Delete undoes
+  suppression that already happened.
+- **Windows are history.** Nothing deletes them automatically, including the
+  `auto: <project> deploy` ones. **Delete** works on a window that hasn't
+  started yet or is already over. A running window (or an open recurring
+  series) has to be ended first; the API refuses with `409`.
 - **A closed window can't be edited.** Once ended early or past its end (a
   series: its end date), Edit and End disappear and the API refuses an edit
   with `409`.

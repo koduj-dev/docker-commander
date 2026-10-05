@@ -50,7 +50,6 @@ Set under [Settings → Data retention](settings.md#data-retention).
 | Project revisions | newest 50 per project by default | At least 3, or unlimited. |
 | Purge schedule | first run about 2 minutes after start, then every 24 hours | Deletes in batches of 2 000 rows. |
 | Backup job run history | newest 200 runs per job | Not adjustable. See [Backup jobs](backup-jobs.md). |
-| Finished one-off maintenance windows | **30 days** after they end | Includes the automatic `auto: <project> deploy` windows. Checked hourly. Not adjustable. |
 
 ## Containers and recovery
 

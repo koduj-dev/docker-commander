@@ -80,6 +80,7 @@ every key, and `dockercmd --help` every flag. The key ones:
 | `DC_TRUSTED_PROXIES` | (none) | comma-separated reverse-proxy IPs/CIDRs whose `X-Forwarded-For` is trusted for the real client IP — **set this when behind a proxy** (see below) |
 | `DC_UPDATE_CHECK` | `1` | check GitHub Releases for a newer version (admin banner); set `0` to disable the outbound call |
 | `DC_SELF_UPDATE` | `1` | allow admins to apply an update from the web UI (the one-tap "Update & restart"); set `0` to keep the banner but forbid web-triggered self-replacement |
+| `DC_LOG_FILE` | (stderr) | write the log to this file instead, rotated at 10 MiB with one older copy (`<file>.1`). Under systemd the journal already has it |
 | `DC_PPROF` | (off) | serve Go's `net/http/pprof` on a **dedicated `127.0.0.1:6060`** listener for profiling; off in normal operation |
 | `DC_DEPLOY_SILENCE_GRACE` | `3m` | silence alert delivery for a project this long after a successful deploy; `0` disables — see [Alerts](alerts.md) |
 | `DC_DEV` | (off) | development mode: serves the API only (no embedded UI; run the Vite dev server) and allows cross-origin requests from the dev server. Not for production |
@@ -257,8 +258,8 @@ the log is `dockercmd.log` in that folder (rotated at 10 MiB, one older copy kep
 Task**. It starts at boot (or `-AtLogon`, if Docker Desktop only runs under your
 account) and restarts on failure. By default the task runs as SYSTEM; `-AtLogon`
 runs it as your account instead. Use it if you want to read exactly what gets
-installed. It keeps **no log**: the task's output goes
-nowhere, so use the native service when you need one. Wrapping the exe with
+installed. The task passes `-log-file`, so the log is `dockercmd.log` in the data
+dir, as with the native service. Wrapping the exe with
 [NSSM](https://nssm.cc) or WinSW still works, but is no longer needed for a real
 service.
 

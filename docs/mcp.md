@@ -361,9 +361,9 @@ authorize against it; see the security model below.
 - **Whole-stack calls are charged per container.** `start_stack`/`stop_stack`/
   `restart_stack` spend one unit per container the stack has, resolved before the
   action runs. A 30-container stack costs 30, the same as 30 single calls.
-- **Some calls cost two units.** `deploy_project`, `down_project` and
-  `acknowledge_alert` check the write permission twice (once more against the
-  project's or alert's host), and each check spends a unit.
+- **One change, one unit.** `deploy_project`, `down_project` and
+  `acknowledge_alert` also check the project's or the alert's own host, but that
+  second check spends nothing.
 - **Charging is reserve-or-refuse.** A batch that doesn't fit is refused whole;
   nothing runs and only the call's own unit is spent. A batch larger than the
   burst can never fit, and the refusal says so instead of "wait and retry".
