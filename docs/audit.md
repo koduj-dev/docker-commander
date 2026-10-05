@@ -2,45 +2,81 @@
 
 [← Manual index](README.md)
 
+A record of **changes and security-relevant actions**: who did what, when, from
+where and on which host. For what Docker itself did (a container dying, an image
+pulled by something else), use [Events](events.md).
+
 ![Audit log](images/audit.png)
 
-A record of **privileged actions**: who did what, when, and from where.
+## Common tasks
 
-Each entry has the **user**, an **action** (e.g. `container.stop`, `image.pull`,
-`user.create`, `host.trust`, `settings.update`, and `mcp.*` for AI-tool actions
-such as `mcp.token.create` or `mcp.container.start`), the **target**, an optional
-**detail**, the source **IP**, the **Docker host** the action targeted (0 = the
-local daemon), and a timestamp. The host is recorded because a
-[host-scoped](users.md) action is only meaningful with the *where* alongside the
-*what*.
+**Find who stopped a container.** Search for the container's id: the target is
+the id, not the name, and the first 12 characters are enough. Look for
+`container.stop` or `container.kill`, or `mcp.container.stop` if an AI client did
+it. For the `mcp.container.*` actions the target is whatever the client passed,
+which may be a name or a short id. A container stopped with its stack shows as `stack.stop` or `project.down`,
+with the stack or project as the target.
 
-Read-only views (listing, inspecting, streaming) are not audited — only changes
-and security-relevant operations are, which keeps the log signal-dense.
+**Check a sign-in you don't recognise.** Search for `auth.`. Every completed
+sign-in is an `auth.login`. A run of `auth.2fa.failed` means someone has the
+password but not the second factor: change the password (*Profile → Account*). Treat any
+`auth.passkey.cloned` as serious.
+
+**See who changed the configuration.** Search for `settings.update`,
+`ldap.configure`, `smtp.configure`, `retention.update` or `policy.rules.update`.
+
+**See what happened on one server.** Type the host's name into the search. The
+**Host** column names the server each action reached.
+
+**See what AI clients have done.** Search for `mcp.`. Changes a client makes
+through [MCP](mcp.md) are recorded under that prefix, as are token changes. What
+it only reads is not.
+
+**Keep entries longer.** Entries older than **365 days** are deleted by default.
+Change it in [Settings → Data retention](settings.md#data-retention). The minimum
+is 30 days.
+
+## The page
+
+The newest **1000** entries you may see, newest first, with search and paging.
+Columns are time, user, action, target, **host** and IP. An entry's **detail**
+(how a sign-in happened, which profiles a deploy used…) is shown under its
+target. The search covers user, action, target, detail, host name and IP.
+
+The **Host** column is the Docker host the action reached:
+
+| Shows | Means |
+|---|---|
+| a host name | The action ran on that host. The local daemon is shown by its own name too. |
+| `#id` | A host you can't see, or one deleted since. Its name isn't shown. |
+| `several hosts` | Something spanning more than one host, or all of them: a maintenance window for several hosts, acknowledging all alerts across hosts. |
+| `—` | An action with no host, such as a settings change. Entries from before 1.7.0 also show this for the local daemon. |
+
+Read-only views (listing, inspecting, streaming) are not audited. Only changes and
+security-relevant operations are, which keeps the log useful.
 
 ## Sign-in and second factors
 
-The `auth.*` actions are the ones worth reading when something feels wrong.
+The `auth.*` actions are the ones to read when something feels wrong.
 
 | Action | Means |
 | --- | --- |
 | `auth.setup` | The first admin account was created. Should appear exactly once, on first run. |
 | `auth.login` | A completed sign-in. The detail says how: `password only`, `password + 2fa`, `password + passkey`, or `passkey (passwordless)`. |
-| `auth.login.failed` | A sign-in that got as far as a **valid signature** and was then refused — a passkey that did not verify the user, or an account that has not enabled passwordless sign-in. |
+| `auth.login.failed` | A sign-in that got as far as a **valid signature** and was then refused: a passkey that did not verify the user, or an account that has not enabled passwordless sign-in. |
 | `auth.2fa.failed` | A rejected second factor. |
-| `auth.2fa.enable` / `auth.2fa.repair.denied` | An authenticator paired / a pairing refused for a wrong password. |
-| `auth.2fa.remove` / `auth.2fa.remove.denied` | An authenticator unpaired / an unpairing refused. Removing one needs the password, and the last one cannot be removed at all. |
-| `auth.password.change` / `auth.password.change.denied` | Own password changed from *Profile*, which ends every other session / a change refused for a wrong current password. |
+| `auth.2fa.enable` / `auth.2fa.repair.denied` | An authenticator paired / a pairing refused: a wrong password, or an enrolment started before the account got its current second factor. |
+| `auth.2fa.remove` / `auth.2fa.remove.denied` | An authenticator unpaired / an unpairing refused. Removing one needs the password, and the last one can't be removed at all. |
+| `auth.password.change` / `auth.password.change.denied` | Own password changed from *Profile → Account*, which ends every other session / a change refused for a wrong current password. |
 | `auth.session.revoke` | A signed-in session was ended from *Profile → Security*. |
 | `auth.passkey.add` / `auth.passkey.add.denied` | A passkey paired / refused. |
 | `auth.passwordless` / `auth.passwordless.denied` | Signing in with a passkey alone turned on or off / refused for a wrong password. |
 | `auth.passkey.cloned` | **Read this one.** A passkey's signature counter went backwards, which is what a *copied* credential looks like: the same key answering from two places. The sign-in is refused. One entry can be a quirky authenticator; a pattern is not. |
 
 Failures before a signature verifies are deliberately **not** attributed to an
-account. The user handle a sign-in attempt carries is attacker-chosen until the
-signature is checked, so naming it would let anyone write failed-sign-in lines
+account. Until the signature is checked, the user handle in a sign-in attempt is
+chosen by the client. Naming it would let anyone write failed-sign-in lines
 against a username they guessed.
-
-
 
 ## Every action, by area
 
@@ -96,7 +132,7 @@ in the log.
 
 **Policy rules** — `policy.rules.update`
 
-**Data retention** — `retention.update`, `retention.purge` (a purge is recorded only when it deleted something)
+**Data retention** — `retention.update`, `retention.purge` (a purge is recorded only when it deleted something or failed)
 
 **LDAP** — `ldap.configure`
 
@@ -110,6 +146,22 @@ in the log.
 
 **Backup jobs** — `backup_job.create`, `backup_job.delete`, `backup_job.disable`, `backup_job.enable`, `backup_job.run`, `backup_job.update`
 
-## Tips
-- Use it to answer “who stopped that container?” or “when was this user created?”
-- The most recent ~200 entries are shown.
+### Technical notes
+
+- **Host scope.** A reader whose roles are limited to some hosts sees only
+  entries for those hosts, the local daemon (always in reach) and actions with no
+  host. Entries about **several hosts** are shown only to readers who see every
+  host. The scope is applied in the query, before the 1000-entry limit, so a busy
+  host you can't see never pushes your own entries out. The MCP `recent_audit`
+  tool applies the same scope, narrowed further by the token's own hosts.
+- **How the host is known.** It is the host the action actually reached, with
+  "no host chosen" resolved to the concrete default. A project action names the
+  project's host, a backup job its job's host, a host setting that host. An MCP
+  call aimed at a remote host names it even when it was refused before it got
+  there. Entries written before 1.7.0 recorded the local daemon, project actions
+  and MCP actions without a host; they can't be corrected.
+- **Who can read it.** The audit log is its own section. **Viewer** includes it
+  read-only; **Operator** does not (see [Users & roles](users.md)).
+- **Older entries.** The page loads only the newest 1000. The API,
+  `GET /api/audit`, takes `limit` (up to 1000) and `before` (an entry id) to page
+  further back. Each entry carries `hostId`: `0` for no host, `-1` for several.
