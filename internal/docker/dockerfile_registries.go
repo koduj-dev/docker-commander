@@ -99,6 +99,11 @@ func BuildRegistries(buildContext io.Reader, dockerfile string, buildArgs map[st
 // of them. A hand-rolled line reader took a FROM inside a heredoc for a real
 // one, and sent the daemon a credential for that registry. A file that doesn't
 // parse is an error: no credentials at all.
+//
+// This is BuildKit's only importer. The module brings a large go.mod graph
+// for one parser, so it may be replaced by a smaller one; the table tests here
+// and TestPentestBuildSendsOnlyTheRegistriesItUses define what a replacement
+// must keep. See docs/gotchas.md.
 func dockerfileImageRefs(content string, buildArgs map[string]string) (refs, unresolved []string, err error) {
 	res, err := parser.Parse(strings.NewReader(content))
 	if err != nil {
