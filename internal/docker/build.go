@@ -27,6 +27,12 @@ type BuildOptions struct {
 	Dockerfile string
 	NoCache    bool
 	BuildArgs  map[string]string
+	// Registries are the registry hosts the Dockerfile pulls from (see
+	// BuildRegistries). Only their stored credentials are sent; none at all
+	// when it is empty.
+	Registries []string
+	// Warnings are shown with the build's own warnings, once it is over.
+	Warnings []string
 }
 
 // BuildImage builds an image from a tar (optionally gzip'd) build context,
@@ -49,8 +55,9 @@ func (m *Manager) BuildImage(ctx context.Context, hostID int64, buildContext io.
 	}
 
 	// A private base image (FROM ghcr.io/…) is pulled by the daemon during the
-	// build, with the credentials sent along here. Before, a build had none, so
-	// such a FROM failed even with the registry stored under Registries.
+	// build, with the credentials sent along here. Only the registries the
+	// Dockerfile uses: the daemon receives the whole set in one header, so on a
+	// remote host every other stored credential would have gone to it too.
 	auths, skipped, err := m.store.AllRegistryAuths(ctx)
 	if err != nil {
 		return fmt.Errorf("load registry credentials: %w", err)
@@ -65,7 +72,17 @@ func (m *Manager) BuildImage(ctx context.Context, hostID int64, buildContext io.
 			return
 		}
 		warned = true
+		for _, w := range opts.Warnings {
+			onMsg(BuildMessage{Stream: "Warning: " + w + "\n"})
+		}
+		inUse := map[string]bool{}
+		for _, h := range opts.Registries {
+			inUse[store.NormalizeRegistryHost(h)] = true
+		}
 		for _, addr := range skipped {
+			if !inUse[store.NormalizeRegistryHost(addr)] {
+				continue // a registry this build doesn't use: not its business
+			}
 			onMsg(BuildMessage{Stream: "Warning: the stored credential for " + addr + " could not be decrypted and was not used\n"})
 		}
 	}
@@ -77,7 +94,7 @@ func (m *Manager) BuildImage(ctx context.Context, hostID int64, buildContext io.
 		NoCache:     opts.NoCache,
 		Remove:      true,
 		BuildArgs:   args,
-		AuthConfigs: buildAuthConfigs(auths),
+		AuthConfigs: buildAuthConfigs(auths, opts.Registries),
 	})
 	if err != nil {
 		return err
@@ -106,12 +123,20 @@ func (m *Manager) BuildImage(ctx context.Context, hostID int64, buildContext io.
 
 // buildAuthConfigs keys stored credentials the way the daemon looks them up for
 // a build: Docker Hub under its index URL, every other registry by its host.
-// auths come oldest first, and the oldest entry for a registry wins, as for
-// pulls (AuthForHost) and deploys (ComposeRegistryEnv).
-func buildAuthConfigs(auths []store.RegistryAuth) map[string]registry.AuthConfig {
-	out := make(map[string]registry.AuthConfig, len(auths))
+// Only the registries in use are included. auths come oldest first, and the
+// oldest entry for a registry wins, as for pulls (AuthForHost) and deploys
+// (ComposeRegistryEnv).
+func buildAuthConfigs(auths []store.RegistryAuth, inUse []string) map[string]registry.AuthConfig {
+	want := make(map[string]bool, len(inUse))
+	for _, h := range inUse {
+		want[store.NormalizeRegistryHost(h)] = true
+	}
+	out := make(map[string]registry.AuthConfig, len(inUse))
 	for _, a := range auths {
 		host := store.NormalizeRegistryHost(a.Address)
+		if !want[host] {
+			continue
+		}
 		key := host
 		if host == "docker.io" {
 			key = dockerHubConfigKey

@@ -36,6 +36,17 @@ every guard and the fixture traps that come with a real Docker daemon.
 
 ## Docker behaviour
 
+- **Reading a Dockerfile line by line gets it wrong.** A `# escape=` directive
+  changes the line-continuation character, and a heredoc body
+  (`COPY <<EOF … EOF`) can contain a line that looks exactly like `FROM`. A
+  hand-rolled reader that picks the registries a build needs missed both and
+  sent the build's daemon a credential it had no use for. `BuildRegistries`
+  therefore uses BuildKit's own parser (`moby/buildkit/frontend/dockerfile/parser`),
+  the one dependency in the tree that's there for one function. It is the only
+  importer, so it can be swapped for a smaller parser later: the table tests in
+  `dockerfile_registries_test.go` and the header pentest in
+  `build_auth_pentest_test.go` define the behaviour a replacement must keep.
+
 - **`docker stats` CPU is per-core: 100% is one core.** A container busy on four
   cores reads ~400%, so any fixed threshold or dashboard built on it is wrong on a
   multi-core host unless divided by the core count. The engine exposes the count
