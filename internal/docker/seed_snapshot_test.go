@@ -197,4 +197,18 @@ func TestSeedSnapshotIsBounded_Integration(t *testing.T) {
 	if left, _ := os.ReadDir(tmp); len(left) != 0 {
 		t.Errorf("the refused snapshot left %d entries on the local disk", len(left))
 	}
+	// Nor a helper on the host, still mounting the volume.
+	cli, err := m.Client(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := cli.ContainerList(ctx, client.ContainerListOptions{
+		All: true, Filters: make(client.Filters).Add("label", volfsLabel+"="+SeedVolumeName(slug, b.Rel)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 0 {
+		t.Errorf("the refused snapshot left %d helper(s) running on the host", len(list.Items))
+	}
 }

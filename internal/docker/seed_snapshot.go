@@ -56,6 +56,15 @@ func (m *Manager) SnapshotSeedVolumes(ctx context.Context, hostID int64, slug st
 	s := &SeedSnapshot{m: m, hostID: hostID, dir: dir}
 	budget := maxSeedSnapshotBytes
 	seen := map[string]bool{}
+	// Reading a volume starts a helper that keeps it mounted. Close them on
+	// every way out, a refused or failed snapshot included: nothing else would
+	// on a remote host until the next volume browse there.
+	var opened []string
+	defer func() {
+		for _, name := range opened {
+			m.CloseVolumeBrowser(context.WithoutCancel(ctx), hostID, name)
+		}
+	}()
 	for _, b := range binds {
 		name := SeedVolumeName(slug, b.Rel)
 		if seen[name] {
@@ -71,6 +80,7 @@ func (m *Manager) SnapshotSeedVolumes(ctx context.Context, hostID int64, slug st
 			return nil, fmt.Errorf("inspect seed volume %s: %w", name, err)
 		}
 		v := snapVolume{name: name, existed: true, tar: filepath.Join(dir, fmt.Sprintf("%d.tar", len(s.vols)))}
+		opened = append(opened, name)
 		if err := m.saveVolume(ctx, hostID, name, v.tar, &budget); err != nil {
 			s.Discard(ctx)
 			return nil, fmt.Errorf("snapshot seed volume %s: %w", name, err)
