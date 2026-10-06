@@ -390,6 +390,11 @@ All notable changes to Docker Commander are documented here. The format follows
   refused before anything changes) and restored on any failure, owners
   included. A seed that failed part-way also left its helper containers
   running, which kept a new volume mounted so it couldn't be removed.
+- **A project runs one operation at a time.** A restore swaps the project folder
+  and deletes the old one, so an editor save made while it ran answered OK and
+  was then lost. Deploy, down, restart, restore, file writes, uploads, deletes,
+  settings and deleting the project now take the project in turn; the second
+  one is refused with `409` and told what is running.
 - **A revision restore that trips a Warn-mode policy rule can be confirmed.** The
   deploy-history dialog never sent the confirmation, so such a restore was
   refused with no way past it in the UI. It now asks, like a deploy does.
