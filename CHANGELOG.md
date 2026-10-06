@@ -4,7 +4,7 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
-## [1.7.0] — 2026-09-21
+## [1.7.0] — 2026-10-06
 
 ### Security
 - **A port scan stays with the account that ran it.** The dashboard kept the last
