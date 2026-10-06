@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/go-chi/chi/v5"
 
@@ -326,20 +325,6 @@ func buildDigestPinOverride(images []store.RevisionImage) string {
 	return b.String()
 }
 
-// restoreLocks serializes concurrent restores of the same project (reject,
-// not queue — mirrors update_handlers.go's applyMu/TryLock precedent for
-// "don't let two of this specific operation race on the same target"). It
-// does not serialize restore against other project-mutating operations
-// (deploy, editor save, delete) — those already have no such guard anywhere
-// in this package, and adding one for all of them is a materially larger
-// change than this fix; noted as a known gap, not attempted here.
-var restoreLocks sync.Map // map[int64]*sync.Mutex
-
-func projectRestoreLock(projectID int64) *sync.Mutex {
-	v, _ := restoreLocks.LoadOrStore(projectID, &sync.Mutex{})
-	return v.(*sync.Mutex)
-}
-
 // handleRestoreRevision rolls a project back to an earlier revision. Every
 // validation — the snapshot still resolving as compose, the digest-pin
 // override, policy — runs against a sibling staging copy of the project
@@ -360,12 +345,17 @@ func (s *Server) handleRestoreRevision(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !docker.ComposeAvailable(r.Context()) {
-		writeErr(w, http.StatusPreconditionFailed, "the `docker compose` CLI is not available on the host running Docker Commander")
-		return
-	}
 	if err := s.requireHostAccess(r, p.HostID); err != nil {
 		writeErr(w, http.StatusForbidden, err.Error())
+		return
+	}
+	release, ok := projectOpOrConflict(w, p.ID, "a restore")
+	if !ok {
+		return
+	}
+	defer release()
+	if !docker.ComposeAvailable(r.Context()) {
+		writeErr(w, http.StatusPreconditionFailed, "the `docker compose` CLI is not available on the host running Docker Commander")
 		return
 	}
 	n, err := revisionNumber(r)
@@ -405,13 +395,6 @@ func (s *Server) handleRestoreRevision(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	lock := projectRestoreLock(p.ID)
-	if !lock.TryLock() {
-		writeErr(w, http.StatusConflict, "a restore is already in progress for this project")
-		return
-	}
-	defer lock.Unlock()
 
 	root := s.projectRoot(p.ID)
 	staging := root + ".restore-staging"

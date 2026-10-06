@@ -337,6 +337,11 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	release, ok := projectOpOrConflict(w, p.ID, "deleting the project")
+	if !ok {
+		return
+	}
+	defer release()
 	force := r.URL.Query().Get("force") == "1"
 
 	if s.projectDeployed(r, p.Slug, p.HostID) {
@@ -505,6 +510,11 @@ func (s *Server) handleWriteProjectFile(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	release, ok := projectOpOrConflict(w, p.ID, "a file save")
+	if !ok {
+		return
+	}
+	defer release()
 	var body struct {
 		Name    string `json:"name"`
 		Content string `json:"content"`
@@ -551,6 +561,11 @@ func (s *Server) handleUploadProjectFileRaw(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
+	release, ok := projectOpOrConflict(w, p.ID, "an upload")
+	if !ok {
+		return
+	}
+	defer release()
 	root := s.projectRoot(p.ID)
 	name := r.URL.Query().Get("path")
 	full, err := safeJoin(root, name)
@@ -635,6 +650,11 @@ func (s *Server) handleDeleteProjectFile(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	release, ok := projectOpOrConflict(w, p.ID, "a file delete")
+	if !ok {
+		return
+	}
+	defer release()
 	full, err := safeJoin(s.projectRoot(p.ID), r.URL.Query().Get("path"))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -655,6 +675,11 @@ func (s *Server) handleMakeProjectDir(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	release, ok := projectOpOrConflict(w, p.ID, "a new folder")
+	if !ok {
+		return
+	}
+	defer release()
 	var body struct {
 		Name string `json:"name"`
 	}
@@ -682,6 +707,11 @@ func (s *Server) handleRenameProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	release, ok := projectOpOrConflict(w, p.ID, "a settings change")
+	if !ok {
+		return
+	}
+	defer release()
 	var body struct {
 		Name                 string `json:"name"`
 		HostID               int64  `json:"hostId"`
@@ -834,6 +864,11 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	release, ok := projectOpOrConflict(w, p.ID, "a deploy")
+	if !ok {
+		return
+	}
+	defer release()
 	if !docker.ComposeAvailable(r.Context()) {
 		writeErr(w, http.StatusPreconditionFailed, "the `docker compose` CLI is not available on the host running Docker Commander")
 		return
@@ -1315,6 +1350,11 @@ func (s *Server) runProjectCompose(w http.ResponseWriter, r *http.Request, fn fu
 	if !ok {
 		return
 	}
+	release, ok := projectOpOrConflict(w, p.ID, "a "+action)
+	if !ok {
+		return
+	}
+	defer release()
 	if !docker.ComposeAvailable(r.Context()) {
 		writeErr(w, http.StatusPreconditionFailed, "the `docker compose` CLI is not available on the host running Docker Commander")
 		return

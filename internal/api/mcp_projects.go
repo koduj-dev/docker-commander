@@ -59,6 +59,11 @@ func (s *Server) mcpDeployProject(ctx context.Context, id int64, profiles []stri
 	if err != nil {
 		return "", err
 	}
+	release, busy := beginProjectOp(p.ID, "a deploy")
+	if release == nil {
+		return "", errProjectBusy(busy)
+	}
+	defer release()
 	dir := s.projectRoot(p.ID)
 	// Normalized before projectDeployEnv, NOT after — bind classification
 	// below must resolve against exactly the profiles this deploy activates,
@@ -127,6 +132,11 @@ func (s *Server) mcpDownProject(ctx context.Context, id int64) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	release, busy := beginProjectOp(p.ID, "a down")
+	if release == nil {
+		return "", errProjectBusy(busy)
+	}
+	defer release()
 	dir := s.projectRoot(p.ID)
 	env, cleanup, err := s.projectComposeEnv(ctx, p, dir)
 	if err != nil {
