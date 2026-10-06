@@ -239,8 +239,18 @@ func (m *Manager) SeedProjectBinds(ctx context.Context, hostID int64, projectDir
 	if err != nil {
 		return err
 	}
+	// The helpers that copied the files in are removed on every way out, a
+	// failure part-way included: one left running keeps its volume mounted, so
+	// a rollback could not remove a volume this seed created.
+	var touched []string
+	defer func() {
+		for _, name := range touched {
+			m.CloseVolumeBrowser(context.WithoutCancel(ctx), hostID, name)
+		}
+	}()
 	for _, b := range binds {
 		name := SeedVolumeName(slug, b.Rel)
+		touched = append(touched, name)
 		if _, err := cli.VolumeCreate(ctx, client.VolumeCreateOptions{
 			Name: name,
 			Labels: map[string]string{
@@ -257,13 +267,6 @@ func (m *Manager) SeedProjectBinds(ctx context.Context, hostID int64, projectDir
 		}
 		if err := m.VolumeCopyTo(ctx, hostID, name, "/", tarball); err != nil {
 			return fmt.Errorf("seed volume for %s: %w", b.Rel, err)
-		}
-	}
-	if len(binds) > 0 {
-		// The helpers have served their purpose; leaving them running would show
-		// up as stray containers on the remote host until the TTL reaps them.
-		for _, b := range binds {
-			m.CloseVolumeBrowser(ctx, hostID, SeedVolumeName(slug, b.Rel))
 		}
 	}
 	return nil

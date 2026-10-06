@@ -12,6 +12,13 @@ import (
 	"github.com/moby/moby/client"
 )
 
+// maxSeedSnapshotBytes bounds what one restore saves of the seed volumes on the
+// Docker Commander machine, all volumes together. The containers write into
+// these volumes at runtime, so their size isn't bounded by the project's files,
+// and saving them without a limit could fill the disk Docker Commander itself
+// runs on. A var so a test can lower it.
+var maxSeedSnapshotBytes int64 = 2 << 30
+
 // SeedSnapshot is what a project's seed volumes held before they were reseeded,
 // kept on the Docker Commander machine so a restore that fails afterwards can
 // put it back.
@@ -47,6 +54,7 @@ func (m *Manager) SnapshotSeedVolumes(ctx context.Context, hostID int64, slug st
 		return nil, err
 	}
 	s := &SeedSnapshot{m: m, hostID: hostID, dir: dir}
+	budget := maxSeedSnapshotBytes
 	seen := map[string]bool{}
 	for _, b := range binds {
 		name := SeedVolumeName(slug, b.Rel)
@@ -63,7 +71,7 @@ func (m *Manager) SnapshotSeedVolumes(ctx context.Context, hostID int64, slug st
 			return nil, fmt.Errorf("inspect seed volume %s: %w", name, err)
 		}
 		v := snapVolume{name: name, existed: true, tar: filepath.Join(dir, fmt.Sprintf("%d.tar", len(s.vols)))}
-		if err := m.saveVolume(ctx, hostID, name, v.tar); err != nil {
+		if err := m.saveVolume(ctx, hostID, name, v.tar, &budget); err != nil {
 			s.Discard(ctx)
 			return nil, fmt.Errorf("snapshot seed volume %s: %w", name, err)
 		}
@@ -72,8 +80,10 @@ func (m *Manager) SnapshotSeedVolumes(ctx context.Context, hostID int64, slug st
 	return s, nil
 }
 
-// saveVolume writes the whole of a volume, as one TAR, to path.
-func (m *Manager) saveVolume(ctx context.Context, hostID int64, volume, path string) error {
+// saveVolume writes the whole of a volume, as one TAR, to path, spending budget.
+// It stops as soon as the budget is spent, so an oversized volume costs at most
+// the budget on disk, and only until Discard.
+func (m *Manager) saveVolume(ctx context.Context, hostID int64, volume, path string, budget *int64) error {
 	rc, _, err := m.VolumeCopyFrom(ctx, hostID, volume, "/")
 	if err != nil {
 		return err
@@ -83,10 +93,16 @@ func (m *Manager) saveVolume(ctx context.Context, hostID int64, volume, path str
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(f, rc); err != nil {
+	n, err := io.Copy(f, io.LimitReader(rc, *budget+1))
+	if err != nil {
 		_ = f.Close()
 		return err
 	}
+	if n > *budget {
+		_ = f.Close()
+		return fmt.Errorf("the seed volumes hold more than %d MiB, which is as much as a restore saves before changing them", maxSeedSnapshotBytes>>20)
+	}
+	*budget -= n
 	return f.Close()
 }
 
@@ -98,6 +114,10 @@ func (s *SeedSnapshot) Restore(ctx context.Context) error {
 	cli, err := s.m.Client(ctx, s.hostID)
 	if err != nil {
 		return err
+	}
+	// No helper may still have a volume mounted, or removing one fails "in use".
+	for _, v := range s.vols {
+		s.m.CloseVolumeBrowser(ctx, s.hostID, v.name)
 	}
 	var errs []error
 	for _, v := range s.vols {

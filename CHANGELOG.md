@@ -386,7 +386,10 @@ All notable changes to Docker Commander are documented here. The format follows
   copied the revision's files into the volumes the running containers mount and
   then deployed; if anything after that failed, only the project folder was
   rolled back, and the containers kept reading the older revision's files. The
-  volumes are now saved first and restored on any failure, owners included.
+  volumes are now saved first (up to 2 GiB in all; over it the restore is
+  refused before anything changes) and restored on any failure, owners
+  included. A seed that failed part-way also left its helper containers
+  running, which kept a new volume mounted so it couldn't be removed.
 - **A revision restore that trips a Warn-mode policy rule can be confirmed.** The
   deploy-history dialog never sent the confirmation, so such a restore was
   refused with no way past it in the UI. It now asks, like a deploy does.
