@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -955,5 +957,110 @@ func TestRestoreRevision_PolicyWarnNeedsAndTakesConfirmation(t *testing.T) {
 	got, _ = os.ReadFile(filepath.Join(srv.projectRoot(pid), "compose.yml"))
 	if string(got) != composeV1 {
 		t.Errorf("confirmed restore did not put revision 1 back:\n%s", got)
+	}
+}
+
+// A remote restore seeds the revision's files into the volumes the running
+// containers mount, then deploys. If that deploy fails, the volumes must hold
+// what they did before, not the revision's files: the project folder was
+// already put back, and the volumes used to be left on the older revision.
+//
+// The "remote" host is a tcp host pointing at the local socket, which takes
+// the remote path (seeded volumes) against the local daemon. The deploy is
+// made to fail by holding the port revision 1 publishes.
+func TestRestoreRevision_RemoteFailurePutsVolumesBack(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	ctx := context.Background()
+	if !docker.ComposeAvailable(ctx) {
+		t.Skip("docker compose CLI not available")
+	}
+	const sock = "/var/run/docker.sock"
+	if _, err := os.Stat(sock); err != nil {
+		t.Skip("needs the local Docker socket at " + sock)
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	_ = l.Close()
+
+	const slug = "dctest-restore-remote-volumes"
+	composeV1 := fmt.Sprintf("services:\n  web:\n    image: %s\n    command: [\"sleep\", \"300\"]\n    ports: [\"127.0.0.1:%d:8080\"]\n    volumes: [\"./html:/srv/html\"]\n", deployTestImage, port)
+	composeV2 := fmt.Sprintf("services:\n  web:\n    image: %s\n    command: [\"sleep\", \"300\"]\n    volumes: [\"./html:/srv/html\"]\n", deployTestImage)
+	srv, st, pid, admin := deployTestServer(t, slug, composeV1)
+	hostID, err := st.CreateHost(ctx, &store.Host{Name: "loop", Kind: "tcp", Address: "unix://" + sock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateProjectSettings(ctx, pid, "app", hostID, false); err != nil {
+		t.Fatal(err)
+	}
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		freeDeployStack(slug)
+		_, _ = srv.docker.RemoveSeedVolumes(bg, hostID, slug)
+	})
+
+	root := srv.projectRoot(pid)
+	writeHTML := func(content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(root, "html"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "html", "index.html"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	volumeIndex := func() string {
+		t.Helper()
+		vol := docker.SeedVolumeName(slug, "html")
+		out, err := exec.Command("docker", "run", "--rm", "-v", vol+":/d:ro", deployTestImage, "cat", "/d/index.html").CombinedOutput()
+		if err != nil {
+			t.Fatalf("read %s: %v %s", vol, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	writeHTML("v1")
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+	if err := os.WriteFile(filepath.Join(root, "compose.yml"), []byte(composeV2), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeHTML("v2")
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+	if got := volumeIndex(); got != "v2" {
+		t.Fatalf("after deploying v2 the volume holds %q, so this test proves nothing", got)
+	}
+
+	// Revision 1 publishes the port; hold it so its deploy fails after the seed.
+	hold, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		t.Skipf("port %d was taken in the meantime: %v", port, err)
+	}
+	defer hold.Close()
+
+	w := restoreRevisionRequest(srv, pid, 1, admin, "admin", `{}`)
+	var resp struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("restore: %d %s", w.Code, w.Body.String())
+	}
+	if resp.OK {
+		t.Fatal("the restore succeeded although its port was held, so this test proves nothing")
+	}
+	if !strings.Contains(resp.Error, "were put back") {
+		t.Errorf("the failure should say the volumes were put back: %q", resp.Error)
+	}
+	if got := volumeIndex(); got != "v2" {
+		t.Errorf("after the failed restore the volume holds %q, want v2 as before", got)
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, "html", "index.html")); string(got) != "v2" {
+		t.Errorf("after the failed restore the project folder holds %q, want v2", got)
 	}
 }

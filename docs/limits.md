@@ -23,6 +23,7 @@ in advance, and whether the number can be changed.
 | Limit | Value | Notes |
 | --- | --- | --- |
 | Ordinary request body | **1 MiB** | Everything except the streaming routes below. |
+| Seed volumes saved before a remote restore | **2 GiB** in all | Kept on the Docker Commander machine until the restore ends. Over it, the restore is refused before anything changes. |
 | File upload into a container or volume, or an image build context | **2 GiB** | Written to a temporary file that is unlinked at once, so it costs no memory. |
 | Archive uploaded for **Extract** | **4 GiB** compressed | |
 | Uploaded archive, after decompression | **512 MiB** | Protects against a zip or gzip bomb. |
