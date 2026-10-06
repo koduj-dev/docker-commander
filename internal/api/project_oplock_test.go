@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -121,5 +122,39 @@ func TestBeginProjectOpIsPerProject(t *testing.T) {
 		t.Error("released project still refused")
 	} else {
 		r()
+	}
+}
+
+// A stack's start/stop/restart/remove act on the containers of the project that
+// deploys it, so while that project is busy they are refused too. A stack no
+// project owns is not held up.
+func TestStackActionsWaitForTheProjectThatOwnsTheStack(t *testing.T) {
+	srv, st, pid, admin := deployTestServer(t, "oplock-stack", "services:\n  web:\n    image: alpine\n")
+	if err := st.EnsureLocalHost(context.Background()); err != nil { // as every real install has
+		t.Fatal(err)
+	}
+	release, _ := beginProjectOp(pid, "a restore")
+	defer release()
+
+	stackAction := func(stack string) (int, string) {
+		r := httptest.NewRequest("POST", "/x", nil).WithContext(ctxAs(admin, "admin"))
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("project", stack)
+		rctx.URLParams.Add("action", "restart")
+		r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+		w := httptest.NewRecorder()
+		srv.handleStackAction(w, r)
+		return w.Code, w.Body.String()
+	}
+	if code, body := stackAction("oplock-stack"); code != http.StatusConflict || !strings.Contains(body, "busy") {
+		t.Errorf("SECURITY: restarting a busy project's stack → %d %s, want 409 busy", code, body)
+	}
+	if code, body := stackAction("someone-elses-stack"); code == http.StatusConflict {
+		t.Errorf("a stack no project owns was held up: %s", body)
+	}
+
+	// The same claim is what the MCP stack tools get through Deps.BeginStackOp.
+	if _, err := srv.beginStackOp(context.Background(), 0, "oplock-stack", "a stack stop"); !errors.Is(err, errBusy) {
+		t.Errorf("beginStackOp on a busy project's stack: %v, want busy", err)
 	}
 }

@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -41,9 +43,32 @@ func beginProjectOp(projectID int64, what string) (release func(), busy string) 
 	}, ""
 }
 
+// errBusy marks the refusal of an operation that found its project busy.
+var errBusy = errors.New("this project is busy")
+
 // errProjectBusy is the refusal for an operation that found the project busy.
 func errProjectBusy(busy string) error {
-	return fmt.Errorf("this project is busy (%s is running); try again when it finishes", busy)
+	return fmt.Errorf("%w (%s is running); try again when it finishes", errBusy, busy)
+}
+
+// beginStackOp claims the project that deploys a stack, when one does: a
+// stack's start/stop/restart/remove act on that project's containers, so they
+// wait their turn like the project's own operations. A stack no project owns
+// needs nothing and gets a no-op release. Not being able to tell is a refusal,
+// not a pass.
+func (s *Server) beginStackOp(ctx context.Context, hostID int64, stack, what string) (release func(), err error) {
+	p, err := s.stackProject(ctx, hostID, stack)
+	if err != nil {
+		return nil, fmt.Errorf("could not check whether a project owns this stack: %w", err)
+	}
+	if p == nil {
+		return func() {}, nil
+	}
+	release, busy := beginProjectOp(p.ID, what)
+	if release == nil {
+		return nil, errProjectBusy(busy)
+	}
+	return release, nil
 }
 
 // projectOpOrConflict is beginProjectOp for a handler: it answers 409 itself

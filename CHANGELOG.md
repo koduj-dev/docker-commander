@@ -394,7 +394,9 @@ All notable changes to Docker Commander are documented here. The format follows
   and deletes the old one, so an editor save made while it ran answered OK and
   was then lost. Deploy, down, restart, restore, file writes, uploads, deletes,
   settings and deleting the project now take the project in turn; the second
-  one is refused with `409` and told what is running.
+  one is refused with `409` and told what is running. Stack actions on a
+  project's stack (start, stop, restart, remove, in Stacks or over MCP) wait
+  their turn the same way.
 - **A revision restore that trips a Warn-mode policy rule can be confirmed.** The
   deploy-history dialog never sent the confirmation, so such a restore was
   refused with no way past it in the UI. It now asks, like a deploy does.

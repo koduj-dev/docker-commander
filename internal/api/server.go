@@ -451,6 +451,7 @@ func (s *Server) mountMCP(r chi.Router) {
 		ListProjects:   s.mcpListProjects,
 		DeployProject:  s.mcpDeployProject,
 		DownProject:    s.mcpDownProject,
+		BeginStackOp:   s.beginStackOp,
 		PreviewProject: s.mcpPreviewProject,
 	}
 	// OAuth (for interactive clients like Claude Desktop) needs a public URL for

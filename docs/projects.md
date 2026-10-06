@@ -199,7 +199,9 @@ Restarting the containers without re-applying files is done on
 runs, anything else that changes it (saving or uploading a file, deleting one,
 a new folder, Settings, another deploy, deleting the project) is refused with
 "this project is busy (… is running)". Try again when it finishes; nothing was
-changed. The same holds for the AI tools' deploy and down.
+changed. The same holds for the AI tools' deploy and down, and for starting,
+stopping, restarting or removing the project's stack in [Stacks](stacks.md) or
+through the AI tools.
 
 **Drift.** In Preview, a change you have reviewed can be marked **Ignore**. It
 stops counting as drift but stays visible, and **Unignore** reverses it. The

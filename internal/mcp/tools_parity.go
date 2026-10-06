@@ -106,6 +106,14 @@ type stackActionOut struct {
 	Action  string `json:"action"`
 }
 
+// beginStackOp is Deps.BeginStackOp, or nothing to claim when it isn't wired.
+func (h *handler) beginStackOp(ctx context.Context, hostID int64, stack, what string) (func(), error) {
+	if h.deps.BeginStackOp == nil {
+		return func() {}, nil
+	}
+	return h.deps.BeginStackOp(ctx, hostID, stack, what)
+}
+
 // stackActionTool builds the handler for one lifecycle verb.
 //
 // Deliberately only start/stop/restart. StackAction also implements "remove",
@@ -121,6 +129,11 @@ func (h *handler) stackActionTool(action string) func(context.Context, *mcpsdk.C
 		if strings.TrimSpace(in.Project) == "" {
 			return nil, stackActionOut{}, errors.New("project is required")
 		}
+		release, err := h.beginStackOp(ctx, in.HostID, in.Project, "a stack "+action)
+		if err != nil {
+			return nil, stackActionOut{}, err
+		}
+		defer release()
 		ids, err := h.deps.Docker.StackContainerIDs(ctx, in.HostID, in.Project)
 		if err != nil {
 			return nil, stackActionOut{}, err
@@ -276,6 +289,11 @@ func (h *handler) stackContainersActionTool(action string) func(context.Context,
 		if err := validateStackContainerIDs(in.ContainerIDs); err != nil {
 			return nil, stackContainersActionOut{}, err
 		}
+		release, err := h.beginStackOp(ctx, in.HostID, in.Project, "a stack "+action)
+		if err != nil {
+			return nil, stackContainersActionOut{}, err
+		}
+		defer release()
 		if dup := docker.FirstDuplicateID(in.ContainerIDs); dup != "" {
 			// Checked here, before any limiter budget beyond authorize()'s own 1
 			// unit is spent, and before BulkStackContainerAction (which applies

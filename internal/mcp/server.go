@@ -94,6 +94,11 @@ type Deps struct {
 	ListProjects  func(ctx context.Context) ([]ManagedProject, error)
 	DeployProject func(ctx context.Context, id int64, profiles []string, confirmPolicyWarnings bool) (string, error)
 	DownProject   func(ctx context.Context, id int64) (string, error)
+	// BeginStackOp claims the managed project that deploys a stack, if one
+	// does, so a stack action waits its turn like the project's own deploy or
+	// restore. Returns the release, or an error when the project is busy (or
+	// it can't be told). nil means no projects are managed: nothing to claim.
+	BeginStackOp func(ctx context.Context, hostID int64, stack, what string) (release func(), err error)
 	// PreviewProject reports what a deploy would change, without deploying.
 	PreviewProject func(ctx context.Context, id int64) (ProjectPreview, error)
 
