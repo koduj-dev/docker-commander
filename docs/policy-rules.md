@@ -62,9 +62,9 @@ until it passes. On a restore no project files are replaced.
 ## Where the rules apply
 - **Deploy** from the UI or the REST API.
 - **Restoring a revision** from the deploy history. Files are checked in a
-  staging copy first, so a refused restore leaves the project unchanged. The
-  dialog has no "restore anyway" step, so under **Warn** a restore that triggers
-  a rule is refused. The REST API accepts `confirmPolicyWarnings` to go ahead.
+  staging copy first, so a refused restore leaves the project unchanged. Under
+  **Warn** the dialog lists the rules and asks first, like a deploy (**Restore
+  anyway**). The REST API takes `confirmPolicyWarnings`.
 - **MCP**, the `deploy_project` tool. **Block** refuses. **Warn** refuses once,
   asking to retry with `confirm_policy_warnings=true`. See [MCP](mcp.md).
 

@@ -893,3 +893,67 @@ func TestRestoreRevision_DigestPinOverrideFailureIsFatal(t *testing.T) {
 		t.Error("a restore that fails while preparing the digest pin override must leave the live project untouched")
 	}
 }
+
+// A restore that trips a warn-mode rule asks for confirmation, and goes ahead
+// once it is given. The UI used to have no way to give it, so the API side of
+// the exchange is pinned here alongside the dialog's own test.
+func TestRestoreRevision_PolicyWarnNeedsAndTakesConfirmation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	const slug = "dctest-restore-policy-warn"
+	composeV1 := "services:\n  web:\n    image: " + deployTestImage + "\n    command: [\"sleep\", \"300\"]\n    privileged: true\n"
+	srv, st, pid, admin := deployTestServer(t, slug, composeV1)
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = docker.ComposeDown(bg, srv.projectRoot(pid), slug, nil)
+		freeDeployStack(slug)
+	})
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+	composeV2 := "services:\n  web:\n    image: " + deployTestImage + "\n    command: [\"sleep\", \"300\"]\n"
+	if err := os.WriteFile(filepath.Join(srv.projectRoot(pid), "compose.yml"), []byte(composeV2), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+	if err := st.SetPolicyRuleModes(context.Background(), map[string]string{"privileged": "warn"}); err != nil {
+		t.Fatal(err)
+	}
+
+	type restoreResp struct {
+		OK                bool `json:"ok"`
+		NeedsConfirmation bool `json:"needsConfirmation"`
+		Policy            struct {
+			Warnings []docker.PolicyViolation `json:"warnings"`
+		} `json:"policy"`
+	}
+	decode := func(body []byte) restoreResp {
+		t.Helper()
+		var r restoreResp
+		if err := json.Unmarshal(body, &r); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+
+	first := decode(restoreRevisionRequest(srv, pid, 1, admin, "admin", `{}`).Body.Bytes())
+	if first.OK || !first.NeedsConfirmation || len(first.Policy.Warnings) != 1 {
+		t.Fatalf("unconfirmed restore under a warn rule: %+v, want refused with one warning to confirm", first)
+	}
+	got, _ := os.ReadFile(filepath.Join(srv.projectRoot(pid), "compose.yml"))
+	if string(got) != composeV2 {
+		t.Fatal("an unconfirmed restore changed the project's files")
+	}
+
+	second := decode(restoreRevisionRequest(srv, pid, 1, admin, "admin", `{"confirmPolicyWarnings":true}`).Body.Bytes())
+	if !second.OK {
+		t.Fatalf("confirmed restore refused: %+v", second)
+	}
+	got, _ = os.ReadFile(filepath.Join(srv.projectRoot(pid), "compose.yml"))
+	if string(got) != composeV1 {
+		t.Errorf("confirmed restore did not put revision 1 back:\n%s", got)
+	}
+}

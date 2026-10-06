@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { deployProjectWithPolicyGate } from "./deployPolicy";
+import { deployProjectWithPolicyGate, restoreRevisionWithPolicyGate } from "./deployPolicy";
 
 const deployProject = vi.hoisted(() => vi.fn());
-vi.mock("./api", () => ({ api: { deployProject } }));
+const restoreRevision = vi.hoisted(() => vi.fn());
+vi.mock("./api", () => ({ api: { deployProject, restoreRevision } }));
 
 const confirm = vi.fn();
 const alert = vi.fn();
@@ -10,6 +11,7 @@ const dialogs = { confirm, alert };
 
 beforeEach(() => {
   deployProject.mockReset();
+  restoreRevision.mockReset();
   confirm.mockReset();
   alert.mockReset();
 });
@@ -65,5 +67,52 @@ describe("deployProjectWithPolicyGate", () => {
     expect(confirm).not.toHaveBeenCalled();
     expect(deployProject).toHaveBeenCalledTimes(1);
     expect(r.ok).toBe(false);
+  });
+});
+
+// A restore redeploys, so it passes the same policy check. Its dialog used to
+// call the API once and show the refusal: a warn-mode rule could never be
+// confirmed, so such a restore was impossible from the UI.
+describe("restoreRevisionWithPolicyGate", () => {
+  const warned = { ok: false, needsConfirmation: true, policy: { warnings: [{ rule: "latest_tag", service: "web", mode: "warn", detail: "unpinned" }] } };
+
+  it("asks first without confirming anything", async () => {
+    restoreRevision.mockResolvedValue({ ok: true, output: "restored" });
+    const r = await restoreRevisionWithPolicyGate(3, 7, dialogs);
+    expect(restoreRevision).toHaveBeenCalledWith(3, 7, undefined, false);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(r.ok).toBe(true);
+  });
+
+  it("on a warn-mode violation, confirming restores with the warnings confirmed", async () => {
+    restoreRevision.mockResolvedValueOnce(warned).mockResolvedValueOnce({ ok: true, output: "restored" });
+    confirm.mockResolvedValue(true);
+
+    const r = await restoreRevisionWithPolicyGate(3, 7, dialogs);
+
+    expect(confirm.mock.calls[0][0].title).toBe("Restore has policy warnings");
+    expect(restoreRevision).toHaveBeenNthCalledWith(2, 3, 7, undefined, true);
+    expect(r).toEqual({ ok: true, output: "restored" });
+  });
+
+  it("on a warn-mode violation, declining restores nothing", async () => {
+    restoreRevision.mockResolvedValueOnce(warned);
+    confirm.mockResolvedValue(false);
+
+    const r = await restoreRevisionWithPolicyGate(3, 7, dialogs);
+
+    expect(restoreRevision).toHaveBeenCalledTimes(1);
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/Restore cancelled/);
+  });
+
+  it("on a block-mode violation, alerts and never retries", async () => {
+    restoreRevision.mockResolvedValue({ ok: false, policy: { blocked: [{ rule: "privileged", service: "web", mode: "block", detail: "privileged" }] } });
+
+    const r = await restoreRevisionWithPolicyGate(3, 7, dialogs);
+
+    expect(alert).toHaveBeenCalledTimes(1);
+    expect(restoreRevision).toHaveBeenCalledTimes(1);
+    expect(r.error).toMatch(/Restore blocked/);
   });
 });

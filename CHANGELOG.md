@@ -382,6 +382,9 @@ All notable changes to Docker Commander are documented here. The format follows
   on Windows) rather than just failing.
 
 ### Fixed
+- **A revision restore that trips a Warn-mode policy rule can be confirmed.** The
+  deploy-history dialog never sent the confirmation, so such a restore was
+  refused with no way past it in the UI. It now asks, like a deploy does.
 - **Download buttons follow write access.** Export, file and folder downloads and
   image **Save** need write access since this release, and a refused download
   opened a bare error page. They are now shown only to accounts that may use them.
