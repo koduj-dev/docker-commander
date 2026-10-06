@@ -33,6 +33,10 @@ func TestDockerfileImageRefs(t *testing.T) {
 		{"continuation and comments", "# FROM evil.example/x\nFROM \\\n  registry.acme.io/app:1 \\\n  AS app\n",
 			nil, []string{"registry.acme.io/app:1"}, nil},
 		{"lower-case instruction", "from quay.io/a/b\n", nil, []string{"quay.io/a/b"}, nil},
+		{"heredoc body is file content, not instructions", "FROM ghcr.io/acme/base:1\nCOPY <<EOF /note.txt\nFROM docker.io/library/alpine:latest\nEOF\n",
+			nil, []string{"ghcr.io/acme/base:1"}, nil},
+		{"several heredocs, <<- and a quoted delimiter", "FROM alpine\nRUN <<-'A' <<B\n\tFROM evil.example/a\n\tA\nFROM evil.example/b\nB\nFROM quay.io/real/one\n",
+			nil, []string{"alpine", "quay.io/real/one"}, nil},
 		{"escape directive: backtick continues a line", "# escape=`\nFROM `\n  private.example/base:1\nRUN dir C:\\\n", nil,
 			[]string{"private.example/base:1"}, nil},
 		{"a directive after the first instruction is just a comment", "FROM alpine\n# escape=`\nFROM a.example/x \\\n  AS b\n", nil,
@@ -40,7 +44,10 @@ func TestDockerfileImageRefs(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			refs, unresolved := dockerfileImageRefs(c.dockerfile, c.args)
+			refs, unresolved, err := dockerfileImageRefs(c.dockerfile, c.args)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if !reflect.DeepEqual(refs, c.refs) {
 				t.Errorf("refs = %q, want %q", refs, c.refs)
 			}

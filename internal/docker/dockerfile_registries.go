@@ -6,13 +6,15 @@ import (
 	"bytes"
 	"compress/gzip"
 	"errors"
+	"fmt"
 	"io"
 	"path"
-	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/distribution/reference"
+	"github.com/moby/buildkit/frontend/dockerfile/parser"
+	"github.com/moby/buildkit/frontend/dockerfile/shell"
 
 	"github.com/koduj-dev/docker-commander/internal/store"
 )
@@ -64,14 +66,14 @@ func BuildRegistries(buildContext io.Reader, dockerfile string, buildArgs map[st
 		if _, err := io.Copy(&b, io.LimitReader(tr, maxDockerfileBytes)); err != nil {
 			return nil, nil, err
 		}
-		refs, unresolved := dockerfileImageRefs(b.String(), buildArgs)
+		refs, unresolved, err := dockerfileImageRefs(b.String(), buildArgs)
+		if err != nil {
+			return nil, nil, fmt.Errorf("parse %s: %w", want, err)
+		}
 		seen := map[string]bool{}
 		for _, ref := range refs {
-			// Only a reference that parses as one says which registry it is.
-			// Anything else (a misread line, an odd syntax) gets no credential,
-			// rather than one guessed from text that isn't an image name.
 			named, err := reference.ParseNormalizedNamed(ref)
-			if err != nil {
+			if err != nil { // dockerfileImageRefs only returns ones that parse
 				unresolved = append(unresolved, ref)
 				continue
 			}
@@ -86,48 +88,42 @@ func BuildRegistries(buildContext io.Reader, dockerfile string, buildArgs map[st
 	}
 }
 
-var (
-	argVar      = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(:?[-+][^}]*)?\}|\$([A-Za-z_][A-Za-z0-9_]*)`)
-	copyFromArg = regexp.MustCompile(`(?i)^--from=(\S+)$`)
-)
-
 // dockerfileImageRefs returns the image references a Dockerfile pulls, with
 // ARG values and build args substituted the way Docker does it: a FROM sees
 // only the ARGs declared before the first FROM; a COPY --from also sees the
 // ARGs of its own stage. A build arg overrides an ARG's default only where that
 // ARG is declared. Stage names, stage indexes and scratch are not images.
-func dockerfileImageRefs(content string, buildArgs map[string]string) (refs, unresolved []string) {
+//
+// The Dockerfile is read by BuildKit's own parser, so parser directives
+// (`# escape=`), line continuations and heredoc bodies are what Docker makes
+// of them. A hand-rolled line reader took a FROM inside a heredoc for a real
+// one, and sent the daemon a credential for that registry. A file that doesn't
+// parse is an error: no credentials at all.
+func dockerfileImageRefs(content string, buildArgs map[string]string) (refs, unresolved []string, err error) {
+	res, err := parser.Parse(strings.NewReader(content))
+	if err != nil {
+		return nil, nil, err
+	}
+	lex := shell.NewLex(res.EscapeToken)
+	expand := func(word string, vars map[string]string) (string, bool) {
+		env := make([]string, 0, len(vars))
+		for k, v := range vars {
+			env = append(env, k+"="+v)
+		}
+		// What Docker makes of it, unset variables included: `${X:-d}` gives
+		// d, and a bare unset `$X` gives "". Whether the result still names an
+		// image is decided by parsing it as one, below.
+		out, err := lex.ProcessWordWithMatches(word, shell.EnvsFromSlice(env))
+		if err != nil {
+			return "", false
+		}
+		return out.Result, true
+	}
+
 	global := map[string]string{}
 	var stage map[string]string // nil until the first FROM
 	stages := map[string]bool{}
-	expand := func(s string, args map[string]string) (string, bool) {
-		ok := true
-		out := argVar.ReplaceAllStringFunc(s, func(m string) string {
-			sub := argVar.FindStringSubmatch(m)
-			name, mod := sub[1], sub[2]
-			if name == "" {
-				name = sub[3]
-			}
-			v, set := args[name]
-			switch {
-			case strings.HasPrefix(mod, ":-") || strings.HasPrefix(mod, "-"):
-				if !set || (v == "" && strings.HasPrefix(mod, ":")) {
-					return strings.TrimLeft(mod, ":-")
-				}
-			case strings.HasPrefix(mod, ":+") || strings.HasPrefix(mod, "+"):
-				if set && (v != "" || !strings.HasPrefix(mod, ":")) {
-					return strings.TrimLeft(mod, ":+")
-				}
-				return ""
-			}
-			if !set {
-				ok = false
-			}
-			return v
-		})
-		return out, ok
-	}
-	add := func(ref string, args map[string]string) {
+	add := func(ref string, vars map[string]string) {
 		ref = strings.TrimSpace(ref)
 		if ref == "" || strings.EqualFold(ref, "scratch") || stages[strings.ToLower(ref)] {
 			return
@@ -135,108 +131,59 @@ func dockerfileImageRefs(content string, buildArgs map[string]string) (refs, unr
 		if strings.Trim(ref, "0123456789") == "" { // COPY --from=0: a stage index
 			return
 		}
-		x, ok := expand(ref, args)
-		if !ok || strings.Contains(x, "$") || x == "" {
-			unresolved = append(unresolved, ref)
+		x, ok := expand(ref, vars)
+		if ok && (strings.EqualFold(x, "scratch") || stages[strings.ToLower(x)]) {
 			return
 		}
-		if strings.EqualFold(x, "scratch") || stages[strings.ToLower(x)] {
+		// Only a reference that parses as one says which registry it is.
+		// Anything else gets no credential, rather than one guessed from text
+		// that isn't an image name.
+		if _, err := reference.ParseNormalizedNamed(x); !ok || err != nil {
+			unresolved = append(unresolved, ref)
 			return
 		}
 		refs = append(refs, x)
 	}
 
-	for _, line := range dockerfileLines(content, dockerfileEscape(content)) {
-		fields := strings.Fields(line)
-		if len(fields) == 0 {
-			continue
-		}
-		switch strings.ToUpper(fields[0]) {
-		case "ARG":
+	for _, n := range res.AST.Children {
+		switch strings.ToLower(n.Value) {
+		case "arg":
 			target := global
 			if stage != nil {
 				target = stage
 			}
-			for _, f := range fields[1:] {
-				name, val, hasVal := strings.Cut(f, "=")
-				if v, given := buildArgs[name]; given {
+			for a := n.Next; a != nil; a = a.Next {
+				name, val, hasVal := strings.Cut(a.Value, "=")
+				switch v, given := buildArgs[name]; {
+				case given:
 					target[name] = v
-				} else if hasVal {
-					target[name] = strings.Trim(val, `"'`)
-				} else if stage != nil {
+				case hasVal:
+					if x, ok := expand(val, target); ok {
+						target[name] = x
+					}
+				case stage != nil:
 					// Redeclaring a global ARG inside a stage brings its value in.
 					if v, ok := global[name]; ok {
 						target[name] = v
 					}
 				}
 			}
-		case "FROM":
+		case "from":
 			stage = map[string]string{}
-			rest := fields[1:]
-			for len(rest) > 0 && strings.HasPrefix(rest[0], "--") {
-				rest = rest[1:]
-			}
-			if len(rest) == 0 {
+			if n.Next == nil {
 				continue
 			}
-			add(rest[0], global)
-			if len(rest) >= 3 && strings.EqualFold(rest[1], "AS") {
-				stages[strings.ToLower(rest[2])] = true
+			add(n.Next.Value, global)
+			if as := n.Next.Next; as != nil && strings.EqualFold(as.Value, "AS") && as.Next != nil {
+				stages[strings.ToLower(as.Next.Value)] = true
 			}
-		case "COPY", "ADD":
-			for _, f := range fields[1:] {
-				if !strings.HasPrefix(f, "--") {
-					break
-				}
-				if m := copyFromArg.FindStringSubmatch(f); m != nil {
-					add(m[1], stage)
+		case "copy", "add":
+			for _, f := range n.Flags {
+				if from, ok := strings.CutPrefix(f, "--from="); ok {
+					add(from, stage)
 				}
 			}
 		}
 	}
-	return refs, unresolved
-}
-
-// parserDirective is a `# key=value` line at the very top of a Dockerfile.
-var parserDirective = regexp.MustCompile(`^#\s*([a-zA-Z][a-zA-Z0-9]*)\s*=\s*(.+?)\s*$`)
-
-// dockerfileEscape returns the escape character, `\` unless the Dockerfile
-// opens with an `escape` parser directive. It also ends a continued line, so
-// reading a "# escape=`" file with `\` would split its instructions wrongly.
-// Directives must come first: the first line that isn't one ends them.
-func dockerfileEscape(content string) byte {
-	for _, raw := range strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
-		m := parserDirective.FindStringSubmatch(strings.TrimSpace(raw))
-		if m == nil {
-			break
-		}
-		if strings.EqualFold(m[1], "escape") && (m[2] == "`" || m[2] == `\`) {
-			return m[2][0]
-		}
-	}
-	return '\\'
-}
-
-// dockerfileLines joins continuation lines and drops comments.
-func dockerfileLines(content string, escape byte) []string {
-	var out []string
-	var cur strings.Builder
-	for _, raw := range strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
-		line := strings.TrimSpace(raw)
-		if strings.HasPrefix(line, "#") {
-			continue
-		}
-		if len(line) > 0 && line[len(line)-1] == escape {
-			cur.WriteString(line[:len(line)-1])
-			cur.WriteString(" ")
-			continue
-		}
-		cur.WriteString(line)
-		out = append(out, cur.String())
-		cur.Reset()
-	}
-	if cur.Len() > 0 {
-		out = append(out, cur.String())
-	}
-	return out
+	return refs, unresolved, nil
 }
