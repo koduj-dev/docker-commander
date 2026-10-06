@@ -119,7 +119,7 @@ describe("RevisionHistoryModal", () => {
     const confirm = [...container.querySelectorAll("button")].find((b) => b.textContent === "Restore");
     await act(async () => confirm!.click());
 
-    expect(restoreRevision).toHaveBeenCalledWith(1, 1);
+    expect(restoreRevision).toHaveBeenCalledWith(1, 1, undefined, false); // first ask, nothing confirmed yet
   });
 
   // A successful restore overwrites the project's files (and redeploys with

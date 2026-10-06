@@ -613,9 +613,13 @@ export const api = {
   getRevision: (id: number, rev: number) => req<ProjectRevision>("GET", `/api/projects/${id}/revisions/${rev}`),
   diffRevision: (id: number, rev: number, against: string) =>
     req<DeployPreview>("GET", `/api/projects/${id}/revisions/${rev}/diff?against=${encodeURIComponent(against)}`),
-  restoreRevision: (id: number, rev: number, reason?: string) =>
-    req<{ ok: boolean; output?: string; error?: string; note?: string; policy?: { error?: string; code?: string } }>(
-      "POST", `/api/projects/${id}/revisions/${rev}/restore`, { reason: reason || "" },
+  restoreRevision: (id: number, rev: number, reason?: string, confirmPolicyWarnings = false) =>
+    req<{
+      ok: boolean; output?: string; error?: string; note?: string;
+      needsConfirmation?: boolean;
+      policy?: { blocked?: PolicyViolation[]; warnings?: PolicyViolation[]; error?: string; code?: string };
+    }>(
+      "POST", `/api/projects/${id}/revisions/${rev}/restore`, { reason: reason || "", confirmPolicyWarnings },
     ),
   // Project secrets: named values referenced from the compose file via plain
   // ${NAME} interpolation. The value is write-only — never returned by list,

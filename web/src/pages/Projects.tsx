@@ -19,7 +19,7 @@ const CodeEditor = lazy(() => import("../components/CodeEditor").then((m) => ({ 
 import { getPref, setPref } from "../lib/prefs";
 import { useDockerEventTick } from "../lib/dockerEvents";
 import { composeOutputText } from "../lib/composeOutput";
-import { deployProjectWithPolicyGate } from "../lib/deployPolicy";
+import { deployProjectWithPolicyGate, restoreRevisionWithPolicyGate } from "../lib/deployPolicy";
 import { resolveServiceState } from "../lib/composeState";
 
 type Output = { title: string; text: string; ok: boolean };
@@ -357,7 +357,7 @@ export function RevisionHistoryModal({ project, onClose, onOutput, onRestored }:
     }))) return;
     setBusy(`restore-${rev.revision}`);
     try {
-      const r = await api.restoreRevision(project.id, rev.revision);
+      const r = await restoreRevisionWithPolicyGate(project.id, rev.revision, dialogs);
       onOutput({ title: `${project.name} — restore to revision ${rev.revision}`, text: composeOutputText(r), ok: r.ok });
       if (r.ok) { load(); onRestored?.(rev.profiles); onClose(); }
     } catch (e) {

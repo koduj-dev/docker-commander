@@ -422,26 +422,6 @@ the security property alone, independent of the NAT-traversal convenience.
   Received/Sent were totals. Rename the columns ("Avg received / Avg sent, per
   second") with a tooltip, and consider a third "Transferred" column
   (roughly average × window length) so "how much data was it" is answerable too.
----
-
-- **Revision restore under a Warn-mode policy rule.** The restore API accepts
-  `confirmPolicyWarnings` (a deploy's dialog sends it), but the deploy-history
-  restore dialog never does — so a restore that trips a *warn* rule is refused
-  with no way to confirm it from the UI. Send it after the same confirmation a
-  deploy shows.
-
-## 📦 Backlog
-
-Plausible, deliberately not prioritized — different from 🧭 below, which is a
-closed question. Revisit if the reasoning changes, not on a timer.
-
-- **Docker Swarm support.** Real feature, real (shrinking) audience — usage
-  keeps moving toward plain Compose on one side and Kubernetes on the other,
-  and Swarm needs a genuinely new object model (services/tasks/nodes,
-  `docker stack deploy`, overlay networks, Swarm-native secrets) rather than
-  an incremental add. Not worth the build for a shrinking slice of users
-  right now. Parked here instead of rejected outright, since "shrinking" can
-  reverse.
 
 ---
 

@@ -13,41 +13,74 @@ type DialogGate = {
   alert: (o: { title: string; message: string }) => Promise<void>;
 };
 
+type PolicyRefusal = {
+  ok: boolean;
+  error?: string;
+  needsConfirmation?: boolean;
+  policy?: { blocked?: PolicyViolation[]; warnings?: PolicyViolation[]; error?: string; code?: string };
+};
+
 /**
- * Wraps api.deployProject with the deploy-time policy check's confirmation
- * flow, so both places that can trigger a deploy (the project list and the
- * project editor) handle the response identically:
- * - a warn-mode violation asks the operator to confirm before proceeding,
- *   then resubmits with confirmPolicyWarnings: true;
- * - a block-mode violation has no per-deploy override — it's surfaced as a
+ * Runs an action that passes the deploy-time policy check (a deploy, or a
+ * revision restore, which redeploys) and handles its answer the same way
+ * everywhere:
+ * - a warn-mode violation asks the operator to confirm, then runs the action
+ *   again with the warnings confirmed;
+ * - a block-mode violation has no per-action override. It is surfaced as a
  *   plain acknowledgement naming the rule(s), pointing at Policy rules in
  *   Settings as the only way past it.
  */
+export async function runWithPolicyGate<R extends PolicyRefusal>(
+  verb: "Deploy" | "Restore",
+  run: (confirmPolicyWarnings: boolean) => Promise<R>,
+  dialogs: DialogGate,
+): Promise<R | { ok: false; error: string }> {
+  const r = await run(false);
+  if (r.needsConfirmation && r.policy?.warnings?.length) {
+    const proceed = await dialogs.confirm({
+      title: `${verb} has policy warnings`,
+      message: `This ${verb.toLowerCase()} triggers the following policy rule(s):\n\n${formatViolations(r.policy.warnings)}\n\n${verb} anyway?`,
+      confirmLabel: `${verb} anyway`,
+      danger: true,
+    });
+    if (!proceed) {
+      return { ok: false, error: `${verb} cancelled — policy warning(s) not confirmed.` };
+    }
+    return run(true);
+  }
+  if (!r.ok && r.policy?.blocked?.length) {
+    await dialogs.alert({
+      title: `${verb} blocked by policy`,
+      message: `This ${verb.toLowerCase()} is blocked by policy rule(s) with no per-${verb.toLowerCase()} override:\n\n${formatViolations(r.policy.blocked)}\n\nAn admin can change a rule's mode under Policy rules.`,
+    });
+    return { ok: false, error: `${verb} blocked by policy — see Policy rules in Settings.` };
+  }
+  return r;
+}
+
+/** A deploy through runWithPolicyGate. Used by the project list and the editor. */
 export async function deployProjectWithPolicyGate(
   id: number,
   profiles: string[],
   dialogs: DialogGate,
   opts?: { pull?: boolean },
 ): Promise<ComposeRunResult & { ok: boolean }> {
-  const r = await api.deployProject(id, profiles, opts);
-  if (r.needsConfirmation && r.policy?.warnings?.length) {
-    const proceed = await dialogs.confirm({
-      title: "Deploy has policy warnings",
-      message: `This deploy triggers the following policy rule(s):\n\n${formatViolations(r.policy.warnings)}\n\nDeploy anyway?`,
-      confirmLabel: "Deploy anyway",
-      danger: true,
-    });
-    if (!proceed) {
-      return { ok: false, error: "Deploy cancelled — policy warning(s) not confirmed." };
-    }
-    return api.deployProject(id, profiles, { ...opts, confirmPolicyWarnings: true });
-  }
-  if (!r.ok && r.policy?.blocked?.length) {
-    await dialogs.alert({
-      title: "Deploy blocked by policy",
-      message: `This deploy is blocked by policy rule(s) with no per-deploy override:\n\n${formatViolations(r.policy.blocked)}\n\nAn admin can change a rule's mode under Policy rules.`,
-    });
-    return { ok: false, error: "Deploy blocked by policy — see Policy rules in Settings." };
-  }
-  return r;
+  return runWithPolicyGate(
+    "Deploy",
+    (confirm) => (confirm ? api.deployProject(id, profiles, { ...opts, confirmPolicyWarnings: true }) : api.deployProject(id, profiles, opts)),
+    dialogs,
+  );
+}
+
+/**
+ * A revision restore through runWithPolicyGate. A restore redeploys, so it
+ * passes the same policy check; without this, one that tripped a warn-mode
+ * rule was refused with no way to confirm it from the UI.
+ */
+export async function restoreRevisionWithPolicyGate(
+  id: number,
+  revision: number,
+  dialogs: DialogGate,
+): Promise<ComposeRunResult & { ok: boolean }> {
+  return runWithPolicyGate("Restore", (confirm) => api.restoreRevision(id, revision, undefined, confirm), dialogs);
 }
