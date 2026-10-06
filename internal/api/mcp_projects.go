@@ -95,7 +95,7 @@ func (s *Server) mcpDeployProject(ctx context.Context, id int64, profiles []stri
 	// Only after policy has passed does any remote-side write happen — see
 	// the seed doc comment on projectDeployEnv.
 	if seed != nil {
-		if err := seed(ctx); err != nil {
+		if err := seed.Run(ctx); err != nil {
 			return "", err
 		}
 	}

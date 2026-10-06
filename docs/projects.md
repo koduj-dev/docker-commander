@@ -203,9 +203,11 @@ again.
 
 **Restore** overwrites the project files with the revision's and redeploys with
 its profiles. Unsaved editor edits are lost. Images with a recorded digest are
-pinned to it. Named volumes are never touched. If any step fails, including the
-deploy, the previous project files are put back. On a remote host the seeded
-volumes keep the revision's files. The restore becomes a new revision, so
+pinned to it. Your own named volumes are never touched. If any step fails,
+including the deploy, the previous project files are put back. On a remote host
+the seeded volumes are saved before the restore copies the revision's files in,
+and put back on failure too; the error says whether that worked. The restore
+becomes a new revision, so
 history only grows forward. The newest 50 revisions per project are kept by
 default ([Settings](settings.md), [Limits](limits.md)).
 

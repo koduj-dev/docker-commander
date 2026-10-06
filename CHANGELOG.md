@@ -382,6 +382,11 @@ All notable changes to Docker Commander are documented here. The format follows
   on Windows) rather than just failing.
 
 ### Fixed
+- **A failed restore on a remote host puts the seeded volumes back.** The restore
+  copied the revision's files into the volumes the running containers mount and
+  then deployed; if anything after that failed, only the project folder was
+  rolled back, and the containers kept reading the older revision's files. The
+  volumes are now saved first and restored on any failure, owners included.
 - **A revision restore that trips a Warn-mode policy rule can be confirmed.** The
   deploy-history dialog never sent the confirmation, so such a restore was
   refused with no way past it in the UI. It now asks, like a deploy does.

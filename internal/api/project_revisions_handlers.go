@@ -351,10 +351,10 @@ func projectRestoreLock(projectID int64) *sync.Mutex {
 // project's files disagreeing with what's actually running. Pins any
 // service with a recorded digest to that exact image, uses the revision's
 // own profiles, and re-uses the project's normal deploy path (so a remote
-// host's bind-override machinery still applies unchanged). Never touches
-// named volumes: the only Docker operation here is `up`, the same as any
-// deploy. The restore itself becomes a new revision — history only grows
-// forward.
+// host's bind-override machinery still applies unchanged). For a remote
+// project that seeds volumes, what they held is saved first and put back on
+// any failure after the seed. Otherwise named volumes are never touched. The
+// restore itself becomes a new revision — history only grows forward.
 func (s *Server) handleRestoreRevision(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.loadProject(w, r)
 	if !ok {
@@ -494,10 +494,25 @@ func (s *Server) handleRestoreRevision(w http.ResponseWriter, r *http.Request) {
 	// Only now, after policy has passed, does any remote-side write happen —
 	// see the seed doc comment on projectDeployEnv. A rejected restore never
 	// reaches this line, so it never overwrites a live remote-mounted volume.
+	//
+	// The seed is undoable: what the volumes held is saved first, and every
+	// failure below puts it back, so a failed restore leaves the running
+	// containers' volumes as they were, not on the revision's files.
+	undoSeed := func() string { return "" }
 	if seed != nil {
-		if err := seed(r.Context()); err != nil {
+		undo, done, err := seed.RunUndoable(r.Context())
+		if err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
+		}
+		defer done()
+		undoSeed = func() string {
+			// Detached from the request: a client that gave up must not stop
+			// the volumes being put back.
+			if err := undo(context.WithoutCancel(r.Context())); err != nil {
+				return " Putting the volumes on the host back FAILED, so they may hold the revision's files: " + err.Error()
+			}
+			return " The volumes on the host were put back."
 		}
 	}
 
@@ -509,7 +524,7 @@ func (s *Server) handleRestoreRevision(w http.ResponseWriter, r *http.Request) {
 	rootExisted := statErr == nil
 	if rootExisted {
 		if err := os.Rename(root, backup); err != nil {
-			writeErr(w, http.StatusInternalServerError, "could not stage the project swap: "+err.Error())
+			writeErr(w, http.StatusInternalServerError, "could not stage the project swap: "+err.Error()+"."+undoSeed())
 			return
 		}
 	}
@@ -517,7 +532,7 @@ func (s *Server) handleRestoreRevision(w http.ResponseWriter, r *http.Request) {
 		if rootExisted {
 			_ = os.Rename(backup, root)
 		}
-		writeErr(w, http.StatusInternalServerError, "could not activate the restored project: "+err.Error())
+		writeErr(w, http.StatusInternalServerError, "could not activate the restored project: "+err.Error()+"."+undoSeed())
 		return
 	}
 	swapCommitted := false
@@ -539,7 +554,7 @@ func (s *Server) handleRestoreRevision(w http.ResponseWriter, r *http.Request) {
 	// deploys whatever image is already available rather than rebuilding.
 	out, err := docker.ComposeUpFiles(r.Context(), root, p.Slug, rev.Profiles, env, files, false)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "output": out})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error() + "." + undoSeed(), "output": out})
 		return
 	}
 	swapCommitted = true

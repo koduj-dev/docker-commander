@@ -892,7 +892,7 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 	// Only after policy has passed does any remote-side write happen — see
 	// the seed doc comment on projectDeployEnv.
 	if seed != nil {
-		if err := seed(r.Context()); err != nil {
+		if err := seed.Run(r.Context()); err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -1489,15 +1489,15 @@ func (s *Server) projectHost(ctx context.Context, p *store.Project) (*store.Host
 // a seeded named volume on that host and repointed by a generated override; binds
 // pointing outside the project folder are refused rather than mounted blind on
 // the remote. Returns the extra `-f` files (empty for a local deploy), a note to
-// show the user, a cleanup that must always be called, and a seed function.
+// show the user, a cleanup that must always be called, and a seed.
 //
 // seed performs the one mutating, remote-side step (copying the project's bind
-// sources into their seeded volumes) and is deliberately NOT invoked here — it
+// sources into their seeded volumes) and is deliberately NOT run here — it
 // is nil when there is nothing to seed (local deploy, or a remote deploy with
 // no internal binds). Every caller MUST run its policy check against the env
-// and files this returns and only invoke seed() after that check passes: the
-// resolved env/files (and the override file's content) never depend on
-// seed() having run, so a policy-blocked deploy/restore never mutates the
+// and files this returns and only run the seed after that check passes: the
+// resolved env/files (and the override file's content) never depend on the
+// seed having run, so a policy-blocked deploy/restore never mutates the
 // remote host at all — see the callers in project_handlers.go,
 // project_revisions_handlers.go and mcp_projects.go.
 //
@@ -1512,7 +1512,7 @@ func (s *Server) projectHost(ctx context.Context, p *store.Project) (*store.Host
 // unclassified (neither internal nor external) whenever that profile is the
 // one actually being activated, silently skipping both the seed/override
 // step AND the external-bind opt-in refusal for that service's mount.
-func (s *Server) projectDeployEnv(ctx context.Context, p *store.Project, dir string, profiles []string) (env, files []string, note string, cleanup func(), seed func(context.Context) error, err error) {
+func (s *Server) projectDeployEnv(ctx context.Context, p *store.Project, dir string, profiles []string) (env, files []string, note string, cleanup func(), seed *projectSeed, err error) {
 	env, files, note, cleanup, seed, err = s.projectDeployEnvBase(ctx, p, dir, profiles)
 	if err != nil {
 		return env, files, note, cleanup, seed, err
@@ -1550,7 +1550,7 @@ func (s *Server) composeRegistryEnv(ctx context.Context) ([]string, func(), []st
 	return docker.RegistryEnvFromStore(ctx, s.store)
 }
 
-func (s *Server) projectDeployEnvBase(ctx context.Context, p *store.Project, dir string, profiles []string) (env, files []string, note string, cleanup func(), seed func(context.Context) error, err error) {
+func (s *Server) projectDeployEnvBase(ctx context.Context, p *store.Project, dir string, profiles []string) (env, files []string, note string, cleanup func(), seed *projectSeed, err error) {
 	noop := func() {}
 	h, err := s.projectHost(ctx, p)
 	if err != nil {
@@ -1619,14 +1619,49 @@ func (s *Server) projectDeployEnvBase(ctx context.Context, p *store.Project, dir
 	}
 	tlsCleanup := cleanup
 	cleanup = func() { _ = os.Remove(path); tlsCleanup() }
-	hostID, slug, seedDir, binds := p.HostID, p.Slug, dir, internal
-	seed = func(seedCtx context.Context) error {
-		if err := s.docker.SeedProjectBinds(seedCtx, hostID, seedDir, slug, binds); err != nil {
-			return fmt.Errorf("copying the project files to %q failed: %v", h.Name, err)
-		}
-		return nil
-	}
+	seed = &projectSeed{s: s, hostID: p.HostID, hostName: h.Name, slug: p.Slug, dir: dir, binds: internal}
 	return env, []string{p.ComposeFile, path}, remoteBindNote(internal, external), cleanup, seed, nil
+}
+
+// projectSeed copies a remote project's bind-mounted files into the volumes
+// that stand in for them on the target host.
+type projectSeed struct {
+	s        *Server
+	hostID   int64
+	hostName string
+	slug     string
+	dir      string
+	binds    []docker.ProjectBind
+}
+
+// Run seeds the volumes. A deploy's seed: the new files are what is wanted
+// whether or not `up` then succeeds.
+func (ps *projectSeed) Run(ctx context.Context) error {
+	if err := ps.s.docker.SeedProjectBinds(ctx, ps.hostID, ps.dir, ps.slug, ps.binds); err != nil {
+		return fmt.Errorf("copying the project files to %q failed: %v", ps.hostName, err)
+	}
+	return nil
+}
+
+// RunUndoable seeds like Run after saving what the volumes held, for a
+// restore, which promises that a failure leaves everything as it was. undo
+// puts the saved content back; done drops the saved copy and must always be
+// called. If the seed itself fails part-way, the volumes are put back before
+// it returns.
+func (ps *projectSeed) RunUndoable(ctx context.Context) (undo func(context.Context) error, done func(), err error) {
+	snap, err := ps.s.docker.SnapshotSeedVolumes(ctx, ps.hostID, ps.slug, ps.binds)
+	if err != nil {
+		return nil, nil, fmt.Errorf("saving the volumes on %q before the restore failed, nothing was changed: %v", ps.hostName, err)
+	}
+	done = func() { snap.Discard(context.Background()) }
+	if err := ps.Run(ctx); err != nil {
+		defer done()
+		if rerr := snap.Restore(context.WithoutCancel(ctx)); rerr != nil {
+			return nil, nil, fmt.Errorf("%v; putting the volumes back also failed: %v", err, rerr)
+		}
+		return nil, nil, fmt.Errorf("%v; the volumes were put back", err)
+	}
+	return snap.Restore, done, nil
 }
 
 // joinBinds renders binds for a user-facing error message.
