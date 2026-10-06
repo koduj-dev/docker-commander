@@ -33,6 +33,10 @@ func TestDockerfileImageRefs(t *testing.T) {
 		{"continuation and comments", "# FROM evil.example/x\nFROM \\\n  registry.acme.io/app:1 \\\n  AS app\n",
 			nil, []string{"registry.acme.io/app:1"}, nil},
 		{"lower-case instruction", "from quay.io/a/b\n", nil, []string{"quay.io/a/b"}, nil},
+		{"escape directive: backtick continues a line", "# escape=`\nFROM `\n  private.example/base:1\nRUN dir C:\\\n", nil,
+			[]string{"private.example/base:1"}, nil},
+		{"a directive after the first instruction is just a comment", "FROM alpine\n# escape=`\nFROM a.example/x \\\n  AS b\n", nil,
+			[]string{"alpine", "a.example/x"}, nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -93,6 +97,14 @@ func TestBuildRegistries(t *testing.T) {
 	hosts, _, err := BuildRegistries(ctx, "build/prod.Dockerfile", nil)
 	if err != nil || !reflect.DeepEqual(hosts, []string{"quay.io"}) {
 		t.Errorf("custom path: hosts %q err %v", hosts, err)
+	}
+
+	// Read without its escape directive, this file's FROM is a lone backtick.
+	// Text that isn't an image reference must not be taken for a Docker Hub
+	// image and get the Hub credential.
+	hosts, unresolved, err := BuildRegistries(tarOf(t, map[string]string{"Dockerfile": "FROM `\n  private.example/base:1\n"}, false), "", nil)
+	if err != nil || len(hosts) != 0 || len(unresolved) != 1 {
+		t.Errorf("a non-reference FROM: hosts %q unresolved %q err %v, want no host", hosts, unresolved, err)
 	}
 
 	if _, _, err := BuildRegistries(tarOf(t, map[string]string{"x": "y"}, false), "", nil); !errors.Is(err, errNoDockerfile) {

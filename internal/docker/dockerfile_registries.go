@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/distribution/reference"
+
 	"github.com/koduj-dev/docker-commander/internal/store"
 )
 
@@ -65,7 +67,15 @@ func BuildRegistries(buildContext io.Reader, dockerfile string, buildArgs map[st
 		refs, unresolved := dockerfileImageRefs(b.String(), buildArgs)
 		seen := map[string]bool{}
 		for _, ref := range refs {
-			h := store.NormalizeRegistryHost(registryHost(ref))
+			// Only a reference that parses as one says which registry it is.
+			// Anything else (a misread line, an odd syntax) gets no credential,
+			// rather than one guessed from text that isn't an image name.
+			named, err := reference.ParseNormalizedNamed(ref)
+			if err != nil {
+				unresolved = append(unresolved, ref)
+				continue
+			}
+			h := store.NormalizeRegistryHost(reference.Domain(named))
 			if !seen[h] {
 				seen[h] = true
 				hosts = append(hosts, h)
@@ -136,7 +146,7 @@ func dockerfileImageRefs(content string, buildArgs map[string]string) (refs, unr
 		refs = append(refs, x)
 	}
 
-	for _, line := range dockerfileLines(content) {
+	for _, line := range dockerfileLines(content, dockerfileEscape(content)) {
 		fields := strings.Fields(line)
 		if len(fields) == 0 {
 			continue
@@ -187,8 +197,28 @@ func dockerfileImageRefs(content string, buildArgs map[string]string) (refs, unr
 	return refs, unresolved
 }
 
+// parserDirective is a `# key=value` line at the very top of a Dockerfile.
+var parserDirective = regexp.MustCompile(`^#\s*([a-zA-Z][a-zA-Z0-9]*)\s*=\s*(.+?)\s*$`)
+
+// dockerfileEscape returns the escape character, `\` unless the Dockerfile
+// opens with an `escape` parser directive. It also ends a continued line, so
+// reading a "# escape=`" file with `\` would split its instructions wrongly.
+// Directives must come first: the first line that isn't one ends them.
+func dockerfileEscape(content string) byte {
+	for _, raw := range strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
+		m := parserDirective.FindStringSubmatch(strings.TrimSpace(raw))
+		if m == nil {
+			break
+		}
+		if strings.EqualFold(m[1], "escape") && (m[2] == "`" || m[2] == `\`) {
+			return m[2][0]
+		}
+	}
+	return '\\'
+}
+
 // dockerfileLines joins continuation lines and drops comments.
-func dockerfileLines(content string) []string {
+func dockerfileLines(content string, escape byte) []string {
 	var out []string
 	var cur strings.Builder
 	for _, raw := range strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
@@ -196,8 +226,8 @@ func dockerfileLines(content string) []string {
 		if strings.HasPrefix(line, "#") {
 			continue
 		}
-		if strings.HasSuffix(line, `\`) {
-			cur.WriteString(strings.TrimSuffix(line, `\`))
+		if len(line) > 0 && line[len(line)-1] == escape {
+			cur.WriteString(line[:len(line)-1])
 			cur.WriteString(" ")
 			continue
 		}
