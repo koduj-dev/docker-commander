@@ -23,7 +23,7 @@ in advance, and whether the number can be changed.
 | Limit | Value | Notes |
 | --- | --- | --- |
 | Ordinary request body | **1 MiB** | Everything except the streaming routes below. |
-| File upload into a container or volume | **2 GiB** | Written to a temporary file that is unlinked at once, so it costs no memory. |
+| File upload into a container or volume, or an image build context | **2 GiB** | Written to a temporary file that is unlinked at once, so it costs no memory. |
 | Archive uploaded for **Extract** | **4 GiB** compressed | |
 | Uploaded archive, after decompression | **512 MiB** | Protects against a zip or gzip bomb. |
 | Idle time during a streaming upload | **2 minutes** | Counts silence, not total time. A slow large upload is fine; a stalled one is dropped. |

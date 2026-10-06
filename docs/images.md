@@ -74,9 +74,13 @@ Set one or more tags, an optional Dockerfile path, **build args** (one
 `KEY=VALUE` per line), and **No cache** to rebuild every layer. The daemon's
 build output streams live.
 
-The build sends every credential stored under [Registries](registries.md), so a
-private base image (`FROM ghcr.io/…`) is pulled with it. A stored credential
-that can't be decrypted is skipped, with a warning line in the build output.
+A private base image (`FROM ghcr.io/…`) is pulled with its credential from
+[Registries](registries.md). Docker Commander reads the Dockerfile first and
+sends the target host only the credentials of the registries it pulls from:
+every `FROM` and `COPY --from=<image>`, with `ARG` values and build args filled
+in. A reference whose registry can't be told (a variable with no value) gets no
+credential, and the build output says so, as it does for a stored credential
+that can't be decrypted. The context may be up to 2 GiB.
 
 Build args reach the daemon as `--build-arg` and can be recorded in the image's
 history, so they are the wrong place for secrets.

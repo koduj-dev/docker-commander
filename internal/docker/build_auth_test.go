@@ -66,7 +66,11 @@ func TestBuildPullsAPrivateBaseImageWithStoredCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	out.Reset()
-	if err := m.BuildImage(ctx, 0, buildContextFrom(t, dockerfile), BuildOptions{Tags: []string{tag}}, collect); err != nil {
+	hosts, _, err := BuildRegistries(buildContextFrom(t, dockerfile), "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.BuildImage(ctx, 0, buildContextFrom(t, dockerfile), BuildOptions{Tags: []string{tag}, Registries: hosts}, collect); err != nil {
 		t.Fatalf("build with the stored credential failed: %v\n%s", err, out.String())
 	}
 }
@@ -74,16 +78,26 @@ func TestBuildPullsAPrivateBaseImageWithStoredCredentials(t *testing.T) {
 // Credentials are keyed the way the daemon looks them up: Docker Hub by its
 // index URL, others by host; the oldest entry for a registry wins.
 func TestBuildAuthConfigsKeys(t *testing.T) {
-	got := buildAuthConfigs([]store.RegistryAuth{
+	all := []store.RegistryAuth{
 		{Address: "docker.io", Username: "hub", Password: "1"},
 		{Address: "ghcr.io", Username: "first", Password: "2"},
 		{Address: "ghcr.io", Username: "second", Password: "3"},
-	})
+		{Address: "registry.internal:5000", Username: "other", Password: "4"},
+	}
+	got := buildAuthConfigs(all, []string{"docker.io", "ghcr.io"})
 	if got[dockerHubConfigKey].Username != "hub" {
 		t.Errorf("Docker Hub not under %s: %+v", dockerHubConfigKey, got)
 	}
 	if got["ghcr.io"].Username != "first" {
 		t.Errorf("want the oldest ghcr.io entry, got %+v", got["ghcr.io"])
+	}
+	// SECURITY: the daemon gets the whole map, so a registry the Dockerfile
+	// doesn't use must not be in it.
+	if _, sent := got["registry.internal:5000"]; sent {
+		t.Error("SECURITY: a credential for a registry the build doesn't use was sent")
+	}
+	if n := len(buildAuthConfigs(all, nil)); n != 0 {
+		t.Errorf("no registries in use, but %d credentials were sent", n)
 	}
 }
 
@@ -159,7 +173,7 @@ func TestBuildWarnsAboutSkippedCredentialsOnlyAfterTheContextIsRead(t *testing.T
 
 	var out strings.Builder
 	early := false
-	err = m.BuildImage(ctx, 0, body, BuildOptions{Tags: []string{tag}}, func(msg BuildMessage) {
+	err = m.BuildImage(ctx, 0, body, BuildOptions{Tags: []string{tag}, Registries: []string{"registry.invalid"}}, func(msg BuildMessage) {
 		if !body.eof {
 			early = true
 		}

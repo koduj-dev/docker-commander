@@ -3,8 +3,11 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/coder/websocket"
@@ -314,6 +317,33 @@ func (s *Server) handleImportImage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out})
 }
 
+// spoolBuildContext stores a build's uploaded context in an unlinked temporary
+// file, with the same size cap and stall timeout as other uploads.
+func spoolBuildContext(w http.ResponseWriter, r *http.Request) (*os.File, error) {
+	f, err := os.CreateTemp("", "dc-build-*")
+	if err != nil {
+		return nil, err
+	}
+	_ = os.Remove(f.Name()) // the descriptor keeps it; nothing is left behind
+	body := http.MaxBytesReader(w, streamingBody(w, r), maxUploadBytes)
+	if _, err := io.Copy(f, body); err != nil {
+		f.Close()
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			return nil, errUploadTooBig
+		}
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			return nil, errUploadStalled
+		}
+		return nil, err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
 // handleBuildImage builds an image from an uploaded tar context (the request
 // body) and streams the daemon's build output back as newline-delimited JSON.
 // Build params come from query string: tag (repeatable), dockerfile, nocache,
@@ -337,6 +367,28 @@ func (s *Server) handleBuildImage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The context is kept on disk before the build starts: the stored registry
+	// credentials go to the daemon in a header ahead of the context, so the
+	// Dockerfile has to be read first to send only the registries it uses.
+	buildCtx, err := spoolBuildContext(w, r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	defer buildCtx.Close()
+	hosts, unresolved, rerr := docker.BuildRegistries(buildCtx, opts.Dockerfile, opts.BuildArgs)
+	if rerr != nil {
+		opts.Warnings = append(opts.Warnings, "could not read the Dockerfile to pick registry credentials, so none were sent: "+rerr.Error())
+	}
+	for _, ref := range unresolved {
+		opts.Warnings = append(opts.Warnings, fmt.Sprintf("could not tell which registry %q is pulled from, so no credentials were sent for it", ref))
+	}
+	opts.Registries = hosts
+	if _, err := buildCtx.Seek(0, io.SeekStart); err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not read back the build context")
+		return
+	}
+
 	// Stream NDJSON as the build proceeds. Flush each line so the browser sees
 	// progress live rather than buffered to the end.
 	w.Header().Set("Content-Type", "application/x-ndjson")
@@ -351,7 +403,7 @@ func (s *Server) handleBuildImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.audit(r, "image.build", strings.Join(opts.Tags, ","), "")
-	err = s.docker.BuildImage(r.Context(), hostID, streamingBody(w, r), opts, func(m docker.BuildMessage) { send(m) })
+	err = s.docker.BuildImage(r.Context(), hostID, buildCtx, opts, func(m docker.BuildMessage) { send(m) })
 	if err != nil {
 		send(map[string]any{"error": err.Error()})
 		return

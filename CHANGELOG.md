@@ -436,7 +436,10 @@ All notable changes to Docker Commander are documented here. The format follows
   use Projects.
 - **Building an image uses the credentials stored under Registries**, so a
   Dockerfile whose `FROM` is a private image builds. The Build dialog sent no
-  credentials, and such a build failed even with the registry stored.
+  credentials, and such a build failed even with the registry stored. Only the
+  registries the Dockerfile pulls from (`FROM`, `COPY --from=<image>`) get
+  their credentials sent: the daemon, possibly a remote host, never sees the
+  rest. The uploaded context is now limited to 2 GiB, like other uploads.
 - **The Windows service keeps a log.** It wrote to a console the service doesn't
   have, so its log was lost, while the installer pointed at the Event Viewer,
   where nothing was written. It now writes `dockercmd.log` in the data dir,

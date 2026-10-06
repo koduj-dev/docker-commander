@@ -42,8 +42,8 @@ success or the error. That is the way to check it.
 
 When you [pull](images.md) or [push](images.md), the credential is matched by
 the **registry host** of the image reference. An image
-[build](images.md#build) sends every stored credential, and the daemon picks the
-one for each `FROM` image's registry. Docker Hub aliases are normalised,
+[build](images.md#build) sends the credentials of the registries its Dockerfile
+pulls from, and no others. Docker Hub aliases are normalised,
 so a `docker.io` entry also matches `nginx` or `user/app`.
 
 - A pull with no matching credential runs anonymously.
