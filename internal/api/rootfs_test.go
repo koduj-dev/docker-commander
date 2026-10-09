@@ -1,6 +1,7 @@
 package api
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -75,6 +76,48 @@ func TestPentestRootIOIgnoresSymlinkSwappedInAfterCheck(t *testing.T) {
 			t.Fatal("SECURITY: mkdir through a swapped-in symlink created a folder outside the sandbox")
 		}
 	})
+}
+
+// PENTEST: a folder swapped for an escaping symlink in the middle of a walk
+// (listing, download zip, template snapshot) must not be read through.
+func TestPentestWalkRootIgnoresSymlinkSwappedInMidWalk(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	root, victim := t.TempDir(), t.TempDir()
+	mustWriteFile(t, filepath.Join(victim, "secret.txt"), "SECRET")
+	mustWriteFile(t, filepath.Join(root, "a.txt"), "a")
+	if err := os.MkdirAll(filepath.Join(root, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mustWriteFile(t, filepath.Join(root, "sub", "secret.txt"), "decoy")
+
+	var read []string
+	_ = walkRoot(root, func(fsys fs.FS, rel string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // keep walking, as a lenient caller would
+		}
+		if rel == "a.txt" { // walked in lexical order: a.txt comes before sub
+			if err := os.RemoveAll(filepath.Join(root, "sub")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(victim, filepath.Join(root, "sub")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if data, rerr := fs.ReadFile(fsys, rel); rerr == nil {
+			read = append(read, string(data))
+		}
+		return nil
+	})
+	for _, c := range read {
+		if c == "SECRET" {
+			t.Fatal("SECURITY: the walk read a file outside the sandbox through a swapped-in symlink")
+		}
+	}
 }
 
 // The Root helpers still do the ordinary job: nested folders are created,

@@ -109,3 +109,18 @@ func missingInRoot(root, full string) bool {
 	_, err = rt.Stat(rel)
 	return errors.Is(err, fs.ErrNotExist)
 }
+
+// walkRoot walks root through an os.Root, so neither the walk nor a read made
+// with fsys can be carried outside by a symlink swapped in mid-walk. rel is
+// slash-separated and relative to root ("." for root itself).
+func walkRoot(root string, fn func(fsys fs.FS, rel string, d fs.DirEntry, err error) error) error {
+	rt, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer rt.Close()
+	fsys := rt.FS()
+	return fs.WalkDir(fsys, ".", func(rel string, d fs.DirEntry, err error) error {
+		return fn(fsys, rel, d, err)
+	})
+}

@@ -547,25 +547,21 @@ func seedProjectFiles(root string, files []templates.File) error {
 // readProjectFilesFromDisk snapshots every file under root into a file set.
 func readProjectFilesFromDisk(root string) ([]templates.File, error) {
 	var out []templates.File
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	err := walkRoot(root, func(fsys fs.FS, rel string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
 		if d.Type()&fs.ModeSymlink != 0 {
 			return nil // don't follow symlinks (matches the other project walkers)
 		}
-		rel, err := filepath.Rel(root, p)
-		if err != nil {
-			return err
-		}
-		data, err := os.ReadFile(p)
+		data, err := fs.ReadFile(fsys, rel)
 		if err != nil {
 			return err
 		}
 		if len(data) > maxProjectFileBytes {
 			return fmt.Errorf("file %q is too large to snapshot", rel)
 		}
-		out = append(out, templates.File{Path: filepath.ToSlash(rel), Content: string(data)})
+		out = append(out, templates.File{Path: rel, Content: string(data)})
 		return nil
 	})
 	return out, err

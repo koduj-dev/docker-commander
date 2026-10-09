@@ -546,7 +546,10 @@ systemctl start dockercmd
 Nothing enforces the stop: restoring under a live process leaves it holding a
 database that no longer exists. Without `--force`, restore won't overwrite an
 existing installation, so a mistyped path can't destroy one. Archive entries are
-jailed to the data dir, and a **symlink** entry is refused outright.
+jailed to the data dir, and a **symlink** entry is refused outright. A restore
+also won't write through a symlink that is already in the data dir and points
+out of it. With `projects/` linked to another disk, restore into a fresh data
+dir and move the folders over afterwards.
 
 **Symbolic links are not backed up, and the backup says so.** If something in the
 data dir is a link (`projects/` on a bigger disk, say), neither the link nor what

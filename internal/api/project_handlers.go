@@ -472,12 +472,10 @@ func (s *Server) handleListProjectFiles(w http.ResponseWriter, r *http.Request) 
 // project and template file listings — both fold to the same caps and sandboxing.
 func listFilesInRoot(root string) ([]projectFileJSON, error) {
 	var out []projectFileJSON
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || path == root || d.Type()&fs.ModeSymlink != 0 {
+	err := walkRoot(root, func(fsys fs.FS, name string, d fs.DirEntry, err error) error {
+		if err != nil || name == "." || d.Type()&fs.ModeSymlink != 0 {
 			return err
 		}
-		rel, _ := filepath.Rel(root, path)
-		name := filepath.ToSlash(rel)
 		if d.IsDir() {
 			out = append(out, projectFileJSON{Name: name, IsDir: true})
 			return nil
@@ -490,7 +488,7 @@ func listFilesInRoot(root string) ([]projectFileJSON, error) {
 			out = append(out, projectFileJSON{Name: name, Size: info.Size(), TooLarge: true})
 			return nil
 		}
-		data, err := os.ReadFile(path)
+		data, err := fs.ReadFile(fsys, name)
 		if err != nil {
 			return err
 		}
@@ -1150,16 +1148,15 @@ func (s *Server) overlayProject(id int64, name, content string) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || p == root || d.Type()&fs.ModeSymlink != 0 {
+	err = walkRoot(root, func(fsys fs.FS, rel string, d fs.DirEntry, err error) error {
+		if err != nil || rel == "." || d.Type()&fs.ModeSymlink != 0 {
 			return err
 		}
-		rel, _ := filepath.Rel(root, p)
-		dst := filepath.Join(tmp, rel)
+		dst := filepath.Join(tmp, filepath.FromSlash(rel))
 		if d.IsDir() {
 			return os.MkdirAll(dst, 0o700)
 		}
-		data, err := os.ReadFile(p)
+		data, err := fs.ReadFile(fsys, rel)
 		if err != nil {
 			return err
 		}
@@ -1318,16 +1315,15 @@ func (s *Server) handleDownloadProject(w http.ResponseWriter, r *http.Request) {
 func zipDir(root string) ([]byte, error) {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	err := walkRoot(root, func(fsys fs.FS, rel string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
 			return err
 		}
-		rel, _ := filepath.Rel(root, path)
-		fw, err := zw.Create(filepath.ToSlash(rel))
+		fw, err := zw.Create(rel)
 		if err != nil {
 			return err
 		}
-		data, err := os.ReadFile(path)
+		data, err := fs.ReadFile(fsys, rel)
 		if err != nil {
 			return err
 		}
