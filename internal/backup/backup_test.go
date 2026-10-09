@@ -643,3 +643,76 @@ func TestPentestRestoreDoesNotFollowExistingSymlinkOut(t *testing.T) {
 		t.Fatal("SECURITY: restore wrote outside the data dir through an existing symlink")
 	}
 }
+
+// projects/ itself moved to a bigger disk and linked back is the case the
+// manual names: it is not in the archive, and the report must say so.
+func TestBackupReportsSymlinkedTopLevelFolder(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	src := t.TempDir()
+	mustWrite(t, filepath.Join(src, dbFileName), "DB")
+	elsewhere := t.TempDir()
+	mustWrite(t, filepath.Join(elsewhere, "shop", "compose.yml"), "services: {}")
+	if err := os.Symlink(elsewhere, filepath.Join(src, "projects")); err != nil {
+		t.Fatal(err)
+	}
+
+	archive := filepath.Join(t.TempDir(), "b.dcbak")
+	rep, err := Create(src, archive, fakeDB{"DB"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.SkippedLinks) != 1 || rep.SkippedLinks[0] != "projects" {
+		t.Errorf("a symlinked projects/ should be named in the report, got %v", rep.SkippedLinks)
+	}
+	for _, name := range entryNames(t, archive) {
+		if strings.HasPrefix(name, "projects") {
+			t.Errorf("the archive should not contain %q", name)
+		}
+	}
+}
+
+// PENTEST: a folder swapped for a link out of the data dir after the walk
+// listed it (a container with the project mounted can do that mid-backup)
+// must not pull outside files into the archive.
+func TestPentestBackupIgnoresFolderSwappedMidWalk(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	src := seedDataDir(t)
+	victim := t.TempDir()
+	mustWrite(t, filepath.Join(victim, "index.html"), "HOST-SECRET")
+
+	fired := false
+	testHookWalkEntry = func(root, rel string) {
+		if rel != "shop/html" || fired { // seen as a folder, swapped before it is read
+			return
+		}
+		fired = true
+		html := filepath.Join(root, "shop", "html")
+		if err := os.RemoveAll(html); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(victim, html); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { testHookWalkEntry = nil })
+
+	archive := filepath.Join(t.TempDir(), "b.dcbak")
+	_, err := Create(src, archive, fakeDB{"DB"}, "")
+	if !fired {
+		t.Fatal("the walk never reached shop/html through addTree")
+	}
+	if err != nil {
+		return // refusing the backup is a fine outcome
+	}
+	// The real shop/html was removed by the swap, so any entry under it can
+	// only have come through the link.
+	for _, name := range entryNames(t, archive) {
+		if strings.Contains(name, "shop/html/") {
+			t.Fatalf("SECURITY: the backup archived %q through a swapped-in link", name)
+		}
+	}
+}

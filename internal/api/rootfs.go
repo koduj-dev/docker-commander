@@ -121,6 +121,13 @@ func walkRoot(root string, fn func(fsys fs.FS, rel string, d fs.DirEntry, err er
 	defer rt.Close()
 	fsys := rt.FS()
 	return fs.WalkDir(fsys, ".", func(rel string, d fs.DirEntry, err error) error {
+		if err == nil && testHookWalkEntry != nil {
+			testHookWalkEntry(root, rel)
+		}
 		return fn(fsys, rel, d, err)
 	})
 }
+
+// testHookWalkEntry, when set by a test, runs as walkRoot reaches each entry —
+// the moment a racing process would swap something in.
+var testHookWalkEntry func(root, rel string)

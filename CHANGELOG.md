@@ -20,15 +20,21 @@ found, and from now on every change is scanned before it ships.
   replaces. (CodeQL `go/cookie-secure-not-set`.)
 - **The CI and Homebrew workflows run with a read-only `GITHUB_TOKEN`.**
   (CodeQL `actions/missing-workflow-permissions`.)
-- **Project and template files, imports and backup restore stay inside their
-  folder even if a symlink appears mid-operation.** Names were already checked,
-  symlinks included, but only before the file was touched; a link swapped in
-  between the check and the write (by a container that has the project folder
-  mounted, say) could still carry it outside. Every read, write, delete and new
-  folder now goes through Go's `os.Root`, which refuses to leave the folder at
-  the moment of use. A `--restore --force` over an existing install also no
-  longer writes through a symlink already in the data dir that points out of it.
+- **File operations stay inside their folder even if a symlink appears
+  mid-operation.** Names were already checked, symlinks included, but only
+  before the file was touched; a link swapped in between the check and the use
+  (by a container that has the project folder mounted, say) could still carry
+  it outside. Project and template files, imports, the recovery export, backup
+  and restore, and the bind folders a remote deploy copies now all go through
+  Go's `os.Root`, which refuses to leave the folder at the moment of use. A
+  `--restore --force` over an existing install also no longer writes through a
+  symlink already in the data dir that points out of it.
   (CodeQL `go/path-injection`, `go/zipslip`.)
+
+### Fixed
+- **`--backup` now names a linked `projects/` (or template/revision) folder.**
+  The manual says skipped links are listed; a link one level down was, but a
+  whole folder moved to another disk and linked back was left out silently.
 
 ### Changed
 - **The README is a short landing page.** What Docker Commander is for, the

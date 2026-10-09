@@ -20,7 +20,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -165,20 +167,39 @@ func writeArchive(out, dataDir, dbSnapshot string, rep *Report) error {
 	return gz.Close()
 }
 
+// testHookWalkEntry, when set by a test, runs as the walk reaches each entry —
+// the moment a racing process would swap something in.
+var testHookWalkEntry func(root, rel string)
+
 func addTree(tw *tar.Writer, root, prefix string, rep *Report) error {
-	return filepath.Walk(root, func(p string, fi os.FileInfo, err error) error {
+	// projects/ itself may be the link (moved to a bigger disk). Walking it
+	// would yield nothing, so name it here like any other skipped link.
+	if fi, err := os.Lstat(root); err != nil {
+		return err
+	} else if fi.Mode()&os.ModeSymlink != 0 {
+		rep.SkippedLinks = append(rep.SkippedLinks, prefix)
+		return nil
+	}
+	// Walk and read through an os.Root: a link swapped in for a file or folder
+	// after it was listed (by a container with the project mounted, say) can't
+	// pull outside data into the archive.
+	rt, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer rt.Close()
+	return fs.WalkDir(rt.FS(), ".", func(rel string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
-		}
-		rel, rerr := filepath.Rel(root, p)
-		if rerr != nil {
-			return rerr
 		}
 		if rel == "." {
 			return nil
 		}
-		name := filepath.ToSlash(filepath.Join(prefix, rel))
-		if fi.Mode()&os.ModeSymlink != 0 {
+		if testHookWalkEntry != nil {
+			testHookWalkEntry(root, rel)
+		}
+		name := path.Join(prefix, rel)
+		if d.Type()&fs.ModeSymlink != 0 {
 			// Skipped, not stored. Walk never descends into a link, so its contents
 			// were never in the archive — storing the link itself only made the
 			// backup look complete. Naming it is the useful part: whoever pointed
@@ -186,10 +207,14 @@ func addTree(tw *tar.Writer, root, prefix string, rep *Report) error {
 			rep.SkippedLinks = append(rep.SkippedLinks, name)
 			return nil
 		}
+		fi, err := d.Info()
+		if err != nil {
+			return err
+		}
 		if fi.Mode().IsRegular() {
 			rep.Bytes += fi.Size()
 		}
-		return addOne(tw, p, name, fi)
+		return addOne(tw, func() (io.ReadCloser, error) { return rt.Open(rel) }, name, fi)
 	})
 }
 
@@ -198,11 +223,12 @@ func addFile(tw *tar.Writer, path, name string) error {
 	if err != nil {
 		return err
 	}
-	return addOne(tw, path, name, fi)
+	return addOne(tw, func() (io.ReadCloser, error) { return os.Open(path) }, name, fi)
 }
 
 // addOne writes one regular file or directory entry.
-func addOne(tw *tar.Writer, path, name string, fi os.FileInfo) error {
+// open reads the content of a regular file; fi is what the walk saw.
+func addOne(tw *tar.Writer, open func() (io.ReadCloser, error), name string, fi os.FileInfo) error {
 	if !fi.Mode().IsRegular() && !fi.IsDir() {
 		// Sockets, devices, fifos: nothing to restore. Symlinks are filtered out
 		// by the caller, which records them in the report.
@@ -225,7 +251,7 @@ func addOne(tw *tar.Writer, path, name string, fi os.FileInfo) error {
 	if !fi.Mode().IsRegular() {
 		return nil
 	}
-	src, err := os.Open(path)
+	src, err := open()
 	if err != nil {
 		return err
 	}

@@ -585,3 +585,58 @@ func TestPentestTarPath_SkipsSpecialFiles(t *testing.T) {
 		t.Errorf("regular files should still be archived: %v", names)
 	}
 }
+
+// PENTEST: a folder in a bind source swapped for a link out of it after the
+// walk listed it must not ship the outside files to the remote volume.
+func TestPentestTarPath_FolderSwappedMidWalk(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	root, victim := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(victim, "secret"), []byte("PRIVATE-KEY-MATERIAL"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("a"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "sub", "secret"), []byte("decoy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	fired := false
+	testHookWalkEntry = func(_, rel string) {
+		if rel != "sub" || fired { // swapped after it was seen as a folder, before it is read
+			return
+		}
+		fired = true
+		if err := os.RemoveAll(filepath.Join(root, "sub")); err != nil {
+			t.Error(err)
+		}
+		if err := os.Symlink(victim, filepath.Join(root, "sub")); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { testHookWalkEntry = nil })
+
+	r, err := tarPath(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := tar.NewReader(r)
+	for {
+		h, err := tr.Next()
+		if err != nil {
+			break // io.EOF, or the walk refused: both fine
+		}
+		body, _ := io.ReadAll(tr)
+		if strings.Contains(string(body), "PRIVATE-KEY-MATERIAL") {
+			t.Fatalf("SECURITY: %q carried a file from outside the bind source", h.Name)
+		}
+	}
+	if !fired {
+		t.Fatal("the walk never reached sub through writeTar")
+	}
+}

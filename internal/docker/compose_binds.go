@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -351,35 +352,55 @@ func writeTar(tw *tar.Writer, src string, isFile bool) error {
 		}
 		return err
 	}
+	// Everything below is read through an os.Root on the source, so a file or
+	// folder swapped for a link out of it after the walk listed it (by a
+	// container that has the project mounted, say) can't ship outside data to
+	// the remote volume.
 	if isFile {
-		return tarOne(tw, src, filepath.Base(src))
-	}
-	return filepath.Walk(src, func(p string, fi os.FileInfo, err error) error {
+		rt, err := os.OpenRoot(filepath.Dir(src))
 		if err != nil {
 			return err
 		}
-		rel, rerr := filepath.Rel(src, p)
-		if rerr != nil {
-			return rerr
+		defer rt.Close()
+		return tarOne(tw, rt, filepath.Base(src), filepath.Base(src))
+	}
+	if fi, err := os.Lstat(src); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return nil // a linked folder is not walked into, as before
+	}
+	rt, err := os.OpenRoot(src)
+	if err != nil {
+		return err
+	}
+	defer rt.Close()
+	return fs.WalkDir(rt.FS(), ".", func(rel string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
 		}
 		if rel == "." {
 			return nil // the volume root already exists
 		}
-		return tarOne(tw, p, filepath.ToSlash(rel))
+		if testHookWalkEntry != nil {
+			testHookWalkEntry(src, rel)
+		}
+		return tarOne(tw, rt, rel, rel)
 	})
 }
+
+// testHookWalkEntry, when set by a test, runs as writeTar reaches each entry —
+// the moment a racing process would swap something in.
+var testHookWalkEntry func(root, rel string)
 
 // tarOne writes a single filesystem entry. Regular files, directories and
 // symlinks are supported; anything else (socket, device, fifo) is skipped rather
 // than failing the whole deploy.
-func tarOne(tw *tar.Writer, p, name string) error {
-	fi, err := os.Lstat(p)
+func tarOne(tw *tar.Writer, rt *os.Root, rel, name string) error {
+	fi, err := rt.Lstat(rel)
 	if err != nil {
 		return err
 	}
 	var link string
 	if fi.Mode()&os.ModeSymlink != 0 {
-		if link, err = os.Readlink(p); err != nil {
+		if link, err = rt.Readlink(rel); err != nil {
 			return err
 		}
 	} else if !fi.Mode().IsRegular() && !fi.IsDir() {
@@ -402,7 +423,7 @@ func tarOne(tw *tar.Writer, p, name string) error {
 	if !fi.Mode().IsRegular() {
 		return nil
 	}
-	f, err := os.Open(p)
+	f, err := rt.Open(rel)
 	if err != nil {
 		return err
 	}

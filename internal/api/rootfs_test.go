@@ -1,10 +1,14 @@
 package api
 
 import (
+	"archive/zip"
+	"bytes"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -118,6 +122,100 @@ func TestPentestWalkRootIgnoresSymlinkSwappedInMidWalk(t *testing.T) {
 			t.Fatal("SECURITY: the walk read a file outside the sandbox through a swapped-in symlink")
 		}
 	}
+}
+
+// PENTEST: every walker that reads a project or template folder — recovery
+// export, download zip, file listing, template snapshot — must go through
+// walkRoot, so a folder swapped for an escaping link mid-walk isn't read.
+func TestPentestFolderWalkersIgnoreFolderSwappedMidWalk(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	walkers := map[string]func(root string) string{
+		"recovery export": func(root string) string {
+			var buf bytes.Buffer
+			zw := zip.NewWriter(&buf)
+			budget := int64(1 << 20)
+			_, _ = writeDirToZip(zw, root, "projects/p/", &budget)
+			_ = zw.Close()
+			return buf.String()
+		},
+		"download zip": func(root string) string {
+			data, _ := zipDir(root)
+			return string(data)
+		},
+		"file listing": func(root string) string {
+			files, _ := listFilesInRoot(root)
+			var out strings.Builder
+			for _, f := range files {
+				out.WriteString(f.Content)
+			}
+			return out.String()
+		},
+		"template snapshot": func(root string) string {
+			files, _ := readProjectFilesFromDisk(root)
+			var out strings.Builder
+			for _, f := range files {
+				out.WriteString(f.Content)
+			}
+			return out.String()
+		},
+	}
+	for name, walk := range walkers {
+		t.Run(name, func(t *testing.T) {
+			root, victim := t.TempDir(), t.TempDir()
+			mustWriteFile(t, filepath.Join(victim, "secret.txt"), "HOST-SECRET")
+			mustWriteFile(t, filepath.Join(root, "a.txt"), "a")
+			if err := os.MkdirAll(filepath.Join(root, "sub"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			mustWriteFile(t, filepath.Join(root, "sub", "secret.txt"), "decoy")
+
+			fired := false
+			testHookWalkEntry = func(r, rel string) {
+				if r != root || rel != "sub" || fired { // seen as a folder, swapped before it is read
+					return
+				}
+				fired = true
+				if err := os.RemoveAll(filepath.Join(root, "sub")); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(victim, filepath.Join(root, "sub")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Cleanup(func() { testHookWalkEntry = nil })
+
+			// Zip entries may be compressed, so zipHas reads them back.
+			out := walk(root)
+			if !fired {
+				t.Fatal("the walk did not go through walkRoot")
+			}
+			if strings.Contains(out, "HOST-SECRET") || zipHas(out, "HOST-SECRET") {
+				t.Fatal("SECURITY: the walk read a file outside the folder through a swapped-in link")
+			}
+		})
+	}
+}
+
+// zipHas reports whether data is a zip with an entry whose content contains s.
+func zipHas(data, s string) bool {
+	zr, err := zip.NewReader(strings.NewReader(data), int64(len(data)))
+	if err != nil {
+		return false
+	}
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			continue
+		}
+		b, _ := io.ReadAll(rc)
+		rc.Close()
+		if strings.Contains(string(b), s) {
+			return true
+		}
+	}
+	return false
 }
 
 // The Root helpers still do the ordinary job: nested folders are created,

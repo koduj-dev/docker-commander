@@ -1864,7 +1864,7 @@ func assertWithinRoot(root, p string) error {
 // countFiles counts regular files under root.
 func countFiles(root string) (int, error) {
 	n := 0
-	err := filepath.WalkDir(root, func(_ string, d fs.DirEntry, err error) error {
+	err := walkRoot(root, func(_ fs.FS, _ string, d fs.DirEntry, err error) error {
 		if err == nil && !d.IsDir() {
 			n++
 		}
