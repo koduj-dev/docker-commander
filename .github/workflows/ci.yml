@@ -8,6 +8,10 @@ on:
     branches: [main, "release/v*"]
   pull_request:
 
+# Read-only token: CI builds and tests, it writes nothing back to the repo.
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
