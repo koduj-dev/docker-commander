@@ -296,6 +296,14 @@ func (s *Server) handleImportProject(w http.ResponseWriter, r *http.Request) {
 // failure (a bad path, a read error) is skipped rather than aborting the
 // whole extraction.
 func extractZipToDir(zr *zip.Reader, root string) int {
+	if os.MkdirAll(root, projectDirMode) != nil {
+		return 0
+	}
+	rt, err := os.OpenRoot(root)
+	if err != nil {
+		return 0
+	}
+	defer rt.Close()
 	count := 0
 	for _, f := range zr.File {
 		if f.FileInfo().IsDir() || count >= maxProjectFiles {
@@ -311,10 +319,11 @@ func extractZipToDir(zr *zip.Reader, root string) int {
 		}
 		content, _ := io.ReadAll(io.LimitReader(rc, maxProjectFileBytes))
 		rc.Close()
-		if err := os.MkdirAll(filepath.Dir(full), projectDirMode); err != nil {
+		rel, err := rootRel(root, full)
+		if err != nil {
 			continue
 		}
-		if os.WriteFile(full, content, projectFileMode) == nil {
+		if writeRootFile(rt, rel, content, projectDirMode, projectFileMode) == nil {
 			count++
 		}
 	}
@@ -463,12 +472,10 @@ func (s *Server) handleListProjectFiles(w http.ResponseWriter, r *http.Request) 
 // project and template file listings — both fold to the same caps and sandboxing.
 func listFilesInRoot(root string) ([]projectFileJSON, error) {
 	var out []projectFileJSON
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || path == root || d.Type()&fs.ModeSymlink != 0 {
+	err := walkRoot(root, func(fsys fs.FS, name string, d fs.DirEntry, err error) error {
+		if err != nil || name == "." || d.Type()&fs.ModeSymlink != 0 {
 			return err
 		}
-		rel, _ := filepath.Rel(root, path)
-		name := filepath.ToSlash(rel)
 		if d.IsDir() {
 			out = append(out, projectFileJSON{Name: name, IsDir: true})
 			return nil
@@ -481,7 +488,7 @@ func listFilesInRoot(root string) ([]projectFileJSON, error) {
 			out = append(out, projectFileJSON{Name: name, Size: info.Size(), TooLarge: true})
 			return nil
 		}
-		data, err := os.ReadFile(path)
+		data, err := fs.ReadFile(fsys, name)
 		if err != nil {
 			return err
 		}
@@ -534,17 +541,13 @@ func (s *Server) handleWriteProjectFile(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	// Enforce a file-count cap when adding a new file.
-	if _, statErr := os.Stat(full); errors.Is(statErr, os.ErrNotExist) {
+	if missingInRoot(root, full) {
 		if n, _ := countFiles(root); n >= maxProjectFiles {
 			writeErr(w, http.StatusBadRequest, "too many files in this project")
 			return
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(full), projectDirMode); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if err := os.WriteFile(full, []byte(body.Content), projectFileMode); err != nil {
+	if err := writeInRoot(root, full, []byte(body.Content), projectDirMode, projectFileMode); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -574,7 +577,7 @@ func (s *Server) handleUploadProjectFileRaw(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	// Enforce the file-count cap when adding a new file.
-	if _, statErr := os.Stat(full); errors.Is(statErr, os.ErrNotExist) {
+	if missingInRoot(root, full) {
 		if n, _ := countFiles(root); n >= maxProjectFiles {
 			writeErr(w, http.StatusBadRequest, "too many files in this project")
 			return
@@ -589,11 +592,7 @@ func (s *Server) handleUploadProjectFileRaw(w http.ResponseWriter, r *http.Reque
 		writeErr(w, http.StatusRequestEntityTooLarge, "file too large")
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(full), projectDirMode); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if err := os.WriteFile(full, data, projectFileMode); err != nil {
+	if err := writeInRoot(root, full, data, projectDirMode, projectFileMode); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -610,12 +609,13 @@ func (s *Server) handleDownloadProjectFile(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	name := r.URL.Query().Get("path")
-	full, err := safeJoin(s.projectRoot(p.ID), name)
+	root := s.projectRoot(p.ID)
+	full, err := safeJoin(root, name)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	f, err := os.Open(full)
+	f, err := openInRoot(root, full)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "file not found")
 		return
@@ -655,12 +655,13 @@ func (s *Server) handleDeleteProjectFile(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer release()
-	full, err := safeJoin(s.projectRoot(p.ID), r.URL.Query().Get("path"))
+	root := s.projectRoot(p.ID)
+	full, err := safeJoin(root, r.URL.Query().Get("path"))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := os.Remove(full); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := removeInRoot(root, full); err != nil && !errors.Is(err, os.ErrNotExist) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -687,12 +688,13 @@ func (s *Server) handleMakeProjectDir(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	full, err := safeJoin(s.projectRoot(p.ID), body.Name)
+	root := s.projectRoot(p.ID)
+	full, err := safeJoin(root, body.Name)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := os.MkdirAll(full, projectDirMode); err != nil {
+	if err := mkdirInRoot(root, full, projectDirMode); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1146,16 +1148,15 @@ func (s *Server) overlayProject(id int64, name, content string) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || p == root || d.Type()&fs.ModeSymlink != 0 {
+	err = walkRoot(root, func(fsys fs.FS, rel string, d fs.DirEntry, err error) error {
+		if err != nil || rel == "." || d.Type()&fs.ModeSymlink != 0 {
 			return err
 		}
-		rel, _ := filepath.Rel(root, p)
-		dst := filepath.Join(tmp, rel)
+		dst := filepath.Join(tmp, filepath.FromSlash(rel))
 		if d.IsDir() {
 			return os.MkdirAll(dst, 0o700)
 		}
-		data, err := os.ReadFile(p)
+		data, err := fs.ReadFile(fsys, rel)
 		if err != nil {
 			return err
 		}
@@ -1170,11 +1171,7 @@ func (s *Server) overlayProject(id int64, name, content string) (string, error) 
 		os.RemoveAll(tmp)
 		return "", err
 	}
-	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
-		os.RemoveAll(tmp)
-		return "", err
-	}
-	if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
+	if err := writeInRoot(tmp, full, []byte(content), 0o700, 0o600); err != nil {
 		os.RemoveAll(tmp)
 		return "", err
 	}
@@ -1318,16 +1315,15 @@ func (s *Server) handleDownloadProject(w http.ResponseWriter, r *http.Request) {
 func zipDir(root string) ([]byte, error) {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	err := walkRoot(root, func(fsys fs.FS, rel string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
 			return err
 		}
-		rel, _ := filepath.Rel(root, path)
-		fw, err := zw.Create(filepath.ToSlash(rel))
+		fw, err := zw.Create(rel)
 		if err != nil {
 			return err
 		}
-		data, err := os.ReadFile(path)
+		data, err := fs.ReadFile(fsys, rel)
 		if err != nil {
 			return err
 		}
@@ -1868,7 +1864,7 @@ func assertWithinRoot(root, p string) error {
 // countFiles counts regular files under root.
 func countFiles(root string) (int, error) {
 	n := 0
-	err := filepath.WalkDir(root, func(_ string, d fs.DirEntry, err error) error {
+	err := walkRoot(root, func(_ fs.FS, _ string, d fs.DirEntry, err error) error {
 		if err == nil && !d.IsDir() {
 			n++
 		}

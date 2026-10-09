@@ -305,7 +305,7 @@ func TestTarPath_Directory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "sub", "app.js"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	r, err := tarPath(root, false)
+	r, err := tarPath(root, ".", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,9 +329,9 @@ func TestTarPath_Directory(t *testing.T) {
 // whole deploy fails. Classification calls such a source internal
 // (TestClassifyProjectBinds_MissingSourceStillInternal), so seeding has to agree.
 func TestTarPath_MissingSourceYieldsEmptyArchive(t *testing.T) {
-	missing := filepath.Join(t.TempDir(), "not-created-yet")
+	projectDir := t.TempDir()
 	for _, isFile := range []bool{false, true} {
-		r, err := tarPath(missing, isFile)
+		r, err := tarPath(projectDir, "not-created-yet", isFile)
 		if err != nil {
 			t.Fatalf("isFile=%v: tarPath returned %v", isFile, err)
 		}
@@ -360,7 +360,7 @@ func TestTarPath_SingleFile(t *testing.T) {
 	if err := os.WriteFile(p, []byte("worker_processes 1;"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	r, err := tarPath(p, true)
+	r, err := tarPath(root, filepath.Base(p), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -378,7 +378,7 @@ func TestTarPath_DropsOwnership(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "f"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	r, err := tarPath(root, false)
+	r, err := tarPath(root, ".", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -543,7 +543,7 @@ func TestPentestTarPath_SymlinkNotFollowed(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(root, "leak")); err != nil {
 		t.Fatal(err)
 	}
-	r, err := tarPath(root, false)
+	r, err := tarPath(root, ".", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -576,12 +576,168 @@ func TestPentestTarPath_SkipsSpecialFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "ok.txt"), []byte("fine"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	r, err := tarPath(root, false)
+	r, err := tarPath(root, ".", false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	names := tarNames(t, r)
 	if _, ok := names["ok.txt"]; !ok {
 		t.Errorf("regular files should still be archived: %v", names)
+	}
+}
+
+// PENTEST: a folder in a bind source swapped for a link out of it after the
+// walk listed it must not ship the outside files to the remote volume.
+func TestPentestTarPath_FolderSwappedMidWalk(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	root, victim := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(victim, "secret"), []byte("PRIVATE-KEY-MATERIAL"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("a"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "sub", "secret"), []byte("decoy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	fired := false
+	testHookWalkEntry = func(_, rel string) {
+		if rel != "sub" || fired { // swapped after it was seen as a folder, before it is read
+			return
+		}
+		fired = true
+		if err := os.RemoveAll(filepath.Join(root, "sub")); err != nil {
+			t.Error(err)
+		}
+		if err := os.Symlink(victim, filepath.Join(root, "sub")); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { testHookWalkEntry = nil })
+
+	r, err := tarPath(root, ".", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := tar.NewReader(r)
+	for {
+		h, err := tr.Next()
+		if err != nil {
+			break // io.EOF, or the walk refused: both fine
+		}
+		body, _ := io.ReadAll(tr)
+		if strings.Contains(string(body), "PRIVATE-KEY-MATERIAL") {
+			t.Fatalf("SECURITY: %q carried a file from outside the bind source", h.Name)
+		}
+	}
+	if !fired {
+		t.Fatal("the walk never reached sub through writeTar")
+	}
+}
+
+// tarHas reports whether any entry of the archive r carries s.
+func tarHas(t *testing.T, r io.Reader, s string) (string, bool) {
+	t.Helper()
+	tr := tar.NewReader(r)
+	for {
+		h, err := tr.Next()
+		if err != nil {
+			return "", false // io.EOF, or the walk refused: both fine
+		}
+		body, _ := io.ReadAll(tr)
+		if strings.Contains(string(body), s) {
+			return h.Name, true
+		}
+	}
+}
+
+// PENTEST: the bind source folder itself swapped for a link out of the
+// project after it was checked must not be archived from its new target.
+func TestPentestTarPath_SourceFolderSwapped(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	projectDir, victim := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(victim, "secret"), []byte("PRIVATE-KEY-MATERIAL"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(projectDir, "data"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	fired := false
+	testHookWalkEntry = func(_, rel string) {
+		if rel != "data" || fired {
+			return
+		}
+		fired = true
+		if err := os.RemoveAll(filepath.Join(projectDir, "data")); err != nil {
+			t.Error(err)
+		}
+		if err := os.Symlink(victim, filepath.Join(projectDir, "data")); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { testHookWalkEntry = nil })
+
+	r, err := tarPath(projectDir, "data", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name, leaked := tarHas(t, r, "PRIVATE-KEY-MATERIAL"); leaked {
+		t.Fatalf("SECURITY: %q carried a file from outside the project", name)
+	}
+	if !fired {
+		t.Fatal("writeTar never reached the bind source")
+	}
+}
+
+// PENTEST: the parent folder of a single-file bind swapped for a link out of
+// the project must not make the archive read the file behind the link.
+func TestPentestTarPath_FileParentSwapped(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	projectDir, victim := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(victim, "nginx.conf"), []byte("PRIVATE-KEY-MATERIAL"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(projectDir, "conf"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "conf", "nginx.conf"), []byte("worker_processes 1;"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	fired := false
+	testHookWalkEntry = func(_, rel string) {
+		if rel != "conf/nginx.conf" || fired {
+			return
+		}
+		fired = true
+		if err := os.RemoveAll(filepath.Join(projectDir, "conf")); err != nil {
+			t.Error(err)
+		}
+		if err := os.Symlink(victim, filepath.Join(projectDir, "conf")); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { testHookWalkEntry = nil })
+
+	r, err := tarPath(projectDir, "conf/nginx.conf", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name, leaked := tarHas(t, r, "PRIVATE-KEY-MATERIAL"); leaked {
+		t.Fatalf("SECURITY: %q carried a file from outside the project", name)
+	}
+	if !fired {
+		t.Fatal("writeTar never reached the bind source")
 	}
 }

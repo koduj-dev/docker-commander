@@ -20,7 +20,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -150,12 +152,16 @@ func writeArchive(out, dataDir, dbSnapshot string, rep *Report) error {
 	if fi, err := os.Stat(dbSnapshot); err == nil {
 		rep.Bytes += fi.Size()
 	}
+	// The folders are reached relative to an os.Root on the data dir, so even
+	// projects/ itself being swapped for a link between the check and the walk
+	// can't take the backup outside it.
+	dataRoot, err := os.OpenRoot(dataDir)
+	if err != nil {
+		return err
+	}
+	defer dataRoot.Close()
 	for _, dir := range dataDirEntries {
-		src := filepath.Join(dataDir, dir)
-		if _, err := os.Stat(src); os.IsNotExist(err) {
-			continue // nothing created yet
-		}
-		if err := addTree(tw, src, dir, rep); err != nil {
+		if err := addTree(tw, dataRoot, dataDir, dir, rep); err != nil {
 			return err
 		}
 	}
@@ -165,20 +171,49 @@ func writeArchive(out, dataDir, dbSnapshot string, rep *Report) error {
 	return gz.Close()
 }
 
-func addTree(tw *tar.Writer, root, prefix string, rep *Report) error {
-	return filepath.Walk(root, func(p string, fi os.FileInfo, err error) error {
+// testHookWalkEntry, when set by a test, runs as the walk reaches each entry —
+// the moment a racing process would swap something in.
+var testHookWalkEntry func(root, rel string)
+
+func addTree(tw *tar.Writer, dataRoot *os.Root, dataDir, prefix string, rep *Report) error {
+	// Lstat, not Stat: projects/ itself may be the link (moved to a bigger
+	// disk), and one whose disk is unplugged must be named too, not taken for
+	// "nothing created yet".
+	fi, err := dataRoot.Lstat(prefix)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil // nothing created yet
+	}
+	if err != nil {
+		return err
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		rep.SkippedLinks = append(rep.SkippedLinks, prefix)
+		return nil
+	}
+	if testHookWalkEntry != nil {
+		testHookWalkEntry(dataDir, prefix)
+	}
+	root := filepath.Join(dataDir, prefix)
+	// Walk and read through an os.Root: a link swapped in for a file or folder
+	// after it was listed (by a container with the project mounted, say) can't
+	// pull outside data into the archive.
+	rt, err := dataRoot.OpenRoot(prefix)
+	if err != nil {
+		return err
+	}
+	defer rt.Close()
+	return fs.WalkDir(rt.FS(), ".", func(rel string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
-		}
-		rel, rerr := filepath.Rel(root, p)
-		if rerr != nil {
-			return rerr
 		}
 		if rel == "." {
 			return nil
 		}
-		name := filepath.ToSlash(filepath.Join(prefix, rel))
-		if fi.Mode()&os.ModeSymlink != 0 {
+		if testHookWalkEntry != nil {
+			testHookWalkEntry(root, rel)
+		}
+		name := path.Join(prefix, rel)
+		if d.Type()&fs.ModeSymlink != 0 {
 			// Skipped, not stored. Walk never descends into a link, so its contents
 			// were never in the archive — storing the link itself only made the
 			// backup look complete. Naming it is the useful part: whoever pointed
@@ -186,10 +221,14 @@ func addTree(tw *tar.Writer, root, prefix string, rep *Report) error {
 			rep.SkippedLinks = append(rep.SkippedLinks, name)
 			return nil
 		}
+		fi, err := d.Info()
+		if err != nil {
+			return err
+		}
 		if fi.Mode().IsRegular() {
 			rep.Bytes += fi.Size()
 		}
-		return addOne(tw, p, name, fi)
+		return addOne(tw, func() (io.ReadCloser, error) { return rt.Open(rel) }, name, fi)
 	})
 }
 
@@ -198,11 +237,12 @@ func addFile(tw *tar.Writer, path, name string) error {
 	if err != nil {
 		return err
 	}
-	return addOne(tw, path, name, fi)
+	return addOne(tw, func() (io.ReadCloser, error) { return os.Open(path) }, name, fi)
 }
 
 // addOne writes one regular file or directory entry.
-func addOne(tw *tar.Writer, path, name string, fi os.FileInfo) error {
+// open reads the content of a regular file; fi is what the walk saw.
+func addOne(tw *tar.Writer, open func() (io.ReadCloser, error), name string, fi os.FileInfo) error {
 	if !fi.Mode().IsRegular() && !fi.IsDir() {
 		// Sockets, devices, fifos: nothing to restore. Symlinks are filtered out
 		// by the caller, which records them in the report.
@@ -225,7 +265,7 @@ func addOne(tw *tar.Writer, path, name string, fi os.FileInfo) error {
 	if !fi.Mode().IsRegular() {
 		return nil
 	}
-	src, err := os.Open(path)
+	src, err := open()
 	if err != nil {
 		return err
 	}
@@ -291,6 +331,15 @@ func extract(r io.Reader, dataDir string) error {
 	if err != nil {
 		return err
 	}
+	// Every write goes through an os.Root on the data dir: safeJoin turns away
+	// names that escape lexically, the Root refuses anything that would leave
+	// the dir through a symlink already there (a --force restore over an
+	// existing install). Joined, nothing in the archive lands outside.
+	rt, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer rt.Close()
 	tr := tar.NewReader(gz)
 	for {
 		hdr, err := tr.Next()
@@ -304,9 +353,13 @@ func extract(r io.Reader, dataDir string) error {
 		if err != nil {
 			return err
 		}
+		rel, err := filepath.Rel(root, dest)
+		if err != nil {
+			return err
+		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(dest, 0o700); err != nil {
+			if err := rt.MkdirAll(rel, 0o700); err != nil {
 				return err
 			}
 		case tar.TypeSymlink:
@@ -318,10 +371,10 @@ func extract(r io.Reader, dataDir string) error {
 			// class of bug is not to create links at all.
 			return fmt.Errorf("backup: refusing symlink entry %q → %q: backups do not carry symlinks", hdr.Name, hdr.Linkname)
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
+			if err := rt.MkdirAll(filepath.Dir(rel), 0o700); err != nil {
 				return err
 			}
-			out, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode)&0o777)
+			out, err := rt.OpenFile(rel, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode)&0o777)
 			if err != nil {
 				return err
 			}
