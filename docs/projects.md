@@ -23,6 +23,8 @@ resulting `compose.yml` shows next to the form before anything is created.
 It compares the saved files with what is running, lists each service that would
 change, and marks the ones that will be **recreated**.
 
+![Deploy preview](images/deploy_preview.png)
+
 **Roll back a bad deploy.** In the editor, click **History**, find the last good
 revision with **Diff vs current**, then click **Restore**. Images that had a
 recorded digest are pinned to it, so a moved tag can't bring back something

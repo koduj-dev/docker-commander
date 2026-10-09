@@ -44,6 +44,11 @@ and roll back when something goes wrong.
 
 ![Dashboard](docs/images/dashboard.png)
 
+**Deploy preview:** before a deploy, every service that would change and why —
+image, digest, ports, env — and which containers it would recreate.
+
+![Deploy preview](docs/images/deploy_preview.png)
+
 **Container detail:** live CPU and memory with history, and tabs for logs, an
 interactive console, processes, the file browser, filesystem changes and env.
 
