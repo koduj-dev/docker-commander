@@ -45,7 +45,7 @@ as flat lines and empty feeds.
 | `DC_CONTAINER`   | `queue-worker`                         | Container to feature in `container_detail`.            |
 | `DC_LOG_SOURCES` | `app-php-fpm,queue-worker,db-postgres` | Containers to tick in the aggregated Logs view.        |
 | `DC_NETWORK`     | —                                      | Network to open in the detail drawer. Prefer one with several containers attached: the graph view of a single-container network is two boxes and a line. |
-| `DC_PREVIEW_PROJECT` | first project                       | Project to open in the deploy preview. Pick one that is deployed and whose saved files differ from what runs (a bumped image tag, a changed port), or the preview only says "Nothing would change". |
+| `DC_PROJECT`     | first project                          | Project for the deploy preview, history, secrets and domains shots. Pick one that is deployed, has a few deploys behind it, and whose saved files differ from what runs (a bumped image tag, a changed port), or the preview only says "Nothing would change". |
 
 ## Notes
 
