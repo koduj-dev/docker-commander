@@ -43,6 +43,7 @@ web/tsconfig.tsbuildinfo
 # that would otherwise be swept up by `git add -A`.
 .claude/worktrees/
 
-# Local Codex review report (intentionally not committed).
+# Local review notes (intentionally not committed).
 codex-review.md
 code-review.md
+/*review*.md
