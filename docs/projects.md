@@ -282,7 +282,7 @@ and has no effect on traffic. With the proxy, these limits apply:
   *published host port* directly. That works when Docker Commander runs on bare
   metal or a VM next to the daemon, the common case. It does **not** work when
   Docker Commander runs in a container per
-  [Option D](../README.md#option-d--docker) *without* `--network host`, since
+  [Docker](install.md#docker) *without* `--network host`, since
   the published port lives in the host's namespace. If the "local" daemon is
   really remote (`DOCKER_HOST=tcp://…` elsewhere), the proxy detects it and
   refuses. The containerized-on-the-same-machine case can't be detected that way

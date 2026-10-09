@@ -19,7 +19,7 @@ name: Docker compatibility matrix
 # docker:NN-dind) and the Compose plugin (a client-side CLI binary the app
 # shells out to). Pinning only the Engine and letting Compose be "whatever the
 # runner image ships" means five green jobs still only ever exercise one
-# Compose release — and the README claims "v2 or newer", which is a much
+# Compose release — and docs/compatibility.md claims "v2 or newer", which is a much
 # bigger promise than that. So each job now also installs a specific pinned
 # `docker-compose` plugin binary before the test step, overriding the runner's
 # default.

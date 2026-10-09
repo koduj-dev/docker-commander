@@ -170,7 +170,7 @@ the **standalone actions** (`--version`, `--make-certs`, `--self-upgrade`, `--ba
 ### Debian / Ubuntu & Fedora packages (.deb / .rpm)
 
 Each release publishes `.deb` and `.rpm` packages (amd64 + arm64) on the
-[Releases](../../releases) page. They install the binary to `/usr/bin/dockercmd`, a
+[Releases](https://github.com/koduj-dev/docker-commander/releases) page. They install the binary to `/usr/bin/dockercmd`, a
 hardened **systemd** unit, the man page, and `/etc/docker-commander/commander.conf`
 (a *conffile*: your edits survive upgrades), then create the `dockercmd` user and
 start the service.
