@@ -221,11 +221,18 @@ func keysEqual(a, b ssh.PublicKey) bool {
 	return true
 }
 
+// errHostKeyCaptured ends a host-key probe as soon as the key is in hand.
+var errHostKeyCaptured = errors.New("host key captured")
+
 // probeSSHHostKey connects far enough to capture the daemon's presented host
 // key, accepting whatever is offered. It backs the explicit "trust" action:
 // the caller pins the returned key after the operator approves the fingerprint.
-// The host key is exchanged before authentication, so this succeeds (returns
-// the key) even when SSH auth would later fail.
+//
+// The key arrives during key exchange, before authentication, and the probe
+// stops right there: the callback rejects the connection once it has the key.
+// A server whose key nobody has approved yet must not be offered our
+// credentials. Authenticating used to follow, which told an unverified server
+// every public key in the agent and the default key files.
 func probeSSHHostKey(h *store.Host) (keyLine, fingerprint string, err error) {
 	user, addr, err := parseSSHAddress(h.Address)
 	if err != nil {
@@ -234,11 +241,10 @@ func probeSSHHostKey(h *store.Host) (keyLine, fingerprint string, err error) {
 
 	var captured ssh.PublicKey
 	cfg := &ssh.ClientConfig{
-		User: user,
-		Auth: sshAuthMethods(),
+		User: user, // no Auth: the handshake ends before authentication
 		HostKeyCallback: func(_ string, _ net.Addr, key ssh.PublicKey) error {
 			captured = key
-			return nil
+			return errHostKeyCaptured
 		},
 		Timeout: 10 * time.Second,
 	}

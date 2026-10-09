@@ -172,6 +172,9 @@ jobs:
   homebrew:
     needs: release # the release (and its SHA256SUMS) must exist first
     runs-on: ubuntu-latest
+    # Reads the release's SHA256SUMS; the tap push uses its own token.
+    permissions:
+      contents: read
     env:
       # Cross-repo push needs a PAT with contents:write on koduj-dev/homebrew-tap
       # (the default GITHUB_TOKEN can't reach another repo). If the secret isn't

@@ -10,6 +10,17 @@ We switched on GitHub's CodeQL code scanning only after 1.7.0 had shipped, so it
 first scan ran against a released version. This release fixes what that scan
 found, and from now on every change is scanned before it ships.
 
+### Security
+- **The SSH host-key probe no longer authenticates.** The **Test** step of adding
+  an SSH host connects to a server whose key nobody has approved yet; after
+  taking the key it went on to sign in, which told that server every public key
+  in the SSH agent and the default key files. It now stops right after key
+  exchange. (CodeQL `go/insecure-hostkeycallback`.)
+- **The logout cookie is `Secure` on HTTPS,** like the session cookie it
+  replaces. (CodeQL `go/cookie-secure-not-set`.)
+- **The CI and Homebrew workflows run with a read-only `GITHUB_TOKEN`.**
+  (CodeQL `actions/missing-workflow-permissions`.)
+
 ### Changed
 - **The README is a short landing page.** What Docker Commander is for, the
   features as one-line lists linking to the manual, and a quick start. The rest

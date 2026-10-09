@@ -228,3 +228,27 @@ func TestCookieSecure(t *testing.T) {
 		})
 	}
 }
+
+// The cookie that ends a session carries the same Secure flag as the one that
+// started it: on HTTPS a deletion cookie without it is one a browser may refuse
+// to apply over the Secure original.
+func TestClearSessionCookieMatchesSecure(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		tlsCert string
+		want    bool
+	}{{"https install", "/etc/tls/cert.pem", true}, {"plain http on loopback", "", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := &Server{cfg: config.Config{TLSCert: tc.tlsCert}}
+			w := httptest.NewRecorder()
+			srv.clearSessionCookie(w, httptest.NewRequest("POST", "/api/auth/logout", nil))
+			cookies := w.Result().Cookies()
+			if len(cookies) != 1 || cookies[0].MaxAge >= 0 {
+				t.Fatalf("want one deletion cookie, got %+v", cookies)
+			}
+			if cookies[0].Secure != tc.want {
+				t.Errorf("deletion cookie Secure = %v, want %v", cookies[0].Secure, tc.want)
+			}
+		})
+	}
+}
