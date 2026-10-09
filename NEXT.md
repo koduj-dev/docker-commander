@@ -66,6 +66,14 @@ networks/restart/resources/healthcheck differences, with a per-change
 `recreates` (downtime-risk) flag, behind both a REST endpoint
 (`GET /api/projects/{id}/preview`) and the `preview_deploy` MCP tool.
 
+- **Deploy verification.** The safe-change loop is plan → policy → deploy →
+  history → rollback, and the one step missing is *verify*: a deploy ends when
+  `compose up` returns, and nothing checks that what it started is healthy.
+  After any deploy or restore, watch the project's containers for a set time
+  (healthcheck status, restarts, exits), mark the revision **verified** or
+  **failed** in the history, and on failure offer a rollback to the last
+  verified revision (opt-in: do it automatically). Controlled updates' auto-apply
+  below needs exactly this gate, so it should be built once, here, and reused.
 - ~~**Drift detection (desired vs. running state).**~~ **Shipped** (see
   CHANGELOG): the deploy preview *is* this comparison, with three of its four
   named actions — **view the full diff** (the preview itself), **reconcile**
@@ -371,6 +379,16 @@ the security property alone, independent of the NAT-traversal convenience.
 
 ### Smaller, well-scoped
 
+- **Editor: refuse a save based on a stale read.** Two tabs or two people editing
+  the same project file: the second save silently overwrites the first. Hand out
+  the file's version (a hash) with each read, refuse a save whose version has
+  moved with `409`, and let the editor offer to reload. The per-project operation
+  lock (1.7.0) closed the data-loss race with a restore, not this one.
+- **CodeQL on pull requests into release branches.** CodeQL's default setup
+  analyses pull requests into `main` and protected branches only. `release/v*`
+  isn't protected, so a cycle's PRs are first scanned when the release PR
+  reaches `main`. Protect `release/v*` (with the CodeQL check required) or move
+  to an advanced-setup workflow that also covers them.
 - **Bulk operations — remaining scope.** Restart/stop/start and pull across a
   multi-selection all shipped (preview, confirmation, per-container
   success/failure summary; reuses the existing `containers` section write
@@ -506,3 +524,6 @@ in the [CHANGELOG](CHANGELOG.md). The ranked candidates, in descending priority
 26. Backlog: Docker Swarm support
 27. Open questions to triage: automation API + CLI, "existing containers →
     Compose project", Compose Watch / dev mode
+28. Deploy verification — the *verify* step of the safe-change loop, and the
+    gate controlled updates' auto-apply needs
+29. Smaller: editor stale-write protection, CodeQL on release-branch PRs
