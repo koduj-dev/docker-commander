@@ -46,6 +46,11 @@ const LOG_SOURCES = (process.env.DC_LOG_SOURCES || 'app-php-fpm,queue-worker,db-
 // Which network to open in the detail drawer. Pick one with several containers
 // attached: the graph view of a single-container network is two boxes and a line,
 // which shows the feature at its least convincing.
+// Which project to open in the deploy preview. The preview is only worth a
+// picture when the project is deployed and its saved files differ from what
+// runs (a bumped image tag, a changed port), or it just says "Nothing would
+// change".
+const PREVIEW_PROJECT = (process.env.DC_PREVIEW_PROJECT || '').trim();
 const NETWORKS = [
   ...(process.env.DC_NETWORK || '').split(',').map((s) => s.trim()).filter(Boolean),
   'elastic', 'bridge',
@@ -260,6 +265,27 @@ const SHOTS = [
         return true;
       }
       return openFirstRow(page);
+    },
+  },
+  {
+    // The deploy preview: open the project's editor, then Preview.
+    name: 'deploy_preview',
+    path: '/projects',
+    settle: 3000,
+    prep: async (page) => {
+      let edit = page.locator('button[title="Edit files"]');
+      if (PREVIEW_PROJECT) {
+        edit = page.locator('tr, li, [role="row"], div.card')
+          .filter({ hasText: PREVIEW_PROJECT })
+          .locator('button[title="Edit files"]');
+      }
+      if (!(await edit.first().count().catch(() => 0))) return false;
+      await edit.first().click().catch(() => {});
+      await page.waitForTimeout(1400); // CodeMirror is lazy-loaded
+      const preview = page.locator('button[title="See what a deploy would change before running it"]').first();
+      if (!(await preview.count().catch(() => 0))) return false;
+      await preview.click().catch(() => {});
+      return true;
     },
   },
 ];
