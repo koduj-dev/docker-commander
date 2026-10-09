@@ -486,51 +486,9 @@ Recorded so they don't get re-proposed.
 
 ## 🗺️ Working priority order
 
-**Agreed 2026-08-27** — done, all shipped in 1.7.0:
-- [x] Deployment plan / diff
-- [x] Drift detection (view/reconcile/ignore shipped; "adopt" deliberately deferred, see below)
-- [x] Deployment revisions and rollback (Projects only; CLI-discovered Stacks and remote seeded-volume snapshots still open, see below)
-- [x] Portable recovery bundle
-- [x] Policy checks before deploy
-- [x] Volume data: trigger-and-status wrapper
-
-**Agreed 2026-09-04** — final feature set for 1.7.0, security/RBAC first. Check
-items off as they ship; revisit the order deliberately if priorities change,
-don't just silently reshuffle it. (Original numbering from the candidate list
-kept in parentheses for traceability.)
-
-**Reordered 2026-09-11**: maintenance windows and alert delivery retry pulled
-ahead of project secrets — both build directly on the alert lifecycle engine
-that already shipped, are smaller/related work, and were judged worth doing
-together (a silence is, among other things, a reason a delivery legitimately
-doesn't retry). Project secrets pushed to #4, unchanged in scope.
-
-**Reordered 2026-09-18**: item 8 added — after shipping domain mappings
-phase 1 (config only), Filip decided the live proxy engine (phase 2) should
-land in 1.7.0 too rather than ship the release with a "Domains" panel that
-visibly does nothing yet. Sequenced after top talkers, not before, since it
-was already in flight when the call was made.
-
-1. [x] Per-session MCP token revocation (#20)
-2. [x] Maintenance windows / silences (#6)
-3. [x] Alert delivery retry (#12)
-4. [x] Project secrets (#10)
-5. [x] Controlled image updates (#11; detection + notification shipped,
-   auto-apply/policy/cooldown/prune still open, see below) — together with
-   self-update auto-apply policy (#19), same poll/policy/audit/notify shape,
-   one applied to workloads and the other to DC's own binary
-6. [x] Per-container domain + TLS / embedded reverse proxy (#13; phase 1,
-   config only, shipped — live proxy engine shipped in item 8 below)
-7. [x] Network alerting / top talkers (#21)
-8. [x] Per-container domain + TLS, phase 2 — the live proxy engine
-   (shared-listener SNI dispatch, `ReverseProxy` routing from the stored
-   mappings, local-host projects only, off by default); remote-host
-   reachability and polish still open, see the "Reverse proxy and ingress"
-   detail entry above
-
-**Not yet ordered**, full ranked candidate list (original numbering kept as-is —
-this is everything not pulled into a bundle above, in descending priority, no
-agreed commitment yet, revisit before reshuffling):
+Nothing is agreed for the next release yet. Everything that shipped in 1.7.0 is
+in the [CHANGELOG](CHANGELOG.md). The ranked candidates, in descending priority
+(original numbering kept as-is), no commitment yet; revisit before reshuffling:
 
 5. Incident timeline / correlation
 9. External / synthetic checks
