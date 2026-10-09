@@ -38,7 +38,21 @@ and roll back when something goes wrong.
 - **AI access without a shell.** An optional MCP server lets AI tools read and
   safely operate Docker as you, within your permissions.
 
+## 📸 Screenshots
+
+**Dashboard:** host overview, disk usage, and running containers at a glance.
+
 ![Dashboard](docs/images/dashboard.png)
+
+**Container detail:** live CPU and memory with history, and tabs for logs, an
+interactive console, processes, the file browser, filesystem changes and env.
+
+![Container detail](docs/images/container_detail.png)
+
+**Aggregated logs:** many containers in one stream, color-coded by source, with
+level filters, regex search and structured parsing.
+
+![Aggregated logs](docs/images/logs.png)
 
 More screenshots are on each page of the [manual](docs/README.md).
 
@@ -136,8 +150,8 @@ to report a vulnerability privately.
 
 ## 🤖 Made with AI
 
-Roughly **95 % of this project was built with AI** (Claude Code), under human
-direction and review.
+Roughly **95 % of this project was built with AI** (Claude Code) — code,
+tests, and docs — under human direction and review. 🎉
 
 ## 📄 License
 
