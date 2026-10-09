@@ -44,6 +44,16 @@ and roll back when something goes wrong.
 
 ![Dashboard](docs/images/dashboard.png)
 
+**Deploy preview:** before a deploy, every service that would change and why —
+image, digest, ports, env — and which containers it would recreate.
+
+![Deploy preview](docs/images/deploy_preview.png)
+
+**Deploy history:** every deploy is a revision you can diff against what runs
+now, and restore.
+
+![Deploy history](docs/images/project_history.png)
+
 **Container detail:** live CPU and memory with history, and tabs for logs, an
 interactive console, processes, the file browser, filesystem changes and env.
 

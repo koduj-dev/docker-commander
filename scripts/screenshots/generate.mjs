@@ -46,6 +46,11 @@ const LOG_SOURCES = (process.env.DC_LOG_SOURCES || 'app-php-fpm,queue-worker,db-
 // Which network to open in the detail drawer. Pick one with several containers
 // attached: the graph view of a single-container network is two boxes and a line,
 // which shows the feature at its least convincing.
+// Which project to feature in the deploy preview, history, secrets and domains
+// shots. The preview is only worth a picture when the project is deployed and
+// its saved files differ from what runs (a bumped image tag, a changed port),
+// or it just says "Nothing would change"; history wants a few deploys behind it.
+const PROJECT = (process.env.DC_PROJECT || '').trim();
 const NETWORKS = [
   ...(process.env.DC_NETWORK || '').split(',').map((s) => s.trim()).filter(Boolean),
   'elastic', 'bridge',
@@ -262,7 +267,89 @@ const SHOTS = [
       return openFirstRow(page);
     },
   },
+  {
+    // The deploy preview: open the project's editor, then Preview.
+    name: 'deploy_preview',
+    path: '/projects',
+    settle: 3000,
+    prep: (page) => openProjectEditorThen(page, 'See what a deploy would change before running it'),
+  },
+  {
+    // Deploy history: every revision, with diff and restore.
+    name: 'project_history',
+    path: '/projects',
+    settle: 2000,
+    prep: (page) => openProjectEditorThen(page, 'Deploy history — diff or restore an earlier revision'),
+  },
+  {
+    // Project secrets (values are never shown), opened from the project's row:
+    // the editor has a Secrets button too, so going through it would find the
+    // row's one first, hidden under the editor.
+    name: 'project_secrets',
+    path: '/projects',
+    settle: 1500,
+    prep: async (page) => {
+      const btn = projectRowButton(page, 'Secrets');
+      if (!(await btn.count().catch(() => 0))) return false;
+      await btn.click().catch(() => {});
+      return true;
+    },
+  },
+  {
+    // Domain mappings, opened from the project's row (globe icon).
+    name: 'project_domains',
+    path: '/projects',
+    settle: 1500,
+    prep: async (page) => {
+      const btn = projectRowButton(page, 'Domains');
+      if (!(await btn.count().catch(() => 0))) return false;
+      await btn.click().catch(() => {});
+      return true;
+    },
+  },
+  {
+    // Top talkers sits below the fold on the dashboard. It ranks a 5-minute
+    // average, so the instance needs a few minutes of traffic behind it.
+    name: 'top_talkers',
+    path: '/',
+    settle: 20000,
+    prep: async (page) => {
+      const tile = page.getByText(/top talkers/i).first();
+      if (!(await tile.count().catch(() => 0))) return false;
+      // Bring the heading to the top, then back off so the sticky page header
+      // doesn't cover it. The content may scroll inside its own container
+      // rather than the window, so move whichever one actually scrolls.
+      await tile.evaluate((el) => {
+        el.scrollIntoView({ block: 'start' });
+        let box = el.parentElement;
+        while (box && box !== document.body && box.scrollHeight <= box.clientHeight) box = box.parentElement;
+        (box && box !== document.body ? box : document.scrollingElement).scrollBy(0, -140);
+      });
+      return true;
+    },
+  },
 ];
+
+// The button with this title in the featured project's row (DC_PROJECT), or in
+// the first row when none is set.
+function projectRowButton(page, title) {
+  const sel = `button[title="${title}"]`;
+  if (!PROJECT) return page.locator(sel).first();
+  return page.locator('tr, li, [role="row"], div.card').filter({ hasText: PROJECT }).locator(sel).first();
+}
+
+// Open the featured project's editor, then click the editor button with this
+// title. Returns false when either control is missing.
+async function openProjectEditorThen(page, title) {
+  const edit = projectRowButton(page, 'Edit files');
+  if (!(await edit.count().catch(() => 0))) return false;
+  await edit.click().catch(() => {});
+  await page.waitForTimeout(1400); // CodeMirror is lazy-loaded
+  const btn = page.locator(`button[title="${title}"]`).first();
+  if (!(await btn.count().catch(() => 0))) return false;
+  await btn.click().catch(() => {});
+  return true;
+}
 
 // Click the first matching list row/card to open its drawer. Tries to match one
 // of `prefer` substrings first, else falls back to the first clickable card/row.
