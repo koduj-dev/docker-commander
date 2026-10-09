@@ -32,6 +32,8 @@ different. Locally built images are restored by reference only.
 Named volumes are not touched, so data changes such as a database migration are
 not undone.
 
+![Deploy history](images/project_history.png)
+
 **Keep a password out of the compose file.** Click the lock icon on the project
 card, add a secret, and write `${DB_PASSWORD}` in the compose file. The value is
 supplied only at deploy time and never written to disk.
@@ -235,6 +237,8 @@ that don't want to re-send a large context can `POST` the deploy with
 
 ## Secrets
 
+![Project secrets](images/project_secrets.png)
+
 Named values such as `DB_PASSWORD` or `API_TOKEN`, used in the compose file like
 any environment variable: `${NAME}`. Open them with the lock icon on the project
 card or in the editor header.
@@ -259,6 +263,8 @@ card or in the editor header.
   anyone with direct `docker inspect` or exec access to the host can see.
 
 ## Domains
+
+![Domains](images/project_domains.png)
 
 The **Domains** panel (globe icon on a project card) records that a domain
 should route to one of the project's services: `app.example.com` → service

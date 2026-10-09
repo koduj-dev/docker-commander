@@ -282,11 +282,18 @@ const SHOTS = [
     prep: (page) => openProjectEditorThen(page, 'Deploy history — diff or restore an earlier revision'),
   },
   {
-    // Project secrets (values are never shown).
+    // Project secrets (values are never shown), opened from the project's row:
+    // the editor has a Secrets button too, so going through it would find the
+    // row's one first, hidden under the editor.
     name: 'project_secrets',
     path: '/projects',
     settle: 1500,
-    prep: (page) => openProjectEditorThen(page, 'Secrets'),
+    prep: async (page) => {
+      const btn = projectRowButton(page, 'Secrets');
+      if (!(await btn.count().catch(() => 0))) return false;
+      await btn.click().catch(() => {});
+      return true;
+    },
   },
   {
     // Domain mappings, opened from the project's row (globe icon).
@@ -309,8 +316,15 @@ const SHOTS = [
     prep: async (page) => {
       const tile = page.getByText(/top talkers/i).first();
       if (!(await tile.count().catch(() => 0))) return false;
-      await tile.evaluate((el) => el.scrollIntoView({ block: 'start' }));
-      await page.evaluate(() => window.scrollBy(0, -24));
+      // Bring the heading to the top, then back off so the sticky page header
+      // doesn't cover it. The content may scroll inside its own container
+      // rather than the window, so move whichever one actually scrolls.
+      await tile.evaluate((el) => {
+        el.scrollIntoView({ block: 'start' });
+        let box = el.parentElement;
+        while (box && box !== document.body && box.scrollHeight <= box.clientHeight) box = box.parentElement;
+        (box && box !== document.body ? box : document.scrollingElement).scrollBy(0, -140);
+      });
       return true;
     },
   },
