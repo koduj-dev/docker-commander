@@ -716,3 +716,63 @@ func TestPentestBackupIgnoresFolderSwappedMidWalk(t *testing.T) {
 		}
 	}
 }
+
+// A projects/ link whose disk is unplugged is still a link the backup leaves
+// out, and the report must name it rather than take it for "not created yet".
+func TestBackupReportsDanglingTopLevelLink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	src := t.TempDir()
+	mustWrite(t, filepath.Join(src, dbFileName), "DB")
+	if err := os.Symlink(filepath.Join(t.TempDir(), "unplugged"), filepath.Join(src, "projects")); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Create(src, filepath.Join(t.TempDir(), "b.dcbak"), fakeDB{"DB"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.SkippedLinks) != 1 || rep.SkippedLinks[0] != "projects" {
+		t.Errorf("a dangling projects/ link should be named in the report, got %v", rep.SkippedLinks)
+	}
+}
+
+// PENTEST: projects/ itself swapped for a link out of the data dir after it
+// was checked must not be archived from its new target.
+func TestPentestBackupIgnoresTopLevelFolderSwapped(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	src := seedDataDir(t)
+	victim := t.TempDir()
+	mustWrite(t, filepath.Join(victim, "stolen", "compose.yml"), "HOST-SECRET")
+
+	fired := false
+	testHookWalkEntry = func(root, rel string) {
+		if root != src || rel != "projects" || fired {
+			return
+		}
+		fired = true
+		if err := os.RemoveAll(filepath.Join(src, "projects")); err != nil {
+			t.Error(err)
+		}
+		if err := os.Symlink(victim, filepath.Join(src, "projects")); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { testHookWalkEntry = nil })
+
+	archive := filepath.Join(t.TempDir(), "b.dcbak")
+	_, err := Create(src, archive, fakeDB{"DB"}, "")
+	if !fired {
+		t.Fatal("the backup never reached projects/ through addTree")
+	}
+	if err != nil {
+		return // refusing the backup is a fine outcome
+	}
+	for _, name := range entryNames(t, archive) {
+		if strings.Contains(name, "stolen") {
+			t.Fatalf("SECURITY: the backup archived %q from outside the data dir", name)
+		}
+	}
+}

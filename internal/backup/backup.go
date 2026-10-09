@@ -152,12 +152,16 @@ func writeArchive(out, dataDir, dbSnapshot string, rep *Report) error {
 	if fi, err := os.Stat(dbSnapshot); err == nil {
 		rep.Bytes += fi.Size()
 	}
+	// The folders are reached relative to an os.Root on the data dir, so even
+	// projects/ itself being swapped for a link between the check and the walk
+	// can't take the backup outside it.
+	dataRoot, err := os.OpenRoot(dataDir)
+	if err != nil {
+		return err
+	}
+	defer dataRoot.Close()
 	for _, dir := range dataDirEntries {
-		src := filepath.Join(dataDir, dir)
-		if _, err := os.Stat(src); os.IsNotExist(err) {
-			continue // nothing created yet
-		}
-		if err := addTree(tw, src, dir, rep); err != nil {
+		if err := addTree(tw, dataRoot, dataDir, dir, rep); err != nil {
 			return err
 		}
 	}
@@ -171,19 +175,29 @@ func writeArchive(out, dataDir, dbSnapshot string, rep *Report) error {
 // the moment a racing process would swap something in.
 var testHookWalkEntry func(root, rel string)
 
-func addTree(tw *tar.Writer, root, prefix string, rep *Report) error {
-	// projects/ itself may be the link (moved to a bigger disk). Walking it
-	// would yield nothing, so name it here like any other skipped link.
-	if fi, err := os.Lstat(root); err != nil {
+func addTree(tw *tar.Writer, dataRoot *os.Root, dataDir, prefix string, rep *Report) error {
+	// Lstat, not Stat: projects/ itself may be the link (moved to a bigger
+	// disk), and one whose disk is unplugged must be named too, not taken for
+	// "nothing created yet".
+	fi, err := dataRoot.Lstat(prefix)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil // nothing created yet
+	}
+	if err != nil {
 		return err
-	} else if fi.Mode()&os.ModeSymlink != 0 {
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
 		rep.SkippedLinks = append(rep.SkippedLinks, prefix)
 		return nil
 	}
+	if testHookWalkEntry != nil {
+		testHookWalkEntry(dataDir, prefix)
+	}
+	root := filepath.Join(dataDir, prefix)
 	// Walk and read through an os.Root: a link swapped in for a file or folder
 	// after it was listed (by a container with the project mounted, say) can't
 	// pull outside data into the archive.
-	rt, err := os.OpenRoot(root)
+	rt, err := dataRoot.OpenRoot(prefix)
 	if err != nil {
 		return err
 	}

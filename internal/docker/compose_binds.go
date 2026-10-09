@@ -6,10 +6,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -261,8 +263,7 @@ func (m *Manager) SeedProjectBinds(ctx context.Context, hostID int64, projectDir
 		}); err != nil {
 			return fmt.Errorf("create seed volume for %s: %w", b.Rel, err)
 		}
-		src := filepath.Join(projectDir, b.Rel)
-		tarball, err := tarPath(src, b.IsFile)
+		tarball, err := tarPath(projectDir, b.Rel, b.IsFile)
 		if err != nil {
 			return fmt.Errorf("archive %s: %w", b.Rel, err)
 		}
@@ -324,15 +325,16 @@ func (m *Manager) RemoveSeedVolumes(ctx context.Context, hostID int64, slug stri
 	return removed, nil
 }
 
-// tarPath archives src for extraction at a volume's root. A single file is stored
-// under its base name; a directory's contents are stored at the top level (so the
-// volume mirrors the directory, not a nested copy of it). Symlinks are stored as
-// links, never followed, so a link inside the project can't pull in outside files.
-func tarPath(src string, isFile bool) (io.Reader, error) {
+// tarPath archives the bind source rel (relative to projectDir) for extraction
+// at a volume's root. A single file is stored under its base name; a
+// directory's contents are stored at the top level (so the volume mirrors the
+// directory, not a nested copy of it). Symlinks are stored as links, never
+// followed, so a link inside the project can't pull in outside files.
+func tarPath(projectDir, rel string, isFile bool) (io.Reader, error) {
 	pr, pw := io.Pipe()
 	go func() {
 		tw := tar.NewWriter(pw)
-		err := writeTar(tw, src, isFile)
+		err := writeTar(tw, projectDir, rel, isFile)
 		if cerr := tw.Close(); err == nil {
 			err = cerr
 		}
@@ -341,54 +343,62 @@ func tarPath(src string, isFile bool) (io.Reader, error) {
 	return pr, nil
 }
 
-func writeTar(tw *tar.Writer, src string, isFile bool) error {
-	// A compose file may name a bind source the project doesn't contain yet (e.g.
-	// ./data for a database that creates it on first run). Locally Docker would
-	// materialise it on demand, so the remote equivalent is an empty volume — not
-	// a failed deploy. Emit an empty archive rather than the lstat error.
-	if _, err := os.Lstat(src); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	// Everything below is read through an os.Root on the source, so a file or
-	// folder swapped for a link out of it after the walk listed it (by a
-	// container that has the project mounted, say) can't ship outside data to
-	// the remote volume.
-	if isFile {
-		rt, err := os.OpenRoot(filepath.Dir(src))
-		if err != nil {
-			return err
-		}
-		defer rt.Close()
-		return tarOne(tw, rt, filepath.Base(src), filepath.Base(src))
-	}
-	if fi, err := os.Lstat(src); err == nil && fi.Mode()&os.ModeSymlink != 0 {
-		return nil // a linked folder is not walked into, as before
-	}
-	rt, err := os.OpenRoot(src)
+func writeTar(tw *tar.Writer, projectDir, rel string, isFile bool) error {
+	// Everything is read through an os.Root on the project folder, the one
+	// path here nobody else controls. The bind source, its parents and
+	// everything under it are only ever reached relative to that root, so a
+	// file or folder swapped for a link out of the project at any point (by a
+	// container that has it mounted, say) can't ship outside data to the
+	// remote volume.
+	rt, err := os.OpenRoot(projectDir)
 	if err != nil {
 		return err
 	}
 	defer rt.Close()
-	return fs.WalkDir(rt.FS(), ".", func(rel string, _ fs.DirEntry, err error) error {
+	rel = filepath.Clean(rel)
+	// A compose file may name a bind source the project doesn't contain yet (e.g.
+	// ./data for a database that creates it on first run). Locally Docker would
+	// materialise it on demand, so the remote equivalent is an empty volume — not
+	// a failed deploy. Emit an empty archive rather than the lstat error.
+	fi, err := rt.Lstat(rel)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if testHookWalkEntry != nil {
+		testHookWalkEntry(projectDir, filepath.ToSlash(rel))
+	}
+	if isFile {
+		return tarOne(tw, rt, rel, filepath.Base(rel))
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return nil // a linked folder is not walked into, as before
+	}
+	sub, err := rt.OpenRoot(rel)
+	if err != nil {
+		return err
+	}
+	defer sub.Close()
+	return fs.WalkDir(sub.FS(), ".", func(p string, _ fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if rel == "." {
+		if p == "." {
 			return nil // the volume root already exists
 		}
 		if testHookWalkEntry != nil {
-			testHookWalkEntry(src, rel)
+			testHookWalkEntry(projectDir, path.Join(filepath.ToSlash(rel), p))
 		}
-		return tarOne(tw, rt, rel, rel)
+		return tarOne(tw, sub, p, p)
 	})
 }
 
-// testHookWalkEntry, when set by a test, runs as writeTar reaches each entry —
+// testHookWalkEntry, when set by a test, runs as writeTar reaches the bind
+// source and each entry under it (rel is relative to the project folder) —
 // the moment a racing process would swap something in.
-var testHookWalkEntry func(root, rel string)
+var testHookWalkEntry func(projectDir, rel string)
 
 // tarOne writes a single filesystem entry. Regular files, directories and
 // symlinks are supported; anything else (socket, device, fifo) is skipped rather

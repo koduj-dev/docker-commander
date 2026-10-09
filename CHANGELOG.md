@@ -34,7 +34,8 @@ found, and from now on every change is scanned before it ships.
 ### Fixed
 - **`--backup` now names a linked `projects/` (or template/revision) folder.**
   The manual says skipped links are listed; a link one level down was, but a
-  whole folder moved to another disk and linked back was left out silently.
+  whole folder moved to another disk and linked back was left out silently,
+  and so was one whose disk was unplugged.
 
 ### Changed
 - **The README is a short landing page.** What Docker Commander is for, the
