@@ -614,3 +614,32 @@ func TestBackupReportCountsTheDatabase(t *testing.T) {
 			rep.Bytes, want, files, 4096)
 	}
 }
+
+// PENTEST: a --force restore over an existing install must not write through
+// a symlink that is already in the data dir. The archive itself is clean —
+// "projects/link/pwn" is an ordinary name — but if projects/link points out
+// of the data dir, following it lands the bytes anywhere.
+func TestPentestRestoreDoesNotFollowExistingSymlinkOut(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	victimDir := t.TempDir()
+	dataDir := filepath.Join(t.TempDir(), "data")
+	if err := os.MkdirAll(filepath.Join(dataDir, "projects"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victimDir, filepath.Join(dataDir, "projects", "link")); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(t.TempDir(), "plain.dcbak")
+	writeOrderedArchive(t, archive, []archiveEntry{
+		{name: "projects/link/pwn", content: "PWNED"},
+	})
+
+	if err := Restore(archive, dataDir, "", true); err == nil {
+		t.Error("SECURITY: restore through an existing escaping symlink succeeded")
+	}
+	if _, err := os.Stat(filepath.Join(victimDir, "pwn")); err == nil {
+		t.Fatal("SECURITY: restore wrote outside the data dir through an existing symlink")
+	}
+}

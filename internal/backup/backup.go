@@ -291,6 +291,15 @@ func extract(r io.Reader, dataDir string) error {
 	if err != nil {
 		return err
 	}
+	// Every write goes through an os.Root on the data dir: safeJoin turns away
+	// names that escape lexically, the Root refuses anything that would leave
+	// the dir through a symlink already there (a --force restore over an
+	// existing install). Joined, nothing in the archive lands outside.
+	rt, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer rt.Close()
 	tr := tar.NewReader(gz)
 	for {
 		hdr, err := tr.Next()
@@ -304,9 +313,13 @@ func extract(r io.Reader, dataDir string) error {
 		if err != nil {
 			return err
 		}
+		rel, err := filepath.Rel(root, dest)
+		if err != nil {
+			return err
+		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(dest, 0o700); err != nil {
+			if err := rt.MkdirAll(rel, 0o700); err != nil {
 				return err
 			}
 		case tar.TypeSymlink:
@@ -318,10 +331,10 @@ func extract(r io.Reader, dataDir string) error {
 			// class of bug is not to create links at all.
 			return fmt.Errorf("backup: refusing symlink entry %q → %q: backups do not carry symlinks", hdr.Name, hdr.Linkname)
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
+			if err := rt.MkdirAll(filepath.Dir(rel), 0o700); err != nil {
 				return err
 			}
-			out, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode)&0o777)
+			out, err := rt.OpenFile(rel, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode)&0o777)
 			if err != nil {
 				return err
 			}

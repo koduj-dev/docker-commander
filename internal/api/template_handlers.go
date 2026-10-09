@@ -537,10 +537,7 @@ func seedProjectFiles(root string, files []templates.File) error {
 		if err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Dir(dst), projectDirMode); err != nil {
-			return err
-		}
-		if err := os.WriteFile(dst, []byte(f.Content), projectFileMode); err != nil {
+		if err := writeInRoot(root, dst, []byte(f.Content), projectDirMode, projectFileMode); err != nil {
 			return err
 		}
 	}
@@ -1089,17 +1086,13 @@ func (s *Server) handleWriteTemplateFile(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if _, statErr := os.Stat(full); errors.Is(statErr, os.ErrNotExist) {
+	if missingInRoot(root, full) {
 		if n, _ := countFiles(root); n >= maxProjectFiles {
 			writeErr(w, http.StatusBadRequest, "too many files in this template")
 			return
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(full), projectDirMode); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if err := os.WriteFile(full, []byte(body.Content), projectFileMode); err != nil {
+	if err := writeInRoot(root, full, []byte(body.Content), projectDirMode, projectFileMode); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1119,7 +1112,7 @@ func (s *Server) handleUploadTemplateFileRaw(w http.ResponseWriter, r *http.Requ
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if _, statErr := os.Stat(full); errors.Is(statErr, os.ErrNotExist) {
+	if missingInRoot(root, full) {
 		if n, _ := countFiles(root); n >= maxProjectFiles {
 			writeErr(w, http.StatusBadRequest, "too many files in this template")
 			return
@@ -1134,11 +1127,7 @@ func (s *Server) handleUploadTemplateFileRaw(w http.ResponseWriter, r *http.Requ
 		writeErr(w, http.StatusRequestEntityTooLarge, "file too large")
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(full), projectDirMode); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if err := os.WriteFile(full, data, projectFileMode); err != nil {
+	if err := writeInRoot(root, full, data, projectDirMode, projectFileMode); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1152,12 +1141,13 @@ func (s *Server) handleDownloadTemplateFile(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	name := r.URL.Query().Get("path")
-	full, err := safeJoin(s.templateRoot(t.ID), name)
+	root := s.templateRoot(t.ID)
+	full, err := safeJoin(root, name)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	f, err := os.Open(full)
+	f, err := openInRoot(root, full)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "file not found")
 		return
@@ -1179,12 +1169,13 @@ func (s *Server) handleDeleteTemplateFile(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	full, err := safeJoin(s.templateRoot(t.ID), r.URL.Query().Get("path"))
+	root := s.templateRoot(t.ID)
+	full, err := safeJoin(root, r.URL.Query().Get("path"))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := os.Remove(full); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := removeInRoot(root, full); err != nil && !errors.Is(err, os.ErrNotExist) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1204,12 +1195,13 @@ func (s *Server) handleMakeTemplateDir(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	full, err := safeJoin(s.templateRoot(t.ID), body.Name)
+	root := s.templateRoot(t.ID)
+	full, err := safeJoin(root, body.Name)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := os.MkdirAll(full, projectDirMode); err != nil {
+	if err := mkdirInRoot(root, full, projectDirMode); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
