@@ -27,6 +27,7 @@ found, and from now on every change is scanned before it ships.
   moved into the manual: [Installing](docs/install.md),
   [Configuration](docs/configuration.md), [Docker versions](docs/compatibility.md),
   [Security model](docs/security.md) and [Architecture](docs/architecture.md).
+- Routine Go, npm and GitHub Actions dependency updates (minor/patch only).
 
 ## [1.7.0] — 2026-10-09
 
