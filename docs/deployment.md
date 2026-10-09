@@ -170,7 +170,7 @@ the **standalone actions** (`--version`, `--make-certs`, `--self-upgrade`, `--ba
 ### Debian / Ubuntu & Fedora packages (.deb / .rpm)
 
 Each release publishes `.deb` and `.rpm` packages (amd64 + arm64) on the
-[Releases](../../releases) page. They install the binary to `/usr/bin/dockercmd`, a
+[Releases](https://github.com/koduj-dev/docker-commander/releases) page. They install the binary to `/usr/bin/dockercmd`, a
 hardened **systemd** unit, the man page, and `/etc/docker-commander/commander.conf`
 (a *conffile*: your edits survive upgrades), then create the `dockercmd` user and
 start the service.
@@ -546,7 +546,10 @@ systemctl start dockercmd
 Nothing enforces the stop: restoring under a live process leaves it holding a
 database that no longer exists. Without `--force`, restore won't overwrite an
 existing installation, so a mistyped path can't destroy one. Archive entries are
-jailed to the data dir, and a **symlink** entry is refused outright.
+jailed to the data dir, and a **symlink** entry is refused outright. A restore
+also won't write through a symlink that is already in the data dir and points
+out of it. With `projects/` linked to another disk, restore into a fresh data
+dir and move the folders over afterwards.
 
 **Symbolic links are not backed up, and the backup says so.** If something in the
 data dir is a link (`projects/` on a bigger disk, say), neither the link nor what

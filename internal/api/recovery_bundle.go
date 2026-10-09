@@ -6,7 +6,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"path/filepath"
 )
 
 // Portable recovery bundle: one file capturing everything Docker Commander
@@ -253,18 +252,14 @@ func writeDirToZip(zw *zip.Writer, root, prefix string, budget *int64) (int, err
 		return 0, nil
 	}
 	count := 0
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	err := walkRoot(root, func(fsys fs.FS, rel string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
 			return err
 		}
 		if count >= maxProjectFiles {
 			return nil
 		}
-		rel, rerr := filepath.Rel(root, path)
-		if rerr != nil {
-			return rerr
-		}
-		data, rerr := os.ReadFile(path)
+		data, rerr := fs.ReadFile(fsys, rel)
 		if rerr != nil {
 			return rerr
 		}
@@ -274,7 +269,7 @@ func writeDirToZip(zw *zip.Writer, root, prefix string, budget *int64) (int, err
 		if int64(len(data)) > *budget {
 			return errBundleTooLarge
 		}
-		fw, werr := zw.Create(prefix + filepath.ToSlash(rel))
+		fw, werr := zw.Create(prefix + rel)
 		if werr != nil {
 			return werr
 		}

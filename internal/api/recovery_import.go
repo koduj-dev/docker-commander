@@ -632,6 +632,14 @@ func (s *Server) applyRecoveryBundle(ctx context.Context, m *recoveryManifest, z
 // truncated or corrupted entry fails this project's extraction instead of
 // silently landing a partial file.
 func extractZipPrefixToDir(zr *zip.Reader, prefix, root string, byteBudget *int64, fileBudget *int) (int, error) {
+	if err := os.MkdirAll(root, projectDirMode); err != nil {
+		return 0, err
+	}
+	rt, err := os.OpenRoot(root)
+	if err != nil {
+		return 0, err
+	}
+	defer rt.Close()
 	count := 0
 	for _, f := range zr.File {
 		if f.FileInfo().IsDir() || count >= maxProjectFiles {
@@ -663,10 +671,11 @@ func extractZipPrefixToDir(zr *zip.Reader, prefix, root string, byteBudget *int6
 		if int64(len(content)) > *byteBudget {
 			return count, errBundleTooLarge
 		}
-		if err := os.MkdirAll(filepath.Dir(full), projectDirMode); err != nil {
+		relPath, err := rootRel(root, full)
+		if err != nil {
 			return count, err
 		}
-		if err := os.WriteFile(full, content, projectFileMode); err != nil {
+		if err := writeRootFile(rt, relPath, content, projectDirMode, projectFileMode); err != nil {
 			return count, err
 		}
 		*byteBudget -= int64(len(content))

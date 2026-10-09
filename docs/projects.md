@@ -23,12 +23,16 @@ resulting `compose.yml` shows next to the form before anything is created.
 It compares the saved files with what is running, lists each service that would
 change, and marks the ones that will be **recreated**.
 
+![Deploy preview](images/deploy_preview.png)
+
 **Roll back a bad deploy.** In the editor, click **History**, find the last good
 revision with **Diff vs current**, then click **Restore**. Images that had a
 recorded digest are pinned to it, so a moved tag can't bring back something
 different. Locally built images are restored by reference only.
 Named volumes are not touched, so data changes such as a database migration are
 not undone.
+
+![Deploy history](images/project_history.png)
 
 **Keep a password out of the compose file.** Click the lock icon on the project
 card, add a secret, and write `${DB_PASSWORD}` in the compose file. The value is
@@ -233,6 +237,8 @@ that don't want to re-send a large context can `POST` the deploy with
 
 ## Secrets
 
+![Project secrets](images/project_secrets.png)
+
 Named values such as `DB_PASSWORD` or `API_TOKEN`, used in the compose file like
 any environment variable: `${NAME}`. Open them with the lock icon on the project
 card or in the editor header.
@@ -258,6 +264,8 @@ card or in the editor header.
 
 ## Domains
 
+![Domains](images/project_domains.png)
+
 The **Domains** panel (globe icon on a project card) records that a domain
 should route to one of the project's services: `app.example.com` → service
 `web`, port `8080`. Without the embedded reverse proxy, it only stores intent
@@ -282,7 +290,7 @@ and has no effect on traffic. With the proxy, these limits apply:
   *published host port* directly. That works when Docker Commander runs on bare
   metal or a VM next to the daemon, the common case. It does **not** work when
   Docker Commander runs in a container per
-  [Option D](../README.md#option-d--docker) *without* `--network host`, since
+  [Docker](install.md#docker) *without* `--network host`, since
   the published port lives in the host's namespace. If the "local" daemon is
   really remote (`DOCKER_HOST=tcp://…` elsewhere), the proxy detects it and
   refuses. The containerized-on-the-same-machine case can't be detected that way

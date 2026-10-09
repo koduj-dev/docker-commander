@@ -4,6 +4,49 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [1.7.1] — 2026-10-09
+
+We switched on GitHub's CodeQL code scanning only after 1.7.0 had shipped, so its
+first scan ran against a released version. This release fixes what that scan
+found, and from now on every change is scanned before it ships.
+
+### Security
+- **The SSH host-key probe no longer authenticates.** The **Test** step of adding
+  an SSH host connects to a server whose key nobody has approved yet; after
+  taking the key it went on to sign in, which told that server every public key
+  in the SSH agent and the default key files. It now stops right after key
+  exchange. (CodeQL `go/insecure-hostkeycallback`.)
+- **The logout cookie is `Secure` on HTTPS,** like the session cookie it
+  replaces. (CodeQL `go/cookie-secure-not-set`.)
+- **The CI and Homebrew workflows run with a read-only `GITHUB_TOKEN`.**
+  (CodeQL `actions/missing-workflow-permissions`.)
+- **File operations stay inside their folder even if a symlink appears
+  mid-operation.** Names were already checked, symlinks included, but only
+  before the file was touched; a link swapped in between the check and the use
+  (by a container that has the project folder mounted, say) could still carry
+  it outside. Project and template files, imports, the recovery export, backup
+  and restore, and the bind folders a remote deploy copies now all go through
+  Go's `os.Root`, which refuses to leave the folder at the moment of use. A
+  `--restore --force` over an existing install also no longer writes through a
+  symlink already in the data dir that points out of it.
+  (CodeQL `go/path-injection`, `go/zipslip`.)
+
+### Fixed
+- **`--backup` now names a linked `projects/` (or template/revision) folder.**
+  The manual says skipped links are listed; a link one level down was, but a
+  whole folder moved to another disk and linked back was left out silently,
+  and so was one whose disk was unplugged.
+
+### Changed
+- **The README is a short landing page.** What Docker Commander is for, the
+  features as one-line lists linking to the manual, and a quick start. The rest
+  moved into the manual: [Installing](docs/install.md),
+  [Configuration](docs/configuration.md), [Docker versions](docs/compatibility.md),
+  [Security model](docs/security.md) and [Architecture](docs/architecture.md).
+  New screenshots of the deploy preview and deploy history (also in the README),
+  project secrets, domains and Top talkers.
+- Routine Go, npm and GitHub Actions dependency updates (minor/patch only).
+
 ## [1.7.0] — 2026-10-09
 
 ### Security
@@ -56,10 +99,6 @@ All notable changes to Docker Commander are documented here. The format follows
   rotated at 10 MiB with one older copy. The Windows Scheduled Task installer
   (`install-windows.ps1`) uses it, so a task-run server keeps a log in its data
   dir like the native service does; before, the task's output went nowhere.
-- **Change your own password** (`PUT /api/auth/me/password`). It needs the current
-  password, ends every other session and keeps you signed in on the device that
-  made the change. Directory (LDAP) accounts change theirs in the directory. The
-  Profile screen for it follows.
 - **Resources page** (Observability → Resources). CPU, memory and network per
   container and per stack, refreshed every 5 s. A Network tab with the top talkers
   as an average rate over a window. A Disk tab with the size of every image,
@@ -2532,6 +2571,7 @@ Initial release: a single CGO-free Go binary with an embedded React UI.
   per-section permissions / read-only, feature flags, audit log, optional LDAP;
   secrets encrypted at rest.
 
+[1.7.1]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.7.1
 [1.7.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.7.0
 [1.6.6]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.6
 [1.6.5]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.5

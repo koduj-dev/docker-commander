@@ -42,6 +42,11 @@ covers installing and running it.
 
 ## Operations
 - [Getting started](getting-started.md) — first run, 2FA, the basics
+- [Installing](install.md) — binaries, Homebrew, packages, Docker, from source; verifying a download; running as a service
+- [Configuration](configuration.md) — every flag and environment variable
+- [Docker versions](compatibility.md) — which Engine and Compose versions are tested
+- [Security model](security.md) — how access to the daemons is protected
+- [Architecture](architecture.md) — how the pieces fit (for developers)
 - [Deployment](deployment.md) — running on a server: systemd, HTTPS, config, logs, health, self-update
 - [Limits](limits.md) — every cap you can hit, and which can be changed
 - [How it's tested](testing.md) — test tiers, multi-daemon runs over TCP/SSH, what isn't covered (for developers)

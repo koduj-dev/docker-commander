@@ -66,7 +66,7 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	// forbidding it would be a puzzle rather than a protection. Clear the cookie
 	// so the browser doesn't keep presenting a token that is now refused.
 	if id == c.ID {
-		s.clearSessionCookie(w)
+		s.clearSessionCookie(w, r)
 	}
 	s.audit(r, "auth.session.revoke", c.Username, "")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})

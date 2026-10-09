@@ -52,7 +52,7 @@ func TestManPageDocumentsAllFlags(t *testing.T) {
 var envVar = regexp.MustCompile(`"(DC_[A-Z][A-Z0-9_]*)"`)
 
 // TestDocsListAllEnvVars fails if a DC_* variable read in config.go is missing
-// from the man page, the example config or the README table, the three places an
+// from the man page, the example config or docs/configuration.md, the three places an
 // operator looks a setting up. DC_DEV is left out of the example config on
 // purpose: it is not something to set on a real install.
 func TestDocsListAllEnvVars(t *testing.T) {
@@ -61,7 +61,7 @@ func TestDocsListAllEnvVars(t *testing.T) {
 		t.Fatalf("read config.go: %v", err)
 	}
 	docs := map[string]string{}
-	for _, p := range []string{"../../deploy/dockercmd.1", "../../deploy/commander.conf.example", "../../README.md"} {
+	for _, p := range []string{"../../deploy/dockercmd.1", "../../deploy/commander.conf.example", "../../docs/configuration.md"} {
 		b, err := os.ReadFile(p)
 		if err != nil {
 			t.Fatalf("read %s: %v", p, err)

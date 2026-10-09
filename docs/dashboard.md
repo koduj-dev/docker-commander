@@ -78,6 +78,8 @@ shows the top 10 and refetches every 15 seconds. **View all →** opens
 selector (5 min, 15 min, 1 hour), a metric selector (total, received, sent) and a
 name filter.
 
+![Top talkers](images/top_talkers.png)
+
 ## Open ports
 A host-wide map of every **published port** across the running containers.
 **Scan** connects to each one and identifies what's really listening (SSH,

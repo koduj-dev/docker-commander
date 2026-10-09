@@ -614,3 +614,165 @@ func TestBackupReportCountsTheDatabase(t *testing.T) {
 			rep.Bytes, want, files, 4096)
 	}
 }
+
+// PENTEST: a --force restore over an existing install must not write through
+// a symlink that is already in the data dir. The archive itself is clean —
+// "projects/link/pwn" is an ordinary name — but if projects/link points out
+// of the data dir, following it lands the bytes anywhere.
+func TestPentestRestoreDoesNotFollowExistingSymlinkOut(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	victimDir := t.TempDir()
+	dataDir := filepath.Join(t.TempDir(), "data")
+	if err := os.MkdirAll(filepath.Join(dataDir, "projects"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victimDir, filepath.Join(dataDir, "projects", "link")); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(t.TempDir(), "plain.dcbak")
+	writeOrderedArchive(t, archive, []archiveEntry{
+		{name: "projects/link/pwn", content: "PWNED"},
+	})
+
+	if err := Restore(archive, dataDir, "", true); err == nil {
+		t.Error("SECURITY: restore through an existing escaping symlink succeeded")
+	}
+	if _, err := os.Stat(filepath.Join(victimDir, "pwn")); err == nil {
+		t.Fatal("SECURITY: restore wrote outside the data dir through an existing symlink")
+	}
+}
+
+// projects/ itself moved to a bigger disk and linked back is the case the
+// manual names: it is not in the archive, and the report must say so.
+func TestBackupReportsSymlinkedTopLevelFolder(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	src := t.TempDir()
+	mustWrite(t, filepath.Join(src, dbFileName), "DB")
+	elsewhere := t.TempDir()
+	mustWrite(t, filepath.Join(elsewhere, "shop", "compose.yml"), "services: {}")
+	if err := os.Symlink(elsewhere, filepath.Join(src, "projects")); err != nil {
+		t.Fatal(err)
+	}
+
+	archive := filepath.Join(t.TempDir(), "b.dcbak")
+	rep, err := Create(src, archive, fakeDB{"DB"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.SkippedLinks) != 1 || rep.SkippedLinks[0] != "projects" {
+		t.Errorf("a symlinked projects/ should be named in the report, got %v", rep.SkippedLinks)
+	}
+	for _, name := range entryNames(t, archive) {
+		if strings.HasPrefix(name, "projects") {
+			t.Errorf("the archive should not contain %q", name)
+		}
+	}
+}
+
+// PENTEST: a folder swapped for a link out of the data dir after the walk
+// listed it (a container with the project mounted can do that mid-backup)
+// must not pull outside files into the archive.
+func TestPentestBackupIgnoresFolderSwappedMidWalk(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	src := seedDataDir(t)
+	victim := t.TempDir()
+	mustWrite(t, filepath.Join(victim, "index.html"), "HOST-SECRET")
+
+	fired := false
+	testHookWalkEntry = func(root, rel string) {
+		if rel != "shop/html" || fired { // seen as a folder, swapped before it is read
+			return
+		}
+		fired = true
+		html := filepath.Join(root, "shop", "html")
+		if err := os.RemoveAll(html); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(victim, html); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { testHookWalkEntry = nil })
+
+	archive := filepath.Join(t.TempDir(), "b.dcbak")
+	_, err := Create(src, archive, fakeDB{"DB"}, "")
+	if !fired {
+		t.Fatal("the walk never reached shop/html through addTree")
+	}
+	if err != nil {
+		return // refusing the backup is a fine outcome
+	}
+	// The real shop/html was removed by the swap, so any entry under it can
+	// only have come through the link.
+	for _, name := range entryNames(t, archive) {
+		if strings.Contains(name, "shop/html/") {
+			t.Fatalf("SECURITY: the backup archived %q through a swapped-in link", name)
+		}
+	}
+}
+
+// A projects/ link whose disk is unplugged is still a link the backup leaves
+// out, and the report must name it rather than take it for "not created yet".
+func TestBackupReportsDanglingTopLevelLink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	src := t.TempDir()
+	mustWrite(t, filepath.Join(src, dbFileName), "DB")
+	if err := os.Symlink(filepath.Join(t.TempDir(), "unplugged"), filepath.Join(src, "projects")); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Create(src, filepath.Join(t.TempDir(), "b.dcbak"), fakeDB{"DB"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.SkippedLinks) != 1 || rep.SkippedLinks[0] != "projects" {
+		t.Errorf("a dangling projects/ link should be named in the report, got %v", rep.SkippedLinks)
+	}
+}
+
+// PENTEST: projects/ itself swapped for a link out of the data dir after it
+// was checked must not be archived from its new target.
+func TestPentestBackupIgnoresTopLevelFolderSwapped(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	src := seedDataDir(t)
+	victim := t.TempDir()
+	mustWrite(t, filepath.Join(victim, "stolen", "compose.yml"), "HOST-SECRET")
+
+	fired := false
+	testHookWalkEntry = func(root, rel string) {
+		if root != src || rel != "projects" || fired {
+			return
+		}
+		fired = true
+		if err := os.RemoveAll(filepath.Join(src, "projects")); err != nil {
+			t.Error(err)
+		}
+		if err := os.Symlink(victim, filepath.Join(src, "projects")); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { testHookWalkEntry = nil })
+
+	archive := filepath.Join(t.TempDir(), "b.dcbak")
+	_, err := Create(src, archive, fakeDB{"DB"}, "")
+	if !fired {
+		t.Fatal("the backup never reached projects/ through addTree")
+	}
+	if err != nil {
+		return // refusing the backup is a fine outcome
+	}
+	for _, name := range entryNames(t, archive) {
+		if strings.Contains(name, "stolen") {
+			t.Fatalf("SECURITY: the backup archived %q from outside the data dir", name)
+		}
+	}
+}

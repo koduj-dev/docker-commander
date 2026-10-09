@@ -319,16 +319,17 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if c, ok := auth.ClaimsFrom(r.Context()); ok {
 		_ = s.store.DeleteSession(r.Context(), c.ID, c.UserID)
 	}
-	s.clearSessionCookie(w)
+	s.clearSessionCookie(w, r)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // clearSessionCookie tells the browser to drop the session cookie. Shared by
-// logout and by revoking the session you are currently using.
-func (s *Server) clearSessionCookie(w http.ResponseWriter) {
+// logout and by revoking the session you are currently using. It carries the
+// same attributes as the cookie it replaces, Secure included.
+func (s *Server) clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name: auth.SessionCookie, Value: "", Path: "/", MaxAge: -1,
-		HttpOnly: true, SameSite: http.SameSiteStrictMode,
+		HttpOnly: true, Secure: s.cookieSecure(r), SameSite: http.SameSiteStrictMode,
 	})
 }
 
