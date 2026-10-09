@@ -29,6 +29,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The release text is the version's CHANGELOG section. Checked before
+      # anything is built: a tag without one fails here, not after the release
+      # exists (releases are immutable).
+      - name: Release notes from CHANGELOG
+        run: ./scripts/release-notes.sh "${GITHUB_REF_NAME}" > release-notes.md
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v6
         with:
           go-version: "1.27"
@@ -114,7 +120,7 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" dist-bin/* out/* --title "${GITHUB_REF_NAME}" --generate-notes
+        run: gh release create "${GITHUB_REF_NAME}" dist-bin/* out/* --title "${GITHUB_REF_NAME}" --notes-file release-notes.md
 
   image:
     runs-on: ubuntu-latest

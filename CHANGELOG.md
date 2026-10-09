@@ -4,6 +4,12 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+We switched on GitHub's CodeQL code scanning only after 1.7.0 had shipped, so its
+first scan ran against a released version. This release fixes what that scan
+found, and from now on every change is scanned before it ships.
+
 ## [1.7.0] — 2026-10-09
 
 ### Security
@@ -56,10 +62,6 @@ All notable changes to Docker Commander are documented here. The format follows
   rotated at 10 MiB with one older copy. The Windows Scheduled Task installer
   (`install-windows.ps1`) uses it, so a task-run server keeps a log in its data
   dir like the native service does; before, the task's output went nowhere.
-- **Change your own password** (`PUT /api/auth/me/password`). It needs the current
-  password, ends every other session and keeps you signed in on the device that
-  made the change. Directory (LDAP) accounts change theirs in the directory. The
-  Profile screen for it follows.
 - **Resources page** (Observability → Resources). CPU, memory and network per
   container and per stack, refreshed every 5 s. A Network tab with the top talkers
   as an average rate over a window. A Disk tab with the size of every image,
