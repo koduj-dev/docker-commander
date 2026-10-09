@@ -1,0 +1,1066 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/go-chi/chi/v5"
+
+	"github.com/koduj-dev/docker-commander/internal/auth"
+	"github.com/koduj-dev/docker-commander/internal/docker"
+	"github.com/koduj-dev/docker-commander/internal/mcp"
+	"github.com/koduj-dev/docker-commander/internal/store"
+)
+
+// revisionRouteCtx builds a chi route context carrying {id} and, when rev > 0,
+// {rev} — the two path params every revision route needs.
+func revisionRouteCtx(pid int64, rev int) *chi.Context {
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", strconv.FormatInt(pid, 10))
+	if rev > 0 {
+		rctx.URLParams.Add("rev", strconv.Itoa(rev))
+	}
+	return rctx
+}
+
+func listRevisionsRequest(srv *Server, pid, uid int64, role string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest("GET", "/api/projects/"+strconv.FormatInt(pid, 10)+"/revisions", nil).WithContext(ctxAs(uid, role))
+	r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, revisionRouteCtx(pid, 0)))
+	w := httptest.NewRecorder()
+	srv.handleListRevisions(w, r)
+	return w
+}
+
+func getRevisionRequest(srv *Server, pid int64, rev int, uid int64, role string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest("GET", "/api/projects/x/revisions/x", nil).WithContext(ctxAs(uid, role))
+	r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, revisionRouteCtx(pid, rev)))
+	w := httptest.NewRecorder()
+	srv.handleGetRevision(w, r)
+	return w
+}
+
+func diffRevisionRequest(srv *Server, pid int64, rev int, against string, uid int64, role string) *httptest.ResponseRecorder {
+	url := "/api/projects/x/revisions/x/diff"
+	if against != "" {
+		url += "?against=" + against
+	}
+	r := httptest.NewRequest("GET", url, nil).WithContext(ctxAs(uid, role))
+	r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, revisionRouteCtx(pid, rev)))
+	w := httptest.NewRecorder()
+	srv.handleRevisionDiff(w, r)
+	return w
+}
+
+func restoreRevisionRequest(srv *Server, pid int64, rev int, uid int64, role, body string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest("POST", "/api/projects/x/revisions/x/restore", strings.NewReader(body)).WithContext(ctxAs(uid, role))
+	r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, revisionRouteCtx(pid, rev)))
+	w := httptest.NewRecorder()
+	srv.handleRestoreRevision(w, r)
+	return w
+}
+
+func mustDeploy(t *testing.T, srv *Server, pid, admin int64, body string) {
+	t.Helper()
+	w := deployRequest(srv, pid, admin, body)
+	if w.Code != 200 {
+		t.Fatalf("deploy request failed: %d %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		OK     bool   `json:"ok"`
+		Error  string `json:"error"`
+		Output string `json:"output"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK {
+		t.Fatalf("deploy did not succeed: %s / %s", resp.Error, resp.Output)
+	}
+}
+
+// A successful deploy must record a revision: its author, the profiles it
+// ran with, and (best-effort) the service's image reference.
+func TestCaptureRevision_OnSuccessfulDeploy(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	const slug = "dctest-revision-capture"
+	compose := "services:\n  web:\n    image: " + deployTestImage + "\n    command: [\"sleep\", \"300\"]\n"
+	srv, st, pid, admin := deployTestServer(t, slug, compose)
+	// captureRevisionImages resolves the local Docker API client via host id
+	// 0 — deployTestServer never registers a "local" host row (ComposeUpFiles
+	// itself only shells out to the compose CLI, so it doesn't need one), so
+	// without this the image-capture half silently finds nothing to resolve.
+	if err := st.EnsureLocalHost(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = docker.ComposeDown(bg, srv.projectRoot(pid), slug, nil)
+		freeDeployStack(slug)
+	})
+
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+
+	list, err := st.ListRevisions(context.Background(), pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("got %d revisions, want 1: %+v", len(list), list)
+	}
+	rev := list[0]
+	// Author is "" here: ctxAs (the shared test-request helper) never sets
+	// Claims.Username, only UserID/Role — a real session always carries it.
+	// TestCaptureRevision_RecordsTheAuthenticatedAuthor below drives a
+	// request with Username set to cover that half specifically.
+	if rev.Revision != 1 || !rev.Valid {
+		t.Errorf("revision = %+v", rev)
+	}
+	if len(rev.Images) != 1 || rev.Images[0].Service != "web" || rev.Images[0].Image != deployTestImage {
+		t.Errorf("Images = %+v", rev.Images)
+	}
+}
+
+// A successful deploy must clear any drift ignores recorded against the
+// project — otherwise one that happens to fingerprint-match a later,
+// unrelated drift would be silently re-accepted without a human reviewing it
+// again (see store.ClearDriftIgnores).
+func TestCaptureRevision_ClearsDriftIgnores(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	const slug = "dctest-revision-clears-drift"
+	compose := "services:\n  web:\n    image: " + deployTestImage + "\n    command: [\"sleep\", \"300\"]\n"
+	srv, st, pid, admin := deployTestServer(t, slug, compose)
+	if err := st.EnsureLocalHost(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = docker.ComposeDown(bg, srv.projectRoot(pid), slug, nil)
+		freeDeployStack(slug)
+	})
+
+	if err := st.IgnoreDrift(context.Background(), pid, "web", "env", "fp-stale"); err != nil {
+		t.Fatal(err)
+	}
+
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+
+	list, err := st.ListDriftIgnores(context.Background(), pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Errorf("expected drift ignores cleared after a successful deploy, got %+v", list)
+	}
+}
+
+// A deploy driven by a request whose claims actually carry a username (as a
+// real session's do) must record it as the revision's author.
+func TestCaptureRevision_RecordsTheAuthenticatedAuthor(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	const slug = "dctest-revision-author"
+	compose := "services:\n  web:\n    image: " + deployTestImage + "\n"
+	srv, st, pid, admin := deployTestServer(t, slug, compose)
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = docker.ComposeDown(bg, srv.projectRoot(pid), slug, nil)
+		freeDeployStack(slug)
+	})
+
+	r := httptest.NewRequest("POST", "/api/projects/"+strconv.FormatInt(pid, 10)+"/deploy", strings.NewReader(`{"build":false}`)).
+		WithContext(auth.WithClaims(context.Background(), &auth.Claims{UserID: admin, Username: "root", Role: "admin"}))
+	r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, revisionRouteCtx(pid, 0)))
+	w := httptest.NewRecorder()
+	srv.handleDeployProject(w, r)
+	if w.Code != 200 {
+		t.Fatalf("deploy status = %d: %s", w.Code, w.Body.String())
+	}
+
+	rev, err := st.LatestRevision(context.Background(), pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rev.Author != "root" {
+		t.Errorf("Author = %q, want %q", rev.Author, "root")
+	}
+}
+
+// The centerpiece: deploy two different revisions, restore to the first, and
+// verify the live compose file, the running env, and the profiles all go
+// back — AND that the restore itself becomes a new (third) revision rather
+// than rewriting history.
+func TestRestoreRevision_RoundTrip(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	const slug = "dctest-revision-restore"
+	composeV1 := "services:\n  web:\n    image: " + deployTestImage + "\n    command: [\"sleep\", \"300\"]\n    environment:\n      FOO: v1\n"
+	srv, st, pid, admin := deployTestServer(t, slug, composeV1)
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = docker.ComposeDown(bg, srv.projectRoot(pid), slug, nil)
+		freeDeployStack(slug)
+	})
+
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+
+	// Edit to v2 and deploy again.
+	composeV2 := "services:\n  web:\n    image: " + deployTestImage + "\n    command: [\"sleep\", \"300\"]\n    environment:\n      FOO: v2\n"
+	root := srv.projectRoot(pid)
+	if err := os.WriteFile(filepath.Join(root, "compose.yml"), []byte(composeV2), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+
+	list, err := st.ListRevisions(context.Background(), pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("got %d revisions before restore, want 2: %+v", len(list), list)
+	}
+
+	// Restore to revision 1 (the v1 content).
+	w := restoreRevisionRequest(srv, pid, 1, admin, "admin", `{}`)
+	if w.Code != 200 {
+		t.Fatalf("restore status = %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		OK     bool   `json:"ok"`
+		Error  string `json:"error"`
+		Output string `json:"output"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK {
+		t.Fatalf("restore did not succeed: %s / %s", resp.Error, resp.Output)
+	}
+
+	// The live file must match v1 again.
+	got, err := os.ReadFile(filepath.Join(root, "compose.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != composeV1 {
+		t.Errorf("compose.yml after restore = %q, want the v1 content %q", got, composeV1)
+	}
+
+	// History grows forward: a third revision records the restore, not a
+	// rewrite of revision 1 or 2.
+	list, err = st.ListRevisions(context.Background(), pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 3 {
+		t.Fatalf("got %d revisions after restore, want 3: %+v", len(list), list)
+	}
+	if list[0].Revision != 3 || !strings.Contains(list[0].Reason, "revision 1") {
+		t.Errorf("newest revision = %+v, want revision 3 explaining the restore", list[0])
+	}
+}
+
+// Restoring an unknown revision number is a 404, not a 500 or a silent no-op.
+func TestRestoreRevision_UnknownRevisionIs404(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs the docker compose CLI; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	compose := "services:\n  web:\n    image: " + deployTestImage + "\n"
+	srv, _, pid, admin := deployTestServer(t, "dctest-revision-404", compose)
+	w := restoreRevisionRequest(srv, pid, 99, admin, "admin", `{}`)
+	if w.Code != 404 {
+		t.Errorf("status = %d, want 404 for an unknown revision", w.Code)
+	}
+}
+
+// PENTEST/RBAC: restoring mutates the project (redeploys it), so a read-only
+// "projects" grant must be denied — same rule as deploy itself.
+func TestRestoreRevision_ReadOnlyUserDenied(t *testing.T) {
+	compose := "services:\n  web:\n    image: " + deployTestImage + "\n"
+	srv, st, pid, _ := deployTestServer(t, "dctest-revision-ro", compose)
+	viewer, err := st.CreateUser(context.Background(), &store.User{
+		Username: "viewer", Role: "user", Sections: []string{"projects"}, ReadOnly: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := restoreRevisionRequest(srv, pid, 1, viewer, "user", `{}`)
+	if w.Code != 403 {
+		t.Errorf("status = %d, want 403 for a read-only grant", w.Code)
+	}
+}
+
+func TestListAndGetRevision(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	compose := "services:\n  web:\n    image: " + deployTestImage + "\n"
+	srv, _, pid, admin := deployTestServer(t, "dctest-revision-list", compose)
+	freeDeployStack("dctest-revision-list")
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = docker.ComposeDown(bg, srv.projectRoot(pid), "dctest-revision-list", nil)
+		freeDeployStack("dctest-revision-list")
+	})
+	mustDeploy(t, srv, pid, admin, `{"build":false,"reason":"initial rollout"}`)
+
+	w := listRevisionsRequest(srv, pid, admin, "admin")
+	if w.Code != 200 {
+		t.Fatalf("list status = %d: %s", w.Code, w.Body.String())
+	}
+	var list []struct {
+		Revision int    `json:"revision"`
+		Reason   string `json:"reason"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Reason != "initial rollout" {
+		t.Fatalf("list = %+v", list)
+	}
+
+	w = getRevisionRequest(srv, pid, 1, admin, "admin")
+	if w.Code != 200 {
+		t.Fatalf("get status = %d: %s", w.Code, w.Body.String())
+	}
+	w = getRevisionRequest(srv, pid, 99, admin, "admin")
+	if w.Code != 404 {
+		t.Errorf("get unknown revision status = %d, want 404", w.Code)
+	}
+}
+
+// The revision diff endpoint must reuse the exact same comparison the
+// deploy preview uses (env change, recreates flag) — proving revisions and
+// live-preview share one engine rather than two subtly different ones.
+func TestRevisionDiff_AgainstCurrentAndAgainstAnotherRevision(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	const slug = "dctest-revision-diff"
+	composeV1 := "services:\n  web:\n    image: " + deployTestImage + "\n    command: [\"sleep\", \"300\"]\n    environment:\n      FOO: v1\n"
+	srv, st, pid, admin := deployTestServer(t, slug, composeV1)
+	// "against=current" resolves the live containers via the Docker API
+	// (host id 0), which needs a registered local host — see the comment in
+	// TestCaptureRevision_OnSuccessfulDeploy.
+	if err := st.EnsureLocalHost(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = docker.ComposeDown(bg, srv.projectRoot(pid), slug, nil)
+		freeDeployStack(slug)
+	})
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+
+	composeV2 := "services:\n  web:\n    image: " + deployTestImage + "\n    command: [\"sleep\", \"300\"]\n    environment:\n      FOO: v2\n"
+	root := srv.projectRoot(pid)
+	if err := os.WriteFile(filepath.Join(root, "compose.yml"), []byte(composeV2), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+
+	// Revision 1 vs what's running now (v2) must show the env change.
+	w := diffRevisionRequest(srv, pid, 1, "current", admin, "admin")
+	if w.Code != 200 {
+		t.Fatalf("diff status = %d: %s", w.Code, w.Body.String())
+	}
+	var diff struct {
+		Valid   bool `json:"valid"`
+		Changes []struct {
+			Kind string `json:"kind"`
+		} `json:"changes"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &diff); err != nil {
+		t.Fatal(err)
+	}
+	if !diff.Valid {
+		t.Fatal("expected a valid diff")
+	}
+	foundEnv := false
+	for _, c := range diff.Changes {
+		if c.Kind == "env" {
+			foundEnv = true
+		}
+	}
+	if !foundEnv {
+		t.Errorf("expected an env change between revision 1 and the currently-running v2, got %+v", diff.Changes)
+	}
+
+	// Revision 1 vs revision 2 directly (not "current") must show the same shape.
+	w = diffRevisionRequest(srv, pid, 1, "2", admin, "admin")
+	if w.Code != 200 {
+		t.Fatalf("diff(1,2) status = %d: %s", w.Code, w.Body.String())
+	}
+	diff.Changes = nil
+	if err := json.Unmarshal(w.Body.Bytes(), &diff); err != nil {
+		t.Fatal(err)
+	}
+	foundEnv = false
+	for _, c := range diff.Changes {
+		if c.Kind == "env" {
+			foundEnv = true
+		}
+	}
+	if !foundEnv {
+		t.Errorf("expected an env change between revision 1 and revision 2, got %+v", diff.Changes)
+	}
+}
+
+// TestRevisionDiff_UnchangedVolumesDoNotFalsePositive is the exact bug a
+// real user hit: a project with a relative bind mount and a named volume,
+// deployed once and never touched again, showed a spurious "volumes"
+// change when diffed against itself. Two independent causes, both fixed
+// here — a named volume's compose-declared name ("webdata") never matched
+// the live container's actual project-prefixed one ("<slug>_webdata"), and
+// a relative bind mount resolves to an absolute path anchored to whatever
+// throwaway directory a revision happens to be extracted into, which is
+// different on every call. Nothing about either mount changed, so the diff
+// must report nothing.
+func TestRevisionDiff_UnchangedVolumesDoNotFalsePositive(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	const slug = "dctest-revision-volumes"
+	compose := "services:\n  web:\n    image: " + deployTestImage + "\n    command: [\"sleep\", \"300\"]\n" +
+		"    volumes:\n      - webdata:/data\n      - ./html:/usr/share/nginx/html\n" +
+		"volumes:\n  webdata: {}\n"
+	srv, st, pid, admin := deployTestServer(t, slug, compose)
+	if err := st.EnsureLocalHost(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(srv.projectRoot(pid), "html"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = docker.ComposeDown(bg, srv.projectRoot(pid), slug, nil)
+		freeDeployStack(slug)
+		_ = exec.Command("docker", "volume", "rm", "-f", slug+"_webdata").Run()
+	})
+
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+
+	w := diffRevisionRequest(srv, pid, 1, "current", admin, "admin")
+	if w.Code != 200 {
+		t.Fatalf("diff status = %d: %s", w.Code, w.Body.String())
+	}
+	var diff struct {
+		Valid   bool `json:"valid"`
+		Changes []struct {
+			Service string `json:"service"`
+			Kind    string `json:"kind"`
+			From    string `json:"from"`
+			To      string `json:"to"`
+		} `json:"changes"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &diff); err != nil {
+		t.Fatal(err)
+	}
+	if !diff.Valid {
+		t.Fatal("expected a valid diff")
+	}
+	if len(diff.Changes) != 0 {
+		t.Errorf("nothing actually changed since the deploy; expected no changes, got %+v", diff.Changes)
+	}
+}
+
+// TestRestoreRevision_PreviewIsCleanAfterDigestPinnedRestore is a real bug a
+// user hit: restore pins the deploy to the exact digest recorded on the
+// revision (buildDigestPinOverride), so the resulting container's own
+// recorded image reference becomes "repo@sha256:…" — a plain-tag Preview
+// comparison then flagged it as "image changed" forever, since Docker never
+// forgets it was created from a digest and there's no way to ask it what
+// tag that used to be. This exercises the actual restore + preview HTTP
+// path end to end (digest capture requires a registered local host, which
+// TestRestoreRevision_RoundTrip's fixture doesn't set up — that's exactly
+// why this bug slipped past that test).
+func TestRestoreRevision_PreviewIsCleanAfterDigestPinnedRestore(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	const slug = "dctest-restore-pin-preview"
+	compose := "services:\n  web:\n    image: " + deployTestImage + "\n    command: [\"sleep\", \"300\"]\n"
+	srv, st, pid, admin := deployTestServer(t, slug, compose)
+	if err := st.EnsureLocalHost(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = docker.ComposeDown(bg, srv.projectRoot(pid), slug, nil)
+		freeDeployStack(slug)
+	})
+
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+
+	// Sanity check: the revision actually recorded a digest to pin, or this
+	// test would pass for the wrong reason (nothing to pin, nothing to
+	// mismatch).
+	rev, err := st.RevisionByNumber(context.Background(), pid, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rev.Images) != 1 || rev.Images[0].Digest == "" {
+		t.Fatalf("expected revision 1 to have captured a digest, got %+v", rev.Images)
+	}
+
+	// Snapshot before restore, not just glob-after: the glob pattern is
+	// process-wide, so a stray leftover from an unrelated/earlier run would
+	// otherwise be misattributed to this restore's own cleanup.
+	before, _ := filepath.Glob(filepath.Join(os.TempDir(), "dc-rollback-pin-*.yml"))
+	beforeSet := map[string]bool{}
+	for _, f := range before {
+		beforeSet[f] = true
+	}
+
+	w := restoreRevisionRequest(srv, pid, 1, admin, "admin", `{}`)
+	if w.Code != 200 {
+		t.Fatalf("restore status = %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		OK     bool   `json:"ok"`
+		Error  string `json:"error"`
+		Output string `json:"output"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK {
+		t.Fatalf("restore did not succeed: %s / %s", resp.Error, resp.Output)
+	}
+
+	// The digest-pin override is a temp file outside the project folder
+	// (buildDigestPinOverride's caller) — a successful restore must remove
+	// it, not just on a later failure path. Regression for the defer bug
+	// where `defer cleanup()` captured cleanup's value before the pin block
+	// reassigned it, so the wrapper that deletes the pin file never ran.
+	// Only new files (absent from the `before` snapshot) count — anything
+	// else pre-dates this restore and isn't its leak to answer for.
+	after, _ := filepath.Glob(filepath.Join(os.TempDir(), "dc-rollback-pin-*.yml"))
+	var newlyLeaked []string
+	for _, f := range after {
+		if !beforeSet[f] {
+			newlyLeaked = append(newlyLeaked, f)
+		}
+	}
+	if len(newlyLeaked) != 0 {
+		t.Errorf("digest pin override temp file(s) leaked after a successful restore: %v", newlyLeaked)
+	}
+
+	pw := previewRequest(srv, pid, admin, "admin")
+	if pw.Code != 200 {
+		t.Fatalf("preview status = %d: %s", pw.Code, pw.Body.String())
+	}
+	var prev mcp.ProjectPreview
+	if err := json.Unmarshal(pw.Body.Bytes(), &prev); err != nil {
+		t.Fatal(err)
+	}
+	if len(prev.Changes) != 0 {
+		t.Errorf("preview right after a correct restore must report nothing to reconcile, got %+v", prev.Changes)
+	}
+}
+
+// TestRestoreRevision_PolicyBlockLeavesLiveProjectUntouched is the
+// regression test for P1-1: restore must validate everything — including
+// policy — against a staged copy of the revision, and only ever touch the
+// live project directory after every check has passed. Restoring a revision
+// that a block-mode policy now rejects must leave the live project's files
+// and running container exactly as they were.
+func TestRestoreRevision_PolicyBlockLeavesLiveProjectUntouched(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	const slug = "dctest-restore-policy-block"
+	composeV1 := "services:\n  web:\n    image: " + deployTestImage + "\n    command: [\"sleep\", \"300\"]\n    privileged: true\n"
+	srv, st, pid, admin := deployTestServer(t, slug, composeV1)
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = docker.ComposeDown(bg, srv.projectRoot(pid), slug, nil)
+		freeDeployStack(slug)
+	})
+
+	// Revision 1: privileged, deployed before any policy exists to block it.
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+
+	// Revision 2: not privileged — this becomes "what's actually running".
+	composeV2 := "services:\n  web:\n    image: " + deployTestImage + "\n    command: [\"sleep\", \"300\"]\n"
+	root := srv.projectRoot(pid)
+	if err := os.WriteFile(filepath.Join(root, "compose.yml"), []byte(composeV2), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+
+	if err := st.SetPolicyRuleModes(context.Background(), map[string]string{"privileged": "block"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Restoring revision 1 now hits a block-mode violation.
+	w := restoreRevisionRequest(srv, pid, 1, admin, "admin", `{}`)
+	if w.Code != 200 {
+		t.Fatalf("restore status = %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		OK     bool `json:"ok"`
+		Policy struct {
+			Blocked []docker.PolicyViolation `json:"blocked"`
+		} `json:"policy"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.OK {
+		t.Fatal("a block-mode violation on the restored revision must refuse the restore")
+	}
+	if len(resp.Policy.Blocked) != 1 || resp.Policy.Blocked[0].Rule != docker.RulePrivileged {
+		t.Errorf("expected exactly one privileged violation reported, got %+v", resp.Policy.Blocked)
+	}
+
+	// The live project's files must still be v2 — SECURITY/correctness:
+	// under the old code this had already been overwritten with v1's
+	// content before the policy check ever ran.
+	got, err := os.ReadFile(filepath.Join(root, "compose.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != composeV2 {
+		t.Errorf("live compose.yml changed despite the restore being policy-blocked:\ngot:  %q\nwant: %q", got, composeV2)
+	}
+	if n := runningServiceCount(t, slug, "web"); n != 1 {
+		t.Errorf("the running container must be unaffected by a blocked restore, got %d running", n)
+	}
+	if _, err := os.Stat(root + ".restore-staging"); !os.IsNotExist(err) {
+		t.Error("a staging directory leaked after a policy-blocked restore")
+	}
+	if _, err := os.Stat(root + ".restore-backup"); !os.IsNotExist(err) {
+		t.Error("a backup directory leaked after a policy-blocked restore")
+	}
+}
+
+// TestRestoreRevision_PolicyBlockRefusesBeforeRemoteSeed is the regression
+// test for the more severe, remote-host variant of the same finding: a
+// restore used to call projectDeployEnv (and, for a remote-host project with
+// an internal bind, its SeedProjectBinds side effect — a real, irreversible
+// write into a live-mounted named volume on that host) before the policy
+// check ever ran. Proven the same way as the deploy-side regression test:
+// point the project at a host nothing listens on, so an attempted
+// SeedProjectBinds fails distinctly (a connection/dial error) from a clean
+// policy-blocked response.
+func TestRestoreRevision_PolicyBlockRefusesBeforeRemoteSeed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	const slug = "dctest-restore-remote-policy-block"
+	// The internal bind (./data) is what makes SeedProjectBinds relevant once
+	// this project is pointed at a remote host below.
+	composeV1 := "services:\n  web:\n    image: " + deployTestImage + "\n    command: [\"sleep\", \"300\"]\n    privileged: true\n    volumes:\n      - ./data:/data\n"
+	srv, st, pid, admin := deployTestServer(t, slug, composeV1)
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = docker.ComposeDown(bg, srv.projectRoot(pid), slug, nil)
+		freeDeployStack(slug)
+	})
+
+	// Revision 1: privileged, captured while the project still targets the
+	// local daemon (host 0) — a remote deploy isn't needed to CREATE the
+	// snapshot, only to restore it below.
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+
+	ctx := context.Background()
+	hostID, err := st.CreateHost(ctx, &store.Host{Name: "unreachable", Kind: "tcp", Address: "tcp://127.0.0.1:1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateProjectSettings(ctx, pid, "app", hostID, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetPolicyRuleModes(ctx, map[string]string{"privileged": "block"}); err != nil {
+		t.Fatal(err)
+	}
+
+	w := restoreRevisionRequest(srv, pid, 1, admin, "admin", `{}`)
+	if w.Code != 200 {
+		t.Fatalf("restore status = %d: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if strings.Contains(body, "copying the project files") {
+		t.Fatalf("the restore tried to seed the remote host before the policy check ran: %s", body)
+	}
+	var resp struct {
+		OK     bool `json:"ok"`
+		Policy struct {
+			Blocked []docker.PolicyViolation `json:"blocked"`
+		} `json:"policy"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response was not the expected policy-block shape: %v (%s)", err, body)
+	}
+	if resp.OK {
+		t.Fatal("a block-mode violation on the restored revision must refuse the restore")
+	}
+	if len(resp.Policy.Blocked) != 1 || resp.Policy.Blocked[0].Rule != docker.RulePrivileged {
+		t.Errorf("expected exactly one privileged violation reported, got %+v", resp.Policy.Blocked)
+	}
+}
+
+// TestCaptureRevision_SnapshotDirFailureLeavesRevisionMarkedInvalid is the
+// regression test for P2-1: if the on-disk snapshot can never be written,
+// the revision row must not be left claiming Valid=true — restore must
+// never be offered a revision whose file doesn't actually exist.
+func TestCaptureRevision_SnapshotDirFailureLeavesRevisionMarkedInvalid(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	const slug = "dctest-revision-capture-fail"
+	compose := "services:\n  web:\n    image: " + deployTestImage + "\n"
+	srv, st, pid, admin := deployTestServer(t, slug, compose)
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = docker.ComposeDown(bg, srv.projectRoot(pid), slug, nil)
+		freeDeployStack(slug)
+	})
+
+	// Force os.MkdirAll(revisionsDir, ...) to fail deterministically (works
+	// even running as root, unlike a permission-bit trick): pre-create a
+	// plain file at the exact path the snapshot directory needs to occupy.
+	revDir := srv.projectRevisionsDir(pid)
+	if err := os.MkdirAll(filepath.Dir(revDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(revDir, []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(revDir) })
+
+	// The deploy itself must still succeed — a revision-capture hiccup is
+	// never surfaced as a deploy failure (existing, deliberate design).
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+
+	rev, err := st.RevisionByNumber(context.Background(), pid, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rev.Valid {
+		t.Errorf("revision recorded Valid=true despite the snapshot directory never being created: %+v", rev)
+	}
+	if rev.ValidationError == "" {
+		t.Error("expected a ValidationError explaining the failed capture")
+	}
+	if _, err := os.Stat(srv.revisionZipPath(pid, 1)); err == nil {
+		t.Error("no snapshot should exist on disk for a revision that failed to capture")
+	}
+
+	// And restore must refuse it cleanly rather than trying to read a
+	// nonexistent zip.
+	w := restoreRevisionRequest(srv, pid, 1, admin, "admin", `{}`)
+	if w.Code != 200 {
+		t.Fatalf("restore status = %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.OK {
+		t.Fatal("restoring a revision with no valid snapshot must not report success")
+	}
+}
+
+// TestRestoreRevision_DigestPinOverrideFailureIsFatal is the regression test
+// for P2-2's first half: if the digest-pin override file can't be built,
+// restore must refuse outright rather than silently deploying unpinned (a
+// mutable tag could then pull a different image than the one this revision
+// actually recorded), and must leave the live project untouched.
+func TestRestoreRevision_DigestPinOverrideFailureIsFatal(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	const slug = "dctest-restore-pin-fail"
+	compose := "services:\n  web:\n    image: " + deployTestImage + "\n    command: [\"sleep\", \"300\"]\n"
+	srv, st, pid, admin := deployTestServer(t, slug, compose)
+	if err := st.EnsureLocalHost(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = docker.ComposeDown(bg, srv.projectRoot(pid), slug, nil)
+		freeDeployStack(slug)
+	})
+
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+	rev, err := st.RevisionByNumber(context.Background(), pid, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rev.Images) != 1 || rev.Images[0].Digest == "" {
+		t.Fatalf("expected revision 1 to have captured a digest to pin, got %+v", rev.Images)
+	}
+
+	root := srv.projectRoot(pid)
+	before, err := os.ReadFile(filepath.Join(root, "compose.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Force os.CreateTemp("", "dc-rollback-pin-*.yml") to fail: point TMPDIR
+	// at a path that exists but isn't a directory.
+	notADir := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(notADir, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", notADir)
+
+	w := restoreRevisionRequest(srv, pid, 1, admin, "admin", `{}`)
+	if w.Code == 200 {
+		var resp struct {
+			OK bool `json:"ok"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if resp.OK {
+			t.Fatal("restore must not report success when the digest pin override can't be written")
+		}
+	}
+
+	after, err := os.ReadFile(filepath.Join(root, "compose.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Error("a restore that fails while preparing the digest pin override must leave the live project untouched")
+	}
+}
+
+// A restore that trips a warn-mode rule asks for confirmation, and goes ahead
+// once it is given. The UI used to have no way to give it, so the API side of
+// the exchange is pinned here alongside the dialog's own test.
+func TestRestoreRevision_PolicyWarnNeedsAndTakesConfirmation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	const slug = "dctest-restore-policy-warn"
+	composeV1 := "services:\n  web:\n    image: " + deployTestImage + "\n    command: [\"sleep\", \"300\"]\n    privileged: true\n"
+	srv, st, pid, admin := deployTestServer(t, slug, composeV1)
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = docker.ComposeDown(bg, srv.projectRoot(pid), slug, nil)
+		freeDeployStack(slug)
+	})
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+	composeV2 := "services:\n  web:\n    image: " + deployTestImage + "\n    command: [\"sleep\", \"300\"]\n"
+	if err := os.WriteFile(filepath.Join(srv.projectRoot(pid), "compose.yml"), []byte(composeV2), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+	if err := st.SetPolicyRuleModes(context.Background(), map[string]string{"privileged": "warn"}); err != nil {
+		t.Fatal(err)
+	}
+
+	type restoreResp struct {
+		OK                bool `json:"ok"`
+		NeedsConfirmation bool `json:"needsConfirmation"`
+		Policy            struct {
+			Warnings []docker.PolicyViolation `json:"warnings"`
+		} `json:"policy"`
+	}
+	decode := func(body []byte) restoreResp {
+		t.Helper()
+		var r restoreResp
+		if err := json.Unmarshal(body, &r); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+
+	first := decode(restoreRevisionRequest(srv, pid, 1, admin, "admin", `{}`).Body.Bytes())
+	if first.OK || !first.NeedsConfirmation || len(first.Policy.Warnings) != 1 {
+		t.Fatalf("unconfirmed restore under a warn rule: %+v, want refused with one warning to confirm", first)
+	}
+	got, _ := os.ReadFile(filepath.Join(srv.projectRoot(pid), "compose.yml"))
+	if string(got) != composeV2 {
+		t.Fatal("an unconfirmed restore changed the project's files")
+	}
+
+	second := decode(restoreRevisionRequest(srv, pid, 1, admin, "admin", `{"confirmPolicyWarnings":true}`).Body.Bytes())
+	if !second.OK {
+		t.Fatalf("confirmed restore refused: %+v", second)
+	}
+	got, _ = os.ReadFile(filepath.Join(srv.projectRoot(pid), "compose.yml"))
+	if string(got) != composeV1 {
+		t.Errorf("confirmed restore did not put revision 1 back:\n%s", got)
+	}
+}
+
+// A remote restore seeds the revision's files into the volumes the running
+// containers mount, then deploys. If that deploy fails, the volumes must hold
+// what they did before, not the revision's files: the project folder was
+// already put back, and the volumes used to be left on the older revision.
+//
+// The "remote" host is a tcp host pointing at the local socket, which takes
+// the remote path (seeded volumes) against the local daemon. The deploy is
+// made to fail by holding the port revision 1 publishes.
+func TestRestoreRevision_RemoteFailurePutsVolumesBack(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a docker daemon and the compose CLI; skipped under -short")
+	}
+	ctx := context.Background()
+	if !docker.ComposeAvailable(ctx) {
+		t.Skip("docker compose CLI not available")
+	}
+	const sock = "/var/run/docker.sock"
+	if _, err := os.Stat(sock); err != nil {
+		t.Skip("needs the local Docker socket at " + sock)
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	_ = l.Close()
+
+	const slug = "dctest-restore-remote-volumes"
+	composeV1 := fmt.Sprintf("services:\n  web:\n    image: %s\n    command: [\"sleep\", \"300\"]\n    ports: [\"127.0.0.1:%d:8080\"]\n    volumes: [\"./html:/srv/html\"]\n", deployTestImage, port)
+	composeV2 := fmt.Sprintf("services:\n  web:\n    image: %s\n    command: [\"sleep\", \"300\"]\n    volumes: [\"./html:/srv/html\"]\n", deployTestImage)
+	srv, st, pid, admin := deployTestServer(t, slug, composeV1)
+	hostID, err := st.CreateHost(ctx, &store.Host{Name: "loop", Kind: "tcp", Address: "unix://" + sock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateProjectSettings(ctx, pid, "app", hostID, false); err != nil {
+		t.Fatal(err)
+	}
+	freeDeployStack(slug)
+	t.Cleanup(func() {
+		bg := context.Background()
+		freeDeployStack(slug)
+		_, _ = srv.docker.RemoveSeedVolumes(bg, hostID, slug)
+	})
+
+	root := srv.projectRoot(pid)
+	writeHTML := func(content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(root, "html"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "html", "index.html"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	volumeIndex := func() string {
+		t.Helper()
+		vol := docker.SeedVolumeName(slug, "html")
+		out, err := exec.Command("docker", "run", "--rm", "-v", vol+":/d:ro", deployTestImage, "cat", "/d/index.html").CombinedOutput()
+		if err != nil {
+			t.Fatalf("read %s: %v %s", vol, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	writeHTML("v1")
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+	if err := os.WriteFile(filepath.Join(root, "compose.yml"), []byte(composeV2), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeHTML("v2")
+	mustDeploy(t, srv, pid, admin, `{"build":false}`)
+	if got := volumeIndex(); got != "v2" {
+		t.Fatalf("after deploying v2 the volume holds %q, so this test proves nothing", got)
+	}
+
+	// Revision 1 publishes the port; hold it so its deploy fails after the seed.
+	hold, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		t.Skipf("port %d was taken in the meantime: %v", port, err)
+	}
+	defer hold.Close()
+
+	w := restoreRevisionRequest(srv, pid, 1, admin, "admin", `{}`)
+	var resp struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("restore: %d %s", w.Code, w.Body.String())
+	}
+	if resp.OK {
+		t.Fatal("the restore succeeded although its port was held, so this test proves nothing")
+	}
+	if !strings.Contains(resp.Error, "were put back") {
+		t.Errorf("the failure should say the volumes were put back: %q", resp.Error)
+	}
+	if got := volumeIndex(); got != "v2" {
+		t.Errorf("after the failed restore the volume holds %q, want v2 as before", got)
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, "html", "index.html")); string(got) != "v2" {
+		t.Errorf("after the failed restore the project folder holds %q, want v2", got)
+	}
+}

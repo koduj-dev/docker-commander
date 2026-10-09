@@ -20,7 +20,7 @@ you whether a remote deploy actually works.
 | **3 · Runtime smoke** | The real transport/CLI behaves as assumed — no mocks in the loop | MCP over real HTTP with the official SDK client; the Compose override resolved by the real `docker compose` | ⛔ needs Docker |
 | **4 · Integration** | Real Docker daemon, real Redis / OpenLDAP / SMTP | 12 test files behind `testing.Short()`; throwaway containers, skipped cleanly when unavailable | ⛔ needs Docker |
 | **5 · Multi-daemon end-to-end** | Remote operations against daemons that genuinely cannot see this machine | docker-in-docker sidecars over **TCP and SSH**, 1–3 at a time | ⛔ needs Docker + provisioning |
-| **6 · Version matrix** | The app works on the Docker Engine *you* run, not just the maintainer's | Tier 4 re-run against pinned `docker:NN-dind` for Engine 24–28 | 🌙 nightly + on demand ([compat.yml](../.github/workflows/compat.yml)) |
+| **6 · Version matrix** | The app works on the Docker Engine *you* run, not just the maintainer's | Tier 4 re-run against pinned `docker:NN-dind` for Engine 24–29 | 🌙 nightly + on demand ([compat.yml](../.github/workflows/compat.yml)) |
 
 ### Tier 2 — why adversarial tests get their own tier
 
@@ -347,7 +347,7 @@ Stated plainly, so nobody infers more than is there:
   developer-run, because GitHub's runners would need provisioned sidecars for the
   multi-daemon work. A green CI badge therefore means "unit + adversarial tests
   pass"; the nightly matrix badge is what says "and it still works on Engine
-  24–28".
+  24–29".
 - **The matrix pins Engine majors, not every patch release.** `docker:24-dind`
   resolves to the newest 24.x at pull time, so a regression in a specific patch
   between nightly runs is not caught the moment it ships.

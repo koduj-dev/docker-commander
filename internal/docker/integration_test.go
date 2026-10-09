@@ -4,16 +4,15 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
-
 	"github.com/koduj-dev/docker-commander/internal/store"
+	"github.com/moby/moby/client"
 )
 
 // newManager builds a Manager backed by an in-memory store with a local host,
@@ -90,7 +89,7 @@ func rmContainer(ctx context.Context, t *testing.T, m *Manager, id string) {
 	if err != nil {
 		return
 	}
-	_ = cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true})
+	_, _ = cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true})
 }
 
 // freeName force-removes any container already holding a fixed test name.
@@ -105,7 +104,7 @@ func freeName(ctx context.Context, m *Manager, name string) {
 	if err != nil {
 		return
 	}
-	_ = cli.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
+	_, _ = cli.ContainerRemove(ctx, name, client.ContainerRemoveOptions{Force: true})
 }
 
 func startTestContainer(ctx context.Context, t *testing.T, m *Manager, name string) string {
@@ -352,11 +351,11 @@ func TestIntegrationNetworkRemove(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := cli.NetworkCreate(ctx, "dctest_net", network.CreateOptions{})
+	resp, err := cli.NetworkCreate(ctx, "dctest_net", client.NetworkCreateOptions{})
 	if err != nil {
 		t.Fatalf("NetworkCreate: %v", err)
 	}
-	t.Cleanup(func() { _ = cli.NetworkRemove(ctx, resp.ID) })
+	t.Cleanup(func() { _, _ = cli.NetworkRemove(ctx, resp.ID, client.NetworkRemoveOptions{}) })
 	if err := m.RemoveNetwork(ctx, 0, resp.ID); err != nil {
 		t.Errorf("RemoveNetwork: %v", err)
 	}
@@ -377,7 +376,7 @@ func TestIntegrationNetworkLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateNetwork: %v", err)
 	}
-	t.Cleanup(func() { _ = cli.NetworkRemove(ctx, id) })
+	t.Cleanup(func() { _, _ = cli.NetworkRemove(ctx, id, client.NetworkRemoveOptions{}) })
 
 	cid := startTestContainer(ctx, t, m, "dctest_netlife_c")
 	if err := m.ConnectNetwork(ctx, 0, id, cid); err != nil {
@@ -597,4 +596,99 @@ func makeTar(t *testing.T, name string, data []byte) *bytes.Buffer {
 	}
 	tw.Close()
 	return &buf
+}
+
+// InspectRaw promises the daemon's own JSON, field for field — not a re-marshal
+// of an SDK struct — so each kind must return a real document naming the very
+// object that was asked for. "The call did not error" (all the per-kind checks
+// above assert) would pass for an empty body or another object's JSON.
+func TestIntegrationInspectRawReturnsTheDaemonsDocument(t *testing.T) {
+	m, ctx := newManager(t)
+	ensureImage(ctx, t, m)
+
+	cid := startTestContainer(ctx, t, m, "dctest_rawinspect")
+	const vol = "dctest_rawinspect_vol"
+	_ = m.RemoveVolume(ctx, 0, vol, true) // leftover from a killed run (t.Cleanup never ran)
+	if _, err := m.CreateVolume(ctx, 0, vol, "local", nil); err != nil {
+		t.Fatalf("CreateVolume: %v", err)
+	}
+	t.Cleanup(func() { _ = m.RemoveVolume(ctx, 0, vol, true) })
+	cli, err := m.Client(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const netName = "dctest_rawinspect_net"
+	_, _ = cli.NetworkRemove(ctx, netName, client.NetworkRemoveOptions{}) // same: stale from a killed run
+	netID, err := m.CreateNetwork(ctx, 0, NetworkCreateRequest{Name: netName, Driver: "bridge"})
+	if err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+	t.Cleanup(func() { _, _ = cli.NetworkRemove(ctx, netID, client.NetworkRemoveOptions{}) })
+
+	for _, tc := range []struct {
+		kind, ref, field, want string
+	}{
+		{"container", cid, "Id", cid},
+		{"image", testImage, "Id", ""}, // any sha256:… id; see below
+		{"volume", vol, "Name", vol},
+		{"network", netID, "Name", netName},
+	} {
+		raw, err := m.InspectRaw(ctx, 0, tc.kind, tc.ref)
+		if err != nil {
+			t.Errorf("InspectRaw %s: %v", tc.kind, err)
+			continue
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Errorf("InspectRaw %s is not a JSON object (%v): %.120s", tc.kind, err, raw)
+			continue
+		}
+		got, _ := doc[tc.field].(string)
+		switch {
+		case tc.want != "" && got != tc.want:
+			t.Errorf("InspectRaw %s: %s = %q, want %q", tc.kind, tc.field, got, tc.want)
+		case tc.want == "" && !strings.HasPrefix(got, "sha256:"):
+			t.Errorf("InspectRaw %s: %s = %q, want an image id", tc.kind, tc.field, got)
+		}
+	}
+
+	// The container document must carry fields the SDK struct would have
+	// dropped or renamed — proof it is the daemon's bytes.
+	raw, _ := m.InspectRaw(ctx, 0, "container", cid)
+	if !strings.Contains(string(raw), `"HostConfig"`) || !strings.Contains(string(raw), `"NetworkSettings"`) {
+		t.Errorf("container inspect JSON is missing HostConfig/NetworkSettings: %.200s", raw)
+	}
+}
+
+// DiskUsage asks the daemon for each category explicitly (the SDK no longer
+// assumes all four), then sums per-object sizes itself. The existing
+// "SystemAndLists" check only asserts there is no error, which an all-zero
+// result — every flag forgotten — would also satisfy.
+func TestIntegrationDiskUsageCountsWhatExists(t *testing.T) {
+	m, ctx := newManager(t)
+	ensureImage(ctx, t, m)
+	startTestContainer(ctx, t, m, "dctest_diskusage")
+	const vol = "dctest_diskusage_vol"
+	_ = m.RemoveVolume(ctx, 0, vol, true) // leftover from a killed run (t.Cleanup never ran)
+	if _, err := m.CreateVolume(ctx, 0, vol, "local", nil); err != nil {
+		t.Fatalf("CreateVolume: %v", err)
+	}
+	t.Cleanup(func() { _ = m.RemoveVolume(ctx, 0, vol, true) })
+
+	du, err := m.DiskUsage(ctx, 0)
+	if err != nil {
+		t.Fatalf("DiskUsage: %v", err)
+	}
+	if du.Images.Count < 1 || du.Images.Size <= 0 {
+		t.Errorf("images: alpine is present, got count=%d size=%d", du.Images.Count, du.Images.Size)
+	}
+	if du.LayersSize <= 0 {
+		t.Errorf("LayersSize = %d, want > 0 with an image present", du.LayersSize)
+	}
+	if du.Containers.Count < 1 {
+		t.Errorf("containers: one is running, got count=%d", du.Containers.Count)
+	}
+	if du.Volumes.Count < 1 {
+		t.Errorf("volumes: one was just created, got count=%d", du.Volumes.Count)
+	}
 }

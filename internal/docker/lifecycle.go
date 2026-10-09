@@ -4,8 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/go-connections/nat"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 )
 
 // PortSpec is one published port in a create request.
@@ -39,11 +40,11 @@ func (m *Manager) CreateContainer(ctx context.Context, hostID int64, spec Create
 		return "", fmt.Errorf("image is required")
 	}
 
-	cfg := &container.Config{Image: spec.Image, Env: spec.Env, ExposedPorts: nat.PortSet{}}
+	cfg := &container.Config{Image: spec.Image, Env: spec.Env, ExposedPorts: network.PortSet{}}
 	if len(spec.Cmd) > 0 {
 		cfg.Cmd = spec.Cmd
 	}
-	hostCfg := &container.HostConfig{Binds: spec.Binds, PortBindings: nat.PortMap{}}
+	hostCfg := &container.HostConfig{Binds: spec.Binds, PortBindings: network.PortMap{}}
 
 	for _, p := range spec.Ports {
 		if p.ContainerPort == "" {
@@ -53,13 +54,13 @@ func (m *Manager) CreateContainer(ctx context.Context, hostID int64, spec Create
 		if proto == "" {
 			proto = "tcp"
 		}
-		port, err := nat.NewPort(proto, p.ContainerPort)
+		port, err := network.ParsePort(p.ContainerPort + "/" + proto)
 		if err != nil {
 			return "", fmt.Errorf("invalid port %q: %w", p.ContainerPort, err)
 		}
 		cfg.ExposedPorts[port] = struct{}{}
 		if p.HostPort != "" {
-			hostCfg.PortBindings[port] = []nat.PortBinding{{HostPort: p.HostPort}}
+			hostCfg.PortBindings[port] = []network.PortBinding{{HostPort: p.HostPort}}
 		}
 	}
 	if spec.RestartPolicy != "" {
@@ -71,12 +72,12 @@ func (m *Manager) CreateContainer(ctx context.Context, hostID int64, spec Create
 		hostCfg.MemorySwap = spec.Memory // no extra swap beyond the memory limit
 	}
 
-	resp, err := cli.ContainerCreate(ctx, cfg, hostCfg, nil, nil, spec.Name)
+	resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{Config: cfg, HostConfig: hostCfg, Name: spec.Name})
 	if err != nil {
 		return "", err
 	}
 	if spec.Start {
-		if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		if _, err := cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 			return resp.ID, err
 		}
 	}
@@ -89,7 +90,8 @@ func (m *Manager) RenameContainer(ctx context.Context, hostID int64, id, newName
 	if err != nil {
 		return err
 	}
-	return cli.ContainerRename(ctx, id, newName)
+	_, err = cli.ContainerRename(ctx, id, client.ContainerRenameOptions{NewName: newName})
+	return err
 }
 
 // UpdateContainer adjusts a running container's resource limits and restart
@@ -99,17 +101,17 @@ func (m *Manager) UpdateContainer(ctx context.Context, hostID int64, id string, 
 	if err != nil {
 		return err
 	}
-	uc := container.UpdateConfig{}
-	uc.Memory = memory
-	uc.NanoCPUs = nanoCPUs
+	uc := client.ContainerUpdateOptions{Resources: &container.Resources{}}
+	uc.Resources.Memory = memory
+	uc.Resources.NanoCPUs = nanoCPUs
 	// Setting a memory limit without a matching memory+swap limit is rejected by
 	// the daemon ("smaller than already set memoryswap"); pin swap to the memory
 	// limit (i.e. no extra swap) so the update is accepted.
 	if memory > 0 {
-		uc.MemorySwap = memory
+		uc.Resources.MemorySwap = memory
 	}
 	if restartPolicy != "" {
-		uc.RestartPolicy = container.RestartPolicy{Name: container.RestartPolicyMode(restartPolicy)}
+		uc.RestartPolicy = &container.RestartPolicy{Name: container.RestartPolicyMode(restartPolicy)}
 	}
 	_, err = cli.ContainerUpdate(ctx, id, uc)
 	return err
@@ -121,8 +123,10 @@ func (m *Manager) CommitContainer(ctx context.Context, hostID int64, id, ref, co
 	if err != nil {
 		return "", err
 	}
-	resp, err := cli.ContainerCommit(ctx, id, container.CommitOptions{
-		Reference: ref, Comment: comment, Pause: true,
+	// NoPause stays false: the container is paused while it is committed, as
+	// it always was here.
+	resp, err := cli.ContainerCommit(ctx, id, client.ContainerCommitOptions{
+		Reference: ref, Comment: comment,
 	})
 	if err != nil {
 		return "", err

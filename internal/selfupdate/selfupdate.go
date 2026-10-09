@@ -43,6 +43,47 @@ var (
 // ErrUpToDate is returned by Apply when the running version is already current.
 var ErrUpToDate = errors.New("already up to date")
 
+// ErrPolicyRefused is returned by ApplyChecked when the release actually
+// resolved by this call fails the caller's allow predicate (e.g. a granularity
+// ceiling). The predicate is evaluated against the SAME fetch that would be
+// installed, not an earlier/cached one, so a release published between an
+// earlier check and this call can never slip past the gate.
+var ErrPolicyRefused = errors.New("update refused by policy")
+
+// ErrNotWritable is returned when the executable's directory can't be written
+// to — surfaced before any download happens (see preflightWritable). The CLI
+// path (Run, called from `--self-upgrade`) can offer to re-exec elevated when
+// it sees this; the in-app path (Apply, behind the web UI's "Update &
+// restart") has no terminal to prompt on and just reports it — that surface
+// needs the permission granted at install time instead (see ReadWritePaths in
+// deploy/dockercmd.service, added in v1.6.2).
+type ErrNotWritable struct {
+	Dir string
+	Err error
+}
+
+func (e *ErrNotWritable) Error() string {
+	return fmt.Sprintf("cannot write to %s: %v", e.Dir, e.Err)
+}
+
+func (e *ErrNotWritable) Unwrap() error { return e.Err }
+
+// preflightWritable checks that dir — the directory the executable lives in,
+// and so the directory the swap will write into — actually accepts a write,
+// by creating and removing a throwaway file. Checking this before the
+// release asset is downloaded turns a doomed upgrade into an instant, clear
+// failure instead of a ~30 MiB download followed by "permission denied".
+func preflightWritable(dir string) error {
+	f, err := os.CreateTemp(dir, ".dockercmd-writetest-*")
+	if err != nil {
+		return &ErrNotWritable{Dir: dir, Err: err}
+	}
+	name := f.Name()
+	_ = f.Close()
+	_ = os.Remove(name)
+	return nil
+}
+
 // Result describes a completed upgrade.
 type Result struct {
 	From   string `json:"from"`   // version before the upgrade
@@ -106,6 +147,20 @@ func Run(ctx context.Context, current string, w io.Writer, checkOnly bool) error
 // describing the upgrade. It is the programmatic (in-app) entry point and writes
 // no progress output. ErrUpToDate is returned when nothing newer exists.
 func Apply(ctx context.Context, current string) (Result, error) {
+	return ApplyChecked(ctx, current, func(string) bool { return true })
+}
+
+// ApplyChecked is Apply, but the resolved release's tag must also pass allowed
+// before anything is installed — checked against the exact release this call
+// is about to install, never a value resolved by an earlier, possibly-stale
+// call (e.g. a cached "update available" status). This closes a TOCTOU gap a
+// caller enforcing a policy (like a version-granularity ceiling) would
+// otherwise have: checking that policy against yesterday's cached status and
+// then calling plain Apply lets whatever is latest AT INSTALL TIME through
+// unchecked, which can be a newer release than the one the check saw.
+// Returns ErrPolicyRefused, without downloading anything, when allowed(tag)
+// is false.
+func ApplyChecked(ctx context.Context, current string, allowed func(latestTag string) bool) (Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, httpTimeout)
 	defer cancel()
 
@@ -115,6 +170,9 @@ func Apply(ctx context.Context, current string) (Result, error) {
 	}
 	if !version.Less(current, rel.TagName) {
 		return Result{}, ErrUpToDate
+	}
+	if !allowed(rel.TagName) {
+		return Result{}, ErrPolicyRefused
 	}
 	return installRelease(ctx, current, rel, io.Discard)
 }
@@ -137,6 +195,9 @@ func installRelease(ctx context.Context, current string, rel *ghRelease, w io.Wr
 	}
 	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = resolved
+	}
+	if err := preflightWritable(filepath.Dir(exe)); err != nil {
+		return Result{}, err
 	}
 
 	want, err := expectedSHA256(ctx, rel, asset)

@@ -1,22 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Plus, Trash2, Webhook as WebhookIcon, Check, CheckCheck, Pencil, Download, Upload, X , ChevronDown, ChevronUp, ChevronsUpDown} from "lucide-react";
+import { Plus, Trash2, Webhook as WebhookIcon, Check, CheckCheck, Pencil, Download, Upload, X , ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, BellOff, Ban, Repeat, TrendingUp, TrendingDown} from "lucide-react";
 import { Link } from "react-router-dom";
 import clsx from "clsx";
 import { api } from "../lib/api";
+import type { MaintenanceWindowBody } from "../lib/api";
 import { triggerDownload } from "../components/LoadModal";
-import type { AlertEvent, AlertRule, AlertType, Host, Severity, Webhook } from "../lib/types";
+import type { AlertEvent, AlertRule, AlertType, Host, MaintenanceWindow, Severity, Webhook } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
 import { useAuth } from "../auth/AuthContext";
 import { Tabs } from "../components/Tabs";
 import { useDialogs } from "../components/Dialog";
 import { useAlertPulse } from "../lib/alertStream";
+import { getPref, setPref } from "../lib/prefs";
 
 // Metric names understood by a resource rule. "cpu" is Docker's own
 // one-core-is-100% figure; "cpu_total" normalises it across the host's cores.
-type Metric = "cpu" | "cpu_total" | "mem";
+// netrx_rate/nettx_rate are bytes/s, entered here as MiB/s (same convention as
+// the memory-limit field elsewhere) and converted in buildConfig().
+type Metric = "cpu" | "cpu_total" | "mem" | "netrx_rate" | "nettx_rate";
+const isRateMetric = (m: Metric) => m === "netrx_rate" || m === "nettx_rate";
 
-type Tab = "feed" | "rules" | "webhooks";
+type Tab = "feed" | "rules" | "webhooks" | "maintenance";
 
 export function Alerts() {
   const [tab, setTab] = useState<Tab>("feed");
@@ -43,11 +48,13 @@ export function Alerts() {
             { key: "feed", label: "Feed" },
             { key: "rules", label: "Rules" },
             { key: "webhooks", label: "Webhooks" },
+            { key: "maintenance", label: "Maintenance", icon: <BellOff className="h-4 w-4" /> },
           ]}
         />
         {tab === "feed" && <Feed onAckAllReady={setAckAll} />}
         {tab === "rules" && <Rules />}
         {tab === "webhooks" && <Webhooks />}
+        {tab === "maintenance" && <MaintenanceWindows />}
       </div>
     </>
   );
@@ -92,6 +99,11 @@ function Feed({ onAckAllReady }: { onAckAllReady: (fn: (() => void) | null) => v
   const [text, setText] = useState("");
   const [q, setQ] = useState("");
   const [unacked, setUnacked] = useState(false);
+  // Repeats (a condition that is still true, re-announced each cooldown) bury the
+  // firing/resolved events people look for, so they are hidden unless asked for —
+  // by this switch, or by picking "Repeat" as the lifecycle.
+  const [showRepeats, setShowRepeats] = useState(() => getPref("alerts.showRepeats", false));
+  const hideRepeats = !showRepeats && kind !== "repeat";
   const [host, setHost] = useState<string>("");
   const [hosts, setHosts] = useState<Host[]>([]);
   useEffect(() => {
@@ -104,18 +116,18 @@ function Feed({ onAckAllReady }: { onAckAllReady: (fn: (() => void) | null) => v
 
   // Any filter change restarts paging: staying on page 4 of a result set that
   // just shrank to one page shows an empty table and looks like a bug.
-  useEffect(() => setOffset(0), [severity, kind, container, rule, q, unacked, host]);
+  useEffect(() => setOffset(0), [severity, kind, container, rule, q, unacked, host, showRepeats]);
 
   const load = useCallback(() => {
     api
-      .alerts({ severity, kind, container, rule, q, unacked, host: host === "" ? undefined : Number(host), sort, desc, limit: PAGE, offset })
+      .alerts({ severity, kind, hideRepeats, container, rule, q, unacked, host: host === "" ? undefined : Number(host), sort, desc, limit: PAGE, offset })
       .then((r) => {
         setEvents(r.events);
         setTotal(r.total);
         setOutstanding(r.outstanding);
       })
       .catch(() => setEvents([]));
-  }, [severity, kind, container, rule, q, unacked, host, sort, desc, offset]);
+  }, [severity, kind, hideRepeats, container, rule, q, unacked, host, sort, desc, offset]);
 
   // Refresh on the shared alert poll rather than a timer of its own: a second
   // interval is what made a toast arrive seconds after its row appeared.
@@ -162,7 +174,7 @@ function Feed({ onAckAllReady }: { onAckAllReady: (fn: (() => void) | null) => v
       }))
     )
       return;
-    await api.ackAllAlerts({ severity, kind, container, rule, q, host: host === "" ? undefined : Number(host) });
+    await api.ackAllAlerts({ severity, kind, hideRepeats, container, rule, q, host: host === "" ? undefined : Number(host) });
     load();
   };
   // Hand the action to the page header, and take it back on unmount so it can't
@@ -245,6 +257,14 @@ function Feed({ onAckAllReady }: { onAckAllReady: (fn: (() => void) | null) => v
           <input type="checkbox" checked={unacked} onChange={(e) => setUnacked(e.target.checked)} />
           Unacknowledged only
         </label>
+        <label className="flex items-center gap-2 text-sm pb-1.5" title="A repeat is a condition that is still true, re-announced every cooldown">
+          <input
+            type="checkbox"
+            checked={showRepeats}
+            onChange={(e) => { setShowRepeats(e.target.checked); setPref("alerts.showRepeats", e.target.checked); }}
+          />
+          Show repeats
+        </label>
         {filtered && (
           <button className="btn-ghost px-3 py-1.5 text-sm" onClick={clear}>
             Clear
@@ -257,7 +277,7 @@ function Feed({ onAckAllReady }: { onAckAllReady: (fn: (() => void) | null) => v
       ) : events.length === 0 ? (
         <EmptyState
           title={filtered ? "No alerts match those filters" : "No alerts yet"}
-          hint={filtered ? "Widen or clear the filters to see more." : "Fired alerts will appear here."}
+          hint={filtered ? "Widen or clear the filters to see more." : showRepeats ? "Fired alerts will appear here." : "Fired alerts will appear here. Repeats are hidden — tick “Show repeats” to see re-announcements."}
         />
       ) : (
         <>
@@ -267,6 +287,7 @@ function Feed({ onAckAllReady }: { onAckAllReady: (fn: (() => void) | null) => v
                 <tr className="border-b border-border">
                   <SortTh label="Time" col="time" sort={sort} desc={desc} onSort={applySort} />
                   <SortTh label="Severity" col="severity" sort={sort} desc={desc} onSort={applySort} />
+                  <th className="px-2 py-3" aria-label="Event flags"></th>
                   <SortTh label="Rule" col="rule" sort={sort} desc={desc} onSort={applySort} />
                   <SortTh label="Host" col="host" sort={sort} desc={desc} onSort={applySort} className="hidden lg:table-cell" />
                   <SortTh label="Container" col="container" sort={sort} desc={desc} onSort={applySort} />
@@ -346,6 +367,21 @@ function SortTh({
 
 // FeedRow renders one event. The whole row opens the detail — the table can only
 // ever show a truncated view, and the message is often the least of it.
+// kindFlag is the icon for a lifecycle kind that deserves one. "Firing" (the
+// ordinary case) and "resolved" (already said by the badge) get none.
+function kindFlag(kind?: string) {
+  switch (kind) {
+    case "repeat":
+      return <span title="Repeat — the condition is still true" aria-label="repeat"><Repeat className="h-3.5 w-3.5" /></span>;
+    case "escalated":
+      return <span title="Escalated to a higher severity" aria-label="escalated"><TrendingUp className="h-3.5 w-3.5 text-warn" /></span>;
+    case "eased":
+      return <span title="Eased to a lower severity" aria-label="eased"><TrendingDown className="h-3.5 w-3.5" /></span>;
+    default:
+      return null;
+  }
+}
+
 function FeedRow({ e, onOpen, onAck }: { e: AlertEvent; onOpen: () => void; onAck: () => void }) {
   const deliveries = e.deliveries ?? [];
   return (
@@ -353,14 +389,36 @@ function FeedRow({ e, onOpen, onAck }: { e: AlertEvent; onOpen: () => void; onAc
       className={clsx("border-b border-border/50 cursor-pointer hover:bg-panel2/40", e.acknowledged && "opacity-50")}
       onClick={onOpen}
     >
-      <td className="px-4 py-2.5 text-muted whitespace-nowrap">{e.createdAt.slice(0, 19).replace("T", " ")}</td>
+      <td className="px-4 py-2.5 text-muted whitespace-nowrap">
+        {e.createdAt.slice(0, 19).replace("T", " ")}
+        {/* The repeats are hidden by default, so the row that opened the condition
+            is the only place that says it is still going on, and for how long. */}
+        {e.ongoing && (
+          <div className="text-xs text-warn">still firing · {formatDuration(conditionAgeSec(e))}</div>
+        )}
+      </td>
       <td className="px-4 py-2.5 whitespace-nowrap">
         <span className={clsx("text-xs px-2 py-0.5 rounded-md font-medium capitalize", kindBadge(e))}>
           {e.kind === "resolved" ? "resolved" : e.severity}
         </span>
-        {e.kind && e.kind !== "firing" && e.kind !== "resolved" && (
-          <span className="ml-1 text-[10px] uppercase tracking-wide text-muted">{e.kind}</span>
-        )}
+      </td>
+      {/* What kind of event this is, and whether it was silenced, are icon flags in
+          their own column — not extra words squeezed next to the severity. */}
+      <td className="px-2 py-2.5 whitespace-nowrap">
+        <span className="inline-flex items-center gap-1.5 text-muted">
+          {kindFlag(e.kind)}
+          {!!e.repeats && (
+            <span className="inline-flex items-center gap-0.5 text-xs" aria-label={`repeated ${e.repeats} times`}
+              title={`Repeated ${e.repeats} time${e.repeats === 1 ? "" : "s"}${e.lastRepeatAt ? `, last ${e.lastRepeatAt.slice(0, 19).replace("T", " ")}` : ""}`}>
+              <Repeat className="h-3.5 w-3.5" />{e.repeats}
+            </span>
+          )}
+          {e.suppressed && (
+            <span title="A maintenance window suppressed delivery for this event" aria-label="silenced">
+              <BellOff className="h-3.5 w-3.5" />
+            </span>
+          )}
+        </span>
       </td>
       <td className="px-4 py-2.5">{e.ruleName}</td>
       <td className="px-4 py-2.5 hidden lg:table-cell text-xs text-muted">{e.hostName || "—"}</td>
@@ -420,7 +478,7 @@ function AlertDetailModal({ e, onClose, onAck }: { e: AlertEvent; onClose: () =>
   );
 
   return (
-    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div className="card w-[70vw] max-w-[60rem] max-h-[80vh] flex flex-col" onClick={(ev) => ev.stopPropagation()}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <span className={clsx("text-xs px-2 py-0.5 rounded-md font-medium capitalize", kindBadge(e))}>
@@ -438,6 +496,8 @@ function AlertDetailModal({ e, onClose, onAck }: { e: AlertEvent; onClose: () =>
             {row("Fired at", e.createdAt.slice(0, 19).replace("T", " "))}
             {row("Lifecycle", <span className="capitalize">{e.kind || "firing"}</span>)}
             {e.durationSec > 0 && row("Condition lasted", formatDuration(e.durationSec))}
+            {e.ongoing && row("Status", <span className="text-warn">Still firing for {formatDuration(conditionAgeSec(e))}</span>)}
+            {!!e.repeats && row("Repeats", `${e.repeats}${e.lastRepeatAt ? ` — last ${e.lastRepeatAt.slice(0, 19).replace("T", " ")}` : ""}`)}
             {e.value !== null && e.value !== undefined && row("Measured value", e.value.toFixed(1))}
             {row("Host", e.hostName || "local")}
             {row(
@@ -511,6 +571,14 @@ function AlertDetailModal({ e, onClose, onAck }: { e: AlertEvent; onClose: () =>
   );
 }
 
+// conditionAgeSec is how long the condition an event belongs to has been true:
+// the time since the event PLUS the age it already had when it was emitted (an
+// escalated/eased opener is later than the incident's start; durationSec is that
+// head start, 0 for a firing).
+function conditionAgeSec(e: AlertEvent): number {
+  return Math.max(0, Math.floor((Date.now() - new Date(e.createdAt).getTime()) / 1000)) + (e.durationSec || 0);
+}
+
 // formatDuration renders how long a condition held, matching the engine's own
 // wording in resolved messages.
 function formatDuration(sec: number): string {
@@ -529,7 +597,8 @@ const STATE_EVENTS = [
   { id: "health_status: unhealthy", label: "Unhealthy" },
 ];
 
-function Rules() {
+// Exported for Alerts.networkRule.dom.test.tsx.
+export function Rules() {
   const [rules, setRules] = useState<AlertRule[] | null>(null);
   const [hooks, setHooks] = useState<Webhook[]>([]);
   const [showForm, setShowForm] = useState(false);
@@ -675,12 +744,21 @@ function RuleForm({ hooks, existing, onDone }: { hooks: Webhook[]; existing?: Al
   const [events, setEvents] = useState<Set<string>>(new Set((cfg.events as string[]) ?? ["die"]));
   const [metric, setMetric] = useState<Metric>((cfg.metric as Metric) ?? "cpu");
   const [op, setOp] = useState<">" | "<">((cfg.op as ">" | "<") ?? ">");
-  const [threshold, setThreshold] = useState((cfg.threshold as number) ?? 80);
+  // A rate metric's threshold is stored in bytes/s but edited here as MiB/s.
+  const [threshold, setThreshold] = useState(() => {
+    const raw = (cfg.threshold as number) ?? 80;
+    return isRateMetric((cfg.metric as Metric) ?? "cpu") ? raw / (1024 * 1024) : raw;
+  });
   const [duration, setDuration] = useState((cfg.durationSec as number) ?? 30);
   const [pattern, setPattern] = useState((cfg.pattern as string) ?? "");
   const [isRegex, setIsRegex] = useState((cfg.isRegex as boolean) ?? false);
   const [windowSec, setWindowSec] = useState((cfg.windowSec as number) ?? 60);
   const [count, setCount] = useState((cfg.count as number) ?? 3);
+  // "network" type: alert on the INCREASE of a cumulative counter over a
+  // window, never its absolute value — see the help text below the fields.
+  const [netMetric, setNetMetric] = useState<"netdrops" | "neterrors">((cfg.metric as "netdrops" | "neterrors") ?? "netdrops");
+  const [netThreshold, setNetThreshold] = useState((cfg.threshold as number) ?? 1);
+  const [netWindowSec, setNetWindowSec] = useState((cfg.windowSec as number) ?? 300);
   const [busy, setBusy] = useState(false);
 
   const buildConfig = (): unknown => {
@@ -688,11 +766,13 @@ function RuleForm({ hooks, existing, onDone }: { hooks: Webhook[]; existing?: Al
       case "state":
         return { events: [...events] };
       case "resource":
-        return { metric, op, threshold, durationSec: duration };
+        return { metric, op, threshold: isRateMetric(metric) ? Math.round(threshold * 1024 * 1024) : threshold, durationSec: duration };
       case "log":
         return { pattern, isRegex };
       case "restart":
         return { windowSec, count };
+      case "network":
+        return { metric: netMetric, threshold: netThreshold, windowSec: netWindowSec };
     }
   };
 
@@ -727,6 +807,7 @@ function RuleForm({ hooks, existing, onDone }: { hooks: Webhook[]; existing?: Al
             <option value="resource">Resource threshold</option>
             <option value="log">Log pattern</option>
             <option value="restart">Restart / crash loop</option>
+            <option value="network">Network drops / errors</option>
           </select>
         </div>
         <div>
@@ -767,13 +848,17 @@ function RuleForm({ hooks, existing, onDone }: { hooks: Webhook[]; existing?: Al
               <option value="cpu">CPU % (of one core)</option>
               <option value="cpu_total">CPU % (of all cores)</option>
               <option value="mem">Memory % (of container limit)</option>
+              <option value="netrx_rate">Network RX rate</option>
+              <option value="nettx_rate">Network TX rate</option>
             </select>
             <span className="block text-xs text-muted mt-1">
               {metric === "cpu"
                 ? "Docker's own figure: 100% is one core, so a container busy on 4 cores reads ~400%. A fixed threshold here fires constantly on multi-core hosts."
                 : metric === "cpu_total"
                   ? "Normalised across the host's cores, so 0–100% whatever the core count. Usually what you want."
-                  : "Share of the container's memory limit, not of host RAM."}
+                  : metric === "mem"
+                    ? "Share of the container's memory limit, not of host RAM."
+                    : "The live per-poll rate (same figure the dashboard shows), not averaged over a window."}
             </span>
           </div>
           <div>
@@ -784,7 +869,7 @@ function RuleForm({ hooks, existing, onDone }: { hooks: Webhook[]; existing?: Al
             </select>
           </div>
           <div>
-            <label className="label">Threshold %</label>
+            <label className="label">{isRateMetric(metric) ? "Threshold (MiB/s)" : "Threshold %"}</label>
             <input className="input" type="number" value={threshold} onChange={(e) => setThreshold(+e.target.value)} />
           </div>
           <div>
@@ -815,6 +900,31 @@ function RuleForm({ hooks, existing, onDone }: { hooks: Webhook[]; existing?: Al
             <label className="label">Within (seconds)</label>
             <input className="input" type="number" value={windowSec} onChange={(e) => setWindowSec(+e.target.value)} />
           </div>
+        </div>
+      )}
+      {type === "network" && (
+        <div>
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className="label">Metric</label>
+              <select className="input" value={netMetric} onChange={(e) => setNetMetric(e.target.value as "netdrops" | "neterrors")}>
+                <option value="netdrops">Dropped packets</option>
+                <option value="neterrors">Interface errors</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">Increase by at least</label>
+              <input className="input" type="number" value={netThreshold} onChange={(e) => setNetThreshold(+e.target.value)} />
+            </div>
+            <div>
+              <label className="label">Within (seconds)</label>
+              <input className="input" type="number" value={netWindowSec} onChange={(e) => setNetWindowSec(+e.target.value)} />
+            </div>
+          </div>
+          <span className="block text-xs text-muted mt-1">
+            Fires on the INCREASE within the window, never on the counter's absolute value — a container whose drops sat
+            at a high total since a bad afternoon last month won't trigger this by itself.
+          </span>
         </div>
       )}
 
@@ -893,12 +1003,12 @@ function Webhooks() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         <p className="text-sm text-muted">
           Fire alerts to any HTTP endpoint (Slack, Discord, Grafana, n8n…). Also scrape{" "}
           <code className="text-accent">/metrics</code> with Prometheus for Grafana dashboards.
         </p>
-        <button className="btn-primary" onClick={() => setShowForm((v) => !v)}>
+        <button className="btn-primary shrink-0" onClick={() => setShowForm((v) => !v)}>
           <Plus className="h-4 w-4" /> New webhook
         </button>
       </div>
@@ -971,6 +1081,515 @@ function WebhookForm({ onDone }: { onDone: () => void }) {
       <div className="flex justify-end gap-2">
         <button type="button" className="btn-ghost" onClick={onDone}>Cancel</button>
         <button className="btn-primary" disabled={busy}>{busy ? "Saving…" : "Create webhook"}</button>
+      </div>
+    </form>
+  );
+}
+
+// ---- Maintenance windows -----------------------------------------------------
+
+const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+// A minimal host shape for the maintenance-window picker — deliberately
+// narrower than the full Host type, since the fallback below (for a caller
+// without the "hosts" section) can only ever know an id, never a name.
+interface HostOption {
+  id: number;
+  name: string;
+}
+
+function toInputDateTime(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function toInputDate(iso: string): string {
+  return toInputDateTime(iso).slice(0, 10);
+}
+function fromInputDateTime(value: string): string {
+  return new Date(value).toISOString();
+}
+function fromInputDate(value: string): string {
+  return new Date(`${value}T00:00`).toISOString();
+}
+
+// zonedDateString/fromZonedDate are toInputDate/fromInputDate's counterparts
+// for a recurring window's SERIES start/end date, which the server
+// interprets as a calendar date in the window's OWN schedule timezone, not
+// the browser's. toInputDate/fromInputDate round-trip through the browser's
+// local calendar date instead — harmless when they happen to match, but
+// when they don't, editing and re-saving a window WITHOUT changing its date
+// at all silently shifts it to a different absolute instant, which the
+// server then reads back as a different calendar date in the window's own
+// timezone (see the regression test for a worked example).
+function zonedDateString(iso: string, tz: string): string {
+  try {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: tz || "UTC", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
+  } catch {
+    return toInputDate(iso);
+  }
+}
+function fromZonedDate(value: string, tz: string): string {
+  const zone = tz || "UTC";
+  try {
+    // Start from a UTC guess at midnight of the requested date, read what
+    // that instant reads as IN the target zone, and correct by the
+    // difference — the standard offset-free way to place a wall-clock time
+    // into a named IANA zone without a date library.
+    const utcGuess = new Date(`${value}T00:00:00Z`);
+    const fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone, hour12: false,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+    });
+    const parts: Record<string, string> = {};
+    for (const p of fmt.formatToParts(utcGuess)) if (p.type !== "literal") parts[p.type] = p.value;
+    const hour = parts.hour === "24" ? 0 : Number(parts.hour); // some locales report midnight as "24"
+    const asIfUTC = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), hour, Number(parts.minute), Number(parts.second));
+    const offsetMs = asIfUTC - utcGuess.getTime();
+    return new Date(utcGuess.getTime() - offsetMs).toISOString();
+  } catch {
+    return fromInputDate(value);
+  }
+}
+
+// A window is closed once it ended early, or its end has passed — for a
+// recurring series that is the series end (absent = open-ended, never closed).
+// Closed windows are history: no Edit, no End (mirrors the server's 409).
+function windowClosed(w: MaintenanceWindow): boolean {
+  if (w.ended) return true;
+  return !!w.endsAt && new Date(w.endsAt).getTime() <= Date.now();
+}
+
+// A window can be deleted while it is only a plan, or once it is over. A running
+// one is ended first (the server refuses with 409), so its record of having
+// silenced alerts can't vanish while it is doing so.
+export function windowDeletable(w: MaintenanceWindow, now = Date.now()): boolean {
+  return windowClosed(w) || new Date(w.startsAt).getTime() > now;
+}
+
+const PAST_PAGE = 50;
+
+function WindowTable({ windows, scopeSummary, scheduleSummary, onEdit, onEnd, onDelete }: {
+  windows: MaintenanceWindow[];
+  scopeSummary: (w: MaintenanceWindow) => string;
+  scheduleSummary: (w: MaintenanceWindow) => string;
+  onEdit: (w: MaintenanceWindow) => void;
+  onEnd: (w: MaintenanceWindow) => void;
+  onDelete: (w: MaintenanceWindow) => void;
+}) {
+  return (
+    <div className="card overflow-hidden">
+      <table className="w-full text-sm">
+        <thead className="text-muted text-xs uppercase tracking-wide">
+          <tr className="border-b border-border">
+            <th className="text-left font-medium px-4 py-3">Name</th>
+            <th className="text-left font-medium px-4 py-3">Scope</th>
+            <th className="text-left font-medium px-4 py-3">Schedule</th>
+            <th className="text-left font-medium px-4 py-3">Status</th>
+            <th className="px-4 py-3"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {windows.map((w) => {
+            const status = windowStatus(w);
+            const closed = windowClosed(w);
+            return (
+              <tr key={w.id} className="border-b border-border/50">
+                <td className="px-4 py-2.5 font-medium">
+                  {w.name}
+                  <div className="text-xs text-muted font-normal">{w.reason}</div>
+                </td>
+                <td className="px-4 py-2.5 text-xs text-muted max-w-[260px] truncate" title={scopeSummary(w)}>{scopeSummary(w)}</td>
+                <td className="px-4 py-2.5 text-xs text-muted whitespace-nowrap">{scheduleSummary(w)}</td>
+                <td className="px-4 py-2.5">
+                  <span className={clsx("text-xs px-2 py-0.5 rounded-md font-medium", status.cls)}>{status.label}</span>
+                </td>
+                <td className="px-4 py-2.5 text-right">
+                  <div className="flex items-center justify-end gap-1">
+                    {!closed && (
+                      <button className="btn-ghost px-2 py-1" title="Edit" onClick={() => onEdit(w)}><Pencil className="h-4 w-4" /></button>
+                    )}
+                    {!closed && (
+                      <button className="btn-ghost px-2 py-1" title="End now" onClick={() => onEnd(w)}><Ban className="h-4 w-4" /></button>
+                    )}
+                    {windowDeletable(w) && (
+                      <button className="btn-ghost px-2 py-1 text-danger" title="Delete" onClick={() => onDelete(w)}><Trash2 className="h-4 w-4" /></button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function windowStatus(w: MaintenanceWindow): { label: string; cls: string } {
+  if (w.ended) return { label: "Ended", cls: "bg-panel2 text-muted" };
+  if (w.recurring && !windowClosed(w)) return { label: "Recurring", cls: "bg-accent/15 text-accent" };
+  // A one-off window always carries a real endsAt (the server requires it);
+  // only a recurring series — handled above — can omit it.
+  const now = Date.now();
+  if (new Date(w.endsAt ?? 0).getTime() <= now) return { label: "Expired", cls: "bg-panel2 text-muted" };
+  if (new Date(w.startsAt).getTime() > now) return { label: "Scheduled", cls: "bg-accent/15 text-accent" };
+  return { label: "Active", cls: "bg-warn/15 text-warn" };
+}
+
+// Exported (unlike its sibling sub-views) so it can be exercised directly in
+// a DOM test without mounting the whole Alerts page — the Feed tab's polling
+// (useAlertPulse) has nothing to do with this surface and would only add
+// unrelated setup/teardown to a maintenance-window test.
+export function MaintenanceWindows() {
+  const [windows, setWindows] = useState<MaintenanceWindow[] | null>(null);
+  const [rules, setRules] = useState<AlertRule[]>([]);
+  const [hosts, setHosts] = useState<HostOption[]>([]);
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<MaintenanceWindow | null>(null);
+  // Finished windows are kept as history, one per deploy at least, so they sit
+  // under a toggle, a page at a time, below the ones that still matter.
+  const [showPast, setShowPast] = useState(false);
+  const [pastShown, setPastShown] = useState(PAST_PAGE);
+  const dialogs = useDialogs();
+
+  const load = useCallback(() => {
+    api.maintenanceWindows().then(setWindows).catch(() => setWindows([]));
+    api.alertRules().then(setRules).catch(() => {});
+    api.hosts().then(setHosts).catch(() => {
+      // No "hosts" section (e.g. the built-in Operator role, which grants
+      // "alerts" but deliberately not "hosts") — fall back to just the host
+      // ids this grant can reach, so the picker still works (as "host #N"
+      // chips) instead of silently looking like zero hosts exist.
+      api.myAccess().then((access) => {
+        const g = access.effective?.find((eg) => eg.section === "alerts");
+        if (g && !g.allHosts && g.hosts) {
+          setHosts(g.hosts.map((id) => ({ id, name: `host #${id}` })));
+        }
+      }).catch(() => {});
+    });
+  }, []);
+  useEffect(() => load(), [load]);
+
+  const end = async (w: MaintenanceWindow) => {
+    if (!(await dialogs.confirm({
+      title: "End maintenance window",
+      message: <>Stop silencing <code className="font-mono text-text">{w.name}</code> now? Alerts covered by it will start paging again immediately.</>,
+      confirmLabel: "End now",
+    }))) return;
+    await api.endMaintenanceWindow(w.id);
+    load();
+  };
+  const del = async (w: MaintenanceWindow) => {
+    if (!(await dialogs.confirm({
+      title: "Delete maintenance window",
+      message: <>Delete <code className="font-mono text-text">{w.name}</code>? This does not undo any silencing that already happened.</>,
+      danger: true, confirmLabel: "Delete",
+    }))) return;
+    await api.deleteMaintenanceWindow(w.id);
+    load();
+  };
+
+  if (!windows) return <Loading />;
+  const current = windows.filter((w) => !windowClosed(w));
+  const past = windows.filter((w) => windowClosed(w));
+
+  const hostName = (id: number) => hosts.find((h) => h.id === id)?.name ?? `host #${id}`;
+  const scopeSummary = (w: MaintenanceWindow): string => {
+    // Defensive: the server always sends [] rather than null for an
+    // unrestricted scope, but a nil Go slice marshals to JSON null, and an
+    // empty scope is the COMMON case (every auto-silence window has no
+    // severity restriction) — so a regression here would crash the whole
+    // tab, not just show a blank cell. Tolerate null/undefined too.
+    const hostIds = w.hostIds ?? [];
+    const severities = w.severities ?? [];
+    const parts: string[] = [];
+    if (hostIds.length > 0) parts.push(hostIds.map(hostName).join(", "));
+    if (w.project) parts.push(`project~"${w.project}"`);
+    if (w.container) parts.push(`container~"${w.container}"`);
+    if (w.ruleId != null) parts.push(rules.find((r) => r.id === w.ruleId)?.name ?? `rule #${w.ruleId}`);
+    if (severities.length > 0) parts.push(severities.join("/"));
+    return parts.length > 0 ? parts.join(" · ") : "everything";
+  };
+  const scheduleSummary = (w: MaintenanceWindow): string => {
+    // A one-off window always carries a real endsAt; only a recurring
+    // series (handled below) can leave it unset.
+    if (!w.recurring) return `${new Date(w.startsAt).toLocaleString()} → ${new Date(w.endsAt ?? 0).toLocaleString()}`;
+    const days = (w.weekdays ?? []).map((d) => WEEKDAY_LABELS[d]).join(", ") || "—";
+    const until = w.endsAt ? ` until ${new Date(w.endsAt).toLocaleDateString()}` : "";
+    return `Every ${days} at ${w.timeOfDay || "?"} for ${w.durationMin ?? 0}m${until}`;
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-4">
+        <p className="text-sm text-muted">
+          Suppress alert delivery for planned work — events still get recorded, just not paged. Distinct from a
+          disabled host, which is not monitored at all.
+        </p>
+        <button className="btn-primary shrink-0" onClick={() => { setEditing(null); setShowForm((v) => !v); }}>
+          <Plus className="h-4 w-4" /> New window
+        </button>
+      </div>
+      {(showForm || editing) && (
+        <MaintenanceWindowForm
+          key={editing?.id ?? "new"}
+          rules={rules}
+          hosts={hosts}
+          existing={editing}
+          onDone={() => { setShowForm(false); setEditing(null); load(); }}
+          onCancel={() => { setShowForm(false); setEditing(null); }}
+        />
+      )}
+      {windows.length === 0 ? (
+        <EmptyState title="No maintenance windows" hint="Create one to silence alerts during planned work." />
+      ) : (
+        <>
+          {current.length === 0 ? (
+            <p className="text-sm text-muted">No scheduled or running windows.</p>
+          ) : (
+            <WindowTable windows={current} scopeSummary={scopeSummary} scheduleSummary={scheduleSummary} onEdit={(w) => { setShowForm(false); setEditing(w); }} onEnd={end} onDelete={del} />
+          )}
+          {past.length > 0 && (
+            <div className="space-y-2">
+              <button type="button" className="btn-ghost px-2 py-1 text-sm text-muted" onClick={() => setShowPast((v) => !v)}>
+                {showPast ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                Past windows ({past.length})
+              </button>
+              {showPast && (
+                <>
+                  <WindowTable windows={past.slice(0, pastShown)} scopeSummary={scopeSummary} scheduleSummary={scheduleSummary} onEdit={() => {}} onEnd={() => {}} onDelete={del} />
+                  {past.length > pastShown && (
+                    <button type="button" className="btn-ghost px-2 py-1 text-sm" onClick={() => setPastShown((n) => n + PAST_PAGE)}>
+                      Show {Math.min(PAST_PAGE, past.length - pastShown)} more
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function MaintenanceWindowForm({
+  rules, hosts, existing, onDone, onCancel,
+}: { rules: AlertRule[]; hosts: HostOption[]; existing?: MaintenanceWindow | null; onDone: () => void; onCancel: () => void }) {
+  const [name, setName] = useState(existing?.name ?? "");
+  const [reason, setReason] = useState(existing?.reason ?? "");
+  const [hostIds, setHostIds] = useState<number[]>(existing?.hostIds ?? []);
+  const [project, setProject] = useState(existing?.project ?? "");
+  const [container, setContainer] = useState(existing?.container ?? "");
+  const [ruleId, setRuleId] = useState<number | null>(existing?.ruleId ?? null);
+  const [severities, setSeverities] = useState<Set<Severity>>(new Set(existing?.severities ?? []));
+  const [recurring, setRecurring] = useState(existing?.recurring ?? false);
+
+  const nowIso = new Date().toISOString();
+  const [startLocal, setStartLocal] = useState(toInputDateTime(!existing || !existing.recurring ? existing?.startsAt ?? nowIso : nowIso));
+  // A one-off existing window always carries a real endsAt (the server
+  // requires it); only a recurring series can leave it unset.
+  const existingDurationMin = existing && !existing.recurring
+    ? Math.max(1, Math.round((new Date(existing.endsAt ?? existing.startsAt).getTime() - new Date(existing.startsAt).getTime()) / 60000))
+    : existing?.durationMin ?? 60;
+  const [durationMin, setDurationMin] = useState(existingDurationMin);
+
+  // An EXISTING window's stored timezone ("" meaning UTC, same convention
+  // the server uses) must be preserved as-is when merely editing it —
+  // falling back to the browser's own timezone here would silently change
+  // a saved window's actual wall-clock schedule. Only a brand-new window
+  // defaults to the browser's timezone. Computed before the series
+  // start/end date fields below, which need it to read/write the right
+  // calendar date in THIS timezone, not the browser's own.
+  const tz = existing ? (existing.timezone || "UTC") : Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const [seriesStartDate, setSeriesStartDate] = useState(zonedDateString(existing?.recurring ? existing.startsAt : nowIso, tz));
+  const [seriesEndDate, setSeriesEndDate] = useState(existing?.recurring && existing.endsAt ? zonedDateString(existing.endsAt, tz) : "");
+  const [weekdays, setWeekdays] = useState<Set<number>>(new Set(existing?.weekdays ?? []));
+  const [timeOfDay, setTimeOfDay] = useState(existing?.timeOfDay ?? "02:00");
+
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const toggleHost = (id: number) => setHostIds((prev) => (prev.includes(id) ? prev.filter((h) => h !== id) : [...prev, id]));
+  const toggleSeverity = (s: Severity) => setSeverities((prev) => {
+    const next = new Set(prev);
+    if (next.has(s)) next.delete(s); else next.add(s);
+    return next;
+  });
+  const toggleWeekday = (d: number) => setWeekdays((prev) => {
+    const next = new Set(prev);
+    if (next.has(d)) next.delete(d); else next.add(d);
+    return next;
+  });
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true); setErr("");
+    try {
+      const shared = {
+        name, reason, hostIds, project, container, ruleId,
+        severities: [...severities],
+      };
+      const body: MaintenanceWindowBody = recurring
+        ? {
+          ...shared, recurring: true,
+          // In the window's OWN schedule timezone, not the browser's — see
+          // zonedDateString/fromZonedDate's doc comment for why that matters.
+          startsAt: fromZonedDate(seriesStartDate, tz),
+          // undefined (never ""): Go's time.Time JSON decoder rejects an
+          // empty string for an open-ended series, but a missing key leaves
+          // it at its zero value, which the server treats as indefinite.
+          endsAt: seriesEndDate ? fromZonedDate(seriesEndDate, tz) : undefined,
+          weekdays: [...weekdays], timeOfDay, durationMin, timezone: tz,
+        }
+        : {
+          ...shared, recurring: false,
+          startsAt: fromInputDateTime(startLocal),
+          endsAt: new Date(new Date(fromInputDateTime(startLocal)).getTime() + durationMin * 60000).toISOString(),
+        };
+      if (existing) await api.updateMaintenanceWindow(existing.id, body);
+      else await api.createMaintenanceWindow(body);
+      onDone();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="card p-5 space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label className="label">Name</label>
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} required />
+        </div>
+        <div>
+          <label className="label">Reason</label>
+          <input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why — this suppresses paging, so make it explainable later" required />
+        </div>
+      </div>
+
+      <div>
+        <label className="label">Hosts (blank = every host)</label>
+        <div className="flex flex-wrap gap-1.5">
+          {hosts.length === 0 ? (
+            <span className="text-xs text-muted">No hosts configured.</span>
+          ) : hosts.map((h) => (
+            <button
+              key={h.id} type="button" onClick={() => toggleHost(h.id)}
+              className={clsx("text-xs px-2 py-0.5 rounded-md border",
+                hostIds.includes(h.id) ? "bg-accent/20 border-accent/40 text-text" : "border-border text-muted")}
+            >
+              {h.name}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div>
+          <label className="label">Project (compose stack, contains)</label>
+          <input className="input" value={project} onChange={(e) => setProject(e.target.value)} placeholder="blank = every project" />
+        </div>
+        <div>
+          <label className="label">Container (name contains)</label>
+          <input className="input" value={container} onChange={(e) => setContainer(e.target.value)} placeholder="blank = every container" />
+        </div>
+        <div>
+          <label className="label">Rule</label>
+          <select className="input" value={ruleId ?? ""} onChange={(e) => setRuleId(e.target.value ? Number(e.target.value) : null)}>
+            <option value="">Any rule</option>
+            {rules.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label className="label">Severities (blank = every severity)</label>
+        <div className="flex flex-wrap gap-1.5">
+          {(["info", "warning", "critical"] as Severity[]).map((s) => (
+            <button
+              key={s} type="button" onClick={() => toggleSeverity(s)}
+              className={clsx("text-xs px-2 py-0.5 rounded-md border capitalize",
+                severities.has(s) ? "bg-accent/20 border-accent/40 text-text" : "border-border text-muted")}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex gap-1 rounded-lg bg-panel2/50 p-0.5 max-w-xs">
+        <button
+          type="button" onClick={() => setRecurring(false)}
+          className={clsx("flex-1 px-2 py-1.5 rounded-md text-sm", !recurring ? "bg-panel text-text shadow-sm" : "text-muted hover:text-text")}
+        >
+          One-off
+        </button>
+        <button
+          type="button" onClick={() => setRecurring(true)}
+          className={clsx("flex-1 px-2 py-1.5 rounded-md text-sm", recurring ? "bg-panel text-text shadow-sm" : "text-muted hover:text-text")}
+        >
+          Recurring
+        </button>
+      </div>
+
+      {!recurring ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="label">Starts</label>
+            <input type="datetime-local" className="input" value={startLocal} onChange={(e) => setStartLocal(e.target.value)} required />
+          </div>
+          <div>
+            <label className="label">Duration (minutes)</label>
+            <input type="number" min={1} className="input" value={durationMin} onChange={(e) => setDurationMin(Number(e.target.value))} required />
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div>
+            <label className="label">Weekdays</label>
+            <div className="flex flex-wrap gap-1.5">
+              {WEEKDAY_LABELS.map((label, d) => (
+                <button
+                  key={d} type="button" onClick={() => toggleWeekday(d)}
+                  className={clsx("text-xs px-2 py-0.5 rounded-md border",
+                    weekdays.has(d) ? "bg-accent/20 border-accent/40 text-text" : "border-border text-muted")}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <label className="label">Time of day</label>
+              <input type="time" className="input" value={timeOfDay} onChange={(e) => setTimeOfDay(e.target.value)} required />
+            </div>
+            <div>
+              <label className="label">Duration (minutes)</label>
+              <input type="number" min={1} className="input" value={durationMin} onChange={(e) => setDurationMin(Number(e.target.value))} required />
+            </div>
+            <div>
+              <label className="label">Series starts</label>
+              <input type="date" className="input" value={seriesStartDate} onChange={(e) => setSeriesStartDate(e.target.value)} required />
+            </div>
+            <div>
+              <label className="label">Series ends (optional)</label>
+              <input type="date" className="input" value={seriesEndDate} onChange={(e) => setSeriesEndDate(e.target.value)} />
+            </div>
+          </div>
+          <p className="text-xs text-muted">Evaluated in your browser's timezone, <span className="font-mono">{tz}</span>.</p>
+        </div>
+      )}
+
+      {err && <p className="text-sm text-danger">{err}</p>}
+      <div className="flex justify-end gap-2">
+        <button type="button" className="btn-ghost" onClick={onCancel}>Cancel</button>
+        <button className="btn-primary" disabled={busy}>{busy ? "Saving…" : existing ? "Save changes" : "Create window"}</button>
       </div>
     </form>
   );

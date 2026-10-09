@@ -23,16 +23,20 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/crypto/acme/autocert"
 	"golang.org/x/term"
 
+	"github.com/koduj-dev/docker-commander/internal/acme"
 	"github.com/koduj-dev/docker-commander/internal/api"
 	"github.com/koduj-dev/docker-commander/internal/auth"
 	"github.com/koduj-dev/docker-commander/internal/backup"
+	"github.com/koduj-dev/docker-commander/internal/backupjobs"
 	"github.com/koduj-dev/docker-commander/internal/config"
 	"github.com/koduj-dev/docker-commander/internal/crypto"
 	"github.com/koduj-dev/docker-commander/internal/docker"
 	"github.com/koduj-dev/docker-commander/internal/history"
 	"github.com/koduj-dev/docker-commander/internal/monitor"
+	"github.com/koduj-dev/docker-commander/internal/proxy"
 	"github.com/koduj-dev/docker-commander/internal/selfupdate"
 	"github.com/koduj-dev/docker-commander/internal/service"
 	"github.com/koduj-dev/docker-commander/internal/store"
@@ -66,6 +70,42 @@ func wantsSelfUpgrade() (yes, checkOnly bool) {
 		}
 	}
 	return yes, checkOnly
+}
+
+// elevateAndRerunFn is elevateAndRerun behind a variable so tests can stub it —
+// the real one either replaces this process (Unix) or exits it (Windows),
+// neither of which a test can survive.
+var elevateAndRerunFn = elevateAndRerun
+
+// runSelfUpgrade drives `--self-upgrade`. When the install would fail because
+// the executable's directory isn't writable and a terminal is attached, it
+// offers to re-exec elevated (sudo / Windows UAC) rather than just printing
+// the permission error — the check-only path never reaches this, since
+// selfupdate.Run only installs (and so only preflight-checks) when checkOnly
+// is false.
+func runSelfUpgrade(checkOnly bool) error {
+	err := selfupdate.Run(context.Background(), version, os.Stdout, checkOnly)
+	var notWritable *selfupdate.ErrNotWritable
+	if !errors.As(err, &notWritable) || !term.IsTerminal(int(os.Stdin.Fd())) {
+		return err
+	}
+	if !confirmElevate(err, os.Stdout, os.Stdin) {
+		return err
+	}
+	return elevateAndRerunFn()
+}
+
+// confirmElevate prints cause and a y/N prompt to out, and reports whether the
+// reply from in agreed to re-exec elevated. Split out from runSelfUpgrade so
+// the prompt-parsing logic is testable without a real terminal.
+func confirmElevate(cause error, out io.Writer, in io.Reader) bool {
+	fmt.Fprintf(out, "%v\nRe-run elevated now? [y/N] ", cause)
+	line, err := bufio.NewReader(in).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false
+	}
+	answer := strings.ToLower(strings.TrimSpace(line))
+	return answer == "y" || answer == "yes"
 }
 
 // serviceAction reports the standalone service-management action the user asked
@@ -159,12 +199,21 @@ func wantsMakeCerts() (yes bool, hosts []string) {
 
 // makeCerts generates a self-signed cert + key into <data-dir>/tls and prints
 // how to serve HTTPS with it.
+//
+// The data dir is --data-dir when given, else the usual resolution. Like
+// --backup, this path never reads the config file, so without honouring the
+// flag `sudo dockercmd --make-certs` on a packaged install wrote into root's own
+// config dir instead of /var/lib/dockercmd.
 func makeCerts(hosts []string) error {
 	certPEM, keyPEM, err := tlscert.GenerateSelfSigned(hosts)
 	if err != nil {
 		return err
 	}
-	dir := filepath.Join(config.ResolveDataDir(), "tls")
+	dataDir := flagValue("-data-dir", "--data-dir")
+	if dataDir == "" {
+		dataDir = config.ResolveDataDir()
+	}
+	dir := filepath.Join(dataDir, "tls")
 	certPath, keyPath, err := tlscert.WriteCertPair(dir, certPEM, keyPEM)
 	if err != nil {
 		return err
@@ -172,9 +221,26 @@ func makeCerts(hosts []string) error {
 	covered := append([]string{"localhost", "127.0.0.1", "::1"}, hosts...)
 	fmt.Printf("Wrote a self-signed certificate (valid ~13 months) covering %s:\n", strings.Join(covered, ", "))
 	fmt.Printf("  cert: %s\n  key:  %s  (mode 0600)\n\n", certPath, keyPath)
-	fmt.Printf("Serve HTTPS with it:\n  DC_TLS_CERT=%s DC_TLS_KEY=%s dockercmd\n", certPath, keyPath)
+	fmt.Printf("Serve HTTPS with it:\n  DC_TLS_CERT=%s DC_TLS_KEY=%s dockercmd\n", shQuote(certPath), shQuote(keyPath))
 	fmt.Println("  (or the -tls-cert / -tls-key flags). It's self-signed, so clients warn until they trust it.")
+	if os.Geteuid() == 0 {
+		// The key is written 0600 and owned by root; a service running as its own
+		// user can't read it until it owns the files.
+		fmt.Printf("\nWritten as root. If the server runs as another user (the packaged service runs as dockercmd):\n  %s\n", chownHint(dir))
+	}
 	return nil
+}
+
+// chownHint is the command that hands the data dir to the packaged service's
+// user. dir comes from --data-dir, so it is quoted: the line is meant to be
+// copied into a root shell.
+func chownHint(dir string) string {
+	return "chown -R dockercmd: -- " + shQuote(dir)
+}
+
+// shQuote single-quotes s for a POSIX shell.
+func shQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // runBackupAction performs --backup / --restore and exits. Both need the data dir
@@ -201,14 +267,7 @@ func runBackupAction(action, file string, wantPassphrase bool) error {
 
 	switch action {
 	case "backup":
-		// Snapshot through a live connection so the WAL is accounted for. This is
-		// safe with the server running.
-		st, err := store.Open(filepath.Join(dataDir, "docker-commander.db"))
-		if err != nil {
-			return err
-		}
-		defer st.Close()
-		rep, err := backup.Create(dataDir, file, storeBackuper{st}, passphrase)
+		rep, err := backupDataDir(dataDir, file, passphrase)
 		if err != nil {
 			return err
 		}
@@ -248,6 +307,26 @@ type storeBackuper struct{ st *store.Store }
 
 func (b storeBackuper) BackupTo(path string) error {
 	return b.st.BackupTo(context.Background(), path)
+}
+
+// backupDataDir snapshots dataDir into file. The database is opened read-only
+// through a live connection, so the WAL is accounted for and the server can keep
+// running. A data dir with no Docker Commander database is refused rather than
+// backed up as an empty one: like --reset-password, this path never reads the
+// config file, so `sudo dockercmd --backup` on a packaged install lands in
+// root's own config dir unless --data-dir says otherwise.
+func backupDataDir(dataDir, file, passphrase string) (*backup.Report, error) {
+	db := filepath.Join(dataDir, "docker-commander.db")
+	st, err := store.OpenSnapshotSource(db)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil, fmt.Errorf("no database at %s — point at the right one with --data-dir "+
+			"(a packaged install uses /var/lib/dockercmd)", db)
+	case err != nil:
+		return nil, fmt.Errorf("cannot back up %s: %w", db, err)
+	}
+	defer st.Close()
+	return backup.Create(dataDir, file, storeBackuper{st}, passphrase)
 }
 
 // flagValue returns the value following one of the given flag names, supporting
@@ -375,7 +454,7 @@ func run() error {
 		return makeCerts(hosts)
 	}
 	if up, checkOnly := wantsSelfUpgrade(); up {
-		return selfupdate.Run(context.Background(), version, os.Stdout, checkOnly)
+		return runSelfUpgrade(checkOnly)
 	}
 	switch serviceAction() {
 	case "install":
@@ -413,6 +492,26 @@ func run() error {
 	return runServer(shutdownCtx)
 }
 
+// useLogFile sends the standard logger to path (-log-file), and returns what
+// restores and closes it. An empty path changes nothing. Asked for explicitly,
+// so a file that can't be opened stops the start rather than letting the server
+// run on with its log going nowhere anyone looks.
+func useLogFile(path string) (func(), error) {
+	if path == "" {
+		return func() {}, nil
+	}
+	lf, err := service.OpenLogFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("open log file: %w", err)
+	}
+	prev := log.Writer()
+	log.SetOutput(lf)
+	return func() {
+		log.SetOutput(prev)
+		_ = lf.Close()
+	}, nil
+}
+
 // runServer loads config, opens the store and serves the API + embedded UI
 // until shutdownCtx is cancelled. shutdownCtx comes from an OS signal in the
 // normal/systemd/launchd path, or from the Windows SCM's Stop/Shutdown request
@@ -423,6 +522,12 @@ func runServer(shutdownCtx context.Context) error {
 		return err
 	}
 	cfg.Version = version // expose the build version to the API/UI
+
+	closeLog, err := useLogFile(cfg.LogFile)
+	if err != nil {
+		return err
+	}
+	defer closeLog()
 
 	st, err := store.Open(cfg.DBPath())
 	if err != nil {
@@ -480,6 +585,9 @@ func runServer(shutdownCtx context.Context) error {
 	// Clear any volume-browser helper containers left over from a previous run.
 	go dm.ReapAllVolumeHelpers(shutdownCtx)
 
+	// Start the volume backup job scheduler in the background.
+	go backupjobs.Run(shutdownCtx, st, dm)
+
 	// Serve the embedded SPA unless running in dev mode (Vite serves the UI).
 	webFS := serveWebFS(cfg)
 
@@ -499,11 +607,35 @@ func runServer(shutdownCtx context.Context) error {
 		})
 	}
 
-	httpServer := newHTTPServer(cfg.Addr, srv.Handler())
-	tlsEnabled := cfg.TLSCert != "" && cfg.TLSKey != ""
-	if tlsEnabled {
-		httpServer.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	// Apply a newer release automatically once an admin opts in (off by default).
+	go srv.StartSelfUpdatePolicyLoop(shutdownCtx)
+
+	// Check every project's running services for a newer image at the registry.
+	go srv.StartImageUpdatePollLoop(shutdownCtx)
+
+	// Purge history older than the retention policy (alert feed, audit log, project revisions) once a day.
+	go srv.StartRetentionLoop(shutdownCtx)
+
+	handler := srv.Handler()
+	tlsEnabled := cfg.TLSEnabled()
+	acmeMode := len(cfg.ACMEDomains) > 0
+	var mgr *autocert.Manager
+	if acmeMode {
+		mgr = acme.NewManager(cfg.ACMEDomains, cfg.ACMEEmail, cfg.ACMECacheDir, cfg.ACMEDirectoryURL)
 	}
+	tlsConfig := buildTLSConfig(mgr, tlsEnabled)
+	// The embedded per-container reverse proxy (domain_mappings, phase 2):
+	// off by default, and only reachable at all when DC's own admin domain is
+	// ALSO in ACME mode — the shared-listener design this builds on assumes
+	// DC's own admin TLS already exists via autocert on this same listener.
+	if cfg.ProxyEnabled && acmeMode {
+		px := proxy.New(st, dm, proxy.Config{ACMEEmail: cfg.ACMEEmail, CacheDir: cfg.ProxyACMECacheDir, DirectoryURL: cfg.ACMEDirectoryURL})
+		tlsConfig.GetCertificate = proxy.CombinedGetCertificate(mgr, px.ACMEManager(), cfg.ACMEDomains)
+		handler = proxy.CombinedHandler(handler, cfg.ACMEDomains, px)
+	}
+	// (logStartup below reports the resolved on/off/no-op state.)
+	httpServer := newHTTPServer(cfg.Addr, handler)
+	httpServer.TLSConfig = tlsConfig
 
 	go func() {
 		select {
@@ -524,7 +656,13 @@ func runServer(shutdownCtx context.Context) error {
 
 	logStartup(cfg)
 	serve := httpServer.ListenAndServe
-	if tlsEnabled {
+	if acmeMode {
+		// Empty paths: httpServer.TLSConfig.GetCertificate (set above —
+		// mgr.GetCertificate directly, or proxy.CombinedGetCertificate
+		// wrapping it when the proxy is also enabled) supplies certificates
+		// dynamically instead of a static file pair.
+		serve = func() error { return httpServer.ListenAndServeTLS("", "") }
+	} else if tlsEnabled {
 		// Cert/key paths are passed to ServeTLS; the http.Server reads them.
 		serve = func() error { return httpServer.ListenAndServeTLS(cfg.TLSCert, cfg.TLSKey) }
 	}
@@ -581,6 +719,34 @@ func loadOrCreateSecret(ctx context.Context, st *store.Store, key string) ([]byt
 		return nil, err
 	}
 	return buf, nil
+}
+
+// buildTLSConfig assembles the *tls.Config httpServer will serve with, for
+// every TLS mode: ACME (mgr non-nil), static cert/key (tlsEnabled, mgr nil),
+// or plain HTTP (neither, returns nil).
+//
+// Split out from runServer so the ACME branch's own load-bearing property —
+// mgr.TLSConfig() (NOT a hand-built tls.Config{GetCertificate: mgr.GetCertificate})
+// — has a regression test that doesn't require standing up the whole server.
+// mgr.TLSConfig() also sets NextProtos to ["h2", "http/1.1", acme.ALPNProto];
+// dropping that (as a hand-built config with only GetCertificate set would)
+// silently breaks tls-alpn-01, this app's only ACME challenge path (see
+// internal/acme's doc comment) — GetCertificate's own doc says as much:
+// "If GetCertificate is used directly, instead of via Manager.TLSConfig,
+// package users will also have to add acme.ALPNProto to NextProtos." Only
+// .GetCertificate itself is ever swapped afterward (for the embedded
+// reverse proxy's combined dispatcher, see runServer) — NextProtos is
+// always left exactly as autocert set it.
+func buildTLSConfig(mgr *autocert.Manager, tlsEnabled bool) *tls.Config {
+	if mgr != nil {
+		tlsConfig := mgr.TLSConfig()
+		tlsConfig.MinVersion = tls.VersionTLS12
+		return tlsConfig
+	}
+	if tlsEnabled {
+		return &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	return nil
 }
 
 // newHTTPServer builds the public listener.
@@ -651,10 +817,13 @@ func serveWebFS(cfg config.Config) fs.FS {
 
 func logStartup(cfg config.Config) {
 	scheme := "http"
-	if cfg.TLSCert != "" && cfg.TLSKey != "" {
+	if cfg.TLSEnabled() {
 		scheme = "https"
 	}
 	log.Printf("Docker Commander %s listening on %s://%s", version, scheme, cfg.Addr)
+	if len(cfg.ACMEDomains) > 0 {
+		log.Printf("TLS: automatic via ACME for %s (cache: %s)", strings.Join(cfg.ACMEDomains, ", "), cfg.ACMECacheDir)
+	}
 	if cfg.ConfigFile != "" {
 		log.Printf("config file: %s", cfg.ConfigFile)
 	} else {
@@ -669,6 +838,13 @@ func logStartup(cfg config.Config) {
 		log.Printf("MCP server: ENABLED at %s://%s/mcp — auth: %s", scheme, cfg.Addr, oauth)
 	} else {
 		log.Printf("MCP server: disabled (set DC_MCP_ENABLED=1 to enable)")
+	}
+	if cfg.ProxyEnabled && len(cfg.ACMEDomains) > 0 {
+		log.Printf("embedded reverse proxy: ENABLED for local-host projects' domain_mappings (cert cache: %s)", cfg.ProxyACMECacheDir)
+	} else if cfg.ProxyEnabled {
+		log.Printf("embedded reverse proxy: requested but NOT started (requires ACME mode — set -acme-domains/DC_ACME_DOMAINS)")
+	} else {
+		log.Printf("embedded reverse proxy: disabled (set DC_PROXY_ENABLED=1 to enable)")
 	}
 	if cfg.Dev {
 		log.Printf("dev mode: serving API only; run the Vite dev server for the UI")

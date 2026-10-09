@@ -5,9 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/image"
+	"github.com/moby/moby/client"
 )
 
 // ImageSummary is a compact view of a local image for the Images page.
@@ -45,16 +43,17 @@ func (m *Manager) ListImages(ctx context.Context, hostID int64) ([]ImageSummary,
 	if err != nil {
 		return nil, err
 	}
-	imgs, err := cli.ImageList(ctx, image.ListOptions{All: false})
+	list, err := cli.ImageList(ctx, client.ImageListOptions{All: false})
 	if err != nil {
 		return nil, err
 	}
+	imgs := list.Items
 
 	// Build the set of image IDs currently referenced by containers so we can
 	// flag in-use images. A failure here is non-fatal — we just skip the flag.
 	inUse := map[string]bool{}
-	if ctrs, err := cli.ContainerList(ctx, container.ListOptions{All: true}); err == nil {
-		for _, c := range ctrs {
+	if ctrs, err := cli.ContainerList(ctx, client.ContainerListOptions{All: true}); err == nil {
+		for _, c := range ctrs.Items {
 			inUse[c.ImageID] = true
 		}
 	}
@@ -111,12 +110,12 @@ func (m *Manager) RemoveImage(ctx context.Context, hostID int64, ref string, for
 	if err != nil {
 		return nil, err
 	}
-	res, err := cli.ImageRemove(ctx, ref, image.RemoveOptions{Force: force, PruneChildren: true})
+	res, err := cli.ImageRemove(ctx, ref, client.ImageRemoveOptions{Force: force, PruneChildren: true})
 	if err != nil {
 		return nil, err
 	}
-	changed := make([]string, 0, len(res))
-	for _, r := range res {
+	changed := make([]string, 0, len(res.Items))
+	for _, r := range res.Items {
 		if r.Untagged != "" {
 			changed = append(changed, "untagged "+r.Untagged)
 		}
@@ -133,10 +132,11 @@ func (m *Manager) PruneImages(ctx context.Context, hostID int64) (*ImagePruneRes
 	if err != nil {
 		return nil, err
 	}
-	rep, err := cli.ImagesPrune(ctx, filters.NewArgs(filters.Arg("dangling", "true")))
+	pruned, err := cli.ImagePrune(ctx, client.ImagePruneOptions{Filters: make(client.Filters).Add("dangling", "true")})
 	if err != nil {
 		return nil, err
 	}
+	rep := pruned.Report
 	res := &ImagePruneResult{SpaceReclaimed: rep.SpaceReclaimed}
 	for _, d := range rep.ImagesDeleted {
 		if d.Deleted != "" {
@@ -159,7 +159,7 @@ func (m *Manager) PullImage(ctx context.Context, hostID int64, ref string, onPro
 	}
 	// Attach stored credentials for the image's registry, if any, so private
 	// images pull; otherwise the pull proceeds anonymously.
-	rc, err := cli.ImagePull(ctx, ref, image.PullOptions{RegistryAuth: m.authForRef(ctx, ref)})
+	rc, err := cli.ImagePull(ctx, ref, client.ImagePullOptions{RegistryAuth: m.authForRef(ctx, ref)})
 	if err != nil {
 		return err
 	}

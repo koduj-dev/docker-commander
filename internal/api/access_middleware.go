@@ -38,7 +38,7 @@ func sectionForPath(path string) string {
 		return "events"
 	case "parse-rules":
 		return "logs"
-	case "alerts", "alert-rules", "webhooks":
+	case "alerts", "alert-rules", "webhooks", "maintenance-windows":
 		return "alerts"
 	case "smtp":
 		// The SMTP config is a single INSTANCE-WIDE outbound mail relay with a
@@ -53,7 +53,21 @@ func sectionForPath(path string) string {
 		return "registries"
 	case "audit":
 		return "audit"
-	case "users", "roles", "settings", "ldap", "update", "mcp-admin":
+	case "diagnostics":
+		return "diagnostics"
+	case "users", "roles", "settings", "ldap", "update", "mcp-admin", "policy-rules":
+		return "__admin"
+	case "recovery":
+		// A recovery bundle can aggregate host TLS keys, registry passwords,
+		// SMTP/LDAP credentials and every project's files across the whole
+		// instance — the same class of instance-wide, credential-bearing
+		// surface as smtp/ldap/users above, not a per-section grant.
+		return "__admin"
+	case "backup-jobs":
+		// A job stores arbitrary-command execution (run via a Docker helper
+		// container against any volume/project's data) plus a stored secret
+		// blob (e.g. a restic/borg repository password) — at least as
+		// credential/security-bearing as policy-rules/recovery above.
 		return "__admin"
 	case "stats":
 		// The dashboard's own data: /stats/overview enumerates every running
@@ -140,6 +154,29 @@ func isWriteRequest(r *http.Request) bool {
 		if strings.HasSuffix(r.URL.Path, suffix) {
 			return true
 		}
+	}
+	return isRawDataDownload(r.URL.Path)
+}
+
+// isRawDataDownload reports whether a GET hands over raw content a read-only
+// grant can't otherwise see: a container's whole filesystem, a file out of a
+// container or a volume, or an image's layers. Read access shows lists and
+// metadata of these, not their contents, so downloading them needs write.
+//
+// Downloads of things a reader already sees in full (a project's or template's
+// files, which the editor shows; exported alert rules) stay reads. Matched by
+// shape, not by suffix alone: /alert-rules/export also ends in /export.
+func isRawDataDownload(path string) bool {
+	p := strings.TrimPrefix(path, "/api/")
+	parts := strings.Split(p, "/")
+	switch {
+	case len(parts) == 3 && parts[0] == "containers" && parts[2] == "export":
+		return true
+	case len(parts) == 4 && (parts[0] == "containers" || parts[0] == "volumes") &&
+		parts[2] == "files" && parts[3] == "download":
+		return true
+	case p == "images/save":
+		return true
 	}
 	return false
 }

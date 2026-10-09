@@ -61,6 +61,9 @@ type ProjectPreview struct {
 	Running   []docker.ServiceSpec   `json:"running,omitempty"`
 	Changes   []docker.ServiceChange `json:"changes,omitempty"`
 	Unchanged int                    `json:"unchanged,omitempty"`
+	// Active is len(Changes) minus any marked Ignored (reviewed, accepted
+	// drift) — what still actually needs attention.
+	Active int `json:"active,omitempty"`
 }
 
 type ManagedProject struct {
@@ -89,8 +92,13 @@ type Deps struct {
 	// app's own project directories. Any may be nil, in which case the matching
 	// tool reports the feature as unavailable.
 	ListProjects  func(ctx context.Context) ([]ManagedProject, error)
-	DeployProject func(ctx context.Context, id int64, profiles []string) (string, error)
+	DeployProject func(ctx context.Context, id int64, profiles []string, confirmPolicyWarnings bool) (string, error)
 	DownProject   func(ctx context.Context, id int64) (string, error)
+	// BeginStackOp claims the managed project that deploys a stack, if one
+	// does, so a stack action waits its turn like the project's own deploy or
+	// restore. Returns the release, or an error when the project is busy (or
+	// it can't be told). nil means no projects are managed: nothing to claim.
+	BeginStackOp func(ctx context.Context, hostID int64, stack, what string) (release func(), err error)
 	// PreviewProject reports what a deploy would change, without deploying.
 	PreviewProject func(ctx context.Context, id int64) (ProjectPreview, error)
 
@@ -156,6 +164,7 @@ func (d Deps) Handlers() (mcpHandler, metadataHandler http.Handler) {
 	}, nil)
 	h.registerReadTools(srv)
 	h.registerAlertTools(srv)
+	h.registerMaintenanceTools(srv)
 	h.registerDiagnosticTools(srv)
 	h.registerParityTools(srv)
 	h.registerPreviewTool(srv)
@@ -174,7 +183,7 @@ func (d Deps) Handlers() (mcpHandler, metadataHandler http.Handler) {
 
 	gated := auth.RequireBearerToken(h.verifyToken, &auth.RequireBearerTokenOptions{
 		ResourceMetadataURL: d.MetadataURL,
-	})(streamable)
+	})(withHostRecorder(streamable))
 
 	meta := auth.ProtectedResourceMetadataHandler(&oauthex.ProtectedResourceMetadata{
 		Resource:               d.ResourceURL,
@@ -203,7 +212,7 @@ func (h *handler) verifyToken(ctx context.Context, token string, req *http.Reque
 	// has exactly two dots; only accept it if it fully verifies (signature, alg,
 	// expiry, audience), otherwise fall through to the opaque-token path.
 	if len(h.deps.SigningKey) > 0 && h.deps.ResourceURL != "" && strings.Count(token, ".") == 2 {
-		if uid, cid, ro, exp, err := parseAccessToken(h.deps.SigningKey, h.deps.ResourceURL, token); err == nil {
+		if uid, cid, sid, ro, exp, err := parseAccessToken(h.deps.SigningKey, h.deps.ResourceURL, token); err == nil {
 			u, uerr := h.deps.Store.UserByID(ctx, uid)
 			if uerr != nil {
 				return nil, auth.ErrInvalidToken
@@ -215,6 +224,20 @@ func (h *handler) verifyToken(ctx context.Context, token string, req *http.Reque
 			// "revoked" that quietly means "revoked in fifteen minutes".
 			if cid != "" {
 				if _, cerr := h.deps.Store.OAuthClientByID(ctx, cid); cerr != nil {
+					return nil, auth.ErrInvalidToken
+				}
+			}
+			// The specific SESSION must still exist too — narrower than the
+			// client check above, this is what lets one connector session be
+			// revoked (e.g. a stolen token, or just "sign this one out")
+			// without touching the client's other sessions or removing the
+			// client itself. Revoking a session also deletes its refresh
+			// token in the same transaction, so this check and the refresh
+			// grant failing closed together are what make "revoked" mean now,
+			// not "in up to fifteen minutes".
+			if sid != "" {
+				ok, serr := h.deps.Store.MCPOAuthSessionExists(ctx, sid, uid)
+				if serr != nil || !ok {
 					return nil, auth.ErrInvalidToken
 				}
 			}
@@ -299,6 +322,19 @@ func principalFromExtra(re *mcpsdk.RequestExtra) *principal {
 // token can only reduce rights) and then the live user RBAC. It returns the
 // principal so write tools can audit under the acting user.
 func (h *handler) authorizeExtra(ctx context.Context, re *mcpsdk.RequestExtra, section string, write bool, hostID int64) (*principal, error) {
+	return h.authorizeCharged(ctx, re, section, write, hostID, write)
+}
+
+// authorizeCharged is authorizeExtra with the rate-limit charge made explicit.
+// charge is only ever true for a write; see recheck for when it is false.
+func (h *handler) authorizeCharged(ctx context.Context, re *mcpsdk.RequestExtra, section string, write bool, hostID int64, charge bool) (*principal, error) {
+	// A tool aimed at a remote host names it in the audit even when it fails
+	// before reaching Docker (a rate limit, a bad argument): an entry with no
+	// host is shown to every reader of the audit log. The local daemon needs no
+	// mark, as it is in every reader's scope anyway.
+	if hostID > 0 {
+		docker.RecordHost(ctx, hostID)
+	}
 	p := principalFromExtra(re)
 	if p == nil {
 		return nil, errors.New("unauthenticated")
@@ -321,22 +357,31 @@ func (h *handler) authorizeExtra(ctx context.Context, re *mcpsdk.RequestExtra, s
 	// impersonating, and the refusals it collected would look like a rate limit
 	// rather than the authorization failures they are.
 	//
-	// Charged per authorization, so an operation that authorizes twice (a project
-	// on a remote host checks "projects" again against that host) spends two
-	// units. That errs toward caution, which is the right direction for a ceiling.
-	if write {
+	// One unit per operation. An operation that checks a second scope after its
+	// first authorize (the project's own host, the alert's own host) does that
+	// with recheck, which charges nothing: the ceiling counts changes, not checks.
+	if write && charge {
 		ok, firstTrip := h.limiter.allow(p.user.ID)
 		if !ok {
 			if firstTrip {
 				// Hitting the ceiling is not normal operation. Whatever caused it —
 				// a model in a loop or someone using a stolen token — this is the
 				// line an operator needs to find afterwards.
-				h.audit(p, "mcp.ratelimit", section, "control rate limit reached via MCP; changes refused")
+				h.audit(ctx, p, "mcp.ratelimit", section, "control rate limit reached via MCP; changes refused")
 			}
 			return nil, errControlRateLimited()
 		}
 	}
 	return p, nil
+}
+
+// recheck runs every permission check of authorize but spends no rate-limit
+// unit. For a second scope check inside an operation whose first authorize
+// already charged it. Never the only gate of a write: that one must be
+// authorize, or the write is not rate limited at all.
+func (h *handler) recheck(ctx context.Context, req *mcpsdk.CallToolRequest, section string, write bool, hostID int64) error {
+	_, err := h.authorizeCharged(ctx, req.Extra, section, write, hostID, false)
+	return err
 }
 
 // authorize gates a tool call. Thin wrapper over authorizeExtra. hostID is the
@@ -346,12 +391,59 @@ func (h *handler) authorize(ctx context.Context, req *mcpsdk.CallToolRequest, se
 }
 
 // audit records a mutating tool call under the acting user. Best-effort.
-func (h *handler) audit(p *principal, action, target, detail string) {
+//
+// The host is the one the call reached: docker.Manager.Client records it in the
+// request's recorder (installed by withHostRecorder). The host scopes who may
+// read the entry, so a call that reached no daemon is recorded with 0, "no host".
+func (h *handler) audit(ctx context.Context, p *principal, action, target, detail string) {
+	hostID, _ := docker.HostRecorderFrom(ctx).Host()
+	h.auditOn(p, hostID, action, target, detail)
+}
+
+// auditOn is audit with the host given explicitly.
+func (h *handler) auditOn(p *principal, hostID int64, action, target, detail string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_ = h.deps.Store.Audit(ctx, store.AuditEntry{
 		UserID: p.user.ID, Username: p.user.Username,
-		Action: action, Target: target, Detail: detail, IP: p.ip,
+		Action: action, Target: target, Detail: detail, IP: p.ip, HostID: hostID,
+	})
+}
+
+// projectDaemonHost is the host a project deploys to, with the local daemon (a
+// project HostID of 0) named by its own id so the entry doesn't read as hostless.
+func (h *handler) projectDaemonHost(ctx context.Context, projectID int64) int64 {
+	proj, err := h.deps.Store.ProjectByID(ctx, projectID)
+	if err != nil {
+		return 0
+	}
+	if proj.HostID > 0 {
+		return proj.HostID
+	}
+	id, err := h.deps.Store.LocalHostID(ctx)
+	if err != nil {
+		return 0
+	}
+	return id
+}
+
+// daemonHost names a Docker host where 0 means the local daemon: that host, or
+// the local host's own id, so an audit entry doesn't read as "no host".
+func (h *handler) daemonHost(ctx context.Context, hostID int64) int64 {
+	if hostID > 0 {
+		return hostID
+	}
+	if id, err := h.deps.Store.LocalHostID(ctx); err == nil {
+		return id
+	}
+	return 0
+}
+
+// withHostRecorder gives every MCP request a recorder for audit to read.
+func withHostRecorder(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx, _ := docker.WithHostRecorder(r.Context())
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

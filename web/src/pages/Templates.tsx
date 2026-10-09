@@ -216,7 +216,7 @@ function FragmentModal({ fragment, onClose, onSaved }: { fragment: ComposeFragme
 
   const title = isNew ? "New shared definition" : readOnly ? "Shared definition" : "Edit shared definition";
   return (
-    <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div className="card w-full max-w-3xl flex flex-col max-h-[88vh]" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <Anchor className="h-4 w-4 text-accent" /><div className="font-medium">{title}</div>
@@ -264,7 +264,7 @@ function RenameTemplateModal({ template, onClose, onSaved }: { template: Project
     catch (e2) { setErr(e2 instanceof ApiError ? e2.message : "could not save"); setBusy(false); }
   };
   return (
-    <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <form className="card w-full max-w-lg flex flex-col" onClick={(e) => e.stopPropagation()} onSubmit={save}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <Pencil className="h-4 w-4 text-accent" /><div className="font-medium">Rename template</div>
@@ -321,7 +321,7 @@ function BlockModal({ block, onClose, onSaved }: { block: ServiceBlockMeta | "ne
 
   const title = isNew ? "New service block" : readOnly ? "Service block" : "Edit service block";
   return (
-    <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div className="card w-full max-w-3xl flex flex-col max-h-[88vh]" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <Puzzle className="h-4 w-4 text-accent" /><div className="font-medium">{title}</div>
@@ -468,7 +468,7 @@ function TemplateFilesModal({ template, onClose }: { template: ProjectTemplateMe
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div className="card relative w-[85vw] h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <LayoutTemplate className="h-4 w-4 text-accent shrink-0" />

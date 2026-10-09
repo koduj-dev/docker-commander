@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 
 	"github.com/koduj-dev/docker-commander/internal/store"
 )
@@ -158,7 +158,7 @@ func TestClientDialDoesNotBlockOtherHosts(t *testing.T) {
 			close(dialing)
 			<-release // stands in for an ssh handshake against a dead peer
 		}
-		return client.NewClientWithOpts(client.WithHost(h.Address))
+		return client.New(client.WithHost(h.Address))
 	}
 
 	go func() { _, _ = m.Client(context.Background(), slowID) }()
@@ -193,7 +193,7 @@ func TestConcurrentClientCallsShareOneConnection(t *testing.T) {
 		built++
 		mu.Unlock()
 		time.Sleep(10 * time.Millisecond) // widen the race window
-		return client.NewClientWithOpts(client.WithHost(h.Address))
+		return client.New(client.WithHost(h.Address))
 	}
 
 	const callers = 8

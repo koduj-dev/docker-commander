@@ -71,6 +71,32 @@ export interface AppSettings {
   localhostNo2fa: boolean;
 }
 
+/** Deploy-time policy check ids — see internal/docker/policy.go. */
+export type PolicyRuleId =
+  | "privileged"
+  | "host_network"
+  | "host_pid"
+  | "docker_socket_mount"
+  | "latest_tag"
+  | "missing_resource_limits"
+  | "missing_healthcheck";
+
+export type PolicyMode = "off" | "warn" | "block";
+
+export interface PolicyRules {
+  rules: PolicyRuleId[];
+  modes: Record<string, PolicyMode>;
+  /** The stored rules couldn't be read. Deploys are refused until they are saved again. */
+  corrupt?: boolean;
+}
+
+export interface PolicyViolation {
+  rule: PolicyRuleId;
+  service: string;
+  mode: PolicyMode;
+  detail: string;
+}
+
 export interface UpdateStatus {
   current: string;
   latest?: string;
@@ -81,6 +107,18 @@ export interface UpdateStatus {
   error?: string;
   /** True when the in-app one-tap "Update & restart" is offered (admin + allowed + restartable). */
   selfUpdate?: boolean;
+  selfUpdatePolicy: SelfUpdatePolicy;
+  lastAutoUpdate?: LastAutoUpdate;
+}
+
+export interface SelfUpdatePolicy {
+  enabled: boolean;
+  granularity: "patch" | "minor" | "major";
+}
+
+export interface LastAutoUpdate {
+  version: string;
+  appliedAt: string;
 }
 
 export interface LdapGroupMapping {
@@ -241,6 +279,15 @@ export interface ScanResponse {
   result?: ScanResult;
 }
 
+// A CVE a human has reviewed and accepted, so future scans stop re-flagging
+// it. Keyed by CVE id alone, not per-image — see the backend schema comment.
+export interface IgnoredCVE {
+  id: string;
+  reason: string;
+  addedBy: string;
+  createdAt: string;
+}
+
 // One Docker Hub search hit, used for image-name autocomplete.
 export interface ImageSearchResult {
   name: string;
@@ -331,6 +378,22 @@ export interface DiskUsage {
   containers: UsageCategory;
   volumes: UsageCategory;
   buildCache: UsageCategory;
+}
+
+// Per-object disk report (GET /api/stats/disk). A size of -1 means the daemon
+// did not calculate it — render it as "unknown", never as 0.
+export interface DiskImage { id: string; tags: string[] | null; size: number; unique: number; containers: number }
+export interface DiskContainer { id: string; name: string; project?: string; state: string; sizeRw: number; sizeRoot: number }
+export interface DiskVolume { name: string; driver: string; project?: string; size: number; refCount: number }
+export interface DiskReport {
+  generatedAt: number; // unix seconds
+  images: DiskImage[];
+  containers: DiskContainer[];
+  volumes: DiskVolume[];
+  buildCache: { count: number; size: number; reclaimable: number };
+  // Docker's own "reclaimable" figures (as `docker system df` prints them). For
+  // images it is a lower bound: layers shared only among unused images count in none.
+  reclaimable: { images: number; containers: number; volumes: number; buildCache: number; total: number };
 }
 
 export interface EventMsg {
@@ -475,6 +538,119 @@ export interface ComposeModel {
   volumes?: Record<string, unknown>;
   configs?: Record<string, unknown>;
   secrets?: Record<string, unknown>;
+}
+
+// ServiceSpec/ServiceChange/DeployPreview mirror internal/docker/preview.go +
+// deployfields.go — what a deploy would change, before it runs.
+export interface ServicePort {
+  target: number;
+  published?: string;
+  protocol?: string;
+}
+
+export interface ServiceVolume {
+  type: string;
+  source?: string;
+  target: string;
+}
+
+export interface ServiceHealthcheck {
+  test?: string[];
+  interval?: number; // nanoseconds
+  timeout?: number; // nanoseconds
+  retries?: number;
+}
+
+export interface ServiceSpec {
+  name: string;
+  image?: string;
+  env?: Record<string, string>;
+  ports?: ServicePort[];
+  volumes?: ServiceVolume[];
+  networks?: string[];
+  restart?: string;
+  cpuLimit?: number;
+  memoryLimit?: number;
+  healthcheck?: ServiceHealthcheck;
+}
+
+export interface ServiceChange {
+  service: string;
+  kind: "added" | "removed" | "image" | "digest" | "env" | "ports" | "volumes" | "networks" | "restart" | "resources" | "healthcheck";
+  from?: string;
+  to?: string;
+  detail?: string;
+  existing: boolean;
+  recreates: boolean;
+  // Reviewed, deliberately-accepted drift — still shown, excluded from `active`.
+  ignored: boolean;
+}
+
+export interface DeployPreview {
+  project?: string;
+  valid: boolean;
+  error?: string;
+  services?: ServiceSpec[];
+  running?: ServiceSpec[];
+  // changes.length minus any marked `ignored` — what still needs attention.
+  active?: number;
+  changes?: ServiceChange[];
+  unchanged?: number;
+}
+
+// RevisionImage/ProjectRevision mirror internal/store/project_revisions.go —
+// one successful deploy of a project, immutable once recorded.
+export interface RevisionImage {
+  service: string;
+  image: string;
+  digest?: string;
+}
+
+export interface ProjectRevision {
+  id: number;
+  projectId: number;
+  revision: number;
+  hostId: number;
+  profiles: string[];
+  images: RevisionImage[];
+  valid: boolean;
+  validationError?: string;
+  output?: string;
+  author: string;
+  reason?: string;
+  createdAt: string;
+}
+
+// ProjectSecret mirrors internal/store/project_secrets.go — metadata only,
+// the value is never part of this shape and is never returned by the API.
+export interface ProjectSecret {
+  id: number;
+  name: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// DomainMapping mirrors internal/store/domain_mappings.go (see NEXT.md's
+// "Per-container domain + TLS"). This is intent only — nothing proxies
+// traffic for it until the (not-yet-built) reverse proxy engine ships.
+export interface DomainMapping {
+  id: number;
+  projectId: number;
+  domain: string;
+  service: string;
+  targetPort: number;
+  tlsMode: "acme";
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DomainMappingInput {
+  domain: string;
+  service: string;
+  targetPort: number;
+  tlsMode: "acme";
 }
 
 export interface ProjectFile {
@@ -626,7 +802,7 @@ export interface Webhook {
   createdAt: string;
 }
 
-export type AlertType = "state" | "resource" | "log" | "restart";
+export type AlertType = "state" | "resource" | "log" | "restart" | "network";
 export type Severity = "info" | "warning" | "critical";
 
 export interface AlertRule {
@@ -643,6 +819,28 @@ export interface AlertRule {
   emails?: string[] | null;
   cooldownSec: number;
   createdAt: string;
+}
+
+// A container's rank in a "top talkers" window — an averaged rate over the
+// window, NOT a point-in-time poll sample (see api.topTalkers).
+export interface TopTalker {
+  id: string;
+  name: string;
+  hostId: number;
+  hostName: string;
+  rxRate: number; // bytes/s, averaged over the window
+  txRate: number; // bytes/s, averaged over the window
+  rate: number; // bytes/s for the metric the request ranked by (rx, tx, or rx+tx for "total")
+}
+
+export interface TopTalkers {
+  window: string;
+  metric: string;
+  containers: TopTalker[];
+  // total is how many containers actually ranked (had enough history),
+  // BEFORE the request's limit cut them down to `containers.length` — a
+  // caller compares the two to know whether the list was truncated.
+  total: number;
 }
 
 export interface ParseRule {
@@ -683,6 +881,48 @@ export interface AlertEvent {
   acknowledgedBy?: string;
   acknowledgedAt?: string;
   deliveries?: AlertDelivery[];
+  createdAt: string;
+  /** An active maintenance window suppressed delivery for this event — it is
+   * still recorded, just not paged. suppressedBy names the window (may point
+   * to a since-deleted one; the event still explains why nothing was sent). */
+  suppressed?: boolean;
+  suppressedBy?: number;
+  /** Summary of the condition this event opened (firing/escalated/eased rows
+   * only): how many repeat events followed it and when the last one was, and
+   * whether it is still unresolved. Repeats silenced by a maintenance window are
+   * not recorded, so a window makes the count lower than what really happened. */
+  repeats?: number;
+  lastRepeatAt?: string;
+  ongoing?: boolean;
+}
+
+/** Suppresses alert delivery for a scope and time, without turning off
+ * observation — see docs/alerts.md. Every scope field left empty/unset means
+ * "no restriction on this dimension"; leaving them ALL unset silences
+ * everything. */
+export interface MaintenanceWindow {
+  id: number;
+  name: string;
+  reason: string;
+  authorId: number;
+  author?: string;
+  hostIds: number[];
+  project: string;
+  container: string;
+  ruleId: number | null;
+  severities: Severity[];
+  recurring: boolean;
+  startsAt: string;
+  /** Absent for an open-ended recurring series — never a zero-time sentinel. */
+  endsAt?: string;
+  /** Recurring only: time.Weekday numbering, 0 = Sunday. */
+  weekdays?: number[];
+  /** Recurring only: "HH:MM", 24h, in `timezone`. */
+  timeOfDay?: string;
+  durationMin?: number;
+  /** IANA name; "" = UTC. */
+  timezone?: string;
+  ended: boolean;
   createdAt: string;
 }
 
@@ -740,7 +980,27 @@ export interface AuditEntry {
   target: string;
   detail: string;
   ip: string;
+  // The Docker host the action reached. 0 means the action has no host (entries
+  // written before 1.7.0 also used 0 for the local daemon); -1 means several
+  // hosts, e.g. a maintenance window covering more than one.
+  hostId: number;
   createdAt: string;
+}
+
+export type CheckStatus = "ok" | "warn" | "fail" | "skipped";
+
+export interface CheckResult {
+  id: string;
+  name: string;
+  status: CheckStatus;
+  message: string;
+  details?: string[];
+}
+
+export interface DiagnosticsReport {
+  hostId: number;
+  generatedAt: string;
+  checks: CheckResult[];
 }
 
 // MCP access token (self-service personal token for the remote MCP server).
@@ -784,6 +1044,26 @@ export interface AdminOAuthClient {
   createdAt: string;
 }
 
+// One MCP connector session — an OAuth authorization grant plus the
+// refresh-token chain it started. Revoking one kills both its current access
+// token and its refresh token, without touching the client's other sessions
+// or de-registering the client itself.
+export interface MCPSession {
+  id: string;
+  clientId: string;
+  clientName: string;
+  ip: string;
+  userAgent: string;
+  createdAt: string;
+  lastUsedAt: string;
+  expiresAt: string;
+}
+
+export interface AdminMCPSession extends MCPSession {
+  userId: number;
+  username: string;
+}
+
 /** One section a user can reach, and which role(s) or grant it came from. */
 export interface EffectiveGrant {
   section: string;
@@ -819,6 +1099,39 @@ export interface AuthFactor {
   lastUsedAt: string;
 }
 
+/** Summary of an uploaded recovery bundle, returned by inspect and import — never
+ * the manifest itself, so a bundle carrying secrets can be safely inspected
+ * without echoing them back to the browser. */
+export interface RecoveryManifestSummary {
+  version: number;
+  exportedAt: string;
+  exportedBy: string;
+  includesSecrets: boolean;
+  hosts: number;
+  registries: number;
+  alertRules: number;
+  projects: number;
+}
+
+/** What importing a bundle against the chosen target host would find missing —
+ * computed read-only by inspect, before anything is written. */
+export interface CompatibilityReport {
+  missingImages: string[];
+  missingVolumes: string[];
+  unknownHosts: string[];
+  secretsExcluded: boolean;
+  warnings: string[];
+}
+
+/** What an import actually did. */
+export interface RecoveryImportSummary {
+  hostsCreated: number;
+  registriesCreated: number;
+  webhooksCreated: number;
+  alertRulesCreated: number;
+  projectsCreated: number;
+}
+
 export interface Session {
   id: string;
   ip: string;
@@ -827,4 +1140,100 @@ export interface Session {
   lastSeenAt: string;
   /** The session making the request — never offer to sign this one out silently. */
   current: boolean;
+}
+
+/** A trigger-and-status wrapper around a user-supplied backup command (their
+ * own restic/borg/etc, already pointed at its own repository), run against a
+ * volume's or project's data on a schedule or on demand. Not a backup engine:
+ * no repository, retention or storage logic of Docker Commander's own. */
+export interface BackupJob {
+  id: number;
+  name: string;
+  enabled: boolean;
+  scope: "volume" | "project";
+  volumeName: string;
+  projectId: number;
+  hostId: number;
+  image: string;
+  command: string;
+  /** 0 = manual only (no schedule). */
+  intervalMinutes: number;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  lastRunAt: string | null;
+  lastRunOk: boolean;
+  lastRunDetail: string;
+}
+
+/** Create/update payload. env is write-only: sent here, never returned by
+ * BackupJob's list/get responses. */
+export interface BackupJobInput {
+  name: string;
+  enabled?: boolean;
+  scope: "volume" | "project";
+  volumeName?: string;
+  projectId?: number;
+  hostId?: number;
+  image: string;
+  command: string;
+  intervalMinutes: number;
+  env?: Record<string, string>;
+  /** Explicitly remove the stored env on update — an absent/empty env alone
+   * means "leave it untouched" (env is write-only, so a blank textarea can't
+   * by itself distinguish "unchanged" from "clear it"). */
+  clearEnv?: boolean;
+}
+
+/** One recorded execution of a backup job. */
+export interface BackupRun {
+  id: number;
+  jobId: number;
+  startedAt: string;
+  finishedAt: string;
+  ok: boolean;
+  exitCode: number;
+  output: string;
+  error: string;
+  /** "schedule" or the username that triggered a manual run. */
+  triggeredBy: string;
+}
+
+// Data retention (Settings → Data retention). A 0 means "keep forever".
+export interface RetentionPolicy {
+  alertEventsDays: number;
+  alertDeliveriesDays: number;
+  auditDays: number;
+  revisionsKeep: number;
+}
+export interface RetentionArea { rows: number; oldest?: string }
+export interface RetentionStats {
+  alertEvents: RetentionArea;
+  alertDeliveries: RetentionArea;
+  audit: RetentionArea;
+  revisions: RetentionArea;
+  dbBytes: number;
+  dbFreeBytes: number;
+}
+export interface RetentionRun {
+  at: string;
+  trigger: "scheduled" | "manual";
+  durationMs: number;
+  alertEvents: number;
+  alertDeliveries: number;
+  audit: number;
+  revisions: number;
+  revisionFiles: number;
+  dbBytesBefore: number;
+  dbBytesAfter: number;
+  error?: string;
+}
+export interface RetentionState {
+  policy: RetentionPolicy;
+  defaults: RetentionPolicy;
+  limits: { minAuditDays: number; minAlertDays: number; minRevisionsKeep: number; maxDays: number };
+  stats: RetentionStats;
+  lastRun: RetentionRun | null;
+  /** Set when a policy is stored but unreadable: purging is paused until a new one is saved. */
+  policyError?: string;
 }

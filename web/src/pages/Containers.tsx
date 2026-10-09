@@ -424,7 +424,7 @@ function BulkPullModal({ ids, nameFor, onClose }: { ids: string[]; nameFor: (id:
   const flatResults: BulkActionResult[] = (results ?? []).flatMap((r) => r.containerIds.map((id) => ({ id, ok: r.ok, error: r.error })));
 
   return (
-    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={finished ? onClose : undefined}>
+    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); if (finished) onClose(); }}>
       <div className="card w-[70vw] max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <Download className="h-4 w-4 text-accent" />

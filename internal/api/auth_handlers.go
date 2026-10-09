@@ -199,7 +199,13 @@ func (s *Server) userView(r *http.Request, u *store.User) map[string]any {
 }
 
 // effectiveSections is the set of menu sections a user may access: the globally
-// enabled sections, intersected with the user's grant (admins get them all).
+// enabled sections, intersected with the user's effective grants (admins get
+// them all).
+//
+// The grants are the same ones checkAccess enforces: the account's own sections
+// plus every role it holds. Reading only the account's own list hid any section
+// that came from a role, so the server let the user in while the menu never
+// showed the way there.
 func (s *Server) effectiveSections(ctx context.Context, u *store.User) []string {
 	disabled, _ := s.store.DisabledSections(ctx)
 	enabled := make([]string, 0, len(store.Sections))
@@ -212,8 +218,12 @@ func (s *Server) effectiveSections(ctx context.Context, u *store.User) []string 
 		return enabled
 	}
 	out := make([]string, 0, len(enabled))
+	grants, err := s.store.EffectiveGrants(ctx, u)
+	if err != nil {
+		return out // fail closed: an empty menu, never a wider one
+	}
 	for _, sec := range enabled {
-		if contains(u.Sections, sec) {
+		if grants[sec].Granted {
 			out = append(out, sec)
 		}
 	}
@@ -248,8 +258,15 @@ func contains(list []string, v string) bool {
 // all leaves every remote request looking loopback, since the peer is the local
 // proxy. So a proxied request never qualifies, whatever the address says —
 // "skip 2FA on localhost" has to mean the machine itself.
+//
+// "A proxy we were told about" is not enough to know a proxy is there: a proxy on
+// the same machine that isn't listed in DC_TRUSTED_PROXIES connects from
+// 127.0.0.1 like a local browser. What gives it away is that proxies add
+// forwarding headers and browsers never do, so a loopback request carrying any
+// of them is treated as proxied. A proxy that sends none can't be told apart at
+// all; the docs say to list it, or to keep the exemption off behind a proxy.
 func isLoopback(r *http.Request) bool {
-	if viaTrustedProxy(r) {
+	if viaTrustedProxy(r) || hasForwardingHeaders(r) {
 		return false
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -258,6 +275,26 @@ func isLoopback(r *http.Request) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// forwardingHeaders are the headers a reverse proxy adds and a browser never
+// sends on its own.
+var forwardingHeaders = []string{
+	"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto",
+	"X-Forwarded-Server", "X-Real-Ip", "Via",
+}
+
+// hasForwardingHeaders reports whether the request carries any of them. It is
+// about presence, not value: Header.Get returns "" for an empty header too, so
+// a client could send an empty "X-Forwarded-For:" through a proxy that keeps it
+// and still pass as local.
+func hasForwardingHeaders(r *http.Request) bool {
+	for _, h := range forwardingHeaders {
+		if len(r.Header.Values(h)) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // sessionInfo describes the client for the session list the account later reads
@@ -470,6 +507,50 @@ func (s *Server) handleSetMyEmail(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r, "user.email", c.Username, email)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleChangeMyPassword changes the signed-in account's own password. It needs
+// the current one, ends every other session and moves this one onto a new token.
+// Ungated like the rest of /auth/me: it can only ever change the caller's account.
+func (s *Server) handleChangeMyPassword(w http.ResponseWriter, r *http.Request) {
+	c, ok := auth.ClaimsFrom(r.Context())
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	u, err := s.store.UserByID(r.Context(), c.UserID)
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var b struct {
+		Current  string `json:"current"`
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &b); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	res, err := s.auth.ChangeOwnPassword(r.Context(), auth.StepUpKey(u.ID, c.ID), u, b.Current, b.Password, sessionInfo(r))
+	switch {
+	case err == nil:
+	case errors.Is(err, auth.ErrDirectoryPassword), errors.Is(err, auth.ErrWeakPassword):
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	case errors.Is(err, auth.ErrRateLimited):
+		writeErr(w, http.StatusTooManyRequests, err.Error())
+		return
+	case errors.Is(err, auth.ErrInvalidCreds):
+		s.audit(r, "auth.password.change.denied", u.Username, "wrong current password")
+		writeErr(w, http.StatusForbidden, "your current password is not right")
+		return
+	default:
+		writeErr(w, http.StatusInternalServerError, "could not change the password")
+		return
+	}
+	s.audit(r, "auth.password.change", u.Username, "other sessions ended")
+	s.setSessionCookie(w, r, res.Token, res.ExpiresAt)
+	writeJSON(w, http.StatusOK, s.loginResponse(r, res))
 }
 
 // validEmail is a deliberately loose check: exactly one @, something either side,

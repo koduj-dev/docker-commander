@@ -43,40 +43,51 @@ level filters, regex search and structured parsing.
 - Live **CPU / memory graphs** over WebSockets and **historical charts** (Redis or in-memory).
 - **Dashboard** that updates in near real time (Docker events stream): host facts, disk usage, a **resource breakdown** (each container's share of host CPU/memory plus host-wide **network throughput**), and a **port scan** that fingerprints what's actually listening.
 - **Network telemetry** — per-container **RX/TX rate** (derived, so a counter reset on recreate reads as a gap rather than a spike), totals, **packets / dropped / errors** and the per-interface breakdown, plus **endpoint totals** on a network's detail — labelled for what they are, since Docker reports no per-network counters.
+- **Top talkers** — containers ranked by network throughput **averaged over a stored window** (5 min / 15 min / 1 hour), never a point-in-time poll sample, which reorders itself every poll and is unreadable. A small preview lives on the dashboard; the full ranked table is the **Network** tab of Resources (below).
+- **Resources** — live CPU, memory and network per container and per stack, network top talkers over a stored window, and a Disk tab showing which image, container, volume or build-cache record uses the space. See [Resources](docs/resources.md).
 - **Logs** — per-container tail, plus a global **aggregated** view with level detection, **regex search** and saved **parsing rules** that turn lines into structured columns.
 - Live **events** feed, container **diff** / **top**, **disk usage**, and raw JSON **inspect** for any object.
 - **Networks & topology** — an interactive containers ↔ networks graph (force-directed, pan / zoom / fullscreen, **search**, **filter by compose stack**) with a compact **list view** (state, image, stack, ports, networks).
+- **Troubleshooting** — a battery of read-only sanity checks against a host: overlapping Docker network subnets (against each other, and against the host's own real network interfaces — the LAN/VPN collision that silently breaks routing), a bridge network's MTU not matching the host's default interface, duplicate host port bindings, containers logging without a rotation limit, low free disk space where Docker actually stores its data, and dangling (unused) networks/volumes — each reported as OK/warning/failed/skipped, adapting to the host's OS (Linux, macOS, Windows) when probing it over SSH.
 
 **Control**
 - Containers: **create/run**, start/stop/restart/pause/unpause/**kill**, **rename**, **update** limits & restart policy, **commit** to an image, an interactive **shell** (xterm.js), and **bulk restart/stop** across a multi-selection (preview, confirmation, bounded parallelism, per-container success/failure summary).
 - **File browser** inside containers **and volumes** — list, download, upload (incl. **upload & extract** a `.zip`/`.tar`/`.tar.gz`), delete, create folders.
-- Images: pull (live progress), build, push, tag, save/load/import, history, prune, and **vulnerability scanning** (Trivy — severity summary + CVE table).
+- Images: pull (live progress), build, push, tag, save/load/import, history, prune, and **vulnerability scanning** (Trivy — severity summary + CVE table, with bulk **ignore/accept** for already-reviewed findings — global by CVE id, so one review covers every image it turns up in).
 - Volumes & networks: list, inspect, create, remove, prune; networks also **connect / disconnect** containers, with a per-network detail (graph or list).
-- **Compose** — discover & manage **Stacks** by label (CLI-created ones too: start/stop/restart/remove, and **edit their compose file in place on the host, then redeploy** — kept where it lives, so relative bind/`env_file`/`build.context` paths still resolve), and **Projects**: managed compose *folders* edited in a built-in **code editor** (CodeMirror) with **live, inline validation** — compose (anchors/`${VAR}`-aware), **Dockerfile** (`docker build --check`), YAML/JSON/`.env` — plus a **Resolved** preview, a services/ports **Summary**, **templates**, **schema-aware Compose autocomplete** and **image-name / tag** suggestions (local, Docker Hub, and configured **private registries**), and **deploy via the `docker compose` CLI** with **profiles** (the summary badges each
+- **Compose** — discover & manage **Stacks** by label (CLI-created ones too: start/stop/restart/remove, and **edit their compose file in place on the host, then redeploy** — kept where it lives, so relative bind/`env_file`/`build.context` paths still resolve), and **Projects**: managed compose *folders* edited in a built-in **code editor** (CodeMirror) with **live, inline validation** — compose (anchors/`${VAR}`-aware), **Dockerfile** (`docker build --check`), YAML/JSON/`.env` — plus a **Resolved** preview, a **Deploy preview** (before deploying, see exactly what would change — services added/recreated/left as orphans, image/registry-digest drift, and, for anything already running, env/port/volume/network/restart/resource-limit/healthcheck differences, each flagged if it would recreate the container — this doubles as **drift detection**, since a running container disagreeing with the file is exactly what it reports; a drift can be reviewed and **ignored** per service+kind without hiding it, or fixed immediately with **Reconcile now**), a full **deploy history** with immutable revisions (compose + sidecar files, image digests, profiles, output, author, reason) that can be **diffed** against each other or the running state and **restored** (re-validated first, mutable tags pinned back to the digest that actually ran, never touching named volumes), a services/ports **Summary**, **templates**, **schema-aware Compose autocomplete** and **image-name / tag** suggestions (local, Docker Hub, and configured **private registries**), and **deploy via the `docker compose` CLI** with **profiles** (the summary badges each
   service's real state, and clearly separates what's *currently deployed* from what's
   *selected for the next deploy*, so a profile-excluded service reads as such — not as
   stopped) and `.zip` import/export — to the **local or a remote host** (a remote deploy copies the project's bind-mounted configs/scripts into volumes on that host, and `build:` contexts are uploaded with the build; a redeploy **rebuilds** an edited image).
+- **Policy checks before deploy** — seven rules (privileged containers, host network/PID, Docker socket mounts, unpinned `:latest` images, missing resource limits, missing healthchecks), each independently **off / warn / block**. A warn needs the operator's confirmation before the deploy runs; a block has no per-deploy override. Off by default for every rule.
+- **Project secrets** — name a value once and reference it from the compose file with plain `${NAME}` interpolation; the value is **encrypted at rest**, supplied at deploy time only (never written to disk), and can be replaced but never read back. Every place a resolved value is shown — the Resolved tab, deploy preview, revision diff — redacts it to a stable placeholder instead.
+- **Domain mappings + embedded reverse proxy** — record that a domain should route to one of a project's services (validated as a real, globally-unique FQDN), and, when opted in (`DC_PROXY_ENABLED`, off by default, requires ACME mode for the admin domain), actually route it: an SNI-dispatched shared listener resolves each mapped domain to the project's actual live container port and reverse-proxies to it, with its own separately-cached Let's Encrypt certificate. Local-host projects only for now — a mapping for a remote-host project is recorded but never served.
+- **Controlled image updates** — running services are checked on a schedule against the registry's current digest for their compose-declared tag, raising an alert when a newer image is available; detection & notification only, auto-apply is planned.
 
 **Multi-host**
 - Manage **local**, **TCP(+TLS)** and **SSH** daemons; SSH **host keys are verified** (known_hosts / trust-on-first-use). Every view rebinds to the selected host, and the alert engine watches **all** hosts. A per-host **detail** panel shows the hardware / OS / engine, and a host can be **disabled** to take it out of monitoring (e.g. an offline laptop).
 
 **Alerting & integrations**
-- Rules on **state**, **resource thresholds**, **log patterns** and **restart/crash-loops** — editable, with severity & cooldown.
+- Rules on **state**, **resource thresholds** (CPU, memory, and network RX/TX rate), **log patterns**, **restart/crash-loops**, and a dedicated **network** rule that fires on dropped packets/interface errors *increasing* within a window — never their absolute value — editable, with severity & cooldown.
 - Threshold alerts are **conditions with a lifetime** (`firing` → `escalated`/`eased` → `resolved`), one per container + metric, so overlapping rules produce one incident instead of one each — and the feed is server-side **paged, filtered and sorted**, with **who acknowledged** it and every **delivery attempt** recorded against it.
-- Notify via **webhooks**, **email (SMTP, per-host routing)**, an in-app feed, and a **Prometheus `/metrics`** exporter. Rules **import/export** as a portable JSON bundle.
+- Notify via **webhooks**, **email (SMTP, per-host routing)**, an in-app feed, and a **Prometheus `/metrics`** exporter. Rules **import/export** as a portable JSON bundle. A transient failure (timeout, `429`/`5xx`, an SMTP hiccup) is **retried automatically** — bounded, exponential backoff, and only for failures worth retrying; a `4xx` or missing config never is.
+- **Maintenance windows** suppress alert delivery — not observation — for planned work: scope by host, compose project/container, rule and/or severity, one-off or weekly-**recurring**, with a required reason/author, audited. A successful **deploy auto-opens a short window** for that project (configurable grace period, disableable).
 
 **Remote control from AI tools (MCP)**
-- An optional, **off-by-default** **Model Context Protocol** server lets AI tools (**Claude Code**, **Claude Desktop**, **Cursor**) **monitor and *safely* operate** Docker **as you**: read tools (containers, logs, images, projects, stats, events, audit…), **diagnostics without a shell** (`docker top` / `diff`, cross-container log search), the **alert** surface (history, what is firing *now*, rules, whether an alert was actually delivered, acknowledge), and *safe* control (**start/stop/restart** a container or a whole **stack**, **deploy/down** a project — including one targeting a **remote host** — plus a **preview** of what a deploy would change and a **Trivy image scan**), with MCP **resources** & **prompts**.
-- Authenticate with a **bearer API token** (self-service page) or **OAuth 2.1** (PKCE, dynamic client registration). Every call reuses the app's **RBAC**, and a token can only **narrow** your rights (a subset of your sections and of the **hosts** you reach, plus **read-only**). New tokens **expire after 30 days** by default (admin-configurable, with never-expiring tokens off unless enabled). **Changes are rate limited** (30/min per user; reads are not) so a model stuck in a loop — or a stolen token — is bounded to a few containers rather than your whole estate, and hitting that ceiling is audited. Deliberately **no exec / image export / file read / prune / remove**. See [MCP](docs/mcp.md).
+- An optional, **off-by-default** **Model Context Protocol** server lets AI tools (**Claude Code**, **Claude Desktop**, **Cursor**) **monitor and *safely* operate** Docker **as you**: read tools (containers, logs, images, projects, stats, events, audit…), **diagnostics without a shell** (`docker top` / `diff`, cross-container log search), the **alert** surface (history, what is firing *now*, rules, whether an alert was actually delivered, acknowledge, maintenance windows), and *safe* control (**start/stop/restart** a container or a whole **stack**, **deploy/down** a project — including one targeting a **remote host** — plus a **preview** of what a deploy would change and a **Trivy image scan**), with MCP **resources** & **prompts**.
+- Authenticate with a **bearer API token** (self-service page) or **OAuth 2.1** (PKCE, dynamic client registration). Every call reuses the app's **RBAC**, and a token can only **narrow** your rights (a subset of your sections and of the **hosts** you reach, plus **read-only**). New tokens **expire after 30 days** by default (admin-configurable, with never-expiring tokens off unless enabled). Each OAuth connector pairing gets a **per-session** identity, so one specific session — not just the whole client — can be revoked on its own (self-service, or fleet-wide from MCP Admin), killing its access **and** refresh token immediately. **Changes are rate limited** (30/min per user; reads are not) so a model stuck in a loop — or a stolen token — is bounded to a few containers rather than your whole estate, and hitting that ceiling is audited. Deliberately **no exec / image export / file read / prune / remove**. See [MCP](docs/mcp.md).
 
 **Security & administration**
-- **Argon2id** passwords + **TOTP 2FA** or **passkeys** (WebAuthn — phishing-resistant, and offered wherever the browser allows it: HTTPS or localhost; a passkey that verifies you with a PIN or fingerprint can also sign in **on its own** once you turn that on, with the password still there as the way back if the key is lost), optionally exempt for localhost, with **several authenticators per account** — pair the new phone before wiping the old one; the last one can't be removed. Rate limiting, strict headers, signed `HttpOnly` cookies. Everyone can see **what is signed in as their account** — address, browser, last used — and sign out any of it, or everything else, from their profile.
+- **Argon2id** passwords + **TOTP 2FA** or **passkeys** (WebAuthn — phishing-resistant, and offered wherever the browser allows it: HTTPS or localhost; a passkey that verifies you with a PIN or fingerprint can also sign in **on its own** once you turn that on, with the password still there as the way back if the key is lost), optionally exempt for direct localhost connections, with **several authenticators per account** — pair the new phone before wiping the old one; the last one can't be removed. Rate limiting, strict headers, signed `HttpOnly` cookies. Everyone can see **what is signed in as their account** — address, browser, last used — and sign out any of it, or everything else, from their profile — or change their own password, which signs out everything else at once.
+- **Data retention** — a daily purge deletes old alert events, delivery records, audit entries and project revisions. Defaults: 90 days for alerts, 365 for the audit log (never under 30), newest 50 revisions per project. Per-area settings, **Purge now**, and a record of what each run deleted. See [Settings → Data retention](docs/settings.md#data-retention).
 - **Multi-user** with **roles**, **per-section permissions**, **read-only** mode, global **feature flags**, and an **audit log**. Per-user UI preferences (filters) follow the account across browsers.
 - Optional **LDAP / Active Directory** login with auto-provisioning and **group mapping** — a directory group grants **named roles** (or raw sections), re-derived on every login, so membership drives permissions. Registry / SMTP / LDAP secrets **and host TLS private keys** are **encrypted at rest** (AES-256-GCM).
 
 **Ops**
-- Single CGO-free binary, embedded UI, systemd unit, config file, **native HTTPS** (built-in `--make-certs` self-signed cert helper, or behind a proxy), `/healthz` probe, and structured alert logging to the journal/syslog. See [Deployment](docs/deployment.md).
-- **Self-update** — a **one-tap in-app update & restart** for admins (and an "update available" banner), plus the `dockercmd --self-upgrade` command (SHA-256-verified, atomic binary replace).
+- Single CGO-free binary, embedded UI, systemd unit, config file, **native HTTPS** (built-in `--make-certs` self-signed cert helper, **automatic ACME/Let's Encrypt certificates** for a public host with no reverse proxy, or behind a proxy), `/healthz` probe, and structured alert logging to the journal/syslog. See [Deployment](docs/deployment.md).
+- **Self-update** — a **one-tap in-app update & restart** for admins (and an "update available" banner), plus the `dockercmd --self-upgrade` command (SHA-256-verified, atomic binary replace); an opt-in **auto-apply policy** (patch-only, patch+minor, or everything) applies a matching release automatically on the same schedule, audited, with a one-time notice at the next admin login.
+- **Portable recovery bundle** — export everything the app knows (every project's files, host and registry definitions, alert rules, image digests, and, opt-in, instance settings) as one file, with secrets and passphrase-encryption both opt-in at export time; import runs a read-only **compatibility check** against a chosen target host before writing anything, and never overwrites an existing host/registry/project by name.
+- **Volume backup jobs** — a trigger-and-status wrapper around your own backup command (restic, borg, anything already pointed at its own repository): run it against a volume or every named volume a project created, on an interval or on demand, and see ok/failed status and the output of each run (the newest 200 runs are kept). Not a backup engine of ours — no repositories, retention or storage of its own. Admin-only.
 
 ## 🏗️ Architecture
 
@@ -105,14 +116,14 @@ what is hoped for.
 | | Version |
 |---|---|
 | **Minimum Engine API** | **1.43** (Docker Engine 24) |
-| **Tested Engine majors** | 24, 25, 26, 27, 28 (nightly; see the workflow runs for the current result) |
+| **Tested Engine majors** | 24, 25, 26, 27, 28, 29 (nightly; see the workflow runs for the current result) |
 | **Tested Engine patches** | a handful of exact patch releases of the newest majors are also pinned and tested nightly, independent of the floating major tags (see the workflow runs for the current exact versions) |
 | **Compose** | the `docker compose` plugin, v2 or newer (legacy `docker-compose` v1 is not supported); a handful of recent v2 releases are pinned and tested nightly (see the workflow runs) |
 | **Client SDK** | pinned in `go.mod`, negotiated **down** to the daemon at connect time |
 
-The SDK calls `WithAPIVersionNegotiation()`, so a newer client speaks whatever the
-daemon understands — you do not need to match versions. Below API 1.43 the app is
-neither tested nor claimed to work.
+The SDK negotiates the API version on its own (it does so by default), so a newer
+client speaks whatever the daemon understands — you do not need to match versions.
+Below API 1.43 the app is neither tested nor claimed to work.
 
 These numbers are **measured, not remembered**: the
 [compatibility workflow](.github/workflows/compat.yml) runs the app's whole Docker
@@ -257,10 +268,12 @@ enable 2FA — done.
 
 ## ⚙️ Configuration
 
-Every option is a flag with an environment-variable equivalent, and can also
-live in a config file — see
-[`deploy/commander.conf.example`](deploy/commander.conf.example) for the full
-list. The Docker connection also honours the standard `DOCKER_HOST` /
+Options are flags with an environment-variable equivalent, and can also live in
+a config file — see [`deploy/commander.conf.example`](deploy/commander.conf.example).
+Two exceptions: `-session-ttl` has no variable, and `DC_REDIS_DB` has no flag.
+On/off variables are on only for exactly `1` (`DC_DEV`, `DC_MCP_ENABLED`,
+`DC_PROXY_ENABLED`, `DC_PPROF`), or off only for exactly `0` (`DC_UPDATE_CHECK`,
+`DC_SELF_UPDATE`). The Docker connection also honours the standard `DOCKER_HOST` /
 `DOCKER_CERT_PATH` variables.
 
 | Flag                 | Env                    | Default            | Description |
@@ -270,8 +283,15 @@ list. The Docker connection also honours the standard `DOCKER_HOST` /
 | `-addr`              | `DC_ADDR`              | (unset)            | Legacy full `host:port`; overrides `-host`/`-port`. |
 | `-tls-cert`          | `DC_TLS_CERT`          | (off)              | PEM certificate path; with `-tls-key`, serves **HTTPS** directly. |
 | `-tls-key`           | `DC_TLS_KEY`           | (off)              | PEM private-key path. |
+| `-acme-domains`      | `DC_ACME_DOMAINS`      | (off)              | Comma-separated public hostname(s): automatic **HTTPS** via ACME/Let's Encrypt instead of a static cert. Mutually exclusive with `-tls-cert`/`-tls-key`. |
+| `-acme-email`        | `DC_ACME_EMAIL`        | (unset)            | Contact email registered with the ACME account (optional). |
+| `-acme-cache-dir`    | `DC_ACME_CACHE_DIR`    | `<data-dir>/acme`  | Where issued ACME certificate/account state is cached between restarts. |
+| `-acme-directory-url`| `DC_ACME_DIRECTORY_URL`| Let's Encrypt prod | Override the ACME directory — e.g. the staging directory. **Not** a local Pebble instance, which this server cannot obtain a certificate through — see [Deployment](docs/deployment.md#https). |
 | `-mcp-enabled`       | `DC_MCP_ENABLED=1`     | off                | Enable the remote **MCP** server for AI tools. Off by default; serve behind HTTPS. See [MCP](docs/mcp.md). |
 | `-mcp-public-url`    | `DC_MCP_PUBLIC_URL`    | (unset)            | Externally reachable base URL (`https://host`) — required for the MCP **OAuth** flow (bearer tokens work without it). |
+| `-proxy-enabled`     | `DC_PROXY_ENABLED=1`   | off                | Embedded reverse proxy for projects' domain mappings, on port 443. Needs ACME mode. See [Projects](docs/projects.md#domains). |
+| `-proxy-acme-cache-dir` | `DC_PROXY_ACME_CACHE_DIR` | `<data-dir>/proxy-acme` | Where the proxy's own ACME certificates are cached. |
+| `-config`            | `DC_CONFIG`            | `/etc/docker-commander/commander.conf` | Config file path. On Windows `%ProgramData%\docker-commander\commander.conf`. |
 | `-data-dir`          | `DC_DATA_DIR`          | OS config dir      | SQLite DB + signing/encryption keys. |
 | `-session-ttl`       | —                      | `12h`              | Session token lifetime. |
 | `-dev`               | `DC_DEV=1`             | off                | Dev mode: API only + permissive CORS for Vite. |
@@ -279,6 +299,11 @@ list. The Docker connection also honours the standard `DOCKER_HOST` /
 | `-redis-addr`        | `DC_REDIS_ADDR`        | (memory)           | Redis `host:port` for metric history; empty = in-memory ring. |
 | `-redis-password`    | `DC_REDIS_PASSWORD`    | (empty)            | Redis password; `DC_REDIS_DB` selects the DB index. |
 | `-metrics-retention` | `DC_METRICS_RETENTION` | `6h`               | History retention (e.g. `30m`, `24h`). |
+| `-metrics-interval`  | `DC_METRICS_INTERVAL`  | `15s`              | How often container stats are sampled; raise it on hosts with many containers. |
+| `-deploy-silence-grace` | `DC_DEPLOY_SILENCE_GRACE` | `3m`         | Hold back a project's alert deliveries this long after a successful deploy; `0` disables. |
+| `-log-file`          | `DC_LOG_FILE`          | (stderr)           | Write the log to this file instead, rotated at 10 MiB with one older copy (`<file>.1`). |
+| `-pprof`             | `DC_PPROF=1`           | off                | Go profiling on a dedicated loopback listener, `127.0.0.1:6060`. |
+| `-update-check`      | `DC_UPDATE_CHECK`      | on                 | Check GitHub for newer releases; `0` disables. |
 | `-trusted-proxies`   | `DC_TRUSTED_PROXIES`   | (none)             | Reverse-proxy IPs/CIDRs whose `X-Forwarded-For` may be trusted. The client IP keys rate limits, the localhost 2FA exemption and audit records — **set it behind a proxy**, and never to a range you don't control. |
 | `-self-update`       | `DC_SELF_UPDATE`       | on                 | Let admins apply an update from the web UI. `0` keeps the "update available" banner but forbids web-triggered self-replacement. |
 
@@ -367,10 +392,15 @@ notify webhooks (Go-template bodies) and/or email. **Prometheus:** scrape
 `/metrics` for `dockercmd_container_cpu_percent`, `_mem_bytes`, `_mem_percent`,
 `_container_running` (labelled by `id`, `name`, `host`).
 
+Planned work? Open a **maintenance window** (Alerts → Maintenance) to suppress
+delivery without turning monitoring off — alerts still fire and land in the
+feed, they just don't page. A successful deploy opens one automatically for
+that project.
+
 ## 🔒 Security notes
 
 - Local-by-default (binds to loopback). Behind a server, terminate TLS at a reverse proxy.
-- **2FA is enforced everywhere** unless an admin enables the *localhost exemption* (Settings), which applies only to a **direct** loopback connection — a proxied request never qualifies, however it presents itself. Failed 2FA attempts are rate limited and audited, so the second factor can't be brute-forced by someone who already has the password.
+- **2FA is enforced everywhere** unless an admin enables the *localhost exemption* (Settings), which applies only to a **direct** loopback connection. A request from a proxy listed in `DC_TRUSTED_PROXIES`, or one carrying any forwarding header (`Forwarded`, `X-Forwarded-*`, `X-Real-Ip`, `Via`), never qualifies. A local proxy that adds none of those headers makes every client look local, so keep the exemption off behind one. Failed 2FA attempts are rate limited and audited, so the second factor can't be brute-forced by someone who already has the password.
 - **Passkeys are bound to this site's address.** A page that impersonates this one cannot use an assertion it captures, and a signature counter that goes backwards — the sign of a cloned key — is refused and audited.
 - **Sessions are revocable.** A session is a recorded row, not just a signed token: signing out, revoking one from your profile, or changing your password takes effect on the **next request** rather than whenever the token would have expired.
 - **SSH hosts** verify the daemon host key (known_hosts / trust-on-first-use); a changed key is refused as a possible MITM.
@@ -380,8 +410,8 @@ notify webhooks (Go-template bodies) and/or email. **Prometheus:** scrape
 ## 🧪 How it's tested
 
 You're pointing this at real Docker daemons, so the fast tests are the floor, not
-the ceiling. Alongside **~670 Go unit tests** and **~190 frontend tests**, the repo
-carries **115 adversarial "pentest" cases** that assert attacks are *rejected* (token
+the ceiling. Alongside **~1200 Go unit tests** and **~420 frontend tests**, the repo
+carries **150 adversarial "pentest" cases** that assert attacks are *rejected* (token
 forgery, OAuth replay, CSRF, IDOR, per-host scope bypass, privilege escalation,
 path traversal), an integration tier against a **real Docker daemon** (plus
 throwaway Redis / OpenLDAP / SMTP), and an end-to-end tier that deploys to

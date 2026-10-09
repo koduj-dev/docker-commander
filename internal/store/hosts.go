@@ -86,9 +86,9 @@ func (s *Store) CreateHost(ctx context.Context, h *Host) (int64, error) {
 		key = enc
 	}
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO hosts (name, kind, address, tls_ca, tls_cert, tls_key, alert_email, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		h.Name, h.Kind, h.Address, h.TLSCA, h.TLSCert, key, h.AlertEmail,
+		INSERT INTO hosts (name, kind, address, tls_ca, tls_cert, tls_key, alert_email, disabled, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		h.Name, h.Kind, h.Address, h.TLSCA, h.TLSCert, key, h.AlertEmail, boolToInt(h.Disabled),
 		time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		return 0, err
@@ -210,4 +210,14 @@ func (s *Store) NormalizeHostID(ctx context.Context, id int64) int64 {
 		return 0
 	}
 	return id
+}
+
+// LocalHostID returns the id of the local daemon's host row.
+func (s *Store) LocalHostID(ctx context.Context) (int64, error) {
+	var id int64
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM hosts WHERE kind = 'local' ORDER BY id LIMIT 1`).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return id, err
 }

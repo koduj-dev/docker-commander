@@ -43,7 +43,7 @@ var errNoSuchAlert = errors.New("no such alert, or it belongs to a host outside 
 // plain predicate.
 //
 // Alerts are checked against the alert's host with the "alerts" section ALONE —
-// deliberately not through authorizeHost, which additionally demands "hosts".
+// deliberately not through recheckHost, which additionally demands "hosts".
 // That extra requirement is right for projects, where reaching a remote host
 // means acting on it, and wrong here: a user whose alerts grant is scoped to a
 // remote host already sees those alerts in the feed without holding "hosts", so
@@ -106,6 +106,14 @@ type stackActionOut struct {
 	Action  string `json:"action"`
 }
 
+// beginStackOp is Deps.BeginStackOp, or nothing to claim when it isn't wired.
+func (h *handler) beginStackOp(ctx context.Context, hostID int64, stack, what string) (func(), error) {
+	if h.deps.BeginStackOp == nil {
+		return func() {}, nil
+	}
+	return h.deps.BeginStackOp(ctx, hostID, stack, what)
+}
+
 // stackActionTool builds the handler for one lifecycle verb.
 //
 // Deliberately only start/stop/restart. StackAction also implements "remove",
@@ -121,6 +129,11 @@ func (h *handler) stackActionTool(action string) func(context.Context, *mcpsdk.C
 		if strings.TrimSpace(in.Project) == "" {
 			return nil, stackActionOut{}, errors.New("project is required")
 		}
+		release, err := h.beginStackOp(ctx, in.HostID, in.Project, "a stack "+action)
+		if err != nil {
+			return nil, stackActionOut{}, err
+		}
+		defer release()
 		ids, err := h.deps.Docker.StackContainerIDs(ctx, in.HostID, in.Project)
 		if err != nil {
 			return nil, stackActionOut{}, err
@@ -151,11 +164,11 @@ func (h *handler) stackActionTool(action string) func(context.Context, *mcpsdk.C
 func (h *handler) runStackAction(ctx context.Context, p *principal, hostID int64, project, action string, ids []string) (stackActionOut, error) {
 	if len(ids) == 0 {
 		err := fmt.Errorf("no containers found for stack %q", project)
-		h.audit(p, "mcp.stack."+action, project, outcome(err))
+		h.audit(ctx, p, "mcp.stack."+action, project, outcome(err))
 		return stackActionOut{}, err
 	}
 	if err := h.chargeAdditionalContainers(p, len(ids)); err != nil {
-		h.audit(p, "mcp.stack."+action, project, outcome(err))
+		h.audit(ctx, p, "mcp.stack."+action, project, outcome(err))
 		return stackActionOut{}, err
 	}
 	// StackActionOnIDs, not StackAction: acting on the EXACT ids already
@@ -166,7 +179,7 @@ func (h *handler) runStackAction(ctx context.Context, p *principal, hostID int64
 	derr := h.deps.Docker.StackActionOnIDs(ctx, hostID, ids, action)
 	// Audited whether it worked or not: an attempted stop that failed is
 	// exactly the kind of thing someone will later want to find.
-	h.audit(p, "mcp.stack."+action, project, outcome(derr))
+	h.audit(ctx, p, "mcp.stack."+action, project, outcome(derr))
 	if derr != nil {
 		return stackActionOut{}, derr
 	}
@@ -248,7 +261,7 @@ func (h *handler) chargeAdditionalContainers(p *principal, n int) error {
 	ok, firstTrip := h.limiter.reserve(p.user.ID, extra)
 	if !ok {
 		if firstTrip {
-			h.audit(p, "mcp.ratelimit", "containers", "control rate limit reached via MCP; changes refused")
+			h.auditOn(p, 0, "mcp.ratelimit", "containers", "control rate limit reached via MCP; changes refused")
 		}
 		return errControlRateLimited()
 	}
@@ -276,17 +289,22 @@ func (h *handler) stackContainersActionTool(action string) func(context.Context,
 		if err := validateStackContainerIDs(in.ContainerIDs); err != nil {
 			return nil, stackContainersActionOut{}, err
 		}
+		release, err := h.beginStackOp(ctx, in.HostID, in.Project, "a stack "+action)
+		if err != nil {
+			return nil, stackContainersActionOut{}, err
+		}
+		defer release()
 		if dup := docker.FirstDuplicateID(in.ContainerIDs); dup != "" {
 			// Checked here, before any limiter budget beyond authorize()'s own 1
 			// unit is spent, and before BulkStackContainerAction (which applies
 			// the same guard again at the Docker layer) does any Docker work.
 			derr := fmt.Errorf(
 				"container_ids lists %q more than once; each container may appear only once per call", dup)
-			h.audit(p, "mcp.stack."+action, in.Project, outcome(derr))
+			h.audit(ctx, p, "mcp.stack."+action, in.Project, outcome(derr))
 			return nil, stackContainersActionOut{}, derr
 		}
 		if err := h.chargeAdditionalContainers(p, len(in.ContainerIDs)); err != nil {
-			h.audit(p, "mcp.stack."+action, in.Project, outcome(err))
+			h.audit(ctx, p, "mcp.stack."+action, in.Project, outcome(err))
 			return nil, stackContainersActionOut{}, err
 		}
 
@@ -296,12 +314,12 @@ func (h *handler) stackContainersActionTool(action string) func(context.Context,
 			// belong to the stack, most likely. Audited the same way a failed
 			// whole-stack action is: an attempt was made even though nothing ran,
 			// and that is exactly the kind of thing worth finding later.
-			h.audit(p, "mcp.stack."+action, in.Project, outcome(derr))
+			h.audit(ctx, p, "mcp.stack."+action, in.Project, outcome(derr))
 			return nil, stackContainersActionOut{}, derr
 		}
 
 		// Membership held, so every id was actually attempted.
-		ok := h.auditStackContainerResults(p, action, results)
+		ok := h.auditStackContainerResults(ctx, p, action, results)
 		return nil, stackContainersActionOut{OK: ok, Project: in.Project, Action: action, Results: results}, nil
 	}
 }
@@ -316,14 +334,14 @@ func (h *handler) stackContainersActionTool(action string) func(context.Context,
 // Split out from stackContainersActionTool so the audit fan-out can be
 // exercised directly against a synthetic result set, without going through a
 // live Docker daemon to produce a mixed success/failure batch.
-func (h *handler) auditStackContainerResults(p *principal, action string, results []docker.BulkActionResult) bool {
+func (h *handler) auditStackContainerResults(ctx context.Context, p *principal, action string, results []docker.BulkActionResult) bool {
 	ok := true
 	for _, r := range results {
 		if r.OK {
-			h.audit(p, "mcp.container."+action, r.ID, outcome(nil))
+			h.audit(ctx, p, "mcp.container."+action, r.ID, outcome(nil))
 		} else {
 			ok = false
-			h.audit(p, "mcp.container."+action, r.ID, outcome(errors.New(r.Error)))
+			h.audit(ctx, p, "mcp.container."+action, r.ID, outcome(errors.New(r.Error)))
 		}
 	}
 	return ok
@@ -358,7 +376,8 @@ func (h *handler) scanImage(ctx context.Context, req *mcpsdk.CallToolRequest, in
 	// A scan is gated as a WRITE, matching the REST route. It shells out to Trivy
 	// and pulls the image if absent, so it is real work on the host rather than a
 	// lookup — a read-only token must not be able to trigger it.
-	if _, err := h.authorize(ctx, req, "images", true, in.HostID); err != nil {
+	p, err := h.authorize(ctx, req, "images", true, in.HostID)
+	if err != nil {
 		return nil, scanImageOut{}, err
 	}
 	if !docker.ValidImageRef(in.Ref) {
@@ -387,7 +406,14 @@ func (h *handler) scanImage(ctx context.Context, req *mcpsdk.CallToolRequest, in
 	}
 	defer cleanup()
 
+	// Audited like the REST scan: it pulls the image if it's missing and runs
+	// Trivy on the host. Trivy is a CLI, not a Docker client call, so the host
+	// is named here rather than recorded by docker.Manager.Client. Resolved
+	// before the scan: a request cancelled during it would leave ctx unable to
+	// look the local host up, and the entry would read as hostless.
+	auditHost := h.daemonHost(ctx, in.HostID)
 	res, err := docker.ScanImage(ctx, env, in.Ref)
+	h.auditOn(p, auditHost, "mcp.image.scan", in.Ref, outcome(err))
 	if err != nil {
 		return nil, scanImageOut{Available: true, Error: err.Error()}, nil
 	}

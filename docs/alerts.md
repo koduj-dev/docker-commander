@@ -1,268 +1,365 @@
 # Alerts
 
-
-> The **SMTP server** moved to [Settings → Email](settings.md#email-smtp) and is
-> now admin-only — it is one relay for the whole installation. Alert rules still
-> opt into e-mail here.
 [← Manual index](README.md)
+
+Rules that watch your containers and notify you by webhook or e-mail. The
+engine runs on the **server** and watches **all configured hosts** around the
+clock, whether or not anyone has the UI open. The SMTP relay is set up by an
+admin under [Settings → Email](settings.md#email-smtp); rules only opt into
+e-mail here.
 
 ![Alerts](images/alerts.png)
 
-The alert engine runs on the **server**, watching **all configured hosts** 24/7
-— it keeps working whether or not anyone has the UI open.
+## Common tasks
 
-## Tabs
-- **Feed** — fired alerts (time, severity, host, container, message). Acknowledge
-  to clear the unread badge.
-- **Rules** — define and edit what fires (below).
-- **Webhooks** — HTTP destinations.
-- **Email** — the SMTP server.
+**Alert when a container uses more than 80% CPU for 30 seconds.** On **Rules**,
+add a **Resource threshold** rule: metric **CPU % (of all cores)**, *above*
+`80`, for `30` seconds, then pick a webhook or tick **Also send an email**.
+Avoid *of one core* here: a container busy on four cores reads ~400% there, so
+`80%` fires almost constantly.
+
+**Alert on a log line.** Add a **Log pattern** rule, e.g. `ERROR|panic` with
+**Treat as regular expression** ticked (otherwise it is a substring match). The
+**Cooldown** keeps a noisy container from sending one alert per line.
+
+**Catch a crash loop.** Add a **Restart / crash loop** rule, e.g. 3 restarts
+within 60 seconds. **Target** narrows it to container names containing a
+string; blank watches everything.
+
+**Post alerts to Slack or Discord.** On **Webhooks**, add the endpoint URL and,
+if the service needs its own format, a body template such as
+`{"text":"[{{.Severity}}] {{.Container}}: {{.Message}}"}`. Then select the
+webhook on each rule. The payload doesn't say which host fired, so route per
+host by e-mail instead.
+
+**Silence alerts during planned work.** On **Maintenance**, create a window
+scoped to the project or host, with a duration and a reason. Alerts are still
+recorded; only webhook and e-mail stay quiet. Deploys open a short window on
+their own.
+
+**Check that an alert reached anyone.** Click the alert's row to see every
+webhook call and e-mail with its outcome. Temporary failures are
+retried up to 5 times.
 
 ## Rules
-Create or edit a rule (rules are fully editable, not just create/delete):
 
-| Type       | Fires when… |
-|------------|-------------|
-| `state`    | a container emits a lifecycle event (die, kill, oom, stop, unhealthy) |
-| `resource` | CPU% or MEM% crosses a threshold for *N* seconds |
-| `log`      | a log line matches a substring or regex |
-| `restart`  | a container restarts too often within a window (crash loop) |
+Tabs: **Feed** (fired alerts), **Rules**, **Webhooks**, **Maintenance**. Rules
+can be created, edited, enabled/disabled, deleted, exported and imported.
+Webhooks can only be added and deleted; to change one, add a new one and switch
+the rules over.
 
-Each rule has a **target** (container-name substring; blank/`*` = all), a
-**severity**, a **re-notify interval** (the *cooldown* field — how long a
-condition stays quiet while it is still true), and optional **webhook** and
-**email** delivery.
+| Type | Fires when |
+|---|---|
+| `state` | A container emits a lifecycle event: die, kill, oom, stop, unhealthy. |
+| `resource` | CPU %, memory % or network RX/TX rate crosses a threshold for *N* seconds. |
+| `log` | A log line matches a substring or regex. |
+| `restart` | A container restarts too often within a window (crash loop). |
+| `network` | Dropped packets or interface errors *increase* by at least *N* within a window. |
 
-## Threshold alerts are conditions, not lines
+Each rule has a **target** (container-name substring; blank or `*` = all), a
+**severity**, a **cooldown** (the re-notify interval: how long a condition stays
+quiet while still true), and optional **webhook** and **e-mail** delivery.
 
-A `resource` rule describes a state of the world that is either true or not, so
-it is tracked as a **condition** with a lifetime rather than re-announced on
-every evaluation. A condition is one per **container + metric** — not per rule —
-and you see it exactly at the moments something changes:
+A new rule starts at severity *warning* and a 60-second cooldown. The type
+fields start at: resource **CPU % (of one core)** above `80` for `30` seconds;
+restart `3` within `60` seconds; network an increase of `1` within `300`
+seconds. A rule created over the API or by import with these fields left out
+is evaluated with the same values (resource metric *of one core*, 30 seconds).
+
+**What the percentages mean:**
+
+| Metric | Meaning |
+|---|---|
+| **CPU % (of one core)** | Docker's own figure, as in `docker stats`. 100% is one core, so four busy cores read ~400%. A fixed `> 80%` rule is over threshold almost always on a multi-core host. |
+| **CPU % (of all cores)** | The same divided by the host's core count: 0–100% on any machine. Usually what people mean. |
+| **Memory %** | Share of the **container's limit**, not of host RAM. |
+
+Older rules keep the *of one core* meaning, so nothing changes under them.
+Messages state their basis with absolute values:
+`MEM 3.0 GiB / 5.0 GiB (61.9% of limit) > 5% for 30s`.
+
+**The two network rules answer different questions.**
+
+- `resource` on **RX/TX rate**: a plain threshold, "is the rate above or below
+  *N* MiB/s for *N* seconds". It reads the same live per-poll rate the dashboard
+  shows. Entered in MiB/s (1 MiB = 1024 × 1024 bytes), stored as bytes/s. Alert
+  messages state sizes the same way: `KiB`, `MiB`, `GiB`.
+- `network` on **drops/errors**: fires on the **increase** within a window,
+  never the absolute counter. Drops that have sat at a high total since last
+  month are not an incident; packets being lost right now are. Drops and errors
+  are each counted **RX+TX combined**, as elsewhere in the app.
+
+### Threshold alerts: firing to resolved
+
+A `resource` rule describes something that is either true or not, so it is
+tracked as a **condition** with a lifetime. There is one condition per
+**container + metric**, not per rule, and you hear about it only when it
+changes:
 
 | Event | Meaning |
 |---|---|
-| `firing` | the threshold was crossed and held for the rule's duration |
-| `escalated` | still on, and a more severe rule now applies |
-| `eased` | still on, but only a less severe rule still applies |
-| `repeat` | still on, and the re-notify interval elapsed |
-| `resolved` | it stopped; the event says how long it lasted |
+| `firing` | Threshold crossed and held for the rule's duration. |
+| `escalated` | Still on, and a more severe rule now applies. |
+| `eased` | Still on, but only a less severe rule still applies. |
+| `repeat` | Still on, and the cooldown elapsed. |
+| `resolved` | It stopped. The event says how long it lasted. |
 
-Two consequences worth knowing, because they are the point:
+- **Overlapping rules give one alert.** Over both a *warning > 5%* and a
+  *critical > 10%* memory rule is one fact; the most severe rule speaks for it.
+  Crossing into critical later **escalates** the same condition, so the
+  incident clock keeps running.
+- **Silence means unchanged**, not unchecked.
 
-- **Overlapping rules produce one alert, not one each.** If a container is over
-  both a *warning >5%* and a *critical >10%* memory rule, that is one fact, and
-  the most severe rule speaks for it. Crossing into critical later **escalates
-  the existing condition** — the incident clock keeps running rather than
-  restarting.
-- **A condition that is still true says nothing.** Silence between `firing` and
-  `resolved` means "unchanged", not "not checked".
-
-`state`, `log` and `restart` rules stay **edge-triggered**: a container that died
-or a log line that matched has no later moment at which it stops being true, so
-those still use the plain cooldown and never resolve.
+`state`, `log`, `restart` and `network` rules are **edge-triggered**: a death,
+a matching line or a counter that grew never stops being true later. They use
+the plain cooldown and never resolve.
 
 ## The feed
 
-The event feed is **paged** (50 at a time) and filterable by severity, lifecycle
-kind, **host**, rule, container and message text, plus an *unacknowledged only*
-toggle — and **sortable by any of the first five columns**. All of it happens in
-the database rather than in the browser, so the filters, the counts, the paging
-and the ordering describe the whole result set, not the page you happen to be
-looking at. Severity sorts by how much it matters, not alphabetically (which would
-put *warning* above *info* and look almost right).
+![Alerts feed](images/alerts_feed.png)
 
-**Ack all** sits in the page header with the other actions.
+Paged 50 at a time. Filter by severity, lifecycle kind, **host**, rule,
+container, message text and *unacknowledged only*; sort by any of the first
+five columns. All of it runs in the database, so counts and order cover the
+whole result, not the visible page. Severity sorts by importance, not
+alphabetically.
 
-The **sidebar badge counts problems**, not events: unacknowledged **warnings and
-criticals** only. A condition ending is recorded as `info`, so the number never
-climbs because something got *better* — a badge that grows as problems fix
-themselves is a badge people stop reading. Informational alerts still appear in
-the feed and still count in its totals; they just don't raise the alarm.
+**Repeats are hidden by default**, because they would bury `firing` and
+`resolved`. Tick **Show repeats** or pick *repeat* in the lifecycle filter. The
+choice is saved per account.
 
-**Acknowledging records who did it**, and when. "Someone dealt with this" is only
-useful if you can go and ask them. **Ack all** acknowledges everything matching
-the *current filters* — not the whole table — behind a confirm that says which of
-the two it is about to do.
+The row that started a condition shows **still firing · 27m** (counted from the
+start, also after an escalation) and **↻ 12**, the number of repeats, with the
+last one's time in the tooltip. Only threshold conditions have these. Repeats
+silenced by a [maintenance window](#maintenance-windows) are not stored, so the
+count is lower during a window. Other flags: ↗ escalated, ↘ eased, and a
+crossed-out bell for **silenced**.
 
-**A `resolved` event is stored already settled** and shows no Acknowledge action.
-There is nothing to do about a condition that has ended, so it never appears in
-the outstanding list, never counts toward the badge, and never waits for someone
-to click it. That single rule at the point of writing is why nothing downstream
-needs a special case for resolutions.
+**Acknowledging** records who and when. **Ack all** (page header) acknowledges
+everything matching the *current filters*, not the whole table, and its confirm
+says which. A `resolved` event is stored already settled: no Acknowledge
+action, never outstanding, never in the badge.
 
-**A toast appears when an alert arrives while the app is open**, so you learn
-about it without sitting on the Alerts page. It is a nudge, not a record — the
-feed is the record. Resolved conditions toast in green, a countdown bar shows how
-long is left, and hovering pauses it. Turn them off per account under
-**Profile → Preferences**; the alerts themselves are unaffected — still recorded,
-still counted in the sidebar badge, still delivered by webhook and e-mail.
+**The sidebar badge** counts unacknowledged **warnings and criticals** only.
+Endings are recorded as `info`, so the number never grows because something got
+better. Info alerts still show in the feed and its totals.
 
-The feed, the badge and the toasts share **one** poll. They used to have separate
-timers, which meant a row could appear in the table seconds before the toast
-announcing it — the same event telling you about itself twice, out of order.
+**Toasts** announce new alerts on any page while the app is open. Resolved ones
+are green, a countdown bar shows the time left, and hovering pauses it. Turn
+them off under **Profile → Preferences**; alerts are still recorded, counted
+and delivered. Silenced events don't toast but stay in the feed. The feed,
+badge and toasts share **one** poll, so a row never appears before its toast.
 
-## Alert detail
+**Retention:** events and delivery records are deleted after **90 days** by
+default; see [Settings → Data retention](settings.md#data-retention).
 
-**Click any row** to open it. A table can only ever show a truncated view, and
-the message is often the least of what matters. The detail has the full message,
-the measured value, how long the condition lasted, the host, a link straight to
-the **container** it is about, whether it was acknowledged and by whom, and every
-delivery attempt with the endpoint's own response.
+### Alert detail
 
-You can acknowledge from there too, so reading it and dealing with it aren't two
-separate trips.
+Click a row for the full message, measured value, duration (or time firing and
+repeat count), host, a link to the **container**, who acknowledged it, and
+every delivery attempt with the endpoint's response. You can acknowledge it
+there too.
 
-## Was it actually delivered?
+## Delivery
 
-Every webhook call and e-mail send is recorded against the alert, with the
-outcome. Click the **Delivery** cell to see the attempts:
+Each webhook call and e-mail send is recorded against the alert. Click
+**Delivery** to see them:
 
 ```text
 delivered  EMAIL    ops@example.com            2026-07-31 13:02:11
 failed     WEBHOOK  ops (hooks.example.com)    HTTP 500  — upstream unavailable
 ```
 
-This closes a real gap: a webhook returning 500, an SMTP server refusing the
-connection, or a rule with *e-mail* ticked while **no recipient is configured
-anywhere** all used to fail silently. The alert appeared in the feed and looked
-handled, while nothing had left the building.
+A webhook returning 500, a refusing SMTP server, or e-mail ticked with **no
+recipient configured anywhere** all show here as failures.
 
-Two deliberate limits:
+- **Only the webhook's name and host are stored**, never the full URL, which
+  often carries a token. This record is readable by anyone with the alerts
+  section.
+- **Response bodies are truncated** to 500 bytes before they are stored, so a
+  remote server can't write unbounded text into the database.
 
-- **The webhook's name and host are stored, never its full URL.** Webhook URLs
-  routinely carry a token in the path or query, and this record is readable by
-  anyone with the alerts section.
-- **Response bodies are truncated** (~500 characters). The endpoint's own words
-  usually say why it refused, but a remote server must not be able to write
-  unbounded text into the database.
+**Retries.** Transient failures are retried; configuration problems are not.
 
-There is no automatic retry yet — a failed delivery is recorded, not re-attempted.
+| | |
+|---|---|
+| **Retried** | Webhook timeout, unreachable, or `429`/`5xx`. A failed e-mail send. |
+| **Not retried** | Any other webhook `4xx` (bad payload or auth won't fix itself). SMTP not configured. No recipient anywhere. |
+| **Backoff** | Up to 5 retries at 1, 2, 4, 8, 16 minutes (about half an hour), then it gives up. |
 
-## From an AI tool
+Each attempt adds a row to the same Delivery list. A retry due inside a
+[maintenance window](#maintenance-windows) waits it out, without using up one
+of its 5 attempts.
 
-If the [MCP server](mcp.md) is enabled, the same material is reachable read-only
-from an assistant: the history (`list_alerts`, with these filters), what is over
-threshold **right now** (`active_alert_conditions`), the rules and their
-thresholds (`list_alert_rules`), whether an alert actually reached anyone
-(`alert_delivery`), and `acknowledge_alert`, which is attributed like any other
-acknowledgement. Rule delivery is reported by **channel**, never by recipient or
-webhook URL. Everything obeys the caller's own permissions and host scope.
+### Webhooks
 
-## What the CPU threshold is a percentage *of*
-
-This trips people up, so the rule editor now asks explicitly:
-
-- **CPU % (of one core)** — Docker's own figure, the one `docker stats` prints.
-  100% is a single core, so a container busy on four cores reads ~400%. A fixed
-  `> 80%` rule here is over threshold essentially always on a multi-core host.
-- **CPU % (of all cores)** — the same usage divided by the host's core count, so
-  it is 0–100% whatever the machine. Usually what people mean.
-- **Memory %** — share of the **container's limit**, not of host RAM.
-
-Existing rules keep the *of one core* meaning, so nothing changes underneath a
-rule you already wrote. Alert messages now state their basis and carry absolute
-values — `MEM 3.0 GB / 5.0 GB (61.9% of limit) > 5%` rather than `MEM 61.9% > 5%`.
-
-> **Host reachability is watched automatically** — no rule needed. When a host's
-> Docker daemon goes **unreachable** you get a *critical* `host` alert, and a
-> *recover* (*info*) when it comes back. See
-> [Hosts → Reachability monitoring](hosts.md#reachability-monitoring).
-
-### Import / export
-**Export** downloads every rule as a portable JSON bundle (`alert-rules.json`)
-you can keep in version control or move to another instance. **Import** reads such
-a bundle and creates the rules it contains — it never overwrites or deletes
-existing rules, and every rule is re-validated on the way in.
-
-Webhooks are referenced **by name**, and a webhook's URL/headers/secrets are
-never part of the bundle. On import a rule is re-linked to a local webhook only
-if one with the same name already exists; otherwise it's imported without a
-destination and the skipped link is reported. Recreate any missing webhooks (in
-the **Webhooks** tab) before or after importing, then edit the rule to attach it.
-
-## Webhooks
-Fire to any HTTP endpoint (Slack, Discord, Grafana, n8n…). The body is a Go
+Any HTTP endpoint: Slack, Discord, Grafana, n8n… The optional body is a Go
 template over `{{.RuleName}}`, `{{.Type}}`, `{{.Severity}}`, `{{.Container}}`,
-`{{.ContainerID}}`, `{{.Message}}`, `{{.Value}}` and `{{.Time}}` (RFC 3339, UTC);
-with no template the alert is sent as JSON with those same fields — `value` is
-omitted when the alert carries no measurement.
+`{{.ContainerID}}`, `{{.Message}}`, `{{.Value}}` and `{{.Time}}` (RFC 3339,
+UTC). Without a template, those fields are sent as JSON; `value` is omitted when
+there is no measurement.
 
-Two things the payload does **not** carry, so build your routing accordingly: the
-**host** the alert came from, and the lifecycle **kind** (`firing`, `escalated`,
-`resolved`…). Both are recorded on the event and visible in the feed; a webhook
-consumer only sees them insofar as the message text says so. Per-host routing is
-available for **e-mail**, not for webhooks.
+The payload does **not** carry the **host** or the lifecycle **kind**
+(`firing`, `resolved`…), except as far as the message says. Per-host routing
+exists for e-mail only.
 
-## Email (SMTP)
-Configure host/port, optional username + password (encrypted at rest), from and
-to, and whether the relay wants **implicit TLS** (port 465) — otherwise STARTTLS
-is used opportunistically, when the server offers it. **Send test** verifies it.
-Per-host routing:
-a host's *alert email* (set on the [Hosts](hosts.md) page) overrides the global
-recipient for alerts from that host.
+### Who receives an alert e-mail
+
+A rule with **Also send an email** uses the first of these that is set:
+
+1. **The rule's own recipients** (comma-separated).
+2. **The host's alert e-mail**, set on [Hosts](hosts.md).
+3. **The instance-wide recipient**, *To* under
+   [Settings → Email](settings.md#email-smtp).
+
+Rules older than per-rule recipients have an empty list, so they use 2 or 3.
+
+The **alert e-mail on your account** (Profile, the icon beside *Sign out*)
+prefills the recipients the first time you enable e-mail on a rule; clear it to
+use the instance-wide address. An LDAP `mail` attribute fills it on login. A
+directory without an address never clears one you set by hand.
+
+## Maintenance windows
+
+![Maintenance windows](images/alerts_maintenance.png)
+
+A window stops **delivery** (webhook and e-mail) for planned work. Alerts still
+**fire and are recorded**, with a crossed-out bell. A **disabled host** is
+different: the engine doesn't watch it at all.
+
+**Scope.** Blank means no restriction, so an all-blank window silences
+everything. A blank **Hosts** field needs access to all hosts: a user limited
+to some hosts must pick hosts, or the window is refused.
+
+| Field | Matches |
+|---|---|
+| **Hosts** | One or more Docker hosts. |
+| **Project** | Compose project (stack) name, substring. |
+| **Container** | Container name, substring. |
+| **Rule** | One rule, or any. |
+| **Severities** | Any of info, warning, critical. |
+
+**Schedule.** **One-off** starts now or at a set time, for a duration.
+**Recurring** runs weekly on chosen weekdays at a time of day, for a duration,
+in the timezone of the browser that created it. An optional end date stops the
+series; otherwise it recurs indefinitely. One occurrence lasts at most 24 hours.
+
+Every window records a **reason** and an **author**, audited on create, update,
+end and delete, so "why was this silenced?" stays answerable.
+
+- **During a window**, `firing`, `resolved` and escalations are stored with the
+  silenced flag. `repeat` rows are not stored but go to the
+  [process log](#system-log).
+- **After it ends**, a condition that is still true is delivered as `firing` at
+  the next check, since nobody was told. This needs a rule cooldown above 0;
+  with a cooldown of 0 the silenced condition stays undelivered until it
+  changes. One already delivered before the window gets its next repeat after
+  the normal cooldown.
+- **End early** stops it but keeps the record. Neither End nor Delete undoes
+  suppression that already happened.
+- **Windows are history.** Nothing deletes them automatically, including the
+  `auto: <project> deploy` ones. Finished windows sit under **Past windows**,
+  50 at a time. **Delete** is offered on a window that hasn't started yet or is
+  already over. A running window (or an open recurring series) has to be ended
+  first; the API refuses with `409`.
+- **A closed window can't be edited.** Once ended early or past its end (a
+  series: its end date), Edit and End disappear and the API refuses an edit
+  with `409`.
+  Delete still works. A series past its end date shows *Expired*.
+
+**Deploys silence themselves.** A deploy opens a window for the project's host
+and stack, since restarts right after a deploy are expected. Default 3 minutes,
+set by `-deploy-silence-grace` / `DC_DEPLOY_SILENCE_GRACE`; `0` disables it.
+They show on the Maintenance tab as `auto: <project> deploy`.
+
+## Watched without a rule
+
+- **Host reachability.** An **unreachable** Docker daemon raises a *critical*
+  `host` alert, and its recovery an *info* one. See
+  [Hosts → Reachability monitoring](hosts.md#reachability-monitoring).
+- **Newer images.** Each project's running services are checked every 6 hours
+  against what the registry reports for their compose tag (the deploy preview's
+  check). A new digest raises one *info* `image_update` alert, not one per
+  check. Detection only, nothing is deployed. See [Projects](projects.md).
+
+## Import and export
+
+**Export** downloads every rule as `alert-rules.json`. **Import** creates the
+rules in such a bundle, never overwriting or deleting existing ones, and
+validates each again. Webhooks are referenced **by name**; URLs, headers and
+secrets are never exported. A rule is re-linked only to a local webhook of the
+same name, otherwise it is imported without one and the skipped link is
+reported. Create the webhook, then edit the rule to attach it.
+
+A bundle holds at most 1000 rules. Names and targets may be up to 200
+characters and a rule's config up to 16 KiB. A cooldown above 24 hours is cut
+to 24 hours on import.
 
 ## Prometheus
 
-Scrape `/metrics`. Per container, labelled by `id` (the **short**, 12-character
-form), `name` and `host`:
+Scrape `/metrics`. Container series are labelled `id` (the **short**,
+12-character form), `name` and `host`:
 
 | Metric | Meaning |
 |---|---|
-| `dockercmd_container_running` | 1 if running |
-| `dockercmd_container_cpu_percent` | **docker-stats convention: 100 = one core**, so a container busy on four reads ~400 |
-| `dockercmd_container_cpu_cores` | cores the daemon reports — divide the above by this for a share of the machine |
-| `dockercmd_container_mem_bytes` | memory in use |
-| `dockercmd_container_mem_percent` | share of the container's limit |
+| `dockercmd_container_running` | 1 if running. |
+| `dockercmd_container_cpu_percent` | **docker-stats convention: 100 = one core**, so four busy cores read ~400. |
+| `dockercmd_container_cpu_cores` | Cores the daemon reports. Divide the above by this for a share of the machine. |
+| `dockercmd_container_mem_bytes` | Memory in use. |
+| `dockercmd_container_mem_percent` | Share of the container's limit. |
+| `dockercmd_alert_firing` | 1 per condition over threshold, labelled `host`, `container`, `metric`, `severity`, `rule`. |
+| `dockercmd_alerts_firing_count` | How many conditions are firing. |
+| `dockercmd_alerts_outstanding` | Unacknowledged warnings and criticals, same as the sidebar badge. |
 
-Only `dockercmd_container_running` is emitted for **every** container; the four
-usage series cover **running** ones only. So a stopped container's memory series
-simply ends rather than reporting zero — join on `dockercmd_container_running` if a
-dashboard needs to tell "stopped" from "not scraped". **Network counters are not
-exported here yet**: they are collected, charted and kept in history, but
-`/metrics` carries CPU and memory only.
+Page on `dockercmd_alert_firing`: it is the live condition and disappears on
+resolve, so no `for:` window is needed.
 
-And, from the alert engine:
+## From an AI tool
 
-| Metric | Meaning |
-|---|---|
-| `dockercmd_alert_firing` | 1 per condition currently over threshold, labelled `host`, `container`, `metric`, `severity`, `rule` |
-| `dockercmd_alerts_firing_count` | how many conditions are firing |
-| `dockercmd_alerts_outstanding` | unacknowledged warnings and criticals — the same number as the sidebar badge |
+With the [MCP server](mcp.md) enabled, an assistant can read the history
+(`list_alerts`, filtered by severity, kind, host, container, rule or text; up to
+200 at a time), what is over threshold now (`active_alert_conditions`), the
+rules (`list_alert_rules`) and delivery (`alert_delivery`: a webhook's name and
+host, never its URL, or the e-mail recipients), and
+`acknowledge_alert`, attributed like any acknowledgement. It can also run
+`list_maintenance_windows`, `create_maintenance_window` (starts now, for a
+duration) and `end_maintenance_window`. Editing a window is UI/REST only.
+Everything follows the caller's permissions and host scope.
 
-`dockercmd_alert_firing` is the one to page on: it is the live state of the
-condition, so it disappears when the condition resolves rather than needing a
-`for:` window to guess.
+### Technical notes
 
-> The `cpu_percent` help text used to say *host-relative*, which it never was.
-> A dashboard built on that description would have read four times high on a
-> four-core host.
+- **Prometheus coverage.** Only `dockercmd_container_running` covers every
+  container; the usage series cover **running** ones, so a stopped container's
+  series ends instead of reading zero. Join on `_running` to tell "stopped" from
+  "not scraped". **Network counters are not exported yet**: they are charted
+  and kept in history, but `/metrics` has CPU and memory only.
+- **`cpu_percent` was never host-relative**, though its help text once said so.
+  Read that way it is four times too high on a four-core host.
+- **`/metrics` ignores host scope.** It needs no user session, so a scrape sees
+  every host. Set `DC_METRICS_TOKEN` to require a token, sent as
+  `Authorization: Bearer <token>` or `?token=<token>`; without one the endpoint
+  is open.
 
-`/metrics` is a machine endpoint guarded by `DC_METRICS_TOKEN`, not by a user
-session, so it is **not** filtered by per-host RBAC — a scrape has no user. That
-was already true of the container metrics; it is worth knowing before exposing it.
+### Top talkers and rate rules
 
-## System log
-Beyond these channels, every fired alert is also written to the process log
-(stderr) as a structured line, so under systemd it lands in the journal — and,
-if you enable forwarding, in syslog. See
+The [Top talkers](resources.md#network) ranking averages each container's rate
+over a **stored window** (5 minutes by default), never one poll sample, because
+bursty traffic would reorder a live ranking on every poll. An RX/TX rate rule
+instead checks the live per-poll rate, which must hold for the rule's duration.
+
+### System log
+
+Every fired alert is also written to the process log (stderr) as a structured
+line: the journal under systemd, and syslog if forwarding is on. A silenced
+alert says so: `silenced=true maintenance_window=3 window_name="…"`.
+
+Window starts and ends are logged with scope and duration. The check runs every
+30 seconds, and once at startup for windows already running:
+
+```text
+maintenance window started id=3 name="DB upgrade" scope="project~shop" until=… duration=1h30m0s — matching alerts are recorded but not delivered
+maintenance window ended id=3 name="DB upgrade" after=1h30m0s — alert delivery resumes
+```
+
+`ended early` and `removed` are logged the same way. See
 [Deployment → Logs](deployment.md#logs).
-
-## Who receives an alert e-mail
-A rule that has **Also send an email** ticked resolves its recipients in this
-order, most specific first:
-
-1. **The rule's own recipients** — the comma-separated list on the rule.
-2. **The host's alert address** — set per host under [Hosts](hosts.md), for a host
-   whose alerts should go elsewhere.
-3. **The instance-wide recipient** — the *To* field under
-   [Settings → Email](settings.md#email-smtp).
-
-Rules created before per-rule recipients existed have an empty list, so they keep
-using 2 or 3 exactly as before.
-
-Set an **alert e-mail on your account** (the icon beside *Sign out*) and it
-prefills as the recipient the first time you enable e-mail on a rule — clear the
-field to fall back to the instance-wide address instead. If your LDAP directory
-publishes a `mail` attribute, it is filled in for you on login; a directory with no
-address never clears one you set by hand.

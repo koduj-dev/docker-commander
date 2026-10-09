@@ -94,3 +94,17 @@ func TestRunWindowsServiceStubErrorsOnNonWindows(t *testing.T) {
 		t.Error("RunWindowsService() on a non-Windows stub returned nil error, want an error")
 	}
 }
+
+// The unit must let the unprivileged service user listen on 443 (HTTPS via
+// ACME). Comparing the two copies can't catch the line being dropped from both.
+func TestSystemdUnitCanBindPrivilegedPorts(t *testing.T) {
+	var found bool
+	for _, line := range strings.Split(systemdUnit, "\n") {
+		if strings.TrimSpace(line) == "AmbientCapabilities=CAP_NET_BIND_SERVICE" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the systemd unit no longer grants CAP_NET_BIND_SERVICE, so HTTPS on port 443 fails under the service")
+	}
+}

@@ -64,6 +64,9 @@ var ungatedRoutes = map[string]string{
 	// Writes the CALLER's own alert address, taken from their session claims —
 	// it cannot touch another account (TestPentestSetMyEmail_OnlyAffectsTheCaller).
 	"/api/auth/me/email": "own alert address",
+	// Changes the CALLER's own password, taken from their session claims, and
+	// needs the current one (TestChangeOwnPassword).
+	"/api/auth/me/password": "own password; requires the current one",
 	// Reads only the caller's own roles and grants
 	// (TestPentestMyAccess_OnlyOwnData).
 	"/api/auth/me/access": "own permissions overview",
@@ -78,6 +81,10 @@ var ungatedRoutes = map[string]string{
 	"/api/mcp/status":      "own MCP availability",
 	"/api/mcp/tokens":      "own tokens only",
 	"/api/mcp/tokens/{id}": "own tokens only",
+	// Self-service MCP connector sessions: same narrowing as tokens above —
+	// a session can only ever be the caller's own.
+	"/api/mcp/sessions":      "own sessions only",
+	"/api/mcp/sessions/{id}": "own sessions only",
 	// Shared reads that carry no host/container authority of their own.
 	"/api/system":          "version/health for the shell",
 	"/api/version":         "app version for the shell",
@@ -205,6 +212,7 @@ func TestPentestReadOnlyRoleBlocksGetWrites(t *testing.T) {
 		Sections: []store.RoleSection{
 			{Section: "containers", Write: false},
 			{Section: "images", Write: false},
+			{Section: "volumes", Write: false},
 		},
 	})
 	if err != nil {
@@ -222,6 +230,11 @@ func TestPentestReadOnlyRoleBlocksGetWrites(t *testing.T) {
 		"/api/images/pull",
 		"/api/images/push",
 		"/api/images/scan",
+		// Raw content downloads: a read grant must not hand over the bytes.
+		"/api/containers/abc/export",
+		"/api/containers/abc/files/download",
+		"/api/volumes/data/files/download",
+		"/api/images/save",
 	} {
 		r := httptest.NewRequest("GET", p, nil)
 		if !isWriteRequest(r) {

@@ -363,7 +363,7 @@ func TestResourceMessageStatesItsBasis(t *testing.T) {
 		val    float64
 		want   []string
 	}{
-		{"mem", 61.9, []string{"3.0 GB", "5.0 GB", "of limit"}},
+		{"mem", 61.9, []string{"3.0 GiB", "5.0 GiB", "of limit"}},
 		{"cpu", 324.5, []string{"of one core", "4 cores available"}},
 		{"cpu_total", 81.1, []string{"of 4 cores"}},
 	}
@@ -377,6 +377,26 @@ func TestResourceMessageStatesItsBasis(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Sizes are counted in 1024s, so they are labelled in 1024s: "MiB", not "MB",
+// which reads as a million bytes and understates a big number by about 5%.
+func TestHumanBytesUsesBinaryUnits(t *testing.T) {
+	for in, want := range map[uint64]string{
+		512:      "512 B",
+		1536:     "1.5 KiB",
+		20 << 20: "20.0 MiB",
+		3 << 30:  "3.0 GiB",
+		5 << 40:  "5.0 TiB",
+	} {
+		if got := humanBytes(in); got != want {
+			t.Errorf("humanBytes(%d) = %q, want %q", in, got, want)
+		}
+	}
+	cfg := resourceConfig{Metric: "netrx_rate", Op: ">", Threshold: 10 << 20, DurationSec: 30}
+	if got := resourceMessage(cfg, ContainerStat{}, 20<<20); !strings.Contains(got, "20.0 MiB/s > 10.0 MiB/s") {
+		t.Errorf("rate message %q should read in MiB/s", got)
 	}
 }
 

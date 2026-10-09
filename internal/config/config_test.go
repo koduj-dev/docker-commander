@@ -137,6 +137,65 @@ func TestLoadMetricsIntervalClamp(t *testing.T) {
 	}
 }
 
+// TestLoadDeploySilenceGrace exercises the deploy-silence-grace flag's full
+// default/override/disable path THROUGH Load() itself — the maintenance
+// window auto-silence tests construct config.Config directly, so they could
+// not have caught a regression in this flag/env mapping (e.g. the default
+// silently failing to reach the resolved Config, as a `> 0` guard around the
+// assignment once did).
+func TestLoadDeploySilenceGrace(t *testing.T) {
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	defer func() { os.Args, flag.CommandLine = oldArgs, oldFS }()
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = []string{"dockercmd"}
+	t.Setenv("DC_DATA_DIR", t.TempDir())
+
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.DeploySilenceGrace != 3*time.Minute {
+		t.Errorf("default deploy silence grace = %v, want 3m", c.DeploySilenceGrace)
+	}
+}
+
+func TestLoadDeploySilenceGraceEnvOverride(t *testing.T) {
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	defer func() { os.Args, flag.CommandLine = oldArgs, oldFS }()
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = []string{"dockercmd"}
+	t.Setenv("DC_DATA_DIR", t.TempDir())
+	t.Setenv("DC_DEPLOY_SILENCE_GRACE", "10m")
+
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.DeploySilenceGrace != 10*time.Minute {
+		t.Errorf("DC_DEPLOY_SILENCE_GRACE not mapped: got %v, want 10m", c.DeploySilenceGrace)
+	}
+}
+
+// TestLoadDeploySilenceGraceExplicitZeroDisables pins the documented
+// behaviour that 0 really means "off", not "use the default" — the flag's
+// own help text promises this.
+func TestLoadDeploySilenceGraceExplicitZeroDisables(t *testing.T) {
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	defer func() { os.Args, flag.CommandLine = oldArgs, oldFS }()
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = []string{"dockercmd"}
+	t.Setenv("DC_DATA_DIR", t.TempDir())
+	t.Setenv("DC_DEPLOY_SILENCE_GRACE", "0s")
+
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.DeploySilenceGrace != 0 {
+		t.Errorf("an explicit 0 should disable auto-silence, got %v", c.DeploySilenceGrace)
+	}
+}
+
 func TestParseCIDRs(t *testing.T) {
 	// Valid: a CIDR, a bare IPv4 (→ /32) and a bare IPv6 (→ /128), plus blanks.
 	nets, err := parseCIDRs(" 10.0.0.0/8 , 127.0.0.1 ,, ::1 ")
@@ -320,6 +379,110 @@ func TestLoadTLSBothOK(t *testing.T) {
 	}
 }
 
+func TestLoadACMEDomains(t *testing.T) {
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	defer func() { os.Args, flag.CommandLine = oldArgs, oldFS }()
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = []string{"dockercmd"}
+
+	dir := t.TempDir()
+	t.Setenv("DC_DATA_DIR", dir)
+	t.Setenv("DC_ACME_DOMAINS", " example.com , www.example.com ")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if want := []string{"example.com", "www.example.com"}; !equalStrings(c.ACMEDomains, want) {
+		t.Errorf("ACMEDomains = %v, want %v (whitespace should be trimmed)", c.ACMEDomains, want)
+	}
+	if want := filepath.Join(dir, "acme"); c.ACMECacheDir != want {
+		t.Errorf("ACMECacheDir = %q, want default %q", c.ACMECacheDir, want)
+	}
+	if !c.TLSEnabled() {
+		t.Error("TLSEnabled() should be true when ACME domains are set")
+	}
+}
+
+func TestLoadACMECacheDirOverride(t *testing.T) {
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	defer func() { os.Args, flag.CommandLine = oldArgs, oldFS }()
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = []string{"dockercmd"}
+
+	t.Setenv("DC_DATA_DIR", t.TempDir())
+	t.Setenv("DC_ACME_DOMAINS", "example.com")
+	t.Setenv("DC_ACME_CACHE_DIR", "/var/lib/dockercmd/acme-cache")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.ACMECacheDir != "/var/lib/dockercmd/acme-cache" {
+		t.Errorf("ACMECacheDir = %q, want the explicit override preserved", c.ACMECacheDir)
+	}
+}
+
+// PENTEST-adjacent (config-validation): ACME and a static cert/key pair are
+// two different ways to obtain a certificate — combining them silently would
+// leave it ambiguous which one actually serves, so this must be a hard error,
+// not a "last one wins".
+func TestLoadACMEConflictsWithStaticTLS(t *testing.T) {
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	defer func() { os.Args, flag.CommandLine = oldArgs, oldFS }()
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = []string{"dockercmd"}
+
+	t.Setenv("DC_DATA_DIR", t.TempDir())
+	t.Setenv("DC_ACME_DOMAINS", "example.com")
+	t.Setenv("DC_TLS_CERT", "/tmp/cert.pem")
+	t.Setenv("DC_TLS_KEY", "/tmp/key.pem")
+	if _, err := Load(); err == nil {
+		t.Error("ACME domains combined with a static cert/key pair should error")
+	}
+}
+
+func TestLoadACMERejectsIPAddress(t *testing.T) {
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	defer func() { os.Args, flag.CommandLine = oldArgs, oldFS }()
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = []string{"dockercmd"}
+
+	t.Setenv("DC_DATA_DIR", t.TempDir())
+	t.Setenv("DC_ACME_DOMAINS", "203.0.113.5")
+	if _, err := Load(); err == nil {
+		t.Error("an IP address in -acme-domains should error (ACME issues certs for hostnames only)")
+	}
+}
+
+func TestConfigTLSEnabled(t *testing.T) {
+	cases := []struct {
+		name string
+		c    Config
+		want bool
+	}{
+		{"neither set", Config{}, false},
+		{"static pair", Config{TLSCert: "/c", TLSKey: "/k"}, true},
+		{"cert without key", Config{TLSCert: "/c"}, false},
+		{"acme domains", Config{ACMEDomains: []string{"example.com"}}, true},
+	}
+	for _, tc := range cases {
+		if got := tc.c.TLSEnabled(); got != tc.want {
+			t.Errorf("%s: TLSEnabled() = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestDBPath(t *testing.T) {
 	c := Config{DataDir: "/var/lib/dockercmd"}
 	if got, want := c.DBPath(), "/var/lib/dockercmd/docker-commander.db"; got != want {
@@ -368,5 +531,59 @@ func TestEnvDuration(t *testing.T) {
 func TestDefaultDataDir(t *testing.T) {
 	if defaultDataDir() == "" {
 		t.Error("defaultDataDir should never be empty")
+	}
+}
+
+// The embedded reverse proxy's own settings: off unless DC_PROXY_ENABLED=1,
+// and its ACME state defaults to a directory SEPARATE from the admin one — a
+// shared directory would let the two autocert managers overwrite each
+// other's account key and certificates.
+func loadProxyConfig(t *testing.T, env map[string]string, args ...string) Config {
+	t.Helper()
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	t.Cleanup(func() { os.Args, flag.CommandLine = oldArgs, oldFS })
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = append([]string{"dockercmd"}, args...)
+	for k, v := range env {
+		t.Setenv(k, v)
+	}
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	return c
+}
+
+func TestLoadProxyDisabledByDefault(t *testing.T) {
+	dir := t.TempDir()
+	c := loadProxyConfig(t, map[string]string{"DC_DATA_DIR": dir})
+	if c.ProxyEnabled {
+		t.Error("the proxy is a second public-facing surface and must be off by default")
+	}
+	if want := filepath.Join(dir, "proxy-acme"); c.ProxyACMECacheDir != want {
+		t.Errorf("ProxyACMECacheDir = %q, want the default %q", c.ProxyACMECacheDir, want)
+	}
+	if c.ProxyACMECacheDir == filepath.Join(dir, "acme") {
+		t.Error("the proxy's ACME state must never default to the admin ACME directory")
+	}
+}
+
+func TestLoadProxyEnabledFromEnvAndFlag(t *testing.T) {
+	// Only "1" enables it — the same convention as DC_MCP_ENABLED.
+	if c := loadProxyConfig(t, map[string]string{"DC_DATA_DIR": t.TempDir(), "DC_PROXY_ENABLED": "1"}); !c.ProxyEnabled {
+		t.Error("DC_PROXY_ENABLED=1 should enable the proxy")
+	}
+	if c := loadProxyConfig(t, map[string]string{"DC_DATA_DIR": t.TempDir(), "DC_PROXY_ENABLED": "true"}); c.ProxyEnabled {
+		t.Error(`DC_PROXY_ENABLED=true is not "1" and must not enable the proxy`)
+	}
+	if c := loadProxyConfig(t, map[string]string{"DC_DATA_DIR": t.TempDir()}, "-proxy-enabled"); !c.ProxyEnabled {
+		t.Error("-proxy-enabled should enable the proxy")
+	}
+}
+
+func TestLoadProxyACMECacheDirOverride(t *testing.T) {
+	c := loadProxyConfig(t, map[string]string{"DC_DATA_DIR": t.TempDir(), "DC_PROXY_ACME_CACHE_DIR": "/var/lib/dockercmd/proxy-cache"})
+	if c.ProxyACMECacheDir != "/var/lib/dockercmd/proxy-cache" {
+		t.Errorf("ProxyACMECacheDir = %q, want the explicit override preserved", c.ProxyACMECacheDir)
 	}
 }

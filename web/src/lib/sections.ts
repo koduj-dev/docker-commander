@@ -15,6 +15,7 @@ export const SECTION_LABELS: Record<string, string> = {
   hosts: "Hosts",
   registries: "Registries",
   audit: "Audit log",
+  diagnostics: "Troubleshooting", // the Troubleshooting page's section
 };
 
 export function sectionLabel(key: string): string {

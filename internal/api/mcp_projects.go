@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/koduj-dev/docker-commander/internal/docker"
@@ -44,7 +45,13 @@ func (s *Server) mcpListProjects(ctx context.Context) ([]mcp.ManagedProject, err
 }
 
 // mcpDeployProject runs `docker compose up -d` for a managed project.
-func (s *Server) mcpDeployProject(ctx context.Context, id int64, profiles []string) (string, error) {
+//
+// It runs the exact same evaluateDeployPolicy gate the REST deploy handler
+// does (see policy_handlers.go): a block-mode violation always refuses, and
+// an un-confirmed warn-mode one refuses with a message telling the caller to
+// retry with confirmPolicyWarnings — MCP has no UI to click through, so the
+// caller (the model, on the user's behalf) is the thing that must confirm.
+func (s *Server) mcpDeployProject(ctx context.Context, id int64, profiles []string, confirmPolicyWarnings bool) (string, error) {
 	if !docker.ComposeAvailable(ctx) {
 		return "", errors.New("the `docker compose` CLI is not available on the host running Docker Commander")
 	}
@@ -52,7 +59,16 @@ func (s *Server) mcpDeployProject(ctx context.Context, id int64, profiles []stri
 	if err != nil {
 		return "", err
 	}
+	release, busy := beginProjectOp(p.ID, "a deploy")
+	if release == nil {
+		return "", errProjectBusy(busy)
+	}
+	defer release()
 	dir := s.projectRoot(p.ID)
+	// Normalized before projectDeployEnv, NOT after — bind classification
+	// below must resolve against exactly the profiles this deploy activates,
+	// same as evaluateDeployPolicy does a few lines down.
+	profiles = docker.NormalizeProfiles(profiles)
 	// projectDeployEnv, NOT projectComposeEnv — the same resolver the web UI's
 	// deploy uses. For a local project the two are identical, but for a remote
 	// host only this one ships the project's bind-mount sources to the target and
@@ -60,11 +76,35 @@ func (s *Server) mcpDeployProject(ctx context.Context, id int64, profiles []stri
 	// folder unless the project is explicitly opted in. Deploying through MCP with
 	// the weaker resolver would have quietly produced a different deployment than
 	// the same button in the UI, and skipped that refusal.
-	env, files, note, cleanup, err := s.projectDeployEnv(ctx, p, dir)
+	env, files, note, cleanup, seed, err := s.projectDeployEnv(ctx, p, dir, profiles)
 	if err != nil {
 		return "", err
 	}
 	defer cleanup()
+
+	// The MCP tool dispatcher (internal/mcp) audits the outcome of every
+	// deploy attempt under "mcp.project.deploy", including this one when it
+	// returns an error below — so a refused deploy is not silent, even though
+	// it isn't broken out into its own policy_block/policy_warn_ack action
+	// the way the REST audit trail is.
+	blocked, warned, perr := s.evaluateDeployPolicy(ctx, p.Slug, dir, profiles, env, files)
+	if perr != nil {
+		return "", fmt.Errorf("policy check failed, refusing to deploy for safety: %w", perr)
+	}
+	if len(blocked) > 0 {
+		return "", fmt.Errorf("refused by policy (block): %s", policyViolationSummary(blocked))
+	}
+	if len(warned) > 0 && !confirmPolicyWarnings {
+		return "", fmt.Errorf("policy warnings require confirmation (retry with confirm_policy_warnings=true): %s", policyViolationSummary(warned))
+	}
+	// Only after policy has passed does any remote-side write happen — see
+	// the seed doc comment on projectDeployEnv.
+	if seed != nil {
+		if err := seed.Run(ctx); err != nil {
+			return "", err
+		}
+	}
+
 	// Rebuild, matching the web UI. Not a widening of the MCP surface: `up`
 	// already builds a service whose image is missing, so deploying a project
 	// with a `build:` section could always run its Dockerfile. What this fixes is
@@ -76,6 +116,9 @@ func (s *Server) mcpDeployProject(ctx context.Context, id int64, profiles []stri
 		// remote host. The UI shows it; without it here the model would report a
 		// clean deploy and never mention that paths were remapped.
 		out = strings.TrimRight(out, "\n") + "\nnote: " + note
+	}
+	if err == nil {
+		s.autoSilenceForDeploy(ctx, p)
 	}
 	return out, err
 }
@@ -89,6 +132,11 @@ func (s *Server) mcpDownProject(ctx context.Context, id int64) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	release, busy := beginProjectOp(p.ID, "a down")
+	if release == nil {
+		return "", errProjectBusy(busy)
+	}
+	defer release()
 	dir := s.projectRoot(p.ID)
 	env, cleanup, err := s.projectComposeEnv(ctx, p, dir)
 	if err != nil {
@@ -115,7 +163,24 @@ func (s *Server) mcpPreviewProject(ctx context.Context, id int64) (mcp.ProjectPr
 		return out, err
 	}
 	dir := s.projectRoot(p.ID)
-	cfgJSON, err := docker.ComposeConfigJSON(ctx, dir, p.Slug)
+	_, masked, secretValues, serr := s.projectSecretEnvs(ctx, p.ID)
+	if serr != nil {
+		return out, serr
+	}
+	// Resolve with the profiles the project's LAST successful deploy actually
+	// used — NOT none (Compose silently omits a service gated behind an
+	// inactive profile from a zero-profile `compose config`, which would
+	// otherwise make a running profiled service falsely report as
+	// "removed"), and NOT every profile the compose file declares either: a
+	// preview compares "what's running" against "what a redeploy would
+	// produce", and a redeploy through this same path reuses
+	// LastDeployedProfiles — enabling every declared profile instead would
+	// make preview report a currently-inactive profiled service as falsely
+	// "added". (domain_handlers.go's resolvedComposeServices and
+	// image_update_poller.go's buildProjectImagePreviewChecked DO want every
+	// profile — they're listing possible services, not previewing a specific
+	// redeploy — so this deliberately doesn't reuse either of those.)
+	cfgJSON, err := docker.ComposeConfigJSONFiles(ctx, dir, p.Slug, p.LastDeployedProfiles, masked, nil)
 	if err != nil {
 		// An invalid compose file is the single most useful thing a preview can
 		// report, so it comes back as a result rather than an error.
@@ -130,22 +195,41 @@ func (s *Server) mcpPreviewProject(ctx context.Context, id int64) (mcp.ProjectPr
 		return out, nil
 	}
 
-	var running []docker.ServiceSpec
+	var containers []docker.StackContainer
 	if stacks, serr := s.docker.ListStacks(ctx, p.HostID); serr == nil {
 		for i := range stacks {
 			if stacks[i].Project == p.Slug {
-				running = docker.RunningServices(&stacks[i])
+				containers = stacks[i].Containers
 				break
 			}
 		}
 	}
+	// LiveServices pays for one inspect per service (vs. the free
+	// RunningServices summary) so the preview can compare more than image —
+	// env, ports, volumes, networks, restart policy, resource limits and
+	// healthcheck. Worth it here: this is an explicit, user-triggered
+	// preview, not a hot loop.
+	running := s.docker.LiveServices(ctx, p.HostID, containers)
+	s.maskLiveSecrets(running, secretValues)
 
 	prev := docker.BuildDeployPreview(resolved, running)
+	// Best-effort: a mutable tag can point at a new image without the tag
+	// string changing, which the plain comparison above can't see.
+	s.docker.AugmentDigestDrift(ctx, p.HostID, &prev, containers)
+	docker.ExtendServiceComparison(&prev, resolved, running)
+	if ignores, ierr := s.store.ListDriftIgnores(ctx, p.ID); ierr == nil && len(ignores) > 0 {
+		ignored := make(map[[3]string]bool, len(ignores))
+		for _, ig := range ignores {
+			ignored[[3]string{ig.Service, ig.Kind, ig.Fingerprint}] = true
+		}
+		docker.MarkIgnoredChanges(prev.Changes, ignored)
+	}
 	out.Valid = true
 	out.Project = p.Name
 	out.Services = prev.Services
 	out.Running = prev.Running
 	out.Changes = prev.Changes
 	out.Unchanged = prev.Unchanged
+	out.Active = docker.ActiveChanges(prev.Changes)
 	return out, nil
 }

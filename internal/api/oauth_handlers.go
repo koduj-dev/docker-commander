@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"html/template"
 	"net/http"
 	"net/url"
@@ -271,45 +272,102 @@ func (s *Server) tokenFromCode(w http.ResponseWriter, r *http.Request) {
 		oauthErr(w, http.StatusBadRequest, "invalid_grant", "PKCE verification failed")
 		return
 	}
-	s.issueTokens(w, r, rec.ClientID, rec.UserID, rec.Scope, rec.Resource)
+	// A fresh session: this is the one point in the whole grant where a new
+	// connector pairing is established, so its stable id (unlike the access
+	// token's jti or the refresh token's hash, neither of which survive
+	// rotation) is minted here, once.
+	s.issueTokens(w, r, rec.ClientID, rec.UserID, rec.Scope, rec.Resource, randToken(16))
 }
 
 func (s *Server) tokenFromRefresh(w http.ResponseWriter, r *http.Request) {
 	f := r.PostForm
-	rec, err := s.store.ConsumeRefreshToken(r.Context(), hashToken(f.Get("refresh_token")))
-	if err != nil {
+	clientID := f.Get("client_id")
+	resource := s.mcpResource()
+	refresh := randToken(32)
+	refreshExpiry := time.Now().Add(oauthRefreshTTL)
+	info := sessionInfo(r)
+
+	// validate runs INSIDE RotateRefreshToken's transaction, against the
+	// just-consumed record — see its doc comment for why this whole rotation
+	// must be one transaction rather than "consume, then separately check
+	// and mint" as it used to be.
+	validate := func(rec *store.OAuthRefreshToken) error {
+		if !rec.ExpiresAt.IsZero() && time.Now().After(rec.ExpiresAt) {
+			return store.ErrRefreshTokenExpired
+		}
+		if clientID != rec.ClientID {
+			return store.ErrRefreshClientMismatch
+		}
+		if rec.Resource != resource {
+			return store.ErrRefreshResourceMismatch
+		}
+		return nil
+	}
+
+	rec, sessionID, err := s.store.RotateRefreshToken(r.Context(), hashToken(f.Get("refresh_token")), validate,
+		randToken(16), info.IP, info.UserAgent, refreshExpiry, hashToken(refresh), refreshExpiry)
+	switch {
+	case errors.Is(err, store.ErrRefreshTokenExpired):
+		oauthErr(w, http.StatusBadRequest, "invalid_grant", "refresh token expired")
+		return
+	case errors.Is(err, store.ErrRefreshClientMismatch):
+		oauthErr(w, http.StatusBadRequest, "invalid_grant", "client mismatch")
+		return
+	case errors.Is(err, store.ErrRefreshResourceMismatch):
+		oauthErr(w, http.StatusBadRequest, "invalid_grant", "resource mismatch")
+		return
+	case err != nil:
+		// The only remaining error here is "unknown refresh token" (nothing
+		// to consume) — RotateRefreshToken self-heals a legitimately-desynced
+		// session rather than erroring (see its doc comment).
 		oauthErr(w, http.StatusBadRequest, "invalid_grant", "unknown refresh token")
 		return
 	}
-	if !rec.ExpiresAt.IsZero() && time.Now().After(rec.ExpiresAt) {
-		oauthErr(w, http.StatusBadRequest, "invalid_grant", "refresh token expired")
+
+	readOnly := rec.Scope == scopeReadOnly
+	access, _, aerr := mcp.MintAccessToken(s.mcpSigningKey, s.mcpBase(), rec.Resource, rec.UserID, rec.ClientID, sessionID, readOnly, mcp.AccessTokenTTL)
+	if aerr != nil {
+		oauthErr(w, http.StatusInternalServerError, "server_error", "")
 		return
 	}
-	if f.Get("client_id") != rec.ClientID {
-		oauthErr(w, http.StatusBadRequest, "invalid_grant", "client mismatch")
-		return
-	}
-	if rec.Resource != s.mcpResource() {
-		oauthErr(w, http.StatusBadRequest, "invalid_grant", "resource mismatch")
-		return
-	}
-	s.issueTokens(w, r, rec.ClientID, rec.UserID, rec.Scope, rec.Resource)
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"access_token":  access,
+		"token_type":    "Bearer",
+		"expires_in":    int(mcp.AccessTokenTTL.Seconds()),
+		"refresh_token": refresh,
+		"scope":         rec.Scope,
+	})
 }
 
-// issueTokens mints an access token (audience-bound to resource) and a rotated
-// refresh token. resource is taken from the consumed grant and re-asserted by
-// the callers against the current MCP resource, so the binding is enforced.
-func (s *Server) issueTokens(w http.ResponseWriter, r *http.Request, clientID string, userID int64, scope, resource string) {
+// issueTokens mints an access token (audience-bound to resource, scoped to a
+// freshly minted sessionID) and its first refresh token, and records the new
+// connector pairing as a session — used only by the authorization-code
+// grant (tokenFromCode), the one point where a session is first established.
+// A refresh grant (tokenFromRefresh) does NOT go through this: rotating an
+// EXISTING session's tokens must stay atomic with checking that session is
+// still alive, which is what RotateRefreshToken (see its doc comment) exists
+// for instead.
+func (s *Server) issueTokens(w http.ResponseWriter, r *http.Request, clientID string, userID int64, scope, resource, sessionID string) {
 	readOnly := scope == scopeReadOnly
-	access, _, err := mcp.MintAccessToken(s.mcpSigningKey, s.mcpBase(), resource, userID, clientID, readOnly, mcp.AccessTokenTTL)
+	access, _, err := mcp.MintAccessToken(s.mcpSigningKey, s.mcpBase(), resource, userID, clientID, sessionID, readOnly, mcp.AccessTokenTTL)
 	if err != nil {
 		oauthErr(w, http.StatusInternalServerError, "server_error", "")
 		return
 	}
 	refresh := randToken(32)
+	refreshExpiry := time.Now().Add(oauthRefreshTTL)
 	if err := s.store.CreateRefreshToken(r.Context(), hashToken(refresh), &store.OAuthRefreshToken{
 		ClientID: clientID, UserID: userID, Scope: scope, Resource: resource,
-		ExpiresAt: time.Now().Add(oauthRefreshTTL),
+		ExpiresAt: refreshExpiry, SessionID: sessionID,
+	}); err != nil {
+		oauthErr(w, http.StatusInternalServerError, "server_error", "")
+		return
+	}
+	info := sessionInfo(r)
+	if err := s.store.CreateMCPOAuthSession(r.Context(), &store.MCPOAuthSession{
+		ID: sessionID, ClientID: clientID, UserID: userID,
+		IP: info.IP, UserAgent: info.UserAgent, ExpiresAt: refreshExpiry,
 	}); err != nil {
 		oauthErr(w, http.StatusInternalServerError, "server_error", "")
 		return

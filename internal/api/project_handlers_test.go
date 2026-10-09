@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -17,6 +18,8 @@ import (
 
 	"github.com/koduj-dev/docker-commander/internal/auth"
 	"github.com/koduj-dev/docker-commander/internal/config"
+	"github.com/koduj-dev/docker-commander/internal/crypto"
+	"github.com/koduj-dev/docker-commander/internal/docker"
 	"github.com/koduj-dev/docker-commander/internal/store"
 )
 
@@ -38,7 +41,11 @@ func newProjectServer(t *testing.T) (*Server, int64) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := &Server{cfg: config.Config{DataDir: t.TempDir()}, store: st}
+	key := make([]byte, 32)
+	_, _ = rand.Read(key)
+	cph, _ := crypto.New(key)
+	st.SetCipher(cph)
+	srv := &Server{cfg: config.Config{DataDir: t.TempDir()}, store: st, docker: docker.NewManager(st)}
 	// The project folder exists in the real flow (created at project creation);
 	// mirror that so safeJoin's sandbox resolution has a root to anchor on.
 	if err := os.MkdirAll(srv.projectRoot(id), 0o700); err != nil {
@@ -58,6 +65,35 @@ func projectReq(method, target string, id int64, body io.Reader) *http.Request {
 	// functional tests have to look like requests, not like bare calls. Admin
 	// keeps them about the behaviour under test rather than about grants.
 	return r.WithContext(auth.WithClaims(ctx, &auth.Claims{UserID: 1, Role: "admin"}))
+}
+
+// TestDeleteProject_RemovesRevisionSnapshots is the regression test for the
+// finding that deleting a project left its revision ZIP snapshots (each one
+// a full zip of the project directory at deploy time, so potentially
+// carrying .env/secrets) orphaned on disk with no reachable DB record —
+// store.DeleteProject's own doc comment says the CALLER removes them, but no
+// caller did.
+func TestDeleteProject_RemovesRevisionSnapshots(t *testing.T) {
+	srv, id := newProjectServer(t)
+	p, err := srv.store.ProjectByID(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.captureRevision(context.Background(), p, nil, "test output", "test", "tester")
+	revDir := srv.projectRevisionsDir(id)
+	if _, err := os.Stat(revDir); err != nil {
+		t.Fatalf("revision snapshot dir should exist before delete: %v", err)
+	}
+
+	r := projectReq("DELETE", "/api/projects/x", id, nil)
+	w := httptest.NewRecorder()
+	srv.handleDeleteProject(w, r)
+	if w.Code != 200 {
+		t.Fatalf("delete status = %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(revDir); !os.IsNotExist(err) {
+		t.Errorf("revision snapshot dir should be removed after project delete, stat err = %v", err)
+	}
 }
 
 func TestOverlayProject(t *testing.T) {

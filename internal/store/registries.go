@@ -85,14 +85,22 @@ func (s *Store) AuthByID(ctx context.Context, id int64) (*RegistryAuth, error) {
 func (s *Store) AuthForHost(ctx context.Context, host string) (*RegistryAuth, error) {
 	host = NormalizeRegistryHost(host)
 	return s.scanAuth(s.db.QueryRowContext(ctx, `
-		SELECT address, username, secret_enc FROM registries WHERE address = ? LIMIT 1`, host))
+		SELECT address, username, secret_enc FROM registries WHERE address = ? ORDER BY id LIMIT 1`, host))
 }
 
 // scanAuth decrypts a credential row.
+//
+// row.Scan is called unconditionally, before anything else — a *sql.Row
+// from QueryRowContext only releases its underlying connection back to the
+// pool once Scan runs (database/sql's own documented behavior). The cipher
+// check used to come first and return early on a nil cipher, which left
+// that connection permanently checked out: with the store's connection
+// pool capped at one (SetMaxOpenConns(1)), a single call here with no
+// cipher configured deadlocked every later query against this *Store, not
+// just this one. It also masked the far more common ErrNotFound case (no
+// registry configured at all) behind a misleading "cipher not configured"
+// error, since the row was never even inspected.
 func (s *Store) scanAuth(row *sql.Row) (*RegistryAuth, error) {
-	if s.cipher == nil {
-		return nil, errors.New("store: cipher not configured")
-	}
 	var a RegistryAuth
 	var enc string
 	err := row.Scan(&a.Address, &a.Username, &enc)
@@ -103,6 +111,9 @@ func (s *Store) scanAuth(row *sql.Row) (*RegistryAuth, error) {
 		return nil, err
 	}
 	if enc != "" {
+		if s.cipher == nil {
+			return nil, errors.New("store: cipher not configured")
+		}
 		pw, err := s.cipher.Decrypt(enc)
 		if err != nil {
 			return nil, err
@@ -124,4 +135,50 @@ func NormalizeRegistryHost(host string) string {
 		return "docker.io"
 	}
 	return host
+}
+
+// AllRegistryAuths returns every stored credential, decrypted, for handing to a
+// `docker compose` run. They come oldest first: when two entries share a
+// registry, the oldest one is the one used, here and in AuthForHost alike.
+//
+// A row that can't be decrypted is skipped and named in skipped, rather than
+// failing every deploy: one broken entry must not stop projects that never use
+// that registry. The caller shows the names, so a later 401 has an explanation.
+func (s *Store) AllRegistryAuths(ctx context.Context) (auths []RegistryAuth, skipped []string, err error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT address, username, secret_enc FROM registries ORDER BY id`)
+	if err != nil {
+		return nil, nil, err
+	}
+	type row struct{ address, username, enc string }
+	var raw []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.address, &r.username, &r.enc); err != nil {
+			rows.Close()
+			return nil, nil, err
+		}
+		raw = append(raw, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	auths = make([]RegistryAuth, 0, len(raw))
+	for _, r := range raw {
+		a := RegistryAuth{Address: r.address, Username: r.username}
+		if r.enc != "" {
+			if s.cipher == nil {
+				skipped = append(skipped, r.address)
+				continue
+			}
+			pw, err := s.cipher.Decrypt(r.enc)
+			if err != nil {
+				skipped = append(skipped, r.address)
+				continue
+			}
+			a.Password = pw
+		}
+		auths = append(auths, a)
+	}
+	return auths, skipped, nil
 }

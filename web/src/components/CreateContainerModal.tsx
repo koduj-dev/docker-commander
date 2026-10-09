@@ -62,7 +62,7 @@ export function CreateContainerModal({ onClose, onDone }: { onClose: () => void;
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <form className="card w-full max-w-2xl max-h-[88vh] flex flex-col" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <Boxes className="h-4 w-4 text-accent" />
@@ -97,7 +97,7 @@ export function CreateContainerModal({ onClose, onDone }: { onClose: () => void;
               </select>
             </div>
             <div>
-              <label className="label">Memory limit (MB)</label>
+              <label className="label">Memory limit (MiB)</label>
               <input className="input" type="number" min="0" value={memoryMb} onChange={(e) => setMemoryMb(e.target.value)} placeholder="0 = unlimited" />
             </div>
             <div>

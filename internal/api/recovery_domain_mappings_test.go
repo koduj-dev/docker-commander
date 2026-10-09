@@ -1,0 +1,368 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/koduj-dev/docker-commander/internal/docker"
+	"github.com/koduj-dev/docker-commander/internal/store"
+)
+
+// TestRecoveryDomainMappings_RoundTrip: a project's domain mappings must
+// survive an export/import round trip — they are persistent project
+// configuration, exactly like secrets, not something only the running
+// instance knows about.
+func TestRecoveryDomainMappings_RoundTrip(t *testing.T) {
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	srv, admin := newRecoveryServer(t)
+	ctx := context.Background()
+	pid, err := srv.store.CreateProject(ctx, &store.Project{Name: "shop", Slug: "dctest-recovery-domain", ComposeFile: "compose.yml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := srv.projectRoot(pid)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	compose := "services:\n  web:\n    image: " + deployTestImage + "\n"
+	if err := os.WriteFile(filepath.Join(root, "compose.yml"), []byte(compose), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.store.CreateDomainMapping(ctx, pid, "shop.example.com", "web", 8080, "acme", "admin"); err != nil {
+		t.Fatal(err)
+	}
+
+	w := exportRecoveryRequest(srv, admin, `{}`, "correct horse battery staple")
+	if w.Code != http.StatusOK {
+		t.Fatalf("export status = %d: %s", w.Code, w.Body.String())
+	}
+
+	dst, dstAdmin := newRecoveryServer(t)
+	iw := importRecoveryRequest(dst, dstAdmin, w.Body.Bytes(), "correct horse battery staple", "")
+	if iw.Code != http.StatusOK {
+		t.Fatalf("import status = %d: %s", iw.Code, iw.Body.String())
+	}
+	var resp struct {
+		Summary  importSummary `json:"summary"`
+		Warnings []string      `json:"warnings"`
+	}
+	if err := json.Unmarshal(iw.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Summary.ProjectsCreated != 1 {
+		t.Fatalf("expected 1 project created, got %+v warnings=%v", resp.Summary, resp.Warnings)
+	}
+	projects, err := dst.store.ListProjects(ctx)
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("project not imported: %v %+v", err, projects)
+	}
+	mappings, err := dst.store.ListDomainMappings(ctx, projects[0].ID)
+	if err != nil || len(mappings) != 1 {
+		t.Fatalf("domain mapping not restored: %v %+v", err, mappings)
+	}
+	if mappings[0].Domain != "shop.example.com" || mappings[0].Service != "web" || mappings[0].TargetPort != 8080 {
+		t.Errorf("restored mapping wrong: %+v", mappings[0])
+	}
+}
+
+// PENTEST: the API only ever stores tlsMode "acme", but a bundle is imported
+// straight into the store — a tampered (or hand-edited) one carrying the
+// reserved "none" or an arbitrary string must not land as a live mapping.
+// The valid mapping in the same bundle proves the guard rejects the bad row,
+// not every row.
+func TestRecoveryDomainMappings_UnsupportedTLSModeIsSkipped(t *testing.T) {
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	srv, admin := newRecoveryServer(t)
+	ctx := context.Background()
+	pid, err := srv.store.CreateProject(ctx, &store.Project{Name: "shop", Slug: "dctest-recovery-domain-tls", ComposeFile: "compose.yml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := srv.projectRoot(pid)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	compose := "services:\n  web:\n    image: " + deployTestImage + "\n"
+	if err := os.WriteFile(filepath.Join(root, "compose.yml"), []byte(compose), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The store itself accepts any tlsMode — that is precisely the gap.
+	if _, err := srv.store.CreateDomainMapping(ctx, pid, "good.example.com", "web", 8080, "acme", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.store.CreateDomainMapping(ctx, pid, "plain.example.com", "web", 8081, "none", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.store.CreateDomainMapping(ctx, pid, "junk.example.com", "web", 8082, "bogus", "admin"); err != nil {
+		t.Fatal(err)
+	}
+
+	w := exportRecoveryRequest(srv, admin, `{}`, "correct horse battery staple")
+	if w.Code != http.StatusOK {
+		t.Fatalf("export status = %d: %s", w.Code, w.Body.String())
+	}
+
+	dst, dstAdmin := newRecoveryServer(t)
+	iw := importRecoveryRequest(dst, dstAdmin, w.Body.Bytes(), "correct horse battery staple", "")
+	if iw.Code != http.StatusOK {
+		t.Fatalf("import status = %d: %s", iw.Code, iw.Body.String())
+	}
+	var resp struct {
+		Summary  importSummary `json:"summary"`
+		Warnings []string      `json:"warnings"`
+	}
+	if err := json.Unmarshal(iw.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Summary.ProjectsCreated != 1 {
+		t.Fatalf("the project itself must still import, got %+v warnings=%v", resp.Summary, resp.Warnings)
+	}
+	projects, err := dst.store.ListProjects(ctx)
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("project not imported: %v %+v", err, projects)
+	}
+	mappings, err := dst.store.ListDomainMappings(ctx, projects[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mappings) != 1 || mappings[0].Domain != "good.example.com" || mappings[0].TLSMode != "acme" {
+		t.Fatalf("only the acme mapping may be restored, got %+v", mappings)
+	}
+	for _, domain := range []string{"plain.example.com", "junk.example.com"} {
+		found := false
+		for _, w := range resp.Warnings {
+			if strings.Contains(w, domain) && strings.Contains(w, "tlsMode") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected a skip warning naming %s, got %v", domain, resp.Warnings)
+		}
+	}
+}
+
+// TestRecoveryDomainMappings_CollisionWarnsRatherThanFails: a domain already
+// claimed on the destination (here: by an earlier project in the SAME
+// import) must be skipped with an explicit warning, not silently dropped
+// and not allowed to fail the whole import.
+func TestRecoveryDomainMappings_CollisionWarnsRatherThanFails(t *testing.T) {
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	srv, admin := newRecoveryServer(t)
+	ctx := context.Background()
+	pid1, err := srv.store.CreateProject(ctx, &store.Project{Name: "shop1", Slug: "dctest-recovery-domain-c1", ComposeFile: "compose.yml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := srv.projectRoot(pid1)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	compose := "services:\n  web:\n    image: " + deployTestImage + "\n"
+	if err := os.WriteFile(filepath.Join(root, "compose.yml"), []byte(compose), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.store.CreateDomainMapping(ctx, pid1, "shared.example.com", "web", 80, "acme", "admin"); err != nil {
+		t.Fatal(err)
+	}
+
+	w := exportRecoveryRequest(srv, admin, `{}`, "correct horse battery staple")
+	if w.Code != http.StatusOK {
+		t.Fatalf("export status = %d: %s", w.Code, w.Body.String())
+	}
+
+	// The destination already has a DIFFERENT project sitting on the same
+	// domain before the import even starts.
+	dst, dstAdmin := newRecoveryServer(t)
+	pid2, err := dst.store.CreateProject(ctx, &store.Project{Name: "other", Slug: "other", ComposeFile: "compose.yml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dst.store.CreateDomainMapping(ctx, pid2, "shared.example.com", "api", 9090, "acme", "admin"); err != nil {
+		t.Fatal(err)
+	}
+
+	iw := importRecoveryRequest(dst, dstAdmin, w.Body.Bytes(), "correct horse battery staple", "")
+	if iw.Code != http.StatusOK {
+		t.Fatalf("import status = %d: %s", iw.Code, iw.Body.String())
+	}
+	var resp struct {
+		Summary  importSummary `json:"summary"`
+		Warnings []string      `json:"warnings"`
+	}
+	if err := json.Unmarshal(iw.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	// The project itself still imports — only the colliding domain is skipped.
+	if resp.Summary.ProjectsCreated != 1 {
+		t.Fatalf("expected the project to still be created despite the domain collision, got %+v warnings=%v", resp.Summary, resp.Warnings)
+	}
+	foundWarning := false
+	for _, w := range resp.Warnings {
+		if strings.Contains(w, "shared.example.com") && strings.Contains(w, "already mapped") {
+			foundWarning = true
+		}
+	}
+	if !foundWarning {
+		t.Errorf("expected a warning about the domain collision, got %v", resp.Warnings)
+	}
+	// The original mapping (pid2 -> api:9090) must be untouched.
+	mappings, err := dst.store.ListDomainMappings(ctx, pid2)
+	if err != nil || len(mappings) != 1 || mappings[0].Service != "api" {
+		t.Errorf("existing mapping should be untouched by the collision: %v %+v", err, mappings)
+	}
+}
+
+// PENTEST: the import used to check only tlsMode. A bundle could therefore map
+// Docker Commander's own admin hostname (which the proxy would then serve to a
+// container instead of the admin UI), an invalid hostname, a service the project
+// doesn't have, or a port out of range. Each is now refused the way the API
+// refuses it; the valid row in the same bundle proves only the bad ones go.
+func TestPentestRecoveryImportValidatesDomainMappingsLikeTheAPI(t *testing.T) {
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	srv, admin := newRecoveryServer(t)
+	ctx := context.Background()
+	pid, err := srv.store.CreateProject(ctx, &store.Project{Name: "shop", Slug: "dctest-recovery-domain-validate", ComposeFile: "compose.yml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := srv.projectRoot(pid)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	compose := "services:\n  web:\n    image: " + deployTestImage + "\n"
+	if err := os.WriteFile(filepath.Join(root, "compose.yml"), []byte(compose), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The store accepts all of these; only the API's checks refuse them.
+	rows := []struct {
+		domain, service string
+		port            int
+	}{
+		{"good.example.com", "web", 8080},
+		{"admin.example.com", "web", 8081},   // the destination's own admin hostname
+		{"not a hostname", "web", 8082},      // invalid FQDN
+		{"ghost.example.com", "ghost", 8083}, // no such service
+		{"port.example.com", "web", 70000},   // port out of range
+	}
+	for _, r := range rows {
+		if _, err := srv.store.CreateDomainMapping(ctx, pid, r.domain, r.service, r.port, "acme", "admin"); err != nil {
+			t.Fatalf("seed %s: %v", r.domain, err)
+		}
+	}
+	w := exportRecoveryRequest(srv, admin, `{}`, "correct horse battery staple")
+	if w.Code != http.StatusOK {
+		t.Fatalf("export status = %d: %s", w.Code, w.Body.String())
+	}
+
+	dst, dstAdmin := newRecoveryServer(t)
+	dst.cfg.ACMEDomains = []string{"Admin.Example.com"}
+	iw := importRecoveryRequest(dst, dstAdmin, w.Body.Bytes(), "correct horse battery staple", "")
+	if iw.Code != http.StatusOK {
+		t.Fatalf("import status = %d: %s", iw.Code, iw.Body.String())
+	}
+	var resp struct {
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal(iw.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := dst.store.ListProjects(ctx)
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("project not imported: %v %+v", err, projects)
+	}
+	mappings, err := dst.store.ListDomainMappings(ctx, projects[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mappings) != 1 || mappings[0].Domain != "good.example.com" {
+		t.Fatalf("SECURITY: only the valid mapping may be restored, got %+v (warnings %v)", mappings, resp.Warnings)
+	}
+	for _, r := range rows[1:] {
+		found := false
+		for _, w := range resp.Warnings {
+			if strings.Contains(w, r.domain) && strings.Contains(w, "skipped") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected a skip warning naming %q, got %v", r.domain, resp.Warnings)
+		}
+	}
+}
+
+// PENTEST: an export leaves secret values out by default, and the import doesn't
+// restore a secret it has no value for. A compose file that requires such a
+// secret then didn't resolve at all on the destination, and that failure was
+// read as "can't verify the service", which let a mapping to a service the
+// project doesn't have through. The services are now resolved with the same
+// stand-ins the import validates the files with.
+func TestPentestRecoveryImportChecksServicesWithoutSecretValues(t *testing.T) {
+	if !docker.ComposeAvailable(context.Background()) {
+		t.Skip("docker compose CLI not available")
+	}
+	srv, admin := newRecoveryServer(t)
+	ctx := context.Background()
+	pid, err := srv.store.CreateProject(ctx, &store.Project{Name: "shop", Slug: "dctest-recovery-domain-nosecret", ComposeFile: "compose.yml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := srv.projectRoot(pid)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	compose := "services:\n  web:\n    image: " + deployTestImage + "\n    environment:\n      TOKEN: ${TOKEN:?required}\n"
+	if err := os.WriteFile(filepath.Join(root, "compose.yml"), []byte(compose), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.store.CreateProjectSecret(ctx, pid, "TOKEN", "s3cret-value", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range []struct{ domain, service string }{{"good.example.com", "web"}, {"ghost.example.com", "ghost"}} {
+		if _, err := srv.store.CreateDomainMapping(ctx, pid, r.domain, r.service, 8080, "acme", "admin"); err != nil {
+			t.Fatalf("seed %s: %v", r.domain, err)
+		}
+	}
+	w := exportRecoveryRequest(srv, admin, `{}`, "correct horse battery staple") // secrets left out
+	if w.Code != http.StatusOK {
+		t.Fatalf("export status = %d: %s", w.Code, w.Body.String())
+	}
+
+	dst, dstAdmin := newRecoveryServer(t)
+	iw := importRecoveryRequest(dst, dstAdmin, w.Body.Bytes(), "correct horse battery staple", "")
+	if iw.Code != http.StatusOK {
+		t.Fatalf("import status = %d: %s", iw.Code, iw.Body.String())
+	}
+	var resp struct {
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal(iw.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := dst.store.ListProjects(ctx)
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("project not imported: %v %+v (warnings %v)", err, projects, resp.Warnings)
+	}
+	if secrets, _ := dst.store.ListProjectSecrets(ctx, projects[0].ID); len(secrets) != 0 {
+		t.Fatalf("the secret was restored, so this test proves nothing: %+v", secrets)
+	}
+	mappings, err := dst.store.ListDomainMappings(ctx, projects[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mappings) != 1 || mappings[0].Domain != "good.example.com" {
+		t.Fatalf("SECURITY: want only the mapping to the real service, got %+v (warnings %v)", mappings, resp.Warnings)
+	}
+}

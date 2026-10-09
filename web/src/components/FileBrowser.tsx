@@ -13,7 +13,10 @@ function joinPath(dir: string, name: string): string {
 // FileBrowser is a file manager over a FileApi adapter: navigate directories,
 // download files/dirs, upload into the current directory, and delete paths.
 // The same UI serves containers (docker cp) and volumes (helper container).
-export function FileBrowser({ fs }: { fs: FileApi }) {
+// canDownload shows the download buttons. Downloading hands over the files, which
+// needs write access; the server refuses it otherwise, and a refused download
+// opens a bare error page rather than a file.
+export function FileBrowser({ fs, canDownload }: { fs: FileApi; canDownload: boolean }) {
   const [path, setPath] = useState("/");
   const [entries, setEntries] = useState<FileEntry[] | null>(null);
   const [error, setError] = useState("");
@@ -120,9 +123,11 @@ export function FileBrowser({ fs }: { fs: FileApi }) {
           ))}
         </div>
         <button className="btn-ghost px-2 py-1.5" title="Refresh" onClick={() => load(path)}><RefreshCw className="h-4 w-4" /></button>
-        <button className="btn-ghost px-2 py-1.5 text-xs" title="Download current directory as tar" onClick={() => triggerDownload(fs.downloadUrl(path))}>
-          <Download className="h-4 w-4" /> Dir
-        </button>
+        {canDownload && (
+          <button className="btn-ghost px-2 py-1.5 text-xs" title="Download current directory as tar" onClick={() => triggerDownload(fs.downloadUrl(path))}>
+            <Download className="h-4 w-4" /> Dir
+          </button>
+        )}
         <button className="btn-ghost px-2 py-1.5" title="New folder" onClick={newFolder} disabled={busy === "mkdir"}>
           {busy === "mkdir" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FolderPlus className="h-4 w-4" />}
         </button>
@@ -165,7 +170,7 @@ export function FileBrowser({ fs }: { fs: FileApi }) {
                     <td className="px-3 py-1.5 text-xs text-muted font-mono whitespace-nowrap hidden md:table-cell">{e.mode}</td>
                     <td className="px-3 py-1.5">
                       <div className="flex items-center justify-end gap-1">
-                        <button className="btn-ghost px-1.5 py-1" title="Download" onClick={() => triggerDownload(fs.downloadUrl(full))}><Download className="h-3.5 w-3.5" /></button>
+                        {canDownload && <button className="btn-ghost px-1.5 py-1" title="Download" onClick={() => triggerDownload(fs.downloadUrl(full))}><Download className="h-3.5 w-3.5" /></button>}
                         <button className="btn-ghost px-1.5 py-1 text-danger" title="Delete" disabled={busy === full} onClick={() => del(e)}>
                           {busy === full ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
                         </button>

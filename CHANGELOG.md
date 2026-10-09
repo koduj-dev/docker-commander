@@ -4,6 +4,539 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [1.7.0] — 2026-10-09
+
+### Security
+- **A port scan stays with the account that ran it.** The dashboard kept the last
+  scan in the browser per host only, so the next account to sign in on that
+  browser saw it, read-only accounts included. It is now stored per account, and
+  signing out clears every stored scan.
+- **The localhost 2FA exemption no longer reaches through a local reverse
+  proxy that isn't in `DC_TRUSTED_PROXIES`.** Such a proxy connects from
+  127.0.0.1, so with the exemption on, every request it relayed from the
+  internet skipped the second factor. A loopback request that carries a proxy's
+  forwarding header (`X-Forwarded-For`, `Forwarded`, `X-Real-IP`, `Via`, …) now
+  counts as remote. A proxy that adds none of these can't be detected: list it
+  in `DC_TRUSTED_PROXIES`, or keep the exemption off behind a proxy.
+- **Unreadable policy rules no longer switch every check off.** A stored value
+  that couldn't be parsed was read as "all rules off", so every deploy went
+  through unchecked. Deploys now refuse and say to save the rules again; the
+  Policy rules page still opens so that can be done.
+- **A recovery bundle's domain mappings get the same checks as the UI.** The
+  import only checked the TLS mode, so a bundle could map Docker Commander's own
+  admin hostname (the embedded proxy would then serve it to a container), an
+  invalid hostname, a missing service or an out-of-range port. Such rows are
+  now skipped with a warning.
+- **Read-only access no longer downloads raw content.** Exporting a container's
+  filesystem, downloading a file from a container or a volume, and saving an
+  image are GET requests, so a read-only account could do them, although it
+  only ever sees lists and metadata of these. They now need write access.
+  Downloads of what a reader already sees in full (project and template files,
+  exported alert rules) are unchanged.
+- **The Docker-socket policy check now catches a socket reached through a parent
+  directory.** Binding `/`, `/var/run`, `/run` or a rootless `/run/user/<uid>`
+  gives the container the socket, but only the `docker.sock` paths themselves were
+  recognised.
+- **A deploy writes nothing to the target host before the policy check passes.**
+  This applies to the REST deploy, the MCP deploy and a revision restore.
+- **OAuth refresh-token rotation is one transaction** and checks that the session
+  is still alive. A revoked session can no longer refresh, and a crash can no
+  longer leave a session without a valid refresh token.
+- **The masked-secret fingerprint uses an HKDF-derived key** instead of the AES key
+  itself.
+- **Deleting a project removes its revision snapshots.** They are zips of the whole
+  project directory, secrets included, and were left on disk.
+
+### Added
+- **Change your own password** in *Profile → Account* (`PUT /api/auth/me/password`).
+  It needs the current password, ends every other session and keeps you signed in
+  on the device that made the change. Directory (LDAP) accounts change theirs in
+  the directory.
+- **`-log-file` / `DC_LOG_FILE`** writes the log to a file instead of stderr,
+  rotated at 10 MiB with one older copy. The Windows Scheduled Task installer
+  (`install-windows.ps1`) uses it, so a task-run server keeps a log in its data
+  dir like the native service does; before, the task's output went nowhere.
+- **Change your own password** (`PUT /api/auth/me/password`). It needs the current
+  password, ends every other session and keeps you signed in on the device that
+  made the change. Directory (LDAP) accounts change theirs in the directory. The
+  Profile screen for it follows.
+- **Resources page** (Observability → Resources). CPU, memory and network per
+  container and per stack, refreshed every 5 s. A Network tab with the top talkers
+  as an average rate over a window. A Disk tab with the size of every image,
+  container, volume and build-cache record, what an image shares with others, and
+  what a prune would free. See `docs/resources.md`.
+- **Settings → Data retention.** The alert feed, its delivery records, the audit
+  log and project revisions used to grow forever. A daily purge now deletes what
+  is older than a per-area limit. It is on by default: 90 days for alert events and
+  deliveries, 365 days for the audit log (30 at the minimum), and the newest 50
+  revisions per project (3 at the minimum, with their snapshot files). Each area
+  can be kept forever. **Purge now** runs it on demand. The page shows what the last
+  run deleted. If the saved policy can't be read, nothing is deleted. On upgrade
+  the first purge removes older history; see `docs/settings.md`.
+- **Alerts feed.** Repeats are hidden by default (tick *Show repeats*). The row that
+  started a condition shows **still firing · 27m** and the number of repeats.
+  Event kind and the silenced state are icons in their own column.
+- **Backup jobs keep a run history.** Output, exit code, duration and trigger of
+  each run (newest 200 per job), opened from the History button or the status
+  badge. A failed *Run now* opens the log.
+- **Maintenance windows log when they start and end**, with scope and duration. An
+  alert that a window silenced says so on its log line.
+- **Embedded per-container reverse proxy (phase 2 of "Per-container domain +
+  TLS").** Domain mappings (phase 1) now actually route traffic: opt-in
+  (`DC_PROXY_ENABLED`, off by default — it's a second public-facing surface
+  distinct from the admin UI/API), and only active when Docker Commander's
+  own admin domain is already in ACME mode. The proxy shares that **same**
+  listener, dispatched by SNI/Host — the admin domain goes to the existing
+  UI/API, every mapped domain gets its own ACME certificate (cached
+  separately from the admin one) and is reverse-proxied to the actual
+  running container. **Local-host projects only** in this phase — a mapping
+  for a remote-host project is recorded exactly as before but never served,
+  and a mapping with no live, matching backend gets a clean `502`. Every
+  resolved backend comes from Docker's own live port data for the actual
+  matching container, never from the stored config directly, and a request
+  whose TLS SNI disagrees with its HTTP Host is rejected outright rather
+  than risk the two independent dispatch points (certificate selection vs.
+  request routing) disagreeing. Only mappings in the `acme` TLS mode are
+  served or issued a certificate (a recovery bundle carrying any other value
+  is skipped with a warning on import), and the local host is always
+  resolved by its own row — if it has been deleted the proxy refuses rather
+  than fall back to whichever remote host is first. Remote-host reachability
+  and polish (cert-expiry UI, HTTP→HTTPS redirect) remain open for a later
+  phase.
+- **Network alert rules + Top talkers.** Two new ways to act on the network
+  telemetry that already shipped: an existing **resource** rule can now
+  threshold on network RX/TX rate (bytes/s, same live figure the dashboard
+  shows), and a new **network** rule type fires when dropped packets or
+  interface errors *increase* by at least a chosen amount within a window —
+  never on their absolute value, since a drops counter that has sat at a high
+  total since a bad afternoon last month is not an incident. Separately, a new
+  **Top talkers** dashboard widget (its full table is the **Network** tab of
+  the new Resources page) ranks running containers by throughput — averaged over a
+  **stored window** (5 min / 15 min / 1 hour), never a point-in-time poll
+  sample, which reorders itself every poll and is unreadable.
+- **Domain mappings (phase 1 of "Per-container domain + TLS").** A project
+  can now record that a domain (e.g. `app.example.com`)
+  should route to one of its compose services' ports — manage them from the
+  new **Domains** button on a project's card. Phase 1 is the storage and UI
+  (the embedded reverse proxy above is what makes a saved mapping live). A
+  domain must be a real FQDN (no wildcards, no IP
+  literals), is unique across every project (two projects can't fight over
+  the same public hostname), can't collide with Docker Commander's own
+  configured admin domain(s), and — when the `docker compose` CLI is
+  available — must name a service that actually exists in the project's
+  current compose file, resolved with every Compose profile enabled so a
+  service gated behind one is still mappable. A domain is matched
+  case-insensitively for uniqueness (`App.Example.com` and `app.example.com`
+  are the same hostname) and internationalized domains using punycode
+  (`xn--…`) are accepted. RBAC reuses the project's own "projects" section
+  grants, the same as project secrets and drift ignores. A project's domain
+  mappings are included in the portable recovery bundle, same as its secrets
+  and images. Editing a mapping's service/port from the **Domains** panel is
+  supported (the domain itself is immutable — delete and recreate to
+  repoint a hostname).
+- **Controlled image updates — detection + notification (phase 1 of the
+  feature; auto-apply is a later phase).** Every project's running services
+  are now checked on a schedule (every 6 hours) against what the registry
+  currently reports for their compose-declared tag — the same digest-drift
+  check the deploy preview already does on demand, reused here instead of
+  re-derived. A newly-observed digest raises an *info* `image_update` alert
+  once; the same still-unresolved drift found again on a later poll is never
+  renotified, but a digest that moves again (or reverts) is. Detection and
+  notification only — nothing here applies an update; that, along with
+  per-image ignore controls and a minimum-age/cooldown gate, is later work.
+- **Self-update auto-apply policy.** Self-update already shipped (banner +
+  one-tap + `--self-upgrade`, SHA-256-verified atomic replace) — this adds an
+  opt-in to apply a newer release automatically, on the same 6-hour cadence
+  as the existing update check, instead of waiting for an admin to click
+  **Update & restart**. Off by default; when enabled, a granularity choice
+  (patch only, patch+minor, or everything including major) caps how far it's
+  allowed to jump — the WordPress-style default once enabled is patch+minor,
+  not "auto-apply everything". The ceiling is checked against the exact
+  release resolved at the moment of install, not an earlier cached status, so
+  a release published between two checks can never slip past it. Serialises
+  against a concurrent manual apply through the same lock the one-tap button
+  already uses, so the two can never race. Every automatic apply is recorded
+  in the audit log (as `update.apply`, same as a manual one, with the detail
+  noting it was automatic and which policy triggered it), and every admin
+  sees a one-time "you're now on vX.Y.Z — applied automatically" notice at
+  next login until they dismiss it. Configurable from **Settings →
+  Security**, which explains and disables the control when the update check
+  or self-update itself is unavailable (`DC_UPDATE_CHECK=0`,
+  `DC_SELF_UPDATE=0`, or a platform that can't restart itself) rather than
+  silently accepting a policy that could never run.
+- **Project secrets.** A GitHub-Actions-secrets-style store for a project: name
+  a value once (`DB_PASSWORD`, `API_TOKEN`…) and reference it from the compose
+  file with plain `${NAME}` interpolation instead of inlining it. The value is
+  encrypted at rest, supplied as a process environment variable at deploy time
+  only (never written to `.env` or any file on disk, so it can never end up in
+  a revision snapshot), and can only be replaced, never read back. Everywhere a
+  resolved compose value is normally shown — the Resolved tab, deploy preview,
+  revision diff — a secret renders as a redacted, stable `secret:<fingerprint>`
+  placeholder instead: the same value always fingerprints the same way, so a
+  diff can still show *that* it changed without ever showing *what* it is.
+  RBAC reuses the project's own "projects" section grants (view lists names,
+  write manages them) — no separate secrets permission. Every create/update/
+  delete is audited by name, never by value.
+- **Alert delivery retry.** A webhook that timed out, couldn't be reached, or
+  returned `429`/`5xx`, and an e-mail that failed to send, are now retried
+  automatically — up to 5 attempts, exponential backoff (1m, 2m, 4m, 8m,
+  16m), then it gives up. Deliberately bounded and selective: a webhook
+  returning any other `4xx`, or e-mail failing because SMTP is unconfigured
+  or no recipient resolves, is a configuration problem retrying won't fix,
+  so those are never queued — same as before. Every attempt, retried or not,
+  still lands in the same per-alert Delivery history. A maintenance window
+  that starts (or is still running) by the time a retry is due makes it wait
+  the window out instead of sending, without spending one of its attempts.
+- **Maintenance windows.** Suppress alert *delivery* (webhook/e-mail) for
+  planned work — host, compose project/stack, container, rule and/or
+  severity, one-off or weekly-recurring — without turning monitoring off:
+  the alert still fires and is recorded in the feed (shown with a
+  **silenced** badge), it just doesn't page. A required reason and the
+  author are audited on every create/update/end/delete. A successful
+  **deploy now opens a short auto-silence window** for that project's own
+  host+stack (default 3 minutes, configurable via
+  `-deploy-silence-grace`/`DC_DEPLOY_SILENCE_GRACE`, `0` disables) —
+  containers restarting or warming up right after a deploy are expected
+  noise, not a fresh incident. Manage windows from the new **Maintenance**
+  tab on the Alerts page, or via MCP (`list_maintenance_windows`,
+  `create_maintenance_window`, `end_maintenance_window`).
+  Windows are kept as history, never pruned. One can be deleted while it is
+  only scheduled or once it is over; a running window has to be ended first.
+- **Volume backup jobs.** A trigger-and-status wrapper around your own backup
+  command (restic, borg, or anything else already pointed at its own
+  repository) — not a backup engine of our own: no repositories, retention
+  policies or storage backend. A job runs its command inside a short-lived
+  Docker helper container against a single named **volume** or every named
+  volume a **project** actually created (found via Docker Compose's own
+  `com.docker.compose.project` label, not guessed from the compose file),
+  on a plain "every N minutes" interval or on demand via **Run now**, and
+  records ok/failed, exit code and captured output as run history (capped at
+  the 200 most recent runs per job, so a short interval can't grow the
+  database unbounded). A small status badge on the volume or project shows
+  the last outcome. Credentials the command needs (e.g. `RESTIC_PASSWORD`)
+  go in as an environment map, encrypted at rest and never returned by the
+  API once saved — and can be explicitly cleared from a job's edit form, not
+  just replaced. Admin-only — configuring one is arbitrary-command execution
+  plus a stored secret, the same class of surface as policy rules and the
+  recovery bundle above.
+- **Per-session MCP token revocation.** Revoking used to mean removing an
+  entire OAuth client (a connector's registration), which also killed every
+  other session that connector held. Each authorization now gets its own
+  stable session id, carried across refresh-token rotation, so one specific
+  connector session — "sign out just this laptop's Claude Desktop" — can be
+  revoked on its own: both its live access token and its refresh token stop
+  working immediately, while the client's other sessions are untouched.
+  Sessions are listed and revocable from a new **Sessions** tab on the
+  self-service MCP Access page (your own only) and on the admin MCP overview
+  (every user's).
+- **Portable recovery bundle.** Export everything Docker Commander itself
+  knows — every project's compose + sidecar files, host and registry
+  definitions, alert rules and webhooks, image digests, and (opt-in)
+  instance settings — into one `.dcbundle` file, and import it elsewhere. No
+  volume data. The exporting admin chooses, per export, whether to include
+  store-managed secrets (host TLS keys, registry passwords, webhook URLs,
+  SMTP/LDAP passwords). A passphrase (Argon2id-derived AES-256-GCM, the same
+  scheme `dockercmd backup` already uses, now shared via `internal/passphrase`)
+  is optional for a bundle carrying no projects, but **required** the moment
+  any project is included — a project's own files (`.env`, keys, ...) may
+  carry secrets no matter what the store-managed-secrets choice was, so
+  exporting one unencrypted is never allowed. Import always **inspects**
+  first — a read-only compatibility check against a chosen target host
+  (missing images/volumes, hosts a project references but the bundle
+  doesn't carry) — before anything is written, and never overwrites an
+  existing host/registry/webhook/alert-rule/project by name: a collision is
+  skipped with a warning, exactly like alert rules' existing export/import.
+  Instance-wide settings only apply when explicitly opted into
+  (`applySettings=true`) — a restore onto a live instance never silently
+  repoints its mail relay or feature flags. A project's own secrets travel
+  the same way: names are always carried (harmless metadata), values only
+  when the export included secrets, and import restores them before
+  validating the project so a required `${NAME:?...}` interpolation doesn't
+  reject it. Admin-only.
+- **Deployment plan / diff.** Before deploying a project, **Preview** shows
+  exactly what would change: services added / recreated / left running as
+  orphans, image and registry-digest changes (catches a mutable tag like
+  `:latest` overwritten upstream since the last deploy, even when the tag
+  string itself didn't move), and — for anything already running — env,
+  published ports, volumes (shown as `source:target`), networks, restart
+  policy, resource limits and healthcheck differences — env diffs show the
+  actual values, not just which keys changed — each flagged with whether
+  applying it recreates the container. Every comparison is one-directional:
+  it only flags a field the compose file actually declares and disagrees
+  with reality, never a field compose is silent on — knowing what compose
+  has ever actually
+  managed needs stored history, which the revision store below now is. A
+  first-class screen (`GET /api/projects/{id}/preview`), not just the
+  existing `preview_deploy` MCP tool, and it warns about unsaved editor
+  changes the same way Deploy/Down/Restart already do.
+- **Drift detection.** The deploy preview above doubles as this: any drift
+  found — a container's actual config no longer matching the compose file —
+  can be reviewed and **ignored** (scoped to the specific service, kind AND
+  value, e.g. accepting today's resource-limit change on `web` never silences
+  a different resource-limit change on `web` tomorrow), which keeps it
+  visible but excludes it from the active count, and is fully reversible
+  (**unignore**). A successful deploy clears a project's ignores, so one
+  never silently outlives the state it was reviewed against. A **Reconcile
+  now** button in the same view redeploys immediately (forcing a fresh image
+  pull, so a mutable tag that moved on the registry actually gets fetched) to
+  fix whatever's left active.
+- **Deployment revisions and rollback.** Every successful project deploy is
+  now recorded as an immutable revision — its compose file and every sidecar
+  file, profiles, target host, the image reference *and the digest actually
+  running* per service, validation state, output, author and reason — with
+  a new **History** view. **Diff** compares any revision against another, or
+  against what's running right now, reusing the exact same plan/diff engine
+  (down to the env diff, key AND value — the same values the compose file
+  and the existing Resolved preview already show at this permission level).
+  **Restore** validates the old snapshot — compose resolution, deploy
+  policy, and the digest-pin override that stops a mutable tag from
+  quietly swapping in a different image — entirely against a staging copy;
+  the live project directory is only ever touched by a single atomic swap
+  once every check has passed, and any later failure (including the deploy
+  itself) restores exactly what was there before. Redeploys with the
+  revision's own profiles and becomes a new revision itself — history only
+  grows forward, it's never rewritten. Never touches named volumes. The
+  project editor picks up the restored files and profiles immediately,
+  without needing to be closed and reopened.
+- **A new Troubleshooting tab** runs a battery of read-only sanity checks
+  against the selected Docker host and reports each as OK/warning/failed/
+  skipped: overlapping Docker network subnets, duplicate host port bindings,
+  containers logging without a rotation limit, and dangling (unused)
+  networks/volumes. Exposed via the REST API (`POST /api/diagnostics/run`)
+  and as an MCP tool (`run_diagnostics`), gated by a new `diagnostics`
+  permission section.
+- **Automatic HTTPS via ACME (Let's Encrypt).** `DC_ACME_DOMAINS` obtains and
+  renews a browser-trusted certificate for a public host with no reverse
+  proxy in front, instead of a static `DC_TLS_CERT`/`DC_TLS_KEY` pair —
+  `DC_ACME_EMAIL`, `DC_ACME_CACHE_DIR` and `DC_ACME_DIRECTORY_URL` (to test
+  against Let's Encrypt's staging directory) round it out. Uses the `tls-alpn-01` challenge, so no separate port-80
+  listener is needed.
+- **Image vulnerability scans can now be triaged.** Select one or more CVEs in
+  a Trivy scan's results and **ignore** them in bulk — the decision is global
+  (keyed by CVE id, not per-image), so reviewing one finding once hides it
+  wherever else it turns up. Ignored rows hide by default; a "Show ignored"
+  toggle brings them back with an un-ignore action.
+- **Logs: download the currently-filtered view as a `.log` file** — the
+  aggregated Logs page respects whatever source/level/search filter is
+  active and exports exactly what's on screen, one line per entry with a
+  full timestamp.
+- **Troubleshooting now also checks the host itself**: a Docker network's
+  subnet overlapping one of the host's real network interfaces (the
+  corporate-LAN/VPN collision that prompted this feature), a bridge
+  network's MTU not matching the host's default interface, and low free
+  disk space where Docker actually stores its data. These probe the host
+  over SSH for a remote host (adapting to whatever `ip`/`ifconfig`/`ipconfig`
+  the target offers — Linux, macOS or Windows) or directly for the local
+  daemon; a host reached only over plain TCP, with no shell access, reports
+  these checks as **skipped** rather than guessing.
+- **Policy checks before deploy.** Seven deploy-time rules — privileged
+  containers, host network/PID namespace, a Docker socket mount, an unpinned
+  (`:latest`) image, missing resource limits, missing healthcheck — each
+  independently configurable as **off / warn / block** under the new
+  **Policy rules** admin page. A **warn** violation asks the operator to
+  confirm before the deploy runs; a **block** violation refuses it outright,
+  with no per-deploy override — only changing that rule's mode gets past it.
+  Every rule defaults to **off**: most existing compose files have no
+  healthcheck or resource limits, so enabling anything by default would have
+  demanded a confirmation dialog on nearly every ordinary deploy across every
+  existing install. Adds zero overhead when every rule is off — the compose
+  config is only resolved for evaluation once at least one rule is enabled.
+
+### Changed
+- **The user manual reads more plainly.** The pages now have a *Common tasks*
+  section with short recipes for what people actually do there, followed by a
+  tighter reference. Several statements that no longer matched the app were corrected
+  along the way, and the Troubleshooting page has its own chapter.
+- **Menu.** Policy rules, MCP Admin and Recovery bundle are now tabs in Settings
+  (`/settings?tab=policy|mcp|recovery`). Backup jobs moved to Storage, next to
+  Volumes. The old `/policy-rules`, `/mcp-admin` and `/recovery` URLs no longer
+  work and don't redirect. The API paths are unchanged.
+- **Top talkers** has no page of its own. Its table is Resources → Network, and
+  the dashboard panel links there.
+- **Dashboard disk tiles.** The Images tile now shows the image total with shared
+  layers counted once (it used to add up every image's size). The *Layers total*
+  tile is gone. Build cache leaves out records marked shared.
+- **Maintenance windows and repeats.** While a window is open, the `firing` and
+  `resolved` of a silenced condition are stored, but its `repeat` re-announcements
+  are not (they are still logged). When the window ends and the condition is still
+  true, the next check delivers it as a `firing`, not as a `repeat`. Silenced
+  events no longer show a toast.
+- **A closed maintenance window can't be edited.** After it has been ended or has
+  expired, only Delete is left (the API returns `409`).
+- **Docker SDK moved from `github.com/docker/docker` to `github.com/moby/moby/client`
+  (+ `moby/moby/api`).** The old Go module is frozen at 28.5.2 and will never
+  receive another fix, so every future daemon CVE would keep flagging this
+  project even though only the client half of it was ever imported. The new
+  modules are the maintained line. No feature change, and the documented
+  minimum stays Engine API **1.43** (Engine 24) — the new SDK's own floor is
+  lower (1.40), so nothing narrowed. Worth knowing: a malformed network
+  **subnet** or **gateway** is now rejected by Docker Commander itself with a
+  message naming the field, instead of by the daemon.
+- **The Docker version compatibility matrix now also covers Engine 29** (nightly
+  `compat.yml`, plus a pinned `29.7.2` patch job), following its GA. Docs updated
+  to match ("Tested Engine majors", tier 6 in `docs/testing.md`).
+- **`dockercmd --self-upgrade` now checks write access before downloading**,
+  instead of fetching the full release asset and only then discovering it
+  can't write the target directory. From an interactive terminal, a failed
+  check now offers to re-exec elevated (`sudo` on Linux/macOS, a UAC prompt
+  on Windows) rather than just failing.
+
+### Fixed
+- **A failed restore on a remote host puts the seeded volumes back.** The restore
+  copied the revision's files into the volumes the running containers mount and
+  then deployed; if anything after that failed, only the project folder was
+  rolled back, and the containers kept reading the older revision's files. The
+  volumes are now saved first (up to 2 GiB in all; over it the restore is
+  refused before anything changes) and restored on any failure, owners
+  included. A seed that failed part-way also left its helper containers
+  running, which kept a new volume mounted so it couldn't be removed.
+- **A project runs one operation at a time.** A restore swaps the project folder
+  and deletes the old one, so an editor save made while it ran answered OK and
+  was then lost. Deploy, down, restart, restore, file writes, uploads, deletes,
+  settings and deleting the project now take the project in turn; the second
+  one is refused with `409` and told what is running. Stack actions on a
+  project's stack (start, stop, restart, remove, in Stacks or over MCP) wait
+  their turn the same way.
+- **A revision restore that trips a Warn-mode policy rule can be confirmed.** The
+  deploy-history dialog never sent the confirmation, so such a restore was
+  refused with no way past it in the UI. It now asks, like a deploy does.
+- **Download buttons follow write access.** Export, file and folder downloads and
+  image **Save** need write access since this release, and a refused download
+  opened a bare error page. They are now shown only to accounts that may use them.
+- **Maintenance windows:** **Delete** is offered only before a window starts or
+  once it is over, matching the server. Past windows are folded under **Past
+  windows**, 50 at a time, since they are now kept as history.
+- **The MTU check says what it compared.** It compares only bridge networks that
+  set their own MTU, but its OK result said every bridge network matched. It now
+  counts the ones it compared and the ones left on Docker's default.
+- **Sizes in the UI are labelled in binary units** (`KiB`, `MiB`, `GiB`), like the
+  alert messages; they were counted in 1024s but labelled `KB`/`MB`/`GB`. The
+  memory fields and a network rule's threshold now say `MiB` and `MiB/s`.
+- **UI text that said the wrong thing:** the Features tab now says disabled
+  sections stay reachable for admins; the container **Changes** tab compares with
+  the image, not "since start"; blank limits in container **Settings** stay as
+  they are rather than being "sent as 0 (unlimited)"; Stacks no longer promises
+  compose deploys "coming next"; the *diagnostics* section is labelled
+  **Troubleshooting** in the permission lists.
+- **An account whose only second factor is a passkey is no longer sent to the
+  authenticator enrolment screen at every sign-in.** The gate checked for an
+  authenticator app only, so with 2FA enforced such an account couldn't reach the
+  app without pairing one.
+- **An account whose only second factor is a passkey can add another one.** The
+  Security tab asked for the password only when an authenticator app was paired,
+  while the server asks whenever any second factor is, so adding a factor was
+  refused with no field to type the password in.
+- **An MCP write spends one unit of the control rate limit.** `acknowledge_alert`,
+  `deploy_project` and `down_project` check a second scope (the alert's or the
+  project's host) and spent a unit for each check, so they used up the 30-a-minute
+  ceiling twice as fast.
+- **Alert messages label sizes in binary units** (`KiB`, `MiB`, `GiB`). They were
+  counted in 1024s but labelled `KB`/`MB`/`GB`.
+- **Backup jobs work with images that have an `ENTRYPOINT`, such as
+  `restic/restic`.** The command replaced only the image's CMD, so restic's
+  entrypoint ran `restic sh -c "…"` and every run of the default image failed.
+  The command now replaces the entrypoint and runs as `sh -c <command>`.
+- **`dockercmd --make-certs` honours `--data-dir`.** It wrote into the default
+  data dir, which under `sudo` on a packaged install is root's own config dir,
+  not `/var/lib/dockercmd`. Run as root, it now also prints the `chown` the
+  service user needs to read the key.
+- **MCP `scan_image` and `run_diagnostics` are audited**, as `mcp.image.scan`
+  and `mcp.diagnostics.run`, like their REST counterparts. Both are writes (a
+  scan pulls the image and runs Trivy; diagnostics run commands over SSH) but
+  left no audit entry over MCP.
+- **A Project's stack can no longer be edited or redeployed from Stacks.** The
+  Stacks editor offered Save and Redeploy for any stack whose file it could
+  reach, including the ones Projects deploy, which bypassed the project's
+  revisions and policy checks. Such a stack now opens read-only with a note to
+  use Projects.
+- **Building an image uses the credentials stored under Registries**, so a
+  Dockerfile whose `FROM` is a private image builds. The Build dialog sent no
+  credentials, and such a build failed even with the registry stored. Only the
+  registries the Dockerfile pulls from (`FROM`, `COPY --from=<image>`) get
+  their credentials sent: the daemon, possibly a remote host, never sees the
+  rest. The uploaded context is now limited to 2 GiB, like other uploads.
+- **The Windows service keeps a log.** It wrote to a console the service doesn't
+  have, so its log was lost, while the installer pointed at the Event Viewer,
+  where nothing was written. It now writes `dockercmd.log` in the data dir,
+  rotated at 10 MiB.
+- **`dockercmd --backup` no longer writes to what it backs up.** It opens the
+  database read-only and without migrations. A data dir with no database is now
+  refused instead of backed up as a new empty one (which happened with
+  `sudo dockercmd --backup` on a packaged install without `--data-dir`), and a file
+  that isn't a Docker Commander database is refused and left untouched.
+- **The systemd service can listen on port 443.** The unit grants
+  `CAP_NET_BIND_SERVICE`, which HTTPS via Let's Encrypt on 443 needs. Packages
+  (.deb/.rpm) get the new unit on upgrade. An install made with
+  `--install-service` keeps its old unit until you run
+  `sudo dockercmd --install-service` again and then
+  `sudo systemctl restart dockercmd`.
+- **Sections granted through a role show up in the menu.** The menu read only
+  the account's own sections, so a page reachable through a role had no menu
+  entry. The section picker for a new MCP token had the same gap.
+- **Deploys pull private images with the credentials stored under Registries.**
+  Project deploys, revision restores, MCP deploys and stack redeploys on the
+  local daemon now give `docker compose` a temporary Docker config with those
+  credentials (private to the server user, deleted when the run ends). Before,
+  compose only had the server user's own `docker login`. Your existing Docker
+  config is kept, and a stored credential takes precedence over a credential
+  helper or `DOCKER_AUTH_CONFIG` entry for the same registry. A stored
+  credential that can't be decrypted, or a Docker config that can't be read, no
+  longer stops the deploy: it is skipped and named in the deploy output.
+  **Exception:** a CLI stack on an SSH host runs `docker compose` on that host,
+  which keeps using that host's own `docker login`; the redeploy doesn't copy
+  the stored credentials there, and its output says so.
+- **The Audit log shows each entry's detail and host.** Both were recorded and
+  returned by the API but never displayed, so the page couldn't say how a
+  sign-in happened or on which server a container was stopped. The search now
+  covers them too. A host the account can't see is shown by its id.
+- **Audit entries record the host an action really reached.** An action on the
+  local daemon (the default, with no host chosen) used to be recorded with no
+  host at all, and so did every project action and every action taken through
+  MCP, even on a remote host. Entries with no host are shown to every reader of
+  the audit log, so a reader limited to some hosts could see deploys and MCP
+  actions on hosts outside their scope. Project actions now name the project's
+  host, backup jobs their job's host, host settings and alert acknowledgements
+  that host, and everything that talks to Docker the daemon it reached, including
+  an MCP call refused before it got there. Something spanning several hosts (a
+  maintenance window for more than one host, acknowledging all alerts across
+  hosts) is shown only to readers who see every host. Entries written before 1.7.0 can't be
+  corrected and keep showing no host.
+- **A busy host can no longer empty a scoped reader's audit log.** The host
+  scope is applied in the query, before the limit; it used to be applied to the
+  newest 1,000 entries, so a reader limited to host A could get an empty list
+  after 1,000 actions on host B.
+- **The MCP `recent_audit` tool is limited to the hosts the caller may see.** It
+  returned every host's entries to any holder of the audit section.
+- **`dockercmd --backup` includes the project revision snapshots**
+  (`project-revisions/`). Before, a restored database could list a revision whose
+  snapshot was missing. Revision numbers are now assigned in a transaction, so two
+  deploys at once can't get the same number. The recovery bundle does not carry
+  revisions.
+- **Image digest matching no longer reports drift that isn't there** for a
+  re-tagged image, or one sharing a layer with another image, that has a single
+  digest from a different repository.
+- **A slow webhook can't lose its delivery record.** The send, the record and the
+  retry each get their own timeout.
+- **Backup job *Run now* is no longer cancelled when the browser disconnects.** A
+  run can take 30 minutes. Enabling and disabling a job is now audited.
+- **A redeploy preview uses the profiles of the last deploy**, so a profiled service
+  is no longer shown as added or removed by mistake.
+- **Build-cache "reclaimable" and the dashboard build-cache tile leave out shared
+  records**, which made a prune look bigger than it is.
+- **A rate below 1 B/s no longer shows as "819.2 undefined/s".**
+- **Expired MCP tokens are no longer listed as active**, neither in Settings →
+  MCP Admin nor in your own token list. They had already stopped working.
+- **Clicking outside any modal in the app no longer also closes whatever
+  modal it was opened from.** The same missing-`stopPropagation` bug as the
+  Projects modals, found the same way, fixed everywhere it occurs — 26 more
+  spots across 18 files, including every **confirm/prompt/alert dialog**
+  (`useDialogs()`), which is the highest-impact one: it's opened from inside
+  another modal far more often than not, so dismissing "are you sure?" could
+  silently close the modal underneath it too.
+- **The login form now works with password managers.** The username, password
+  and 2FA code fields had no `name`/`autocomplete` attributes, so a password
+  manager had no reliable way to recognise or fill them.
+
 ## [1.6.6] — 2026-10-05
 
 ### Changed
@@ -1999,6 +2532,7 @@ Initial release: a single CGO-free Go binary with an embedded React UI.
   per-section permissions / read-only, feature flags, audit log, optional LDAP;
   secrets encrypted at rest.
 
+[1.7.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.7.0
 [1.6.6]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.6
 [1.6.5]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.5
 [1.6.4]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.4

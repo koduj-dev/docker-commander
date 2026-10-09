@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/koduj-dev/docker-commander/internal/store"
+	"github.com/moby/moby/client"
 )
 
 // Multi-host coverage for seeded bind mounts. There is no host-to-host traffic in
@@ -189,7 +190,7 @@ func hasVolume(t *testing.T, m *Manager, hostID int64, name string) bool {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cli.VolumeInspect(context.Background(), name); err != nil {
+	if _, err := cli.VolumeInspect(context.Background(), name, client.VolumeInspectOptions{}); err != nil {
 		return false
 	}
 	return true

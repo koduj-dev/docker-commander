@@ -201,6 +201,29 @@ CREATE TABLE IF NOT EXISTS alert_deliveries (
 );
 CREATE INDEX IF NOT EXISTS idx_alert_deliveries_event ON alert_deliveries(event_id);
 
+-- A queue of failed deliveries worth retrying, so a webhook endpoint's 500 or
+-- a transient SMTP hiccup isn't the end of the story the way it used to be —
+-- alert_deliveries above only ever recorded that an attempt happened, never
+-- tried again. Only TRANSIENT failures land here (a transport error, 429, or
+-- 5xx for webhooks; any send error for email) — a 4xx or a missing webhook is
+-- a configuration problem retrying won't fix, and reattempting that
+-- indefinitely is its own hazard. rule_emails duplicates the rule's own
+-- recipients at the time of the original attempt (JSON list, same convention
+-- as alert_rules.emails) since a retry re-resolves the SAME recipients the
+-- first attempt used, not whatever the rule says NOW.
+CREATE TABLE IF NOT EXISTS alert_delivery_retries (
+	id              INTEGER PRIMARY KEY AUTOINCREMENT,
+	event_id        INTEGER NOT NULL,
+	channel         TEXT    NOT NULL,           -- 'webhook' | 'email'
+	webhook_id      INTEGER,                    -- NULL for email
+	rule_emails     TEXT    NOT NULL DEFAULT '', -- JSON list; email only
+	attempt         INTEGER NOT NULL DEFAULT 0,  -- retries made so far (0 = none yet)
+	next_attempt_at TEXT    NOT NULL,
+	last_error      TEXT    NOT NULL DEFAULT '',
+	created_at      TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_alert_delivery_retries_due ON alert_delivery_retries(next_attempt_at);
+
 CREATE TABLE IF NOT EXISTS alert_states (
 	host_id      INTEGER NOT NULL DEFAULT 0,
 	container_id TEXT    NOT NULL DEFAULT '',
@@ -215,6 +238,43 @@ CREATE TABLE IF NOT EXISTS alert_states (
 	notified_at  TEXT    NOT NULL,
 	PRIMARY KEY (host_id, container_id, metric)
 );
+
+-- Suppresses alert DELIVERY for the scope and time it covers, without
+-- stopping the engine from noticing or recording what happened — the point
+-- is to stop the paging, not the observing, so alert_events keeps getting
+-- written either way (see AlertEvent.Suppressed). Distinct from a disabled
+-- host (hosts.disabled), which the engine does not watch at all.
+--
+-- Scope columns follow the same "empty means unrestricted" convention as
+-- alert_rules.target and api_tokens.host_ids: a window with every scope
+-- column empty silences everything, matching a rule with an empty Target
+-- matching every container.
+CREATE TABLE IF NOT EXISTS maintenance_windows (
+	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	name         TEXT NOT NULL DEFAULT '',
+	reason       TEXT NOT NULL DEFAULT '',
+	author_id    INTEGER NOT NULL DEFAULT 0,
+	host_ids     TEXT NOT NULL DEFAULT '',  -- JSON list; empty = every host
+	project      TEXT NOT NULL DEFAULT '',  -- compose project substring; '' = every project
+	container    TEXT NOT NULL DEFAULT '',  -- container name substring; '' = every container
+	rule_id      INTEGER,                   -- NULL = every rule
+	severities   TEXT NOT NULL DEFAULT '',  -- JSON list; empty = every severity
+	recurring    INTEGER NOT NULL DEFAULT 0,
+	-- One-off: the exact window. Recurring: starts_at's date is when the
+	-- series begins (its time-of-day is ignored, see time_of_day), ends_at
+	-- is when the whole series stops recurring ('' = indefinitely).
+	starts_at    TEXT NOT NULL,
+	ends_at      TEXT NOT NULL DEFAULT '',
+	weekdays     TEXT NOT NULL DEFAULT '',  -- JSON list of time.Weekday ints (0=Sunday); recurring only
+	time_of_day  TEXT NOT NULL DEFAULT '',  -- "HH:MM" in timezone; recurring only
+	duration_min INTEGER NOT NULL DEFAULT 0,
+	timezone     TEXT NOT NULL DEFAULT '',  -- IANA name; '' = UTC
+	-- Lets an operator end a window early (the work finished ahead of
+	-- schedule) without losing the audit trail a delete would.
+	ended        INTEGER NOT NULL DEFAULT 0,
+	created_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_maintenance_windows_active ON maintenance_windows(ended, recurring, ends_at);
 
 CREATE TABLE IF NOT EXISTS parse_rules (
 	id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -412,7 +472,184 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
 	scope       TEXT NOT NULL DEFAULT '',
 	resource    TEXT NOT NULL DEFAULT '',
 	expires_at  TEXT NOT NULL DEFAULT '',
-	created_at  TEXT NOT NULL
+	created_at  TEXT NOT NULL,
+	session_id  TEXT NOT NULL DEFAULT ''
+);
+
+-- One MCP connector pairing (an OAuth authorization grant and the refresh-token
+-- chain it started), keyed by a stable session id minted once at the initial
+-- authorization-code exchange and carried forward, unchanged, across every
+-- refresh. An access-token JWT is self-contained and re-minted every
+-- AccessTokenTTL, so without a row per session there is nothing to revoke short
+-- of deleting the whole oauth_clients row — this is the same "the row IS the
+-- session" shape as the sessions table above, applied to MCP.
+--
+-- Revoking a session must delete its oauth_refresh_tokens row in the same
+-- transaction (see RevokeMCPOAuthSession): otherwise the still-valid refresh
+-- token silently mints a fresh access token and the "revoked" session comes
+-- back to life on its own next use.
+CREATE TABLE IF NOT EXISTS mcp_oauth_sessions (
+	id           TEXT PRIMARY KEY,        -- the stable session id (not a jti)
+	client_id    TEXT NOT NULL,
+	user_id      INTEGER NOT NULL,
+	ip           TEXT NOT NULL DEFAULT '',
+	user_agent   TEXT NOT NULL DEFAULT '',
+	created_at   TEXT NOT NULL,
+	last_used_at TEXT NOT NULL,
+	expires_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_oauth_sessions_user ON mcp_oauth_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_mcp_oauth_sessions_client ON mcp_oauth_sessions(client_id);
+
+-- A vulnerability a human has reviewed and accepted, so a Trivy scan stops
+-- re-flagging it. Keyed by CVE id alone, not per-image: the identifier is
+-- global, and the same CVE turning up in a different image is still the same
+-- reviewed finding, not a new one to triage again.
+CREATE TABLE IF NOT EXISTS ignored_cves (
+	id         TEXT PRIMARY KEY,        -- e.g. "CVE-2023-12345"
+	reason     TEXT NOT NULL DEFAULT '',
+	added_by   TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL
+);
+
+-- A specific (service, kind) drift on a project a human has reviewed and
+-- deliberately accepted, so the deploy preview stops counting it as active
+-- drift. Scoped per project, unlike ignored_cves: accepting a resource-limit
+-- drift on one project's "web" service says nothing about the same shape
+-- elsewhere. No declared FK (this schema doesn't use them anywhere) —
+-- DeleteProject removes matching rows itself.
+CREATE TABLE IF NOT EXISTS project_drift_ignores (
+	project_id  INTEGER NOT NULL,
+	service     TEXT NOT NULL,
+	kind        TEXT NOT NULL,
+	fingerprint TEXT NOT NULL DEFAULT '',
+	created_at  TEXT NOT NULL,
+	PRIMARY KEY (project_id, service, kind)
+);
+
+-- One successful deploy of a project. The row is metadata only — the actual
+-- compose file + every sidecar file, as they were at that moment, live on
+-- disk as a zip under DataDir/project-revisions/<project_id>/<revision>.zip
+-- (see Server.revisionZipPath). Resolved config and structural diffs are
+-- always derived fresh from that zip rather than duplicated here, so there is
+-- exactly one stored copy of "what did this revision actually contain" to go
+-- stale. The revision column numbers 1.. per project (not a global id),
+-- because that is the number an operator says out loud ("roll back to
+-- revision 4").
+CREATE TABLE IF NOT EXISTS project_revisions (
+	id               INTEGER PRIMARY KEY AUTOINCREMENT,
+	project_id       INTEGER NOT NULL,
+	revision         INTEGER NOT NULL,
+	host_id          INTEGER NOT NULL DEFAULT 0,
+	profiles         TEXT NOT NULL DEFAULT '',  -- JSON array
+	images           TEXT NOT NULL DEFAULT '',  -- JSON [{"service","image","digest"}]
+	valid            INTEGER NOT NULL DEFAULT 1,
+	validation_error TEXT NOT NULL DEFAULT '',
+	output           TEXT NOT NULL DEFAULT '',
+	author           TEXT NOT NULL DEFAULT '',
+	reason           TEXT NOT NULL DEFAULT '',
+	created_at       TEXT NOT NULL,
+	UNIQUE (project_id, revision)
+);
+CREATE INDEX IF NOT EXISTS idx_project_revisions_project ON project_revisions(project_id);
+
+-- A trigger-and-status wrapper around a user-supplied backup command (their
+-- own restic/borg/etc, already pointed at its own repository) run against a
+-- volume's or project's data. Not a backup engine: no repository, retention
+-- or storage logic of our own. last_run_* is denormalized here (mirroring how
+-- alert_rules stays separate from alert_events/alert_deliveries) so a
+-- volume/project badge is an O(1) lookup rather than a join against
+-- backup_runs. env_enc is the job's command environment (e.g.
+-- RESTIC_PASSWORD), JSON-encoded then encrypted with the store's cipher —
+-- write-only, same pattern as registries.secret_enc.
+CREATE TABLE IF NOT EXISTS backup_jobs (
+	id               INTEGER PRIMARY KEY AUTOINCREMENT,
+	name             TEXT NOT NULL,
+	enabled          INTEGER NOT NULL DEFAULT 1,
+	scope            TEXT NOT NULL,             -- 'volume' | 'project'
+	volume_name      TEXT NOT NULL DEFAULT '',
+	project_id       INTEGER NOT NULL DEFAULT 0,
+	host_id          INTEGER NOT NULL DEFAULT 0,
+	image            TEXT NOT NULL,
+	command          TEXT NOT NULL,             -- run as: sh -c <command>
+	env_enc          TEXT NOT NULL DEFAULT '',
+	interval_minutes INTEGER NOT NULL DEFAULT 0, -- 0 = manual only
+	created_by       TEXT NOT NULL DEFAULT '',
+	created_at       TEXT NOT NULL,
+	updated_at       TEXT NOT NULL,
+	last_run_at      TEXT NOT NULL DEFAULT '',
+	last_run_ok      INTEGER NOT NULL DEFAULT 0,
+	last_run_detail  TEXT NOT NULL DEFAULT ''
+);
+
+-- Append-only run history for a backup job (status feed / audit trail of
+-- what actually happened, separate from the job's own config).
+CREATE TABLE IF NOT EXISTS backup_runs (
+	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	job_id       INTEGER NOT NULL,
+	started_at   TEXT NOT NULL,
+	finished_at  TEXT NOT NULL DEFAULT '',
+	ok           INTEGER NOT NULL DEFAULT 0,
+	exit_code    INTEGER NOT NULL DEFAULT 0,
+	output       TEXT NOT NULL DEFAULT '',
+	error        TEXT NOT NULL DEFAULT '',
+	triggered_by TEXT NOT NULL DEFAULT '' -- 'schedule' or a username
+);
+CREATE INDEX IF NOT EXISTS idx_backup_runs_job ON backup_runs(job_id);
+
+-- A project's named secret values, referenced from its compose file via
+-- plain ${NAME} interpolation. docker-commander supplies NAME as a process
+-- env var at compose-invocation time only — never written to .env or any
+-- file on disk, so it can never leak into a project_revisions zip snapshot.
+-- value_enc is AES-256-GCM, base64(nonce||ciphertext), same pattern as
+-- registries.secret_enc / backup_jobs.env_enc — write-only: no query in
+-- this file selects it except ResolveProjectSecretEnv.
+CREATE TABLE IF NOT EXISTS project_secrets (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	project_id INTEGER NOT NULL,
+	name       TEXT NOT NULL,       -- env-style identifier, e.g. DB_PASSWORD
+	value_enc  TEXT NOT NULL,
+	created_by TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	UNIQUE (project_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_project_secrets_project ON project_secrets(project_id);
+
+-- A domain a human wants the (optional, not-yet-built) embedded reverse
+-- proxy to route to one service+port inside this project — see NEXT.md's
+-- "Per-container domain + TLS". This table stores intent only: nothing
+-- listens on the domain until the proxy engine itself ships. The domain
+-- column is UNIQUE across ALL projects, not just within one — two projects
+-- fighting over the same public hostname is a conflict the proxy could not
+-- resolve either, so it's rejected here at write time instead. No declared
+-- FK, matching this schema's existing convention — DeleteProject removes
+-- matching rows itself (see deleteDomainMappings).
+CREATE TABLE IF NOT EXISTS domain_mappings (
+	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	project_id  INTEGER NOT NULL,
+	domain      TEXT NOT NULL UNIQUE,
+	service     TEXT NOT NULL,
+	target_port INTEGER NOT NULL,
+	tls_mode    TEXT NOT NULL DEFAULT 'acme',
+	created_by  TEXT NOT NULL DEFAULT '',
+	created_at  TEXT NOT NULL,
+	updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_domain_mappings_project ON domain_mappings(project_id);
+
+-- Dedup state for the image-update poller (see internal/api's
+-- StartImageUpdatePollLoop): the digest we last notified about for one
+-- project's service, so a poll that finds the same still-unresolved drift
+-- again never sends a second notification, but a digest that moves again
+-- (or reverts to what's running) does. Not a history/audit table — one row
+-- per (project, service), overwritten in place.
+CREATE TABLE IF NOT EXISTS project_image_update_state (
+	project_id           INTEGER NOT NULL,
+	service              TEXT NOT NULL,
+	last_notified_digest TEXT NOT NULL DEFAULT '',
+	updated_at           TEXT NOT NULL,
+	PRIMARY KEY (project_id, service)
 );
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
@@ -436,6 +673,10 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
 		`ALTER TABLE hosts ADD COLUMN alert_email TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE alert_events ADD COLUMN host_id INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE alert_events ADD COLUMN host_name TEXT NOT NULL DEFAULT ''`,
+		// The feed summarises a condition's repeats per event; that looks the
+		// same container/rule up by key, which would otherwise scan the table.
+		// Here (not in the schema above) because host_id is added by ALTER.
+		`CREATE INDEX IF NOT EXISTS idx_alert_events_key ON alert_events(container_id, host_id, rule_id, id)`,
 		// 'firing' is the default so every event recorded before alerts had a
 		// lifecycle reads as what it was: the moment a condition was noticed.
 		`ALTER TABLE alert_events ADD COLUMN kind TEXT NOT NULL DEFAULT 'firing'`,
@@ -494,6 +735,33 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
 		// profile set", not "stopped". Empty means never successfully deployed, or
 		// deployed with no profiles.
 		`ALTER TABLE projects ADD COLUMN last_deployed_profiles TEXT NOT NULL DEFAULT ''`,
+		// Scopes a drift ignore to the specific from/to/detail values reviewed,
+		// not just the (service, kind) pair — see ProjectDriftIgnore's doc
+		// comment. A pre-existing row from before this column defaults to '',
+		// which never matches a real fingerprint, so it simply stops applying
+		// rather than mismatching something it was never meant to cover.
+		`ALTER TABLE project_drift_ignores ADD COLUMN fingerprint TEXT NOT NULL DEFAULT ''`,
+		// Carries a session's stable id across refresh-token rotation, so
+		// RevokeMCPOAuthSession can find and delete the CURRENT refresh token
+		// for a session without knowing its (single-use, rotating) hash. A
+		// pre-existing row predates per-session revocation and defaults to '',
+		// which matches no session id — it simply isn't individually
+		// revocable until its owner refreshes again after upgrade.
+		`ALTER TABLE oauth_refresh_tokens ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`,
+		// Whether an active maintenance window suppressed this event's delivery,
+		// and which one — the event itself is still recorded either way (see
+		// maintenance_windows' doc comment), so an operator reviewing the feed
+		// can tell "nothing happened" from "something happened and was silenced".
+		// suppressed_by outlives the window it names (no FK): a deleted window
+		// must not make past events look like they were never silenced.
+		`ALTER TABLE alert_events ADD COLUMN suppressed INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE alert_events ADD COLUMN suppressed_by INTEGER NOT NULL DEFAULT 0`,
+		// The container's compose project at the time this event fired,
+		// resolved by the live alert path (Docker event attributes,
+		// ListContainers labels, or the stats snapshot) and persisted here so
+		// a LATER read — a maintenance-window check for a queued delivery
+		// retry — can still scope by project, which nothing else stores.
+		`ALTER TABLE alert_events ADD COLUMN project TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := s.db.ExecContext(ctx, alter); err != nil && !isDuplicateColumn(err) {
 			return err

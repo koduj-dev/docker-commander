@@ -62,6 +62,15 @@ const (
 type Store interface {
 	Record(ctx context.Context, samples []Sample) error
 	Query(ctx context.Context, containerID, metric string, since time.Time) ([]Point, error)
+	// QueryAll is Query for several containers at once — built for ranking
+	// (e.g. "top talkers"), where asking per-container would mean one round
+	// trip per container. containerIDs is REQUIRED and never treated as
+	// "every known id": the Redis backend has no index to enumerate ids
+	// from, so leaving the two backends' behaviour identical here means a
+	// caller can never accidentally depend on memory-only behaviour.
+	// Containers with no points in the window are simply absent from the
+	// result, not present with an empty slice.
+	QueryAll(ctx context.Context, metric string, since time.Time, containerIDs []string) (map[string][]Point, error)
 	// HostFor reports which host a container's samples were recorded from.
 	// ok=false means nothing has ever been recorded for that id, which callers
 	// must treat as "unknown", not as the local daemon.

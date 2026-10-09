@@ -49,3 +49,22 @@ func Less(a, b string) bool {
 	}
 	return false
 }
+
+// Delta classifies how far b is ahead of a: "major", "minor" or "patch" for
+// the most significant component that differs, or "" when b is not strictly
+// newer than a (equal, older, or either unparseable).
+func Delta(a, b string) string {
+	av, aok := Parse(a)
+	bv, bok := Parse(b)
+	if !aok || !bok || !Less(a, b) {
+		return ""
+	}
+	switch {
+	case av[0] != bv[0]:
+		return "major"
+	case av[1] != bv[1]:
+		return "minor"
+	default:
+		return "patch"
+	}
+}

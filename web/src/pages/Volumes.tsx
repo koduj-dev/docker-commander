@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { Database, Trash2, Loader2, Eraser, FileSearch, Plus, Boxes, FolderOpen, X } from "lucide-react";
 import { api, fileApiForVolume } from "../lib/api";
-import type { VolumeSummary } from "../lib/types";
+import type { BackupJob, VolumeSummary } from "../lib/types";
 import { relTime } from "../lib/format";
+import { getHostId } from "../lib/host";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner } from "../components/ui";
 import { InspectModal } from "../components/InspectModal";
 import { FileBrowser } from "../components/FileBrowser";
 import { useDialogs } from "../components/Dialog";
 import { useListControls, SearchBar, Pager, type StatusOption } from "../components/ListControls";
+import { useCanWrite } from "../auth/access";
 
 const VOLUME_STATUSES: StatusOption<VolumeSummary>[] = [
   { value: "all", label: "All volumes" },
@@ -39,7 +41,14 @@ export function Volumes() {
   const [pruning, setPruning] = useState(false);
   const [inspect, setInspect] = useState<VolumeSummary | null>(null);
   const [browse, setBrowse] = useState<VolumeSummary | null>(null);
+  // Downloading a volume's files hands them over: write access to Volumes.
+  const canDownloadFiles = useCanWrite("volumes");
   const [showForm, setShowForm] = useState(false);
+  // Indexed by volume name, for the small backup-status badge below. Fetching
+  // fails silently (403) for a non-admin, since backup jobs are admin-only —
+  // the badge just doesn't render, rather than surfacing an error for a
+  // feature this user can't see anyway.
+  const [backupJobs, setBackupJobs] = useState<Map<string, BackupJob>>(new Map());
   const dialogs = useDialogs();
 
   // Closing the browser also tears down the helper container DC spun up.
@@ -50,6 +59,16 @@ export function Volumes() {
 
   const load = useCallback(() => {
     api.volumes().then(setVols).catch(() => setVols([]));
+    api.backupJobs()
+      .then((jobs) => {
+        const activeHost = getHostId() ?? 0;
+        const byVolume = new Map<string, BackupJob>();
+        for (const j of jobs) {
+          if (j.scope === "volume" && (j.hostId || 0) === activeHost) byVolume.set(j.volumeName, j);
+        }
+        setBackupJobs(byVolume);
+      })
+      .catch(() => {});
   }, []);
   useEffect(() => load(), [load]);
 
@@ -125,6 +144,14 @@ export function Volumes() {
                             <Boxes className="h-3 w-3" /> in use by {(v.inUseBy ?? []).join(", ")}
                           </span>
                         )}
+                        {backupJobs.has(v.name) && (
+                          <span
+                            className={`text-[10px] rounded-sm px-1.5 py-0.5 ${backupJobs.get(v.name)!.lastRunOk ? "bg-ok/15 text-ok" : backupJobs.get(v.name)!.lastRunAt ? "bg-danger/15 text-danger" : "bg-panel2 text-muted"}`}
+                            title={backupJobs.get(v.name)!.lastRunDetail || undefined}
+                          >
+                            backup: {backupJobs.get(v.name)!.lastRunAt ? (backupJobs.get(v.name)!.lastRunOk ? "ok" : "failed") : "never run"}
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs text-muted font-mono mt-1 break-all">{v.mountpoint}</div>
                       {v.createdAt && <div className="text-xs text-muted mt-0.5">{relTime(parseCreated(v.createdAt))}</div>}
@@ -153,7 +180,7 @@ export function Volumes() {
       {inspect && <InspectModal kind="volume" id={inspect.name} title={inspect.name} onClose={() => setInspect(null)} />}
 
       {browse && (
-        <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={closeBrowse}>
+        <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); closeBrowse(); }}>
           <div className="w-[80vw] max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-2 mb-2">
               <Database className="h-4 w-4 text-accent shrink-0" />
@@ -161,7 +188,7 @@ export function Volumes() {
               <span className="text-xs text-muted">— volume files</span>
               <button className="btn-ghost px-2 py-1.5 ml-auto" title="Close" onClick={closeBrowse}><X className="h-4 w-4" /></button>
             </div>
-            <FileBrowser fs={fileApiForVolume(browse.name)} />
+            <FileBrowser fs={fileApiForVolume(browse.name)} canDownload={canDownloadFiles} />
           </div>
         </div>
       )}

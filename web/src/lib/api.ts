@@ -7,8 +7,12 @@ import type {
   AlertRule,
   AppSettings,
   UpdateStatus,
+  DomainMapping,
+  DomainMappingInput,
+  SelfUpdatePolicy,
   ComposeModel,
   AuditEntry,
+  DiagnosticsReport,
   LdapConfig,
   ManagedUser,
   ContainerDetail,
@@ -17,9 +21,11 @@ import type {
   CreateSpec,
   DiffEntry,
   FileEntry,
-  DiskUsage,
+  DiskReport, DiskUsage,
+  RetentionPolicy, RetentionRun, RetentionState,
   HistoryEntry,
   ScanResponse,
+  IgnoredCVE,
   Host,
   ImageSummary,
   ImageSearchResult,
@@ -32,6 +38,8 @@ import type {
   Role,
   RoleSection,
   MCPToken,
+  MCPSession,
+  AdminMCPSession,
   MCPStatus,
   MCPTokenPolicy,
   AdminMCPToken,
@@ -47,17 +55,30 @@ import type {
   TemplateRef,
   FileApi,
   ProjectFile,
+  DeployPreview,
+  ProjectRevision,
+  ProjectSecret,
   ResourceOverview,
   SmtpConfig,
   Stack,
   SystemInfo,
   VolumeSummary,
   TopResult,
+  TopTalkers,
   Topology,
   User,
   Webhook,
   NetworkStats,
   AuthFactor,
+  RecoveryManifestSummary,
+  CompatibilityReport,
+  RecoveryImportSummary,
+  PolicyRules,
+  PolicyViolation,
+  BackupJob,
+  BackupJobInput,
+  BackupRun,
+  MaintenanceWindow,
 } from "./types";
 import { getHostId, hostParam } from "./host";
 import type { CreationOptions, RequestOptions } from "./webauthn";
@@ -145,6 +166,29 @@ async function uploadTar(path: string, file: File): Promise<{ ok: boolean; error
   return data;
 }
 
+// recoveryPassphraseHeader carries a recovery bundle's passphrase in a header,
+// never a query string (which would end up in access logs/proxies) — an
+// empty passphrase omits the header entirely, matching the API's own "no
+// header = not encrypted" reading.
+function recoveryPassphraseHeader(passphrase: string): Record<string, string> {
+  return passphrase ? { "X-Recovery-Passphrase": passphrase } : {};
+}
+
+// uploadRecoveryBundle POSTs a bundle file as a raw body, the same shape as
+// uploadTar/importProject, plus the passphrase header.
+async function uploadRecoveryBundle<T>(path: string, file: File, passphrase: string): Promise<T> {
+  const res = await fetch(path, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/octet-stream", ...recoveryPassphraseHeader(passphrase) },
+    body: file,
+  });
+  const text = await res.text();
+  const data = parseJSON(text);
+  if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText);
+  return data as T;
+}
+
 export interface Enrollment {
   secret: string;
   otpauthUrl: string;
@@ -171,6 +215,8 @@ export interface LoginResult {
 export interface AlertListParams {
   severity?: string;
   kind?: string;
+  /** Drop "repeat" events — still-true re-announcements — from the list. */
+  hideRepeats?: boolean;
   host?: number;
   container?: string;
   rule?: string;
@@ -180,6 +226,26 @@ export interface AlertListParams {
   desc?: boolean;
   limit?: number;
   offset?: number;
+}
+
+export interface MaintenanceWindowBody {
+  name: string;
+  reason: string;
+  hostIds: number[];
+  project: string;
+  container: string;
+  ruleId: number | null;
+  severities: string[];
+  recurring: boolean;
+  startsAt: string;
+  /** Omit (don't send "") for an open-ended recurring series — Go's
+   * time.Time JSON decoder rejects an empty string but leaves the field at
+   * its zero value for a missing key or an explicit null. */
+  endsAt?: string;
+  weekdays?: number[];
+  timeOfDay?: string;
+  durationMin?: number;
+  timezone?: string;
 }
 
 export const api = {
@@ -194,6 +260,10 @@ export const api = {
   logout: () => req<{ ok: boolean }>("POST", "/api/auth/logout"),
   // Own alert address. Self-service: it only ever affects this account's alerts.
   setMyEmail: (email: string) => req<{ ok: boolean }>("PUT", "/api/auth/me/email", { email }),
+  // Own password: needs the current one; ends every other session and re-issues
+  // this one's cookie.
+  changeMyPassword: (current: string, password: string) =>
+    req<unknown>("PUT", "/api/auth/me/password", { current, password }),
   // The caller's own roles and resulting grants, for the profile page.
   myAccess: () => req<MyAccess>("GET", "/api/auth/me/access"),
 
@@ -223,6 +293,15 @@ export const api = {
   settings: () => req<AppSettings>("GET", "/api/settings"),
   setSettings: (b: { disabledSections: string[]; localhostNo2fa: boolean }) =>
     req<{ ok: boolean }>("PUT", "/api/settings", b),
+
+  // Data retention (admin): per-area TTLs, what is stored, and "purge now".
+  retention: () => req<RetentionState>("GET", "/api/settings/retention"),
+  setRetention: (p: RetentionPolicy) => req<{ ok: boolean }>("PUT", "/api/settings/retention", p),
+  purgeRetention: () => req<RetentionRun>("POST", "/api/settings/retention/purge"),
+
+  // Deploy-time policy rules (admin): off/warn/block per rule.
+  policyRules: () => req<PolicyRules>("GET", "/api/policy-rules"),
+  setPolicyRules: (modes: Record<string, string>) => req<{ ok: boolean }>("PUT", "/api/policy-rules", modes),
 
   // LDAP / external auth (admin). Send only server-known fields.
   ldap: () => req<LdapConfig>("GET", "/api/ldap"),
@@ -514,13 +593,74 @@ export const api = {
   // Resolved compose model (JSON) for the overview / port-conflict check.
   projectSummary: (id: number, overlay?: { name: string; content: string }) =>
     req<{ ok: boolean; model?: ComposeModel; error?: string }>("POST", `/api/projects/${id}/summary`, overlay),
+  // What deploying this project would change — services added/recreated/left
+  // alone, and (for anything already running) image/digest/env/ports/volumes/
+  // networks/restart/resources/healthcheck differences. Read-only: a GET.
+  previewProject: (id: number) => req<DeployPreview>("GET", `/api/projects/${id}/preview`),
+  // Marks one (service, kind) drift as reviewed/accepted so it stops counting
+  // toward `active` on future previews (still shown, marked `ignored`), or
+  // reverses that. from/to/detail are the change's own content — the server
+  // fingerprints them so the ignore is scoped to this specific drift, not
+  // every future change of the same (service, kind).
+  ignoreDrift: (id: number, service: string, kind: string, from?: string, to?: string, detail?: string) =>
+    req<{ ok: boolean }>("POST", `/api/projects/${id}/drift/ignore`, { service, kind, from, to, detail }),
+  unignoreDrift: (id: number, service: string, kind: string) =>
+    req<{ ok: boolean }>("POST", `/api/projects/${id}/drift/unignore`, { service, kind }),
+  // Deployment revisions: an immutable history of a project's deploys, with
+  // diff (against another revision, or "current" for what's actually
+  // running) and restore (rolls the project back and redeploys it).
+  listRevisions: (id: number) => req<ProjectRevision[]>("GET", `/api/projects/${id}/revisions`),
+  getRevision: (id: number, rev: number) => req<ProjectRevision>("GET", `/api/projects/${id}/revisions/${rev}`),
+  diffRevision: (id: number, rev: number, against: string) =>
+    req<DeployPreview>("GET", `/api/projects/${id}/revisions/${rev}/diff?against=${encodeURIComponent(against)}`),
+  restoreRevision: (id: number, rev: number, reason?: string, confirmPolicyWarnings = false) =>
+    req<{
+      ok: boolean; output?: string; error?: string; note?: string;
+      needsConfirmation?: boolean;
+      policy?: { blocked?: PolicyViolation[]; warnings?: PolicyViolation[]; error?: string; code?: string };
+    }>(
+      "POST", `/api/projects/${id}/revisions/${rev}/restore`, { reason: reason || "", confirmPolicyWarnings },
+    ),
+  // Project secrets: named values referenced from the compose file via plain
+  // ${NAME} interpolation. The value is write-only — never returned by list,
+  // and update replaces it without ever echoing the old one back.
+  listProjectSecrets: (id: number) => req<ProjectSecret[]>("GET", `/api/projects/${id}/secrets`),
+  createProjectSecret: (id: number, name: string, value: string) =>
+    req<{ id: number }>("POST", `/api/projects/${id}/secrets`, { name, value }),
+  updateProjectSecret: (id: number, name: string, value: string) =>
+    req<{ ok: boolean }>("PUT", `/api/projects/${id}/secrets/${encodeURIComponent(name)}`, { value }),
+  deleteProjectSecret: (id: number, name: string) =>
+    req<{ ok: boolean }>("DELETE", `/api/projects/${id}/secrets/${encodeURIComponent(name)}`),
+  // Domain mappings: domain -> service:port, routed by the embedded reverse
+  // proxy when it is enabled (local-host projects only).
+  listDomainMappings: (id: number) => req<DomainMapping[]>("GET", `/api/projects/${id}/domains`),
+  createDomainMapping: (id: number, body: DomainMappingInput) =>
+    req<{ id: number }>("POST", `/api/projects/${id}/domains`, body),
+  updateDomainMapping: (id: number, domainID: number, body: DomainMappingInput) =>
+    req<{ ok: boolean }>("PUT", `/api/projects/${id}/domains/${domainID}`, body),
+  deleteDomainMapping: (id: number, domainID: number) =>
+    req<{ ok: boolean }>("DELETE", `/api/projects/${id}/domains/${domainID}`),
+  // Every profile enabled, so a profile-gated service is offered too — the
+  // exact same catalog the server validates a mapping's `service` against.
+  listDomainMappingServices: (id: number) => req<{ services: string[]; error?: string }>("GET", `/api/projects/${id}/domains/services`),
   // Lint a Dockerfile via `docker build --check` (no build steps run).
   checkDockerfile: (id: number, content: string) =>
     req<{ level: "ok" | "warning" | "error"; output?: string; unavailable?: boolean }>("POST", `/api/projects/${id}/dockerfile-check`, { content }),
   // `note` is set when deploying to a remote host copied bind-mounted paths into
   // seeded volumes — the UI shows it above the compose output.
-  deployProject: (id: number, profiles: string[] = []) =>
-    req<{ ok: boolean; output?: string; error?: string; note?: string }>("POST", `/api/projects/${id}/deploy`, { profiles }),
+  // `pull`: force a registry check for every service (`--pull always`)
+  // instead of Compose's own default of only pulling an image that's
+  // missing locally. Needed to actually fix a "digest" drift the preview
+  // reported — a plain deploy would just reuse the stale local image.
+  deployProject: (id: number, profiles: string[] = [], opts?: { pull?: boolean; confirmPolicyWarnings?: boolean }) =>
+    req<{
+      ok: boolean; output?: string; error?: string; note?: string;
+      needsConfirmation?: boolean;
+      policy?: { blocked?: PolicyViolation[]; warnings?: PolicyViolation[]; error?: string; code?: string };
+    }>(
+      "POST", `/api/projects/${id}/deploy`,
+      { profiles, pull: opts?.pull ?? false, confirmPolicyWarnings: opts?.confirmPolicyWarnings ?? false },
+    ),
   downProject: (id: number) =>
     req<{ ok: boolean; output?: string; error?: string }>("POST", `/api/projects/${id}/down`),
   restartProject: (id: number) =>
@@ -598,6 +738,9 @@ export const api = {
   },
 
   diskUsage: () => req<DiskUsage>("GET", `/api/system/df${hostParam()}`),
+  // Per-object disk report. The daemon call behind it is expensive, so the
+  // server caches it (~1 min); refresh=true asks for a fresh one.
+  diskReport: (refresh = false) => req<DiskReport>("GET", `/api/stats/disk?${refresh ? "refresh=1" : "refresh=0"}${hostParam("&")}`),
 
   images: () => req<ImageSummary[]>("GET", `/api/images${hostParam()}`),
   // Image-name autocomplete: Docker Hub repo search (via the host daemon) and Hub
@@ -634,6 +777,13 @@ export const api = {
     if (h != null) params.set("host", String(h));
     return req<ScanResponse>("GET", `/api/images/scan?${params.toString()}`);
   },
+  // Ignored CVEs are global (a CVE id means the same thing on every host), so
+  // — unlike scanImage — these deliberately carry no ?host=.
+  ignoredCVEs: () => req<IgnoredCVE[]>("GET", "/api/images/ignored-cves"),
+  ignoreCVEs: (ids: string[], reason: string) =>
+    req<{ ok: boolean }>("POST", "/api/images/ignored-cves", { ids, reason }),
+  unignoreCVE: (id: string) =>
+    req<{ ok: boolean }>("DELETE", `/api/images/ignored-cves/${encodeURIComponent(id)}`),
 
   // Image/container transfer. Save/export are downloads (same-origin GET, cookie
   // auth) so we expose URLs the UI hands to an <a download>.
@@ -673,8 +823,11 @@ export const api = {
   }) =>
     req<{ id: number; token: string }>("POST", "/api/mcp/tokens", b),
   deleteMcpToken: (id: number) => req<{ ok: boolean }>("DELETE", `/api/mcp/tokens/${id}`),
+  mcpSessions: () => req<MCPSession[]>("GET", "/api/mcp/sessions"),
+  revokeMcpSession: (id: string) => req<{ ok: boolean }>("DELETE", `/api/mcp/sessions/${encodeURIComponent(id)}`),
 
-  // MCP admin overview (admin-only): every user's tokens + registered OAuth clients.
+  // MCP admin overview (admin-only): every user's tokens + registered OAuth
+  // clients + live connector sessions.
   mcpAdminTokens: () => req<AdminMCPToken[]>("GET", "/api/mcp-admin/tokens"),
   mcpAdminRevokeToken: (id: number) => req<{ ok: boolean }>("DELETE", `/api/mcp-admin/tokens/${id}`),
   mcpAdminTokenPolicy: () => req<MCPTokenPolicy>("GET", "/api/mcp-admin/token-policy"),
@@ -682,6 +835,9 @@ export const api = {
   mcpAdminOAuthClients: () => req<AdminOAuthClient[]>("GET", "/api/mcp-admin/oauth-clients"),
   mcpAdminDeleteOAuthClient: (id: string) =>
     req<{ ok: boolean }>("DELETE", `/api/mcp-admin/oauth-clients/${encodeURIComponent(id)}`),
+  mcpAdminSessions: () => req<AdminMCPSession[]>("GET", "/api/mcp-admin/sessions"),
+  mcpAdminRevokeSession: (id: string) =>
+    req<{ ok: boolean }>("DELETE", `/api/mcp-admin/sessions/${encodeURIComponent(id)}`),
 
   networkStats: (id: string) =>
     req<NetworkStats>("GET", `/api/networks/${encodeURIComponent(id)}/stats${hostParam()}`),
@@ -696,6 +852,10 @@ export const api = {
     req<{ ok: boolean; error?: string }>("POST", `/api/networks/${id}/disconnect${hostParam()}`, { container, force }),
 
   volumes: () => req<VolumeSummary[]>("GET", `/api/volumes${hostParam()}`),
+  // volumesForHost lists a SPECIFIC host's volumes, independent of the
+  // globally active host — used by the backup-job form, where the target
+  // host is a field on the job, not the shell's current selection.
+  volumesForHost: (hostId: number) => req<VolumeSummary[]>("GET", `/api/volumes?host=${hostId}`),
   createVolume: (b: { name: string; driver?: string }) =>
     req<{ ok: boolean; error?: string }>("POST", `/api/volumes${hostParam()}`, b),
   deleteVolume: (name: string, force = false) => {
@@ -712,15 +872,24 @@ export const api = {
   updateStatus: () => req<UpdateStatus>("GET", "/api/update"), // admin-only
   applyUpdate: () => req<{ from: string; to: string; restartRequired: boolean }>("POST", "/api/update"), // admin-only
   restartServer: () => req<{ restarting: boolean }>("POST", "/api/update/restart"), // admin-only
+  setSelfUpdatePolicy: (p: SelfUpdatePolicy) => req<SelfUpdatePolicy>("PUT", "/api/update/policy", p), // admin-only
   prefs: () => req<Record<string, unknown>>("GET", "/api/prefs"),
   savePrefs: (obj: Record<string, unknown>) => req<{ ok: boolean }>("PUT", "/api/prefs", obj),
   system: () => req<SystemInfo>("GET", `/api/system${hostParam()}`),
   statsOverview: () => req<ResourceOverview>("GET", `/api/stats/overview${hostParam()}`),
   hostPorts: () => req<HostPortProbe[]>("GET", `/api/stats/ports${hostParam()}`),
+  // Ranks containers by network throughput averaged over a STORED window
+  // (never a point-in-time sample — see docs/alerts.md's "top talkers" note
+  // for why). metric is "total" | "netrx" | "nettx". q, if given, filters to
+  // containers whose name contains it (case-insensitive) BEFORE ranking —
+  // the only way to find a container that isn't itself in the top `limit`.
+  topTalkers: (window: string, metric: string, limit?: number, q?: string) =>
+    req<TopTalkers>("GET", `/api/stats/top-talkers?window=${window}&metric=${metric}${limit ? `&limit=${limit}` : ""}${q ? `&q=${encodeURIComponent(q)}` : ""}${hostParam("&")}`),
   // hostSystem fetches engine/host info for a specific host (not the active one).
   hostSystem: (id: number) => req<SystemInfo>("GET", `/api/system?host=${id}`),
   audit: (limit = 50, before?: number) =>
     req<AuditEntry[]>("GET", `/api/audit?limit=${limit}${before ? `&before=${before}` : ""}`),
+  runDiagnostics: () => req<DiagnosticsReport>("POST", `/api/diagnostics/run${hostParam()}`),
 
   // Alerting
   webhooks: () => req<Webhook[]>("GET", "/api/webhooks"),
@@ -751,10 +920,18 @@ export const api = {
   importAlertRules: (bundle: unknown) =>
     req<{ imported: number; warnings: string[] }>("POST", "/api/alert-rules/import", bundle),
 
+  maintenanceWindows: () => req<MaintenanceWindow[]>("GET", "/api/maintenance-windows"),
+  createMaintenanceWindow: (body: MaintenanceWindowBody) => req<{ id: number }>("POST", "/api/maintenance-windows", body),
+  updateMaintenanceWindow: (id: number, body: MaintenanceWindowBody) =>
+    req<{ ok: boolean }>("PUT", `/api/maintenance-windows/${id}`, body),
+  endMaintenanceWindow: (id: number) => req<{ ok: boolean }>("POST", `/api/maintenance-windows/${id}/end`),
+  deleteMaintenanceWindow: (id: number) => req<{ ok: boolean }>("DELETE", `/api/maintenance-windows/${id}`),
+
   alerts: (params?: AlertListParams) => {
     const p = new URLSearchParams();
     if (params?.severity) p.set("severity", params.severity);
     if (params?.kind) p.set("kind", params.kind);
+    if (params?.hideRepeats) p.set("hideRepeats", "1");
     if (params?.host !== undefined) p.set("host", String(params.host));
     if (params?.container) p.set("container", params.container);
     if (params?.rule) p.set("rule", params.rule);
@@ -774,6 +951,7 @@ export const api = {
     const p = new URLSearchParams();
     if (params?.severity) p.set("severity", params.severity);
     if (params?.kind) p.set("kind", params.kind);
+    if (params?.hideRepeats) p.set("hideRepeats", "1");
     if (params?.host !== undefined) p.set("host", String(params.host));
     if (params?.container) p.set("container", params.container);
     if (params?.rule) p.set("rule", params.rule);
@@ -800,6 +978,46 @@ export const api = {
       "GET",
       `/api/metrics/history?container=${encodeURIComponent(container)}&metric=${metric}&range=${range}${hostParam("&")}`
     ),
+
+  // Portable recovery bundle. The passphrase never goes in the URL — it goes
+  // in a header, kept out of query strings/access logs — and is only ever
+  // held in memory on this page, never persisted.
+  exportRecoveryBundle: async (opts: { includeSecrets: boolean; projectIds?: number[] }, passphrase: string): Promise<Blob> => {
+    const res = await fetch("/api/recovery/export", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", ...recoveryPassphraseHeader(passphrase) },
+      body: JSON.stringify(opts),
+    });
+    if (!res.ok) {
+      const data = parseJSON(await res.text());
+      throw new ApiError(res.status, data?.error ?? res.statusText);
+    }
+    return res.blob();
+  },
+  inspectRecoveryBundle: (file: File, passphrase: string, hostId?: number) =>
+    uploadRecoveryBundle<{ manifest: RecoveryManifestSummary; compatibility: CompatibilityReport }>(
+      `/api/recovery/inspect${hostId ? `?host=${hostId}` : ""}`, file, passphrase,
+    ),
+  importRecoveryBundle: (file: File, passphrase: string, opts: { hostId?: number; applySettings?: boolean }) => {
+    const p = new URLSearchParams();
+    if (opts.hostId) p.set("host", String(opts.hostId));
+    if (opts.applySettings) p.set("applySettings", "true");
+    const qs = p.toString();
+    return uploadRecoveryBundle<{ summary: RecoveryImportSummary; warnings: string[] }>(
+      `/api/recovery/import${qs ? `?${qs}` : ""}`, file, passphrase,
+    );
+  },
+
+  // Volume backup jobs: a trigger-and-status wrapper around a user-supplied
+  // backup command. env is write-only — never returned by list/get.
+  backupJobs: () => req<BackupJob[]>("GET", "/api/backup-jobs"),
+  createBackupJob: (body: BackupJobInput) => req<{ id: number }>("POST", "/api/backup-jobs", body),
+  updateBackupJob: (id: number, body: BackupJobInput) => req<{ ok: boolean }>("PUT", `/api/backup-jobs/${id}`, body),
+  toggleBackupJob: (id: number, enabled: boolean) => req<{ ok: boolean }>("PATCH", `/api/backup-jobs/${id}`, { enabled }),
+  deleteBackupJob: (id: number) => req<{ ok: boolean }>("DELETE", `/api/backup-jobs/${id}`),
+  runBackupJob: (id: number) => req<{ ok: boolean }>("POST", `/api/backup-jobs/${id}/run`),
+  backupJobRuns: (id: number) => req<BackupRun[]>("GET", `/api/backup-jobs/${id}/runs`),
 };
 
 // File-browser adapters: the FileBrowser component works over a FileApi, so the

@@ -20,7 +20,7 @@ const (
 func TestAccessTokenRoundTrip(t *testing.T) {
 	key := []byte("0123456789abcdef0123456789abcdef")
 
-	tok, exp, err := MintAccessToken(key, testIssuer, testResource, 42, "cli-test", true, time.Hour)
+	tok, exp, err := MintAccessToken(key, testIssuer, testResource, 42, "cli-test", "sess-test", true, time.Hour)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -28,7 +28,7 @@ func TestAccessTokenRoundTrip(t *testing.T) {
 		t.Fatal("expiry should be in the future")
 	}
 
-	uid, gotCID, ro, gotExp, err := parseAccessToken(key, testResource, tok)
+	uid, gotCID, gotSID, ro, gotExp, err := parseAccessToken(key, testResource, tok)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -40,6 +40,11 @@ func TestAccessTokenRoundTrip(t *testing.T) {
 	if gotCID != "cli-test" {
 		t.Fatalf("client id did not survive the round trip: %q", gotCID)
 	}
+	// Likewise the session binding — it is what lets ONE session be revoked
+	// without removing the whole client.
+	if gotSID != "sess-test" {
+		t.Fatalf("session id did not survive the round trip: %q", gotSID)
+	}
 	if gotExp.Unix() != exp.Unix() {
 		t.Fatalf("expiry mismatch: %v vs %v", gotExp, exp)
 	}
@@ -49,26 +54,26 @@ func TestAccessTokenRejections(t *testing.T) {
 	key := []byte("0123456789abcdef0123456789abcdef")
 	other := []byte("ffffffffffffffffffffffffffffffff")
 
-	tok, _, _ := MintAccessToken(key, testIssuer, testResource, 7, "cli-test", false, time.Hour)
+	tok, _, _ := MintAccessToken(key, testIssuer, testResource, 7, "cli-test", "sess-test", false, time.Hour)
 
 	t.Run("wrong audience rejected (RFC 8707 binding)", func(t *testing.T) {
-		if _, _, _, _, err := parseAccessToken(key, "https://evil.example.com/mcp", tok); err == nil {
+		if _, _, _, _, _, err := parseAccessToken(key, "https://evil.example.com/mcp", tok); err == nil {
 			t.Fatal("token for a different resource must be rejected")
 		}
 	})
 	t.Run("wrong signing key rejected", func(t *testing.T) {
-		if _, _, _, _, err := parseAccessToken(other, testResource, tok); err == nil {
+		if _, _, _, _, _, err := parseAccessToken(other, testResource, tok); err == nil {
 			t.Fatal("token signed with another key must be rejected")
 		}
 	})
 	t.Run("expired token rejected", func(t *testing.T) {
-		expired, _, _ := MintAccessToken(key, testIssuer, testResource, 7, "cli-test", false, -time.Minute)
-		if _, _, _, _, err := parseAccessToken(key, testResource, expired); err == nil {
+		expired, _, _ := MintAccessToken(key, testIssuer, testResource, 7, "cli-test", "sess-test", false, -time.Minute)
+		if _, _, _, _, _, err := parseAccessToken(key, testResource, expired); err == nil {
 			t.Fatal("expired token must be rejected")
 		}
 	})
 	t.Run("garbage rejected", func(t *testing.T) {
-		if _, _, _, _, err := parseAccessToken(key, testResource, "not.a.jwt"); err == nil {
+		if _, _, _, _, _, err := parseAccessToken(key, testResource, "not.a.jwt"); err == nil {
 			t.Fatal("malformed token must be rejected")
 		}
 	})
@@ -95,12 +100,19 @@ func TestVerifyTokenOAuthPath(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("client: %v", err)
 	}
+	// Likewise the session: verification requires the session row to still
+	// exist, same as the client above.
+	if err := st.CreateMCPOAuthSession(context.Background(), &store.MCPOAuthSession{
+		ID: "sess-test", ClientID: "cli-test", UserID: uid, ExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("session: %v", err)
+	}
 	h := newHandler(Deps{
 		Store: st, SigningKey: key, ResourceURL: testResource, IssuerURL: testIssuer,
 		CheckAccess: func(context.Context, *store.User, string, bool, int64) error { return nil },
 	})
 
-	tok, _, _ := MintAccessToken(key, testIssuer, testResource, uid, "cli-test", true, time.Hour)
+	tok, _, _ := MintAccessToken(key, testIssuer, testResource, uid, "cli-test", "sess-test", true, time.Hour)
 	ti, err := h.verifyToken(context.Background(), tok, httptest.NewRequest("POST", "/mcp", nil))
 	if err != nil {
 		t.Fatalf("verify oauth token: %v", err)
@@ -151,13 +163,16 @@ func legacyAccessToken(t *testing.T, key []byte, uid int64) string {
 }
 
 // TestMintAccessTokenRefusesAnUnboundToken pins the decision that a token with no
-// client can never be *minted*, only tolerated on parse. Without this, a future
-// caller passing "" would silently reintroduce an unrevocable token and every
-// existing test would still pass.
+// client, or no session, can never be *minted*, only tolerated on parse.
+// Without this, a future caller passing "" would silently reintroduce an
+// unrevocable token and every existing test would still pass.
 func TestMintAccessTokenRefusesAnUnboundToken(t *testing.T) {
 	key := []byte("0123456789abcdef0123456789abcdef")
-	if _, _, err := MintAccessToken(key, testIssuer, testResource, 1, "", false, time.Hour); err == nil {
+	if _, _, err := MintAccessToken(key, testIssuer, testResource, 1, "", "sess-test", false, time.Hour); err == nil {
 		t.Fatal("minting an access token with no client id must fail — such a token could never be revoked")
+	}
+	if _, _, err := MintAccessToken(key, testIssuer, testResource, 1, "cli-test", "", false, time.Hour); err == nil {
+		t.Fatal("minting an access token with no session id must fail — its session could never be revoked")
 	}
 }
 
@@ -188,6 +203,11 @@ func TestPentestRemovingAnOAuthClientRevokesItsAccessTokens(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("client: %v", err)
 	}
+	if err := st.CreateMCPOAuthSession(ctx, &store.MCPOAuthSession{
+		ID: "sess-doomed", ClientID: "cli-doomed", UserID: uid, ExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("session: %v", err)
+	}
 	h := newHandler(Deps{
 		Store: st, SigningKey: key, ResourceURL: testResource, IssuerURL: testIssuer,
 		CheckAccess: func(context.Context, *store.User, string, bool, int64) error { return nil },
@@ -195,7 +215,7 @@ func TestPentestRemovingAnOAuthClientRevokesItsAccessTokens(t *testing.T) {
 
 	// A long-lived token so the test can only pass because of revocation, never
 	// because the token happened to expire.
-	tok, _, _ := MintAccessToken(key, testIssuer, testResource, uid, "cli-doomed", false, time.Hour)
+	tok, _, _ := MintAccessToken(key, testIssuer, testResource, uid, "cli-doomed", "sess-doomed", false, time.Hour)
 	if _, err := h.verifyToken(ctx, tok, httptest.NewRequest("POST", "/mcp", nil)); err != nil {
 		t.Fatalf("token should work while its client is registered: %v", err)
 	}
@@ -206,5 +226,59 @@ func TestPentestRemovingAnOAuthClientRevokesItsAccessTokens(t *testing.T) {
 
 	if _, err := h.verifyToken(ctx, tok, httptest.NewRequest("POST", "/mcp", nil)); err == nil {
 		t.Fatal("SECURITY: an access token still works after its OAuth client was removed — revoking a connector does not revoke its in-flight access")
+	}
+}
+
+// TestPentestRevokedSessionAccessTokenRejectedImmediately is the point of
+// per-SESSION revocation: unlike TestPentestRemovingAnOAuthClientRevokesItsAccessTokens
+// above, this revokes only ONE session while its client (and any of the
+// client's other sessions) stays registered — the narrower operation the
+// coarser client-removal check above cannot express.
+func TestPentestRevokedSessionAccessTokenRejectedImmediately(t *testing.T) {
+	ctx := context.Background()
+	key := []byte("0123456789abcdef0123456789abcdef")
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	uid, err := st.CreateUser(ctx, &store.User{Username: "carol", PasswordHash: "x", Role: "user"})
+	if err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	if err := st.CreateOAuthClient(ctx, &store.OAuthClient{
+		ID: "cli-multi", Name: "connector", RedirectURIs: []string{"http://127.0.0.1/cb"},
+	}); err != nil {
+		t.Fatalf("client: %v", err)
+	}
+	// Two independent sessions under the SAME client — e.g. the same tool paired
+	// from two machines. Revoking one must not touch the other.
+	for _, sid := range []string{"sess-a", "sess-b"} {
+		if err := st.CreateMCPOAuthSession(ctx, &store.MCPOAuthSession{
+			ID: sid, ClientID: "cli-multi", UserID: uid, ExpiresAt: time.Now().Add(time.Hour),
+		}); err != nil {
+			t.Fatalf("session %s: %v", sid, err)
+		}
+	}
+	h := newHandler(Deps{
+		Store: st, SigningKey: key, ResourceURL: testResource, IssuerURL: testIssuer,
+		CheckAccess: func(context.Context, *store.User, string, bool, int64) error { return nil },
+	})
+
+	// Long-lived tokens so the test can only pass because of revocation, never
+	// because a token happened to expire.
+	tokA, _, _ := MintAccessToken(key, testIssuer, testResource, uid, "cli-multi", "sess-a", false, time.Hour)
+	tokB, _, _ := MintAccessToken(key, testIssuer, testResource, uid, "cli-multi", "sess-b", false, time.Hour)
+
+	if err := st.RevokeMCPOAuthSession(ctx, "sess-a", uid); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+
+	if _, err := h.verifyToken(ctx, tokA, httptest.NewRequest("POST", "/mcp", nil)); err == nil {
+		t.Fatal("SECURITY: a still-time-valid access token works after its own session was revoked")
+	}
+	if _, err := h.verifyToken(ctx, tokB, httptest.NewRequest("POST", "/mcp", nil)); err != nil {
+		t.Fatalf("a sibling session under the same client must be unaffected: %v", err)
 	}
 }

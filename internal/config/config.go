@@ -44,6 +44,33 @@ type Config struct {
 	TLSCert string
 	TLSKey  string
 
+	// ACMEDomains, when non-empty, enables automatic HTTPS: a certificate is
+	// obtained and renewed via ACME (Let's Encrypt by default) for these public
+	// hostnames instead of a static TLSCert/TLSKey pair — mutually exclusive
+	// with them. For a host sitting directly on the public internet with no
+	// reverse proxy in front (the proxy case already terminates TLS itself).
+	ACMEDomains []string
+	// ACMEEmail is optionally registered with the ACME account, so the CA can
+	// reach the operator about renewal problems or policy changes. Not required.
+	ACMEEmail string
+	// ACMECacheDir persists the obtained certificate/key and ACME account state
+	// between restarts, so a restart doesn't re-issue a certificate and burn
+	// into the CA's rate limits. Defaults to <data-dir>/acme.
+	ACMECacheDir string
+	// ACMEDirectoryURL overrides the ACME server (default: Let's Encrypt
+	// production) — e.g. Let's Encrypt's staging directory, to test without
+	// spending production rate-limit budget or minting a real cert, or an
+	// entirely different ACME-compliant CA. NOT a local Pebble instance for
+	// exercising this server's own obtain-and-serve path: Pebble's directory
+	// endpoint uses a locally-generated, untrusted TLS cert (so this process
+	// refuses to talk to it, correctly, the same as it would refuse any
+	// other unverifiable server), and separately, its order-polling response
+	// shape trips a gap in autocert's client library. See docs/gotchas.md.
+	// Pebble is still useful for developing this package itself — see
+	// internal/acme/pebble_integration_test.go, which works around both by
+	// driving the ACME protocol at a lower level than this server does.
+	ACMEDirectoryURL string
+
 	// MCPEnabled turns on the remote MCP server (and its OAuth endpoints). Off by
 	// default: when false the /mcp, /oauth and MCP /.well-known routes are not
 	// mounted, so a request is an unknown path (it falls through to the SPA, or a
@@ -57,6 +84,23 @@ type Config struct {
 	// Empty is fine for Bearer-only (Claude Code header) use; the OAuth flow
 	// needs it set.
 	MCPPublicURL string
+
+	// ProxyEnabled turns on the embedded per-container reverse proxy: routing
+	// public traffic for a project's domain_mappings entries to that
+	// project's actual running container, over the SAME shared listener as
+	// DC's own admin UI (SNI-dispatched). Off by default — this opens a
+	// second public attack surface distinct from DC's own admin UI/API, so
+	// it must be a conscious opt-in. Only takes effect when ACME mode is
+	// also active for DC's own admin domain(s) (len(ACMEDomains) > 0); if
+	// ProxyEnabled is true without ACME mode, startup logs a clear no-op
+	// message rather than failing. Local-host projects only in this phase —
+	// see NEXT.md's "Reverse proxy and ingress".
+	ProxyEnabled bool
+	// ProxyACMECacheDir persists the proxy's OWN obtained certificates and
+	// ACME account state, kept in a directory separate from ACMECacheDir (DC's
+	// own admin-domain cache) — a compromise of one manager's cache must not
+	// expose the other's account key. Defaults to <data-dir>/proxy-acme.
+	ProxyACMECacheDir string
 
 	// Version is the build version string, set by main (not from flags/env).
 	Version string
@@ -79,6 +123,19 @@ type Config struct {
 	// (use an SSH tunnel) since they leak goroutine stacks and heap detail.
 	PProf bool
 
+	// LogFile, when set, is where the log goes instead of stderr, rotated at
+	// 10 MiB with one older copy. For a process nothing captures stderr from:
+	// a Windows Scheduled Task, or a detached run.
+	LogFile string
+
+	// DeploySilenceGrace is how long alert delivery is automatically silenced
+	// for a project immediately after a successful deploy — containers
+	// restarting, warming up or briefly reporting a stale health check are
+	// expected noise, not an incident. 0 disables the automatic silence
+	// entirely (unlike MetricsInterval, 0 here is a valid, deliberate choice,
+	// not clamped to a default).
+	DeploySilenceGrace time.Duration
+
 	// TrustedProxies is the set of reverse-proxy networks whose forwarded client
 	// IP (X-Forwarded-For) we trust. Empty (default) means forwarded headers are
 	// IGNORED and the real TCP peer is used for every IP-based decision (rate
@@ -90,6 +147,13 @@ type Config struct {
 
 // DBPath is the path to the SQLite database file.
 func (c Config) DBPath() string { return filepath.Join(c.DataDir, "docker-commander.db") }
+
+// TLSEnabled reports whether the server should speak HTTPS — either from a
+// static cert/key pair or from ACME-obtained domains. The two are mutually
+// exclusive (enforced in Load), so this is never true from both at once.
+func (c Config) TLSEnabled() bool {
+	return (c.TLSCert != "" && c.TLSKey != "") || len(c.ACMEDomains) > 0
+}
 
 // Load parses flags/env/config-file and returns the resolved configuration.
 //
@@ -130,13 +194,21 @@ func Load() (Config, error) {
 	flag.StringVar(&c.MetricsToken, "metrics-token", lookup("DC_METRICS_TOKEN"), "require this bearer token to scrape /metrics (empty = open)")
 	flag.StringVar(&c.TLSCert, "tls-cert", lookup("DC_TLS_CERT"), "PEM TLS certificate path (enables HTTPS together with -tls-key)")
 	flag.StringVar(&c.TLSKey, "tls-key", lookup("DC_TLS_KEY"), "PEM TLS private-key path")
+	acmeDomains := flag.String("acme-domains", lookup("DC_ACME_DOMAINS"), "comma-separated public hostname(s): enables automatic HTTPS via ACME/Let's Encrypt (mutually exclusive with -tls-cert/-tls-key)")
+	flag.StringVar(&c.ACMEEmail, "acme-email", lookup("DC_ACME_EMAIL"), "contact email registered with the ACME account (optional)")
+	flag.StringVar(&c.ACMECacheDir, "acme-cache-dir", lookup("DC_ACME_CACHE_DIR"), "directory to cache the ACME certificate/account state (default: <data-dir>/acme)")
+	flag.StringVar(&c.ACMEDirectoryURL, "acme-directory-url", lookup("DC_ACME_DIRECTORY_URL"), "override the ACME directory URL (default: Let's Encrypt production) — e.g. its staging directory; NOT a local Pebble instance, which this server cannot obtain a certificate through (see docs/gotchas.md)")
 	flag.BoolVar(&c.MCPEnabled, "mcp-enabled", lookup("DC_MCP_ENABLED") == "1", "enable the remote MCP server + OAuth endpoints (off by default; requires HTTPS)")
 	flag.StringVar(&c.MCPPublicURL, "mcp-public-url", lookup("DC_MCP_PUBLIC_URL"), "externally reachable base URL (https://host[:port]) for MCP OAuth audience/metadata")
+	flag.BoolVar(&c.ProxyEnabled, "proxy-enabled", lookup("DC_PROXY_ENABLED") == "1", "enable the embedded per-container reverse proxy for domain_mappings (off by default; requires ACME mode for DC's own admin domain)")
+	flag.StringVar(&c.ProxyACMECacheDir, "proxy-acme-cache-dir", lookup("DC_PROXY_ACME_CACHE_DIR"), "directory to cache the proxy's own ACME certificate/account state (default: <data-dir>/proxy-acme)")
 	flag.StringVar(&c.RedisAddr, "redis-addr", lookup("DC_REDIS_ADDR"), "Redis address (host:port) for metrics history; empty = in-memory")
 	flag.StringVar(&c.RedisPassword, "redis-password", lookup("DC_REDIS_PASSWORD"), "Redis password")
 	retention := flag.Duration("metrics-retention", envDuration("DC_METRICS_RETENTION", 6*time.Hour), "how long to keep metric history")
 	interval := flag.Duration("metrics-interval", envDuration("DC_METRICS_INTERVAL", 15*time.Second), "how often to sample container stats (raise on hosts with many containers)")
-	flag.BoolVar(&c.PProf, "pprof", lookup("DC_PPROF") == "1", "expose net/http/pprof under /debug/pprof (loopback only; for debugging)")
+	flag.StringVar(&c.LogFile, "log-file", lookup("DC_LOG_FILE"), "write the log to this file instead of stderr (rotated at 10 MiB, one older copy kept as <file>.1)")
+	flag.BoolVar(&c.PProf, "pprof", lookup("DC_PPROF") == "1", "expose net/http/pprof on a dedicated loopback listener, 127.0.0.1:6060 (for debugging)")
+	deploySilence := flag.Duration("deploy-silence-grace", envDuration("DC_DEPLOY_SILENCE_GRACE", 3*time.Minute), "automatically silence alert delivery for a project for this long after a successful deploy (0 disables)")
 	trustedProxies := flag.String("trusted-proxies", lookup("DC_TRUSTED_PROXIES"), "comma-separated reverse-proxy IPs/CIDRs whose X-Forwarded-For is trusted (empty = trust none; use the real peer)")
 	flag.Parse()
 
@@ -165,10 +237,37 @@ func Load() (Config, error) {
 		c.MetricsInterval = 15 * time.Second
 	}
 	c.SessionTTL = *ttl
+	// Unlike MetricsInterval above, 0 here is a deliberate, valid choice (the
+	// flag's own help text promises "0 disables"), so it's assigned
+	// unconditionally rather than clamped to a default — the default already
+	// lives in the flag's own envDuration(...) call, which *deploySilence
+	// resolves to whenever nothing overrides it.
+	c.DeploySilenceGrace = *deploySilence
 
 	// HTTPS needs both halves of the keypair.
 	if (c.TLSCert == "") != (c.TLSKey == "") {
 		return c, errors.New("both -tls-cert and -tls-key (DC_TLS_CERT/DC_TLS_KEY) must be set to enable HTTPS")
+	}
+
+	c.ACMEDomains = splitCommaList(*acmeDomains)
+	if len(c.ACMEDomains) > 0 {
+		if c.TLSCert != "" || c.TLSKey != "" {
+			return c, errors.New("-acme-domains cannot be combined with -tls-cert/-tls-key — pick one way to obtain a certificate")
+		}
+		for _, d := range c.ACMEDomains {
+			// ACME/Let's Encrypt issues certificates for hostnames, not bare IPs —
+			// catch the mistake here rather than as an opaque failure from the CA
+			// the first time a certificate is actually requested.
+			if net.ParseIP(d) != nil {
+				return c, fmt.Errorf("-acme-domains: %q is an IP address; ACME issues certificates for hostnames only", d)
+			}
+		}
+		if c.ACMECacheDir == "" {
+			c.ACMECacheDir = filepath.Join(c.DataDir, "acme")
+		}
+	}
+	if c.ProxyACMECacheDir == "" {
+		c.ProxyACMECacheDir = filepath.Join(c.DataDir, "proxy-acme")
 	}
 
 	if err := os.MkdirAll(c.DataDir, 0o700); err != nil {
@@ -217,6 +316,18 @@ func parseCIDRs(raw string) ([]*net.IPNet, error) {
 		out = append(out, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
 	}
 	return out, nil
+}
+
+// splitCommaList splits a comma-separated flag value into trimmed, non-empty
+// entries.
+func splitCommaList(raw string) []string {
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 // ResolveDataDir returns the data directory for standalone CLI actions, which

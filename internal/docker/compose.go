@@ -91,14 +91,36 @@ func ComposeUp(ctx context.Context, dir, slug string, profiles []string, env []s
 // true. It is a no-op for services that declare no `build:`, so it costs nothing
 // on an image-only project.
 func ComposeUpFiles(ctx context.Context, dir, slug string, profiles, env, files []string, build bool) (string, error) {
+	return composeUp(ctx, dir, slug, profiles, env, files, build, false)
+}
+
+// ComposeUpFilesPull is ComposeUpFiles with `--pull always` added, so Compose
+// checks the registry for a newer image on every service before recreating.
+//
+// `up`'s own default pull policy is "missing" — pull only an image that
+// doesn't exist locally at all. That is why reconciling a mutable-tag digest
+// drift (the preview's "digest" change: the tag reads the same, but it now
+// resolves to a different image on the registry) via a plain `up -d` silently
+// does nothing: the stale local image is already present, so it gets reused
+// and the running digest never actually moves, even though the command
+// reports success. Callers that mean to fix exactly that drift need this
+// variant, not ComposeUpFiles.
+func ComposeUpFilesPull(ctx context.Context, dir, slug string, profiles, env, files []string, build bool) (string, error) {
+	return composeUp(ctx, dir, slug, profiles, env, files, build, true)
+}
+
+func composeUp(ctx context.Context, dir, slug string, profiles, env, files []string, build, pull bool) (string, error) {
 	profiles = NormalizeProfiles(profiles)
-	args := make([]string, 0, len(profiles)*2+3)
+	args := make([]string, 0, len(profiles)*2+5)
 	for _, p := range profiles {
 		args = append(args, "--profile", p)
 	}
 	args = append(args, "up", "-d")
 	if build {
 		args = append(args, "--build")
+	}
+	if pull {
+		args = append(args, "--pull", "always")
 	}
 	// Neutralize COMPOSE_PROFILES for the subprocess so the --profile flags
 	// above — built from `profiles`, the caller's authoritative selection (the
@@ -120,7 +142,33 @@ func ComposeUpFiles(ctx context.Context, dir, slug string, profiles, env, files 
 // ComposeProfiles lists the profiles defined in the project's compose file
 // (`docker compose config --profiles`), one per line.
 func ComposeProfiles(ctx context.Context, dir, slug string) ([]string, error) {
-	out, err := runCompose(ctx, dir, slug, nil, "config", "--profiles")
+	return ComposeProfilesEnv(ctx, dir, slug, nil)
+}
+
+// ComposeProfilesEnv is ComposeProfiles with an explicit process environment
+// — see ComposeConfigEnv.
+func ComposeProfilesEnv(ctx context.Context, dir, slug string, env []string) ([]string, error) {
+	out, err := runCompose(ctx, dir, slug, env, "config", "--profiles")
+	if err != nil {
+		return nil, err
+	}
+	var profiles []string
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			profiles = append(profiles, line)
+		}
+	}
+	return profiles, nil
+}
+
+// ComposeProfilesEnvFiles is ComposeProfilesEnv with an explicit `-f` file
+// list, for a project whose compose file isn't the default-discovered name
+// (see ComposeConfigJSONFiles, which already takes files for the same
+// reason) — without it, a non-default filename makes the auto-discovery
+// this otherwise relies on either fail outright or resolve profiles from the
+// wrong file.
+func ComposeProfilesEnvFiles(ctx context.Context, dir, slug string, env, files []string) ([]string, error) {
+	out, err := runComposeFiles(ctx, dir, slug, env, files, "config", "--profiles")
 	if err != nil {
 		return nil, err
 	}
@@ -143,16 +191,33 @@ func ComposeConfig(ctx context.Context, dir, slug string) (string, error) {
 	return runCompose(ctx, dir, slug, nil, "config", "--quiet")
 }
 
+// ComposeConfigEnv is ComposeConfig with an explicit process environment —
+// used when the compose file interpolates a value (e.g. a project secret's
+// placeholder) that must be supplied without ever going through .env or any
+// file on disk.
+func ComposeConfigEnv(ctx context.Context, dir, slug string, env []string) (string, error) {
+	return runCompose(ctx, dir, slug, env, "config", "--quiet")
+}
+
 // ComposeResolvedConfig returns the fully-resolved compose configuration
 // (`docker compose config` without --quiet): anchors, merge keys, ${VAR}
 // interpolation and extends/include flattened into one canonical YAML — exactly
 // what `up` will deploy. Only stdout (the YAML) is returned; on failure the
 // error carries stderr.
 func ComposeResolvedConfig(ctx context.Context, dir, slug string) (string, error) {
+	return ComposeResolvedConfigEnv(ctx, dir, slug, nil)
+}
+
+// ComposeResolvedConfigEnv is ComposeResolvedConfig with an explicit process
+// environment — see ComposeConfigEnv.
+func ComposeResolvedConfigEnv(ctx context.Context, dir, slug string, env []string) (string, error) {
 	cctx, cancel := context.WithTimeout(ctx, composeTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(cctx, "docker", "compose", "-p", slug, "config")
 	cmd.Dir = dir
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -169,10 +234,34 @@ func ComposeResolvedConfig(ctx context.Context, dir, slug string) (string, error
 // (`docker compose config --format json`) — used to build a project overview
 // (services, ports, volumes) and detect issues like duplicate host ports.
 func ComposeConfigJSON(ctx context.Context, dir, slug string) ([]byte, error) {
+	return ComposeConfigJSONFiles(ctx, dir, slug, nil, nil, nil)
+}
+
+// ComposeConfigJSONFiles is ComposeConfigJSON with the same profile/env/file
+// selection ComposeUpFiles deploys with — including the COMPOSE_PROFILES
+// neutralization (see composeUp) — so the resolved model includes exactly the
+// services `up` will create. Compose silently omits a service gated behind an
+// inactive profile from a plain `config --format json`, so evaluating policy
+// against ComposeConfigJSON's zero-profile result would miss a violation
+// inside a profile the caller actually selected.
+func ComposeConfigJSONFiles(ctx context.Context, dir, slug string, profiles, env, files []string) ([]byte, error) {
 	cctx, cancel := context.WithTimeout(ctx, composeTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, "docker", "compose", "-p", slug, "config", "--format", "json")
+	profiles = NormalizeProfiles(profiles)
+	args := []string{"compose", "-p", slug}
+	for _, f := range files {
+		if f = strings.TrimSpace(f); f != "" {
+			args = append(args, "-f", f)
+		}
+	}
+	for _, p := range profiles {
+		args = append(args, "--profile", p)
+	}
+	args = append(args, "config", "--format", "json")
+	cmd := exec.CommandContext(cctx, "docker", args...)
 	cmd.Dir = dir
+	env = append(append([]string{}, env...), "COMPOSE_PROFILES=")
+	cmd.Env = append(os.Environ(), env...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

@@ -52,6 +52,11 @@ Don't skim it, actually run the commands. Two checkpoints, both mandatory.
    **squash**, and requires the `build` check. The maintainer's account is a
    permanent bypass actor, so `--merge` (merge commit) still works for them —
    don't assume that holds for any other account/token acting on this repo.
+6. **Merging into any `release/vX.Y.Z` branch is also always squash**, by
+   convention (not GitHub-enforced there the way it is on `main`, so don't
+   rely on the ruleset to catch a slip) — `gh pr merge <N> --squash`, never
+   `--merge`, including branch-sync PRs (e.g. "merge main into
+   release/vX.Y.Z").
 
 ## Branching
 

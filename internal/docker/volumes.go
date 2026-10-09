@@ -4,9 +4,7 @@ import (
 	"context"
 	"sort"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/volume"
+	"github.com/moby/moby/client"
 )
 
 // VolumeSummary describes a Docker volume for the Volumes page, including which
@@ -34,15 +32,15 @@ func (m *Manager) ListVolumes(ctx context.Context, hostID int64) ([]VolumeSummar
 	if err != nil {
 		return nil, err
 	}
-	resp, err := cli.VolumeList(ctx, volume.ListOptions{})
+	resp, err := cli.VolumeList(ctx, client.VolumeListOptions{})
 	if err != nil {
 		return nil, err
 	}
 
 	// Map volume name -> container names that mount it.
 	usage := map[string][]string{}
-	if ctrs, err := cli.ContainerList(ctx, container.ListOptions{All: true}); err == nil {
-		for _, c := range ctrs {
+	if ctrs, err := cli.ContainerList(ctx, client.ContainerListOptions{All: true}); err == nil {
+		for _, c := range ctrs.Items {
 			name := cleanName(c.Names)
 			for _, mnt := range c.Mounts {
 				if mnt.Type == "volume" && mnt.Name != "" {
@@ -52,11 +50,8 @@ func (m *Manager) ListVolumes(ctx context.Context, hostID int64) ([]VolumeSummar
 		}
 	}
 
-	out := make([]VolumeSummary, 0, len(resp.Volumes))
-	for _, v := range resp.Volumes {
-		if v == nil {
-			continue
-		}
+	out := make([]VolumeSummary, 0, len(resp.Items))
+	for _, v := range resp.Items {
 		out = append(out, VolumeSummary{
 			Name: v.Name, Driver: v.Driver, Mountpoint: v.Mountpoint,
 			Scope: v.Scope, CreatedAt: v.CreatedAt, Labels: v.Labels,
@@ -75,10 +70,11 @@ func (m *Manager) CreateVolume(ctx context.Context, hostID int64, name, driver s
 	if err != nil {
 		return nil, err
 	}
-	v, err := cli.VolumeCreate(ctx, volume.CreateOptions{Name: name, Driver: driver, Labels: labels})
+	res, err := cli.VolumeCreate(ctx, client.VolumeCreateOptions{Name: name, Driver: driver, Labels: labels})
 	if err != nil {
 		return nil, err
 	}
+	v := res.Volume
 	return &VolumeSummary{
 		Name: v.Name, Driver: v.Driver, Mountpoint: v.Mountpoint,
 		Scope: v.Scope, CreatedAt: v.CreatedAt, Labels: v.Labels,
@@ -92,7 +88,8 @@ func (m *Manager) RemoveVolume(ctx context.Context, hostID int64, name string, f
 	if err != nil {
 		return err
 	}
-	return cli.VolumeRemove(ctx, name, force)
+	_, err = cli.VolumeRemove(ctx, name, client.VolumeRemoveOptions{Force: force})
+	return err
 }
 
 // PruneVolumes removes all unused (anonymous and named) volumes.
@@ -102,9 +99,10 @@ func (m *Manager) PruneVolumes(ctx context.Context, hostID int64) (*VolumePruneR
 		return nil, err
 	}
 	// "all=true" prunes named volumes too, not just anonymous ones.
-	rep, err := cli.VolumesPrune(ctx, filters.NewArgs(filters.Arg("all", "true")))
+	res, err := cli.VolumePrune(ctx, client.VolumePruneOptions{All: true})
 	if err != nil {
 		return nil, err
 	}
+	rep := res.Report
 	return &VolumePruneResult{Deleted: rep.VolumesDeleted, SpaceReclaimed: rep.SpaceReclaimed}, nil
 }

@@ -16,12 +16,15 @@ import { Terminal } from "../components/Terminal";
 import { InspectModal } from "../components/InspectModal";
 import { triggerDownload } from "../components/LoadModal";
 import { FileBrowser } from "../components/FileBrowser";
+import { useCanWrite } from "../auth/access";
 
 const MAX_SAMPLES = 60;
 const MAX_LOGS = 2000;
 
 export function ContainerDetail() {
   const { id = "" } = useParams();
+  // Export and file downloads hand over the container's content: write access.
+  const canDownload = useCanWrite("containers");
   const [detail, setDetail] = useState<Detail | null>(null);
   const [samples, setSamples] = useState<StatsSample[]>([]);
   const [logs, setLogs] = useState<LogLine[]>([]);
@@ -101,7 +104,7 @@ export function ContainerDetail() {
         <div className="flex items-center gap-2">
           <button className="btn-ghost" onClick={() => setCommitOpen(true)} title="Commit to a new image"><Camera className="h-4 w-4" /> Commit</button>
           <button className="btn-ghost" onClick={() => setSettingsOpen(true)} title="Rename / limits / restart policy"><Settings className="h-4 w-4" /></button>
-          <button className="btn-ghost" onClick={() => triggerDownload(api.exportContainerUrl(id))} title="Export filesystem (download tar)"><Download className="h-4 w-4" /> Export</button>
+          {canDownload && <button className="btn-ghost" onClick={() => triggerDownload(api.exportContainerUrl(id))} title="Export filesystem (download tar)"><Download className="h-4 w-4" /> Export</button>}
           <button className="btn-ghost" onClick={() => setInspecting(true)}><FileSearch className="h-4 w-4" /> Inspect</button>
           {running ? (
             <>
@@ -140,7 +143,7 @@ export function ContainerDetail() {
         {tab === "logs" && <LogViewer lines={logs} />}
         {tab === "console" && (running ? <Terminal containerId={id} /> : <div className="text-sm text-muted">Container is not running — start it to open a shell.</div>)}
         {tab === "processes" && (running ? <ProcessTable id={id} /> : <div className="text-sm text-muted">Container is not running — no processes.</div>)}
-        {tab === "files" && (running ? <FileBrowser fs={fileApiForContainer(id)} /> : <div className="text-sm text-muted">Container is not running — start it to browse its filesystem.</div>)}
+        {tab === "files" && (running ? <FileBrowser fs={fileApiForContainer(id)} canDownload={canDownload} /> : <div className="text-sm text-muted">Container is not running — start it to browse its filesystem.</div>)}
         {tab === "changes" && <DiffList id={id} />}
         {tab === "env" && <EnvList env={detail.env ?? []} />}
       </div>
@@ -217,7 +220,7 @@ function ProcessTable({ id }: { id: string }) {
   );
 }
 
-// DiffList shows filesystem changes since the container started (docker diff).
+// DiffList shows filesystem changes compared with the image (docker diff).
 function DiffList({ id }: { id: string }) {
   const [diff, setDiff] = useState<DiffEntry[] | null>(null);
   const [error, setError] = useState("");
@@ -227,7 +230,7 @@ function DiffList({ id }: { id: string }) {
 
   if (error) return <div className="text-sm text-danger">{error}</div>;
   if (!diff) return <div className="flex items-center gap-2 text-muted text-sm"><Spinner className="h-4 w-4" /> Loading…</div>;
-  if (diff.length === 0) return <div className="text-sm text-muted">No filesystem changes since the container started.</div>;
+  if (diff.length === 0) return <div className="text-sm text-muted">No filesystem changes compared with the image.</div>;
 
   const mark = { added: { c: "text-ok", s: "A" }, modified: { c: "text-warn", s: "C" }, deleted: { c: "text-danger", s: "D" }, unknown: { c: "text-muted", s: "?" } } as const;
   return (
@@ -404,7 +407,7 @@ function SettingsModal({ detail, onClose, onDone }: { detail: Detail; onClose: (
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <form className="card w-full max-w-lg" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <Settings className="h-4 w-4 text-accent" /><div className="font-medium">Container settings</div>
@@ -417,7 +420,7 @@ function SettingsModal({ detail, onClose, onDone }: { detail: Detail; onClose: (
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
-              <label className="label">Memory (MB)</label>
+              <label className="label">Memory (MiB)</label>
               <input className="input" type="number" min="0" value={memoryMb} onChange={(e) => setMemoryMb(e.target.value)} placeholder="unchanged" />
             </div>
             <div>
@@ -431,7 +434,7 @@ function SettingsModal({ detail, onClose, onDone }: { detail: Detail; onClose: (
               </select>
             </div>
           </div>
-          <p className="text-[11px] text-muted">Limits left blank are sent as 0 (unlimited). Restart policy "(unchanged)" leaves it as-is.</p>
+          <p className="text-[11px] text-muted">Limits left blank stay as they are. Restart policy "(unchanged)" leaves it as-is.</p>
           {err && <p className="text-sm text-danger break-all">{err}</p>}
         </div>
         <div className="flex justify-end gap-2 p-4 border-t border-border">
@@ -467,7 +470,7 @@ function CommitModal({ id, name, onClose }: { id: string; name: string; onClose:
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <form className="card w-full max-w-lg" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <Camera className="h-4 w-4 text-accent" /><div className="font-medium">Commit container to image</div>

@@ -3,18 +3,51 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"errors"
 	"flag"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"log"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/acme"
+	"golang.org/x/crypto/acme/autocert"
 
 	"github.com/koduj-dev/docker-commander/internal/config"
 	"github.com/koduj-dev/docker-commander/internal/store"
 )
+
+func TestConfirmElevate(t *testing.T) {
+	cases := map[string]bool{
+		"y\n":       true,
+		"Y\n":       true,
+		"yes\n":     true,
+		"YES\n":     true,
+		"  y  \n":   true,
+		"n\n":       false,
+		"no\n":      false,
+		"\n":        false, // plain Enter = the "N" default
+		"garbage\n": false,
+		"":          false, // EOF with nothing typed
+	}
+	for input, want := range cases {
+		var out bytes.Buffer
+		got := confirmElevate(errors.New("cannot write to /usr/local/bin: permission denied"), &out, strings.NewReader(input))
+		if got != want {
+			t.Errorf("confirmElevate(%q) = %v, want %v", input, got, want)
+		}
+		if !strings.Contains(out.String(), "permission denied") {
+			t.Errorf("prompt should surface the underlying error, got: %q", out.String())
+		}
+	}
+}
 
 func TestLoadOrCreateSecret(t *testing.T) {
 	st, err := store.Open(":memory:")
@@ -210,6 +243,58 @@ func TestHTTPServerHasReadTimeouts(t *testing.T) {
 	}
 }
 
+// TestBuildTLSConfigPreservesACMEALPNProtocol is the regression for a P1 a
+// code review caught before merge: buildTLSConfig used to construct a
+// hand-rolled tls.Config{GetCertificate: mgr.GetCertificate} instead of
+// starting from mgr.TLSConfig(), silently dropping NextProtos — which
+// tls-alpn-01 (this app's only ACME challenge path) requires, per
+// GetCertificate's own doc comment. That would have broken ACME issuance
+// and renewal for every existing install using -acme-domains, not just the
+// new embedded proxy feature.
+func TestBuildTLSConfigPreservesACMEALPNProtocol(t *testing.T) {
+	mgr := &autocert.Manager{
+		Prompt:     autocert.AcceptTOS,
+		Cache:      autocert.DirCache(t.TempDir()),
+		HostPolicy: autocert.HostWhitelist("admin.example.com"),
+	}
+	tlsConfig := buildTLSConfig(mgr, false)
+	if tlsConfig == nil {
+		t.Fatal("ACME mode must produce a non-nil tls.Config")
+	}
+	found := false
+	for _, p := range tlsConfig.NextProtos {
+		if p == acme.ALPNProto {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("NextProtos = %v, must include %q or tls-alpn-01 (this app's only ACME challenge path) cannot complete",
+			tlsConfig.NextProtos, acme.ALPNProto)
+	}
+	if tlsConfig.GetCertificate == nil {
+		t.Error("GetCertificate must be set in ACME mode")
+	}
+	if tlsConfig.MinVersion != tls.VersionTLS12 {
+		t.Errorf("MinVersion = %v, want TLS 1.2", tlsConfig.MinVersion)
+	}
+}
+
+func TestBuildTLSConfigStaticCertMode(t *testing.T) {
+	tlsConfig := buildTLSConfig(nil, true)
+	if tlsConfig == nil {
+		t.Fatal("static cert/key mode must produce a non-nil tls.Config")
+	}
+	if tlsConfig.MinVersion != tls.VersionTLS12 {
+		t.Errorf("MinVersion = %v, want TLS 1.2", tlsConfig.MinVersion)
+	}
+}
+
+func TestBuildTLSConfigPlainHTTP(t *testing.T) {
+	if tlsConfig := buildTLSConfig(nil, false); tlsConfig != nil {
+		t.Errorf("plain HTTP mode must produce a nil tls.Config, got %+v", tlsConfig)
+	}
+}
+
 // …and that the listener main actually runs is the one the constructor builds.
 //
 // The test above pins newHTTPServer. It does not pin that anything USES it: a
@@ -280,4 +365,75 @@ func enclosingFunc(file *ast.File, pos token.Pos) string {
 		return true
 	})
 	return name
+}
+
+// --make-certs writes into --data-dir when it is given, not into the default
+// data dir: on a packaged install the default under sudo is root's own config
+// dir, where the service never looks.
+func TestMakeCertsHonoursDataDir(t *testing.T) {
+	want := t.TempDir()
+	t.Setenv("DC_DATA_DIR", t.TempDir()) // the place it must NOT go
+	withArgs([]string{"--make-certs", "example.lan", "--data-dir", want}, func() {
+		_, hosts := wantsMakeCerts()
+		if err := makeCerts(hosts); err != nil {
+			t.Fatal(err)
+		}
+	})
+	for _, f := range []string{"cert.pem", "key.pem"} {
+		if _, err := os.Stat(filepath.Join(want, "tls", f)); err != nil {
+			t.Errorf("%s was not written under --data-dir: %v", f, err)
+		}
+	}
+}
+
+// The hints make-certs prints are meant to be pasted into a (root) shell, and the
+// paths in them come from --data-dir. Each must reach the shell as one literal
+// word, whatever it contains.
+func TestMakeCertsHintsQuotePaths(t *testing.T) {
+	for _, dir := range []string{
+		"/var/lib/dc data",
+		"/tmp/it's",
+		"/tmp/x; touch /tmp/pwned",
+		"/tmp/$(id)`id`",
+		"-rf",
+	} {
+		out, err := exec.Command("sh", "-c", "printf %s "+shQuote(dir)).Output()
+		if err != nil {
+			t.Fatalf("%q: %v", dir, err)
+		}
+		if string(out) != dir {
+			t.Errorf("%q reached the shell as %q", dir, out)
+		}
+		if want := "chown -R dockercmd: -- " + shQuote(dir); chownHint(dir) != want {
+			t.Errorf("chownHint(%q) = %q, want %q", dir, chownHint(dir), want)
+		}
+	}
+}
+
+// -log-file sends the log to the file; a file that can't be opened stops the
+// start instead of leaving the log nowhere.
+func TestUseLogFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dockercmd.log")
+	restore, err := useLogFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log.Print("hello from the test")
+	restore()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "hello from the test") {
+		t.Errorf("log line not in the file: %q", b)
+	}
+
+	if _, err := useLogFile(filepath.Join(t.TempDir(), "missing", "dir", "x.log")); err == nil {
+		t.Error("an unopenable log file was accepted; the log would go nowhere")
+	}
+	if restore, err := useLogFile(""); err != nil {
+		t.Errorf("no -log-file: %v", err)
+	} else {
+		restore()
+	}
 }

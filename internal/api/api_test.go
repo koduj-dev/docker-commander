@@ -14,8 +14,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
+	"github.com/moby/moby/client"
 	"github.com/pquerna/otp/totp"
 
 	"github.com/koduj-dev/docker-commander/internal/auth"
@@ -72,6 +71,16 @@ func TestIsWriteRequest(t *testing.T) {
 	}
 	if !w(http.MethodGet, "/api/containers/x/exec") || !w(http.MethodGet, "/api/images/pull") {
 		t.Error("exec/pull GETs are writes")
+	} // Raw content downloads are writes; configuration exports are not.
+	for _, p := range []string{"/api/containers/x/export", "/api/containers/x/files/download", "/api/volumes/v/files/download", "/api/images/save"} {
+		if !w(http.MethodGet, p) {
+			t.Errorf("GET %s hands over raw content and must count as a write", p)
+		}
+	}
+	for _, p := range []string{"/api/alert-rules/export", "/api/projects/1/download", "/api/projects/1/files/raw", "/api/containers/x/files"} {
+		if w(http.MethodGet, p) {
+			t.Errorf("GET %s is a read", p)
+		}
 	}
 }
 
@@ -224,7 +233,7 @@ func TestAPIDockerBackedReads(t *testing.T) {
 		t.Skipf("docker daemon not available (GET /api/system → %d)", code)
 	}
 	for _, path := range []string{
-		"/api/system", "/api/system/df", "/api/containers", "/api/images",
+		"/api/system", "/api/system/df", "/api/stats/disk", "/api/containers", "/api/images",
 		"/api/volumes", "/api/networks", "/api/topology",
 	} {
 		if code, _ := a.do("GET", path, nil); code != 200 {
@@ -250,7 +259,7 @@ func TestAPIContainerDetailHandlers(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		if cli, err := a.dm.Client(ctx, 0); err == nil {
-			_ = cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true})
+			_, _ = cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true})
 		}
 	})
 
@@ -304,7 +313,7 @@ func TestAPIStatsAndProbe(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		if cli, err := a.dm.Client(ctx, 0); err == nil {
-			_ = cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true})
+			_, _ = cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true})
 		}
 	})
 
@@ -368,7 +377,7 @@ func TestAPIDockerBackedWrites(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		if cli, err := a.dm.Client(ctx, 0); err == nil {
-			_ = cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true})
+			_, _ = cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true})
 		}
 	})
 
@@ -471,7 +480,7 @@ func TestAPIDockerBackedWrites(t *testing.T) {
 
 	// remove a network created out-of-band
 	if cli, err := a.dm.Client(ctx, 0); err == nil {
-		if nw, err := cli.NetworkCreate(ctx, "dctest_apinet", network.CreateOptions{}); err == nil {
+		if nw, err := cli.NetworkCreate(ctx, "dctest_apinet", client.NetworkCreateOptions{}); err == nil {
 			if code, _ := a.do("DELETE", "/api/networks/"+nw.ID, nil); code != 200 {
 				t.Errorf("remove network → %d", code)
 			}
@@ -496,7 +505,7 @@ func TestAPIWebSockets(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		if cli, err := a.dm.Client(ctx, 0); err == nil {
-			_ = cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true})
+			_, _ = cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true})
 		}
 	})
 

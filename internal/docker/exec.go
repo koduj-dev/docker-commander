@@ -4,8 +4,7 @@ import (
 	"context"
 	"net"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/client"
 )
 
 // defaultShell tries bash, falling back to sh, so the terminal works across
@@ -16,14 +15,14 @@ var defaultShell = []string{"/bin/sh", "-c", "[ -x /bin/bash ] && exec /bin/bash
 // bidirectional byte stream (Read = container output, Write = stdin) plus a
 // Resize control. Works for any host kind, since it goes through the Docker API.
 type ExecSession struct {
-	resp   types.HijackedResponse
+	resp   client.HijackedResponse
 	client execResizer
 	execID string
 }
 
 // execResizer is the slice of the docker client the session needs for resizing.
 type execResizer interface {
-	ContainerExecResize(ctx context.Context, execID string, options container.ResizeOptions) error
+	ExecResize(ctx context.Context, execID string, options client.ExecResizeOptions) (client.ExecResizeResult, error)
 }
 
 // ExecAttach starts a TTY exec in the container and attaches to it. Pass cmd to
@@ -36,22 +35,22 @@ func (m *Manager) ExecAttach(ctx context.Context, hostID int64, containerID stri
 	if len(cmd) == 0 {
 		cmd = defaultShell
 	}
-	created, err := cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
+	created, err := cli.ExecCreate(ctx, containerID, client.ExecCreateOptions{
 		Cmd:          cmd,
-		Tty:          true,
+		TTY:          true,
 		AttachStdin:  true,
 		AttachStdout: true,
 		AttachStderr: true,
-		ConsoleSize:  &[2]uint{rows, cols},
+		ConsoleSize:  client.ConsoleSize{Height: rows, Width: cols},
 	})
 	if err != nil {
 		return nil, err
 	}
-	resp, err := cli.ContainerExecAttach(ctx, created.ID, container.ExecAttachOptions{Tty: true})
+	resp, err := cli.ExecAttach(ctx, created.ID, client.ExecAttachOptions{TTY: true})
 	if err != nil {
 		return nil, err
 	}
-	return &ExecSession{resp: resp, client: cli, execID: created.ID}, nil
+	return &ExecSession{resp: resp.HijackedResponse, client: cli, execID: created.ID}, nil
 }
 
 // Read returns container output (stdout+stderr merged, since TTY).
@@ -65,7 +64,8 @@ func (s *ExecSession) Conn() net.Conn { return s.resp.Conn }
 
 // Resize updates the remote TTY dimensions.
 func (s *ExecSession) Resize(ctx context.Context, cols, rows uint) error {
-	return s.client.ContainerExecResize(ctx, s.execID, container.ResizeOptions{Height: rows, Width: cols})
+	_, err := s.client.ExecResize(ctx, s.execID, client.ExecResizeOptions{Height: rows, Width: cols})
+	return err
 }
 
 // Close tears down the hijacked connection.

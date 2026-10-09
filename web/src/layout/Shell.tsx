@@ -1,10 +1,10 @@
 import { Link, NavLink, useNavigate, useLocation, useNavigationType } from "react-router-dom";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Activity, Bell, Blocks, Boxes, ChevronDown, Container, Database, FolderGit2, KeyRound, Layers, LayoutDashboard, LayoutTemplate, Network, Plug, ScrollText, Server, Settings, Share2, Terminal, Users, LogOut, CircleUser, ArrowUpCircle, ExternalLink, X, Loader2 } from "lucide-react";
+import { Activity, Archive, Bell, Blocks, Boxes, ChevronDown, Container, Database, FolderGit2, KeyRound, Layers, LayoutDashboard, LayoutTemplate, Network, ScrollText, Server, Settings, Share2, Stethoscope, Terminal, Users, LogOut, CircleUser, ArrowUpCircle, ExternalLink, X, Loader2, CheckCircle2, Gauge } from "lucide-react";
 import clsx from "clsx";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../lib/api";
-import { useAlertPulse } from "../lib/alertStream";
+import { toastableEvents, useAlertPulse } from "../lib/alertStream";
 import { useToasts, type ToastTone } from "../components/Toasts";
 import type { Host, UpdateStatus } from "../lib/types";
 import { getHostId, setHostId } from "../lib/host";
@@ -35,6 +35,7 @@ const navGroups: { title: string; items: NavItem[] }[] = [
     items: [
       { to: "/images", label: "Images", icon: Layers, section: "images" },
       { to: "/volumes", label: "Volumes", icon: Database, section: "volumes" },
+      { to: "/backup-jobs", label: "Backup jobs", icon: Archive, adminOnly: true },
     ],
   },
   {
@@ -47,6 +48,8 @@ const navGroups: { title: string; items: NavItem[] }[] = [
   {
     title: "Observability",
     items: [
+      // Same RBAC gate as the dashboard: it reads /stats/overview.
+      { to: "/resources", label: "Resources", icon: Gauge, section: "dashboard" },
       { to: "/logs", label: "Logs", icon: Terminal, section: "logs" },
       { to: "/events", label: "Events", icon: Activity, section: "events" },
       { to: "/alerts", label: "Alerts", icon: Bell, section: "alerts" },
@@ -58,8 +61,8 @@ const navGroups: { title: string; items: NavItem[] }[] = [
       { to: "/hosts", label: "Hosts", icon: Server, section: "hosts" },
       { to: "/registries", label: "Registries", icon: KeyRound, section: "registries" },
       { to: "/audit", label: "Audit log", icon: ScrollText, section: "audit" },
+      { to: "/troubleshooting", label: "Troubleshooting", icon: Stethoscope, section: "diagnostics" },
       { to: "/mcp-tokens", label: "MCP Access", icon: KeyRound },
-      { to: "/mcp-admin", label: "MCP Admin", icon: Plug, adminOnly: true },
       { to: "/users", label: "Users", icon: Users, adminOnly: true },
       { to: "/settings", label: "Settings", icon: Settings, adminOnly: true },
     ],
@@ -221,7 +224,7 @@ export function Shell({ children }: { children: ReactNode }) {
   useEffect(() => setUnread(pulse.unread), [pulse.unread]);
   useEffect(() => {
     if (!getPref("alerts.toasts", true)) return;
-    for (const e of pulse.fresh) {
+    for (const e of toastableEvents(pulse.fresh)) {
       toasts.push({
         tone: e.kind === "resolved" ? "ok" : (e.severity as ToastTone),
         title: `${e.ruleName}${e.containerName ? ` — ${e.containerName}` : ""}`,
@@ -326,6 +329,7 @@ export function Shell({ children }: { children: ReactNode }) {
       </aside>
       <main ref={mainRef} className="overflow-auto">
         <UpdateBanner admin={user?.role === "admin"} />
+        <AutoUpdateNotice admin={user?.role === "admin"} />
         {children}
       </main>
     </div>
@@ -401,6 +405,36 @@ function UpdateBanner({ admin }: { admin?: boolean }) {
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+// AutoUpdateNotice shows a one-time "you're now on vX.Y.Z" bar after a
+// policy-driven auto-apply, to every admin, until each of them dismisses it.
+// A new auto-apply event produces a new dismissal key, so it resurfaces even
+// for an admin who dismissed the previous one — same shape as UpdateBanner's
+// own per-version dismissal.
+function AutoUpdateNotice({ admin }: { admin?: boolean }) {
+  const [st, setSt] = useState<UpdateStatus | null>(null);
+  const [seen, setSeen] = useState<string>(() => getPref("selfupdate.autoapplied.seen", ""));
+  useEffect(() => {
+    if (!admin) return;
+    api.updateStatus().then(setSt).catch(() => {});
+  }, [admin]);
+  const info = st?.lastAutoUpdate;
+  const key = info ? `${info.version}@${info.appliedAt}` : "";
+  if (!admin || !info || seen === key) return null;
+  const dismiss = () => { setPref("selfupdate.autoapplied.seen", key); setSeen(key); };
+  return (
+    <div className="flex items-center gap-3 px-6 py-2.5 bg-accent/10 border-b border-accent/30 text-sm">
+      <CheckCircle2 className="h-4 w-4 text-accent shrink-0" />
+      <span>
+        You're now on <span className="font-semibold">{info.version}</span>
+        <span className="text-muted"> — applied automatically on {new Date(info.appliedAt).toLocaleString()}</span>
+      </span>
+      <button className="btn-ghost px-1.5 py-1 ml-auto" title="Dismiss" onClick={dismiss}>
+        <X className="h-3.5 w-3.5" />
+      </button>
     </div>
   );
 }

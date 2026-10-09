@@ -26,6 +26,43 @@ func TestResourceExceeds(t *testing.T) {
 	}
 }
 
+func TestResourceMetricKeyNetworkRates(t *testing.T) {
+	rx, err := parseResource(`{"metric":"netrx_rate","threshold":1000000}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rx.metricKey() != "netrx_rate" {
+		t.Errorf("netrx_rate should keep its own key, got %q", rx.metricKey())
+	}
+	tx, _ := parseResource(`{"metric":"nettx_rate","threshold":1000000}`)
+	if tx.metricKey() != "nettx_rate" {
+		t.Errorf("nettx_rate should keep its own key, got %q", tx.metricKey())
+	}
+	if rx.metricKey() == tx.metricKey() {
+		t.Error("rx and tx rate rules must never share a condition key")
+	}
+}
+
+func TestParseNetworkDefaults(t *testing.T) {
+	c, err := parseNetwork(`{}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Metric != "netdrops" || c.Threshold != 1 || c.WindowSec != 300 {
+		t.Errorf("network defaults not applied: %+v", c)
+	}
+	c2, err := parseNetwork(`{"metric":"neterrors","threshold":5,"windowSec":120}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c2.Metric != "neterrors" || c2.Threshold != 5 || c2.WindowSec != 120 {
+		t.Errorf("network parse: %+v", c2)
+	}
+	if _, err := parseNetwork("not json"); err == nil {
+		t.Error("invalid JSON should error")
+	}
+}
+
 func TestParseStateAndMatches(t *testing.T) {
 	c, err := parseState(`{"events":["die","oom"]}`)
 	if err != nil {

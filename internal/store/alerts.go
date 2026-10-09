@@ -42,19 +42,27 @@ type AlertRule struct {
 
 // AlertEvent is a fired alert recorded for the in-app feed.
 type AlertEvent struct {
-	ID            int64     `json:"id"`
-	RuleID        int64     `json:"ruleId"`
-	RuleName      string    `json:"ruleName"`
-	Type          string    `json:"type"`
-	Severity      string    `json:"severity"`
-	HostID        int64     `json:"hostId"`
-	HostName      string    `json:"hostName"`
-	ContainerID   string    `json:"containerId"`
-	ContainerName string    `json:"containerName"`
-	Message       string    `json:"message"`
-	Value         *float64  `json:"value"`
-	Acknowledged  bool      `json:"acknowledged"`
-	CreatedAt     time.Time `json:"createdAt"`
+	ID            int64  `json:"id"`
+	RuleID        int64  `json:"ruleId"`
+	RuleName      string `json:"ruleName"`
+	Type          string `json:"type"`
+	Severity      string `json:"severity"`
+	HostID        int64  `json:"hostId"`
+	HostName      string `json:"hostName"`
+	ContainerID   string `json:"containerId"`
+	ContainerName string `json:"containerName"`
+	// Project is the container's compose project (stack) name at the time
+	// this event fired, resolved by the alert engine (not re-derived here) —
+	// "" for a container Compose doesn't manage. Persisted specifically so a
+	// LATER read (a maintenance-window check for a queued delivery retry)
+	// can still scope by project; the live alert path that resolves it
+	// (docker events' actor attributes, ListContainers' labels, or the stats
+	// snapshot) has no equivalent available after the fact.
+	Project      string    `json:"project,omitempty"`
+	Message      string    `json:"message"`
+	Value        *float64  `json:"value"`
+	Acknowledged bool      `json:"acknowledged"`
+	CreatedAt    time.Time `json:"createdAt"`
 	// Kind is the point in a condition's life this event marks:
 	//
 	//	firing    the condition started
@@ -73,8 +81,24 @@ type AlertEvent struct {
 	// this" is only useful if you can ask them about it.
 	AcknowledgedBy string     `json:"acknowledgedBy,omitempty"`
 	AcknowledgedAt *time.Time `json:"acknowledgedAt,omitempty"`
+	// Suppressed means an active maintenance window matched this event, so
+	// delivery (webhook/email) was skipped — the event is still recorded and
+	// visible in the feed either way. SuppressedBy names the window that did
+	// it (0 if not suppressed); it outlives a deleted window on purpose, so a
+	// past event never stops explaining why nothing was sent.
+	Suppressed   bool  `json:"suppressed"`
+	SuppressedBy int64 `json:"suppressedBy,omitempty"`
 	// Deliveries is filled in on request, not on every list.
 	Deliveries []AlertDelivery `json:"deliveries,omitempty"`
+	// Repeats, LastRepeatAt and Ongoing summarise the life of the condition this
+	// event opened, so the feed can hide the repeat rows and still say that
+	// something is going on. Filled by ListAlertEvents for firing/escalated/eased
+	// events only. Repeats counts STORED repeat events: one silenced by a
+	// maintenance window is not stored (see monitor.emit), so a window shortens it.
+	Repeats      int        `json:"repeats,omitempty"`
+	LastRepeatAt *time.Time `json:"lastRepeatAt,omitempty"`
+	// Ongoing: the condition has not resolved yet (nothing later ended it).
+	Ongoing bool `json:"ongoing,omitempty"`
 }
 
 // AlertDelivery is one attempt to get an alert out of the building.
@@ -96,11 +120,14 @@ type AlertQuery struct {
 	// indicate something is wrong" rather than one specific level.
 	Severities []string
 	Kind       string
-	HostID     *int64
-	Container  string // substring
-	Rule       string // substring
-	Text       string // substring of the message
-	Unacked    bool
+	// HideRepeats drops KindRepeat rows — "still true" re-announcements that
+	// bury the firing/resolved events an operator is looking for.
+	HideRepeats bool
+	HostID      *int64
+	Container   string // substring
+	Rule        string // substring
+	Text        string // substring of the message
+	Unacked     bool
 	// HostIDs restricts the query to these hosts; nil means no restriction.
 	// Empty-but-non-nil means nothing is visible, which must return no rows
 	// rather than all of them — the difference is the whole point of the type.
@@ -288,10 +315,10 @@ func (s *Store) InsertAlertEvent(ctx context.Context, e *AlertEvent) (int64, err
 	kind := orDefault(e.Kind, KindFiring)
 	settled := e.Acknowledged || kind == KindResolved
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO alert_events (rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name, message, value, kind, duration_sec, acknowledged, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.RuleID, e.RuleName, e.Type, e.Severity, e.HostID, e.HostName, e.ContainerID, e.ContainerName, e.Message, e.Value,
-		kind, e.DurationSec, boolToInt(settled),
+		INSERT INTO alert_events (rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name, project, message, value, kind, duration_sec, acknowledged, suppressed, suppressed_by, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.RuleID, e.RuleName, e.Type, e.Severity, e.HostID, e.HostName, e.ContainerID, e.ContainerName, e.Project, e.Message, e.Value,
+		kind, e.DurationSec, boolToInt(settled), boolToInt(e.Suppressed), e.SuppressedBy,
 		time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		return 0, err
@@ -324,6 +351,9 @@ func (q AlertQuery) where() (string, []any) {
 	}
 	if q.Kind != "" {
 		add("kind = ?", q.Kind)
+	}
+	if q.HideRepeats {
+		add("kind <> ?", KindRepeat)
 	}
 	if q.HostID != nil {
 		add("host_id = ?", *q.HostID)
@@ -375,8 +405,9 @@ func (s *Store) ListAlertEvents(ctx context.Context, q AlertQuery) ([]AlertEvent
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name,
-		       message, value, acknowledged, kind, duration_sec, acknowledged_by, acknowledged_at, created_at
+		SELECT id, rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name, project,
+		       message, value, acknowledged, kind, duration_sec, acknowledged_by, acknowledged_at,
+		       suppressed, suppressed_by, created_at
 		FROM alert_events WHERE `+cond+`
 		ORDER BY `+q.orderBy()+` LIMIT ? OFFSET ?`, append(args, q.Limit, q.Offset)...)
 	if err != nil {
@@ -388,22 +419,94 @@ func (s *Store) ListAlertEvents(ctx context.Context, q AlertQuery) ([]AlertEvent
 		var e AlertEvent
 		var created, ackAt string
 		var value sql.NullFloat64
-		var ack int
+		var ack, suppressed int
 		if err := rows.Scan(&e.ID, &e.RuleID, &e.RuleName, &e.Type, &e.Severity, &e.HostID, &e.HostName, &e.ContainerID,
-			&e.ContainerName, &e.Message, &value, &ack, &e.Kind, &e.DurationSec, &e.AcknowledgedBy, &ackAt, &created); err != nil {
+			&e.ContainerName, &e.Project, &e.Message, &value, &ack, &e.Kind, &e.DurationSec, &e.AcknowledgedBy, &ackAt,
+			&suppressed, &e.SuppressedBy, &created); err != nil {
 			return nil, 0, err
 		}
 		if value.Valid {
 			e.Value = &value.Float64
 		}
 		e.Acknowledged = ack != 0
+		e.Suppressed = suppressed != 0
 		e.CreatedAt, _ = time.Parse(time.RFC3339, created)
 		if t, err := time.Parse(time.RFC3339, ackAt); err == nil {
 			e.AcknowledgedAt = &t
 		}
 		out = append(out, e)
 	}
-	return out, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	// Close before annotating: the pool is a single connection, so a query
+	// issued while these rows are still open would wait on them forever.
+	_ = rows.Close()
+	s.annotateConditionSummary(ctx, out)
+	return out, total, nil
+}
+
+// annotateConditionSummary fills Repeats / LastRepeatAt / Ongoing on the events
+// that open a stretch of a condition (firing, escalated, eased). It is
+// best-effort decoration: a failure leaves the fields empty rather than failing
+// the list.
+//
+// A stretch is the same rule on the same container and host, from the event up
+// to the next non-repeat event of that key. "Ongoing" is stricter — the whole
+// condition must be unresolved. A rule that escalates hands over to another rule
+// (so the next event is under a different rule id), which means the resolve
+// arrives under THAT rule; it is matched by the incident's start instead
+// (created_at - duration_sec is the same for every event of one incident).
+func (s *Store) annotateConditionSummary(ctx context.Context, events []AlertEvent) {
+	const maxID = int64(1<<63 - 1)
+	for i := range events {
+		e := &events[i]
+		if e.Kind != KindFiring && e.Kind != KindEscalated && e.Kind != KindEased {
+			continue
+		}
+		// Only level-triggered (resource) conditions have a life: state, log,
+		// restart, network and host events are one-shots that never resolve, so
+		// "ongoing" would be true of them forever.
+		if e.Type != "resource" {
+			continue
+		}
+		var next sql.NullInt64
+		if err := s.db.QueryRowContext(ctx, `
+			SELECT MIN(id) FROM alert_events
+			WHERE container_id = ? AND host_id = ? AND rule_id = ? AND kind <> 'repeat' AND id > ?`,
+			e.ContainerID, e.HostID, e.RuleID, e.ID).Scan(&next); err != nil {
+			continue
+		}
+		bound := maxID
+		if next.Valid {
+			bound = next.Int64
+		}
+		var count int
+		var last sql.NullString
+		if err := s.db.QueryRowContext(ctx, `
+			SELECT COUNT(*), MAX(created_at) FROM alert_events
+			WHERE container_id = ? AND host_id = ? AND rule_id = ? AND kind = 'repeat' AND id > ? AND id < ?`,
+			e.ContainerID, e.HostID, e.RuleID, e.ID, bound).Scan(&count, &last); err != nil {
+			continue
+		}
+		e.Repeats = count
+		if t, err := time.Parse(time.RFC3339, last.String); err == nil {
+			e.LastRepeatAt = &t
+		}
+		if next.Valid {
+			continue // this stretch ended under the same rule
+		}
+		start := e.CreatedAt.Unix() - int64(e.DurationSec)
+		var resolved int
+		if err := s.db.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM alert_events
+			WHERE container_id = ? AND host_id = ? AND kind = 'resolved' AND id > ?
+			  AND ABS(CAST(strftime('%s', created_at) AS INTEGER) - duration_sec - ?) <= 2`,
+			e.ContainerID, e.HostID, e.ID, start).Scan(&resolved); err != nil {
+			continue
+		}
+		e.Ongoing = resolved == 0
+	}
 }
 
 // escapeLike neutralises LIKE wildcards in user input, so searching for "100%"
@@ -639,6 +742,38 @@ func (s *Store) DeleteAlertState(ctx context.Context, hostID int64, containerID,
 		`DELETE FROM alert_states WHERE host_id = ? AND container_id = ? AND metric = ?`,
 		hostID, containerID, metric)
 	return err
+}
+
+// AlertEventByID loads one event — used by delivery retry to reconstruct the
+// payload a queued retry needs without keeping its own copy of the event.
+func (s *Store) AlertEventByID(ctx context.Context, id int64) (*AlertEvent, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, rule_id, rule_name, type, severity, host_id, host_name, container_id, container_name, project,
+		       message, value, acknowledged, kind, duration_sec, acknowledged_by, acknowledged_at,
+		       suppressed, suppressed_by, created_at
+		FROM alert_events WHERE id = ?`, id)
+	var e AlertEvent
+	var created, ackAt string
+	var value sql.NullFloat64
+	var ack, suppressed int
+	if err := row.Scan(&e.ID, &e.RuleID, &e.RuleName, &e.Type, &e.Severity, &e.HostID, &e.HostName, &e.ContainerID,
+		&e.ContainerName, &e.Project, &e.Message, &value, &ack, &e.Kind, &e.DurationSec, &e.AcknowledgedBy, &ackAt,
+		&suppressed, &e.SuppressedBy, &created); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if value.Valid {
+		e.Value = &value.Float64
+	}
+	e.Acknowledged = ack != 0
+	e.Suppressed = suppressed != 0
+	e.CreatedAt, _ = time.Parse(time.RFC3339, created)
+	if t, err := time.Parse(time.RFC3339, ackAt); err == nil {
+		e.AcknowledgedAt = &t
+	}
+	return &e, nil
 }
 
 // AlertEventHost returns the Docker host an alert event belongs to.

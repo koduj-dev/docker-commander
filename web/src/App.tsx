@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "./auth/AuthContext";
+import { mustEnrol2FA } from "./auth/enrolment";
 import { Spinner } from "./components/ui";
 import { Shell } from "./layout/Shell";
 import { Setup } from "./pages/Setup";
@@ -14,6 +15,7 @@ import { Templates } from "./pages/Templates";
 import { Images } from "./pages/Images";
 import { Volumes } from "./pages/Volumes";
 import { Networks } from "./pages/Networks";
+import { Resources } from "./pages/Resources";
 import { Topology } from "./pages/Topology";
 import { Logs } from "./pages/Logs";
 import { Events } from "./pages/Events";
@@ -22,10 +24,11 @@ import { Hosts } from "./pages/Hosts";
 import { Registries } from "./pages/Registries";
 import { MCPTokens } from "./pages/MCPTokens";
 import { Profile } from "./pages/Profile";
-import { MCPAdmin } from "./pages/MCPAdmin";
 import { Users } from "./pages/Users";
 import { Settings } from "./pages/Settings";
+import { BackupJobs } from "./pages/BackupJobs";
 import { Audit } from "./pages/Audit";
+import { Troubleshooting } from "./pages/Troubleshooting";
 
 export default function App() {
   const { user, loading, needsSetup } = useAuth();
@@ -44,7 +47,7 @@ export default function App() {
 
   // 2FA enrollment gate — enforced unless this connection is exempt (the admin
   // allowed password-only login from localhost).
-  if (user.mfaEnforced && !user.totpEnabled) return <Enroll2FA />;
+  if (mustEnrol2FA(user)) return <Enroll2FA />;
 
   return (
     <Shell>
@@ -58,6 +61,8 @@ export default function App() {
         <Route path="/images" element={<Images />} />
         <Route path="/volumes" element={<Volumes />} />
         <Route path="/networks" element={<Networks />} />
+        <Route path="/network/top-talkers" element={<Navigate to="/resources?tab=network" replace />} />
+        <Route path="/resources" element={<Resources />} />
         <Route path="/topology" element={<Topology />} />
         <Route path="/logs" element={<Logs />} />
         <Route path="/events" element={<Events />} />
@@ -67,10 +72,11 @@ export default function App() {
         <Route path="/mcp-tokens" element={<MCPTokens />} />
         {/* Self-service: any signed-in user, no section required. */}
         <Route path="/profile" element={<Profile />} />
-        <Route path="/mcp-admin" element={<MCPAdmin />} />
         <Route path="/users" element={<Users />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/backup-jobs" element={<BackupJobs />} />
         <Route path="/audit" element={<Audit />} />
+        <Route path="/troubleshooting" element={<Troubleshooting />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Shell>

@@ -4,9 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
-
 	"github.com/koduj-dev/docker-commander/internal/docker"
+	"github.com/moby/moby/client"
 )
 
 // --- validation, no daemon required -----------------------------------------
@@ -102,7 +101,7 @@ func TestAPIBulkContainerActionSummaryAndAudit(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		if cli, err := a.dm.Client(ctx, 0); err == nil {
-			_ = cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true})
+			_, _ = cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true})
 		}
 	})
 
@@ -194,7 +193,7 @@ func TestAPIBulkContainerActionStartWorksEndToEnd(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		if cli, err := a.dm.Client(ctx, 0); err == nil {
-			_ = cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true})
+			_, _ = cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true})
 		}
 	})
 

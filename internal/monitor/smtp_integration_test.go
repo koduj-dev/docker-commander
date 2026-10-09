@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"context"
 	"net"
 	"os/exec"
 	"strconv"
@@ -67,7 +68,9 @@ func TestSendMailIntegration(t *testing.T) {
 		From: "alerts@docker-commander.test",
 		To:   "ops@docker-commander.test, oncall@docker-commander.test",
 	}
-	if err := SendMail(cfg, "Test subject", "Hello from the test.\n"); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := SendMail(ctx, cfg, "Test subject", "Hello from the test.\n"); err != nil {
 		t.Fatalf("SendMail to mailhog failed: %v", err)
 	}
 }

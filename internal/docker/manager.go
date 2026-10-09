@@ -12,7 +12,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/koduj-dev/docker-commander/internal/store"
@@ -29,6 +29,9 @@ type Manager struct {
 	clients  map[int64]*client.Client
 	sshConns map[int64]*ssh.Client
 
+	// diskCache holds the expensive `system df -v` report per host (see DiskReport).
+	diskCache *diskReportCache
+
 	// newClient builds the Docker client for a host. Swappable so the connection
 	// bookkeeping — caching, eviction, and not holding the lock across a dial —
 	// can be tested without a daemon or an SSH server. Production always uses
@@ -42,6 +45,7 @@ func NewManager(s *store.Store) *Manager {
 		store:     s,
 		clients:   make(map[int64]*client.Client),
 		sshConns:  make(map[int64]*ssh.Client),
+		diskCache: newDiskReportCache(),
 		newClient: buildClient,
 	}
 }
@@ -57,6 +61,7 @@ func (m *Manager) Client(ctx context.Context, hostID int64) (*client.Client, err
 		}
 		hostID = id
 	}
+	recordHost(ctx, hostID)
 
 	m.mu.Lock()
 	if c, ok := m.clients[hostID]; ok {
@@ -154,7 +159,8 @@ func (m *Manager) Close() {
 
 // buildClient constructs a Docker client appropriate for the host kind.
 func buildClient(h *store.Host) (*client.Client, error) {
-	opts := []client.Opt{client.WithAPIVersionNegotiation()}
+	// API-version negotiation is the SDK's default, so no option for it.
+	var opts []client.Opt
 
 	switch h.Kind {
 	case "local", "":
@@ -185,7 +191,7 @@ func buildClient(h *store.Host) (*client.Client, error) {
 		return nil, fmt.Errorf("unknown host kind %q", h.Kind)
 	}
 
-	return client.NewClientWithOpts(opts...)
+	return client.New(opts...)
 }
 
 // tlsHTTPClient builds an *http.Client trusting the host CA and presenting the

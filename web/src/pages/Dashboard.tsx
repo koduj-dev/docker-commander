@@ -7,6 +7,7 @@ import { bytes } from "../lib/format";
 import { PageHeader } from "../layout/Shell";
 import { StatCard, Spinner } from "../components/ui";
 import { ResourceBreakdown } from "../components/ResourceBreakdown";
+import { TopTalkers } from "../components/TopTalkers";
 import { OpenPorts } from "../components/OpenPorts";
 import { ContainerTable } from "./Containers";
 import { useDockerEventTick } from "../lib/dockerEvents";
@@ -50,8 +51,7 @@ export function Dashboard() {
         {df && (
           <div>
             <h2 className="text-sm font-semibold text-muted mb-3">Disk usage</h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
-              <StatCard icon={<HardDrive className="h-5 w-5" />} label="Layers total" value={bytes(df.layersSize)} />
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-4 gap-3">
               <StatCard icon={<Layers className="h-5 w-5" />} label="Images" value={bytes(df.images.size)} sub={`${df.images.count} images`} />
               <StatCard icon={<Boxes className="h-5 w-5" />} label="Containers (rw)" value={bytes(df.containers.size)} sub={`${df.containers.count} containers`} />
               <StatCard icon={<Database className="h-5 w-5" />} label="Volumes" value={bytes(df.volumes.size)} sub={`${df.volumes.count} volumes`} />
@@ -60,7 +60,7 @@ export function Dashboard() {
           </div>
         )}
 
-        <ResourceBreakdown tick={tick} />
+        <ResourceBreakdown tick={tick} aside={<TopTalkers tick={tick} />} />
 
         <OpenPorts tick={tick} />
 

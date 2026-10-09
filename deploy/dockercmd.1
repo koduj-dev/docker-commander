@@ -144,11 +144,36 @@ PEM TLS certificate path (enables HTTPS together with
 .BI \-tls-key " path"
 PEM TLS private-key path.
 .TP
+.BI \-acme-domains " host[,host...]"
+Comma-separated public hostname(s): enables automatic HTTPS via ACME/Let's
+Encrypt instead of a static certificate. Mutually exclusive with
+.BR \-tls-cert / \-tls-key .
+.TP
+.BI \-acme-email " address"
+Contact email registered with the ACME account (optional).
+.TP
+.BI \-acme-cache-dir " path"
+Directory to cache the ACME certificate/account state (default:
+.IR <data-dir>/acme ).
+.TP
+.BI \-acme-directory-url " url"
+Override the ACME directory URL (default: Let's Encrypt production) \(em e.g.
+its staging directory. Not a local Pebble instance, which this server cannot
+obtain a certificate through.
+.TP
 .B \-mcp-enabled
 Enable the remote MCP server + OAuth endpoints (off by default; requires HTTPS).
 .TP
 .BI \-mcp-public-url " url"
 Externally reachable base URL (https://host[:port]) for the MCP OAuth flow.
+.TP
+.B \-proxy-enabled
+Enable the embedded per-container reverse proxy for domain_mappings (off by
+default; requires ACME mode for DC's own admin domain).
+.TP
+.BI \-proxy-acme-cache-dir " path"
+Directory to cache the proxy's own ACME certificate/account state (default:
+.IR <data-dir>/proxy-acme ).
 .TP
 .BI \-redis-addr " host:port"
 Redis address for metric history (empty = in-memory ring buffer).
@@ -165,10 +190,25 @@ How often to sample container stats; raise on hosts with many containers
 (default
 .BR 15s ).
 .TP
+.BI \-log-file " path"
+Write the log to this file instead of stderr. It is rotated at 10 MiB, and one
+older copy is kept as
+.IR path .1.
+.TP
 .B \-pprof
 Expose Go's net/http/pprof on a loopback-only listener
 .RB ( 127.0.0.1:6060 )
 for debugging.
+.TP
+.BI \-deploy-silence-grace " duration"
+Automatically silence alert delivery for a project for this long after a
+successful deploy; restarting/warming containers are expected noise, not an
+incident
+(default
+.BR 3m ).
+Set to
+.B 0
+to disable.
 .TP
 .BI \-trusted-proxies " list"
 Comma-separated reverse-proxy IPs/CIDRs whose
@@ -189,6 +229,10 @@ variables mirror the options above:
 .BR DC_METRICS_TOKEN ,
 .BR DC_TLS_CERT ,
 .BR DC_TLS_KEY ,
+.BR DC_ACME_DOMAINS ,
+.BR DC_ACME_EMAIL ,
+.BR DC_ACME_CACHE_DIR ,
+.BR DC_ACME_DIRECTORY_URL ,
 .BR DC_MCP_ENABLED ,
 .BR DC_MCP_PUBLIC_URL ,
 .BR DC_REDIS_ADDR ,
@@ -197,7 +241,15 @@ variables mirror the options above:
 .BR DC_METRICS_RETENTION ,
 .BR DC_METRICS_INTERVAL ,
 .BR DC_PPROF ,
+.BR DC_LOG_FILE ,
+.BR DC_PROXY_ENABLED ,
+.BR DC_PROXY_ACME_CACHE_DIR ,
+.BR DC_DEPLOY_SILENCE_GRACE ,
 .BR DC_TRUSTED_PROXIES .
+.B DC_REDIS_DB
+has no flag, and
+.B \-session-ttl
+has no variable.
 .SH FILES
 .TP
 .I /etc/docker-commander/commander.conf
@@ -207,7 +259,9 @@ or
 .BR DC_CONFIG ).
 .TP
 .I ~/.config/docker-commander/
-Default data directory (database + secrets) for a foreground run.
+Default data directory (database + secrets) for a foreground run on Linux; on
+macOS it is
+.IR "~/Library/Application Support/docker-commander/" .
 .TP
 .I /var/lib/dockercmd/
 Data directory used by the installed systemd service.

@@ -181,16 +181,17 @@ func (s *Server) alertQueryFrom(w http.ResponseWriter, r *http.Request) (store.A
 	// caller isn't allowed to see.
 	ids, all := s.visibleHostIDs(r)
 	aq := store.AlertQuery{
-		Severity:  q.Get("severity"),
-		Kind:      q.Get("kind"),
-		Container: q.Get("container"),
-		Rule:      q.Get("rule"),
-		Text:      q.Get("q"),
-		Unacked:   q.Get("unacked") == "1",
-		Sort:      q.Get("sort"),
-		Desc:      q.Get("desc") == "1",
-		Limit:     atoiDefault(q.Get("limit"), 50),
-		Offset:    atoiDefault(q.Get("offset"), 0),
+		Severity:    q.Get("severity"),
+		Kind:        q.Get("kind"),
+		HideRepeats: q.Get("hideRepeats") == "1",
+		Container:   q.Get("container"),
+		Rule:        q.Get("rule"),
+		Text:        q.Get("q"),
+		Unacked:     q.Get("unacked") == "1",
+		Sort:        q.Get("sort"),
+		Desc:        q.Get("desc") == "1",
+		Limit:       atoiDefault(q.Get("limit"), 50),
+		Offset:      atoiDefault(q.Get("offset"), 0),
 	}
 	if !all {
 		aq.HostIDs = ids
@@ -239,6 +240,7 @@ func (s *Server) handleListAlertEvents(w http.ResponseWriter, r *http.Request) {
 	unackQ.Unacked, unackQ.Limit, unackQ.Offset = true, 1, 0
 	unackQ.Severity, unackQ.Kind, unackQ.Container, unackQ.Rule, unackQ.Text = "", "", "", "", ""
 	unackQ.HostID = nil
+	unackQ.HideRepeats = false // the badge counts what needs attention, whatever the feed is hiding
 	// The badge means "something is wrong", so it counts only warnings and
 	// criticals. That is also why it needs no separate rule for resolved events:
 	// a condition ending is emitted as info, so good news can never make the
@@ -305,7 +307,15 @@ func (s *Server) handleAckAllAlertEvents(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusInternalServerError, "could not acknowledge")
 		return
 	}
-	s.audit(r, "alert.ack-all", strconv.FormatInt(n, 10), "")
+	// Filtered to one host (?host=, which the UI sends whenever a host is
+	// selected), it is about that host. Unfiltered it spans every host the caller
+	// can see, so it is shown only to readers who see them all: the count alone
+	// tells how busy hosts outside a reader's scope are.
+	auditHost := store.AuditHostSeveral
+	if aq.HostID != nil {
+		auditHost = s.daemonHost(r.Context(), *aq.HostID)
+	}
+	s.auditOn(r, auditHost, "alert.ack-all", strconv.FormatInt(n, 10), "")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "acknowledged": n})
 }
 
@@ -334,7 +344,7 @@ func (s *Server) handleAckAlertEvent(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "could not acknowledge")
 		return
 	}
-	s.audit(r, "alert.ack", strconv.FormatInt(id, 10), "")
+	s.auditOn(r, s.daemonHost(r.Context(), hostID), "alert.ack", strconv.FormatInt(id, 10), "")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

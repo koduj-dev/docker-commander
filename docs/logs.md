@@ -2,31 +2,70 @@
 
 [← Manual index](README.md)
 
+Live logs from **many containers at once**, interleaved by time and color-coded
+by source. For one container, its [detail page](containers.md) (Logs tab) is
+quicker.
+
 ![Aggregated logs](images/logs.png)
 
-A global view that streams **many containers at once**, interleaved by time and
-color-coded by source.
+## Common tasks
+
+**Find errors across a whole stack.** Select its containers on the left and
+switch off every level except **error**. Lines with an HTTP 5xx status count as
+errors and 4xx as warnings, so access logs filter too.
+
+**Follow one request through several services.** Select them, turn on the
+**`.*`** button and search for the request id, or a pattern such as
+`timeout|refused`. Search ignores case in both modes.
+
+**Read access logs as a table.** Click the gear icon, start from the **nginx**
+preset, check the preview against the latest line, and click **Add rule**. Then
+pick the rule in the toolbar dropdown.
+
+**Get told next time.** Turn the pattern into a **Log pattern** rule in
+[Alerts](alerts.md). Alerts watch the logs on the server, so nobody needs to
+have this page open.
 
 ## Using it
-- Pick sources from the left list (selection persists across visits).
-- **Search** filters lines; toggle the **`.*` button** for regular-expression
-  search (an invalid pattern is flagged, never crashes).
-- **Level filters** (error / warn / info / debug / other) show/hide by detected
-  level; `stderr` lines are highlighted.
-- **Pause** freezes the live tail; the view auto-scrolls when at the bottom.
+
+- Pick sources on the left. Only running containers are listed, and the
+  selection is remembered across visits.
+- **Search** filters lines; the **`.*` button** switches to regular expressions.
+  An invalid pattern is flagged and matches nothing, it never crashes the view.
+- **Level filters** (error, warn, info, debug, other) show or hide lines by
+  detected level. `stderr` lines are highlighted.
+- Click the **Live** badge to freeze the live tail (it then reads **Paused**);
+  click again to resume. The view auto-scrolls while you are at the bottom. The
+  X icon (**Clear**) empties it, and the download icon saves the filtered view
+  as a `.log` file.
 
 ## Structured parsing
-Turn free-text logs into **columns**:
 
-1. Open the parse-rules manager (gear icon) and add a rule — a regex with
-   **named groups**, e.g. `(?<ip>\S+) .* "(?<method>\S+) (?<path>\S+)`.
-2. Pick a **preset** (nginx, Apache, logfmt, level+message, ISO timestamp…) as a
-   starting point; a live preview validates it against the latest line.
-3. Select the rule from the toolbar dropdown — matching lines render as a table
-   (one column per named group); non-matching lines fall back to raw text.
+Parse rules turn free-text lines into **columns**.
 
-Parsing runs in your browser, so it's instant and never leaves the server.
+1. Open the parse-rules manager (gear icon) and add a regex with **named
+   groups**, e.g. `(?<ip>\S+) .* "(?<method>\S+) (?<path>\S+)`.
+2. Or start from a **preset** (nginx, Apache, logfmt, level + message, ISO
+   timestamp, key=value). A live preview tests it against the latest line.
+3. Select the rule in the toolbar dropdown. Matching lines show as a table, one
+   column per named group. Lines that don't match show as raw text.
 
-## Tips
-- Per-container live logs are also on a container's [detail page](containers.md)
-  (Logs tab) and feed **log-pattern [alerts](alerts.md)**.
+Parsing runs in your browser on the lines already shown, so it is instant. Only
+the rule itself is saved on the server.
+
+### Technical notes
+
+- Each source starts with its last 100 lines, then streams live.
+- The view keeps the newest 3000 lines. Search, filters and Download only see
+  those.
+- Levels are guessed from keywords (`error`, `fatal`, `warn`, `debug`…) and from
+  3-digit numbers that look like HTTP status codes. Any space-separated 3-digit
+  number counts, so `took 503 ms` is shown as an error.
+- Rules use JavaScript regex syntax, since they run in the browser.
+
+## Permissions
+
+Viewing logs also needs read access to **Containers**: the source list and the
+log stream come from there. Parse rules are shared by all users. Adding or
+deleting one needs write access to the **Logs** section. See
+[Users & roles](users.md).

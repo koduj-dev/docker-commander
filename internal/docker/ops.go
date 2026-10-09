@@ -2,11 +2,11 @@ package docker
 
 import (
 	"context"
+	"net/netip"
 	"sort"
 	"strings"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
+	"github.com/moby/moby/client"
 )
 
 // ListContainers returns a compact summary of all containers on the host.
@@ -15,10 +15,11 @@ func (m *Manager) ListContainers(ctx context.Context, hostID int64) ([]Container
 	if err != nil {
 		return nil, err
 	}
-	raw, err := cli.ContainerList(ctx, container.ListOptions{All: true})
+	list, err := cli.ContainerList(ctx, client.ContainerListOptions{All: true})
 	if err != nil {
 		return nil, err
 	}
+	raw := list.Items
 
 	out := make([]ContainerSummary, 0, len(raw))
 	for _, c := range raw {
@@ -37,7 +38,7 @@ func (m *Manager) ListContainers(ctx context.Context, hostID int64) ([]Container
 		}
 		for _, p := range c.Ports {
 			s.Ports = append(s.Ports, PortMapping{
-				IP: p.IP, PrivatePort: p.PrivatePort, PublicPort: p.PublicPort, Type: p.Type,
+				IP: addrString(p.IP), PrivatePort: p.PrivatePort, PublicPort: p.PublicPort, Type: p.Type,
 			})
 		}
 		if c.NetworkSettings != nil {
@@ -59,6 +60,17 @@ func (m *Manager) ListContainers(ctx context.Context, hostID int64) ([]Container
 		return out[i].ID < out[j].ID
 	})
 	return out, nil
+}
+
+// addrString renders a daemon-reported IP the way the API always did: the
+// empty string when the daemon reported none. The zero netip.Addr would
+// otherwise print as "invalid IP", and callers (e.g. the reverse proxy's
+// bindDialAddr) treat "" — not that text — as the unset/wildcard spelling.
+func addrString(a netip.Addr) string {
+	if !a.IsValid() {
+		return ""
+	}
+	return a.String()
 }
 
 // cmpFold compares two names case-insensitively, then (on a fold-tie)
@@ -89,10 +101,11 @@ func (m *Manager) InspectContainer(ctx context.Context, hostID int64, id string)
 	if err != nil {
 		return nil, err
 	}
-	c, err := cli.ContainerInspect(ctx, id)
+	res, err := cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
 	if err != nil {
 		return nil, err
 	}
+	c := res.Container
 
 	d := &ContainerDetail{
 		ID:      c.ID,
@@ -106,12 +119,12 @@ func (m *Manager) InspectContainer(ctx context.Context, hostID int64, id string)
 		d.Labels = c.Config.Labels
 	}
 	if c.State != nil {
-		d.State = c.State.Status
-		d.Status = c.State.Status
+		d.State = string(c.State.Status)
+		d.Status = string(c.State.Status)
 		d.StartedAt = c.State.StartedAt
 		d.RestartCount = c.RestartCount
 		if c.State.Health != nil {
-			d.Health = c.State.Health.Status
+			d.Health = string(c.State.Health.Status)
 		}
 	}
 	if c.HostConfig != nil {
@@ -125,8 +138,8 @@ func (m *Manager) InspectContainer(ctx context.Context, hostID int64, id string)
 	if c.NetworkSettings != nil {
 		for name, ep := range c.NetworkSettings.Networks {
 			d.Networks = append(d.Networks, NetworkAttach{
-				Name: name, NetworkID: ep.NetworkID, IPAddress: ep.IPAddress,
-				Gateway: ep.Gateway, MacAddress: ep.MacAddress,
+				Name: name, NetworkID: ep.NetworkID, IPAddress: addrString(ep.IPAddress),
+				Gateway: addrString(ep.Gateway), MacAddress: ep.MacAddress.String(),
 			})
 		}
 	}
@@ -142,20 +155,21 @@ func (m *Manager) ContainerAction(ctx context.Context, hostID int64, id, action 
 	}
 	switch action {
 	case "start":
-		return cli.ContainerStart(ctx, id, container.StartOptions{})
+		_, err = cli.ContainerStart(ctx, id, client.ContainerStartOptions{})
 	case "stop":
-		return cli.ContainerStop(ctx, id, container.StopOptions{})
+		_, err = cli.ContainerStop(ctx, id, client.ContainerStopOptions{})
 	case "restart":
-		return cli.ContainerRestart(ctx, id, container.StopOptions{})
+		_, err = cli.ContainerRestart(ctx, id, client.ContainerRestartOptions{})
 	case "pause":
-		return cli.ContainerPause(ctx, id)
+		_, err = cli.ContainerPause(ctx, id, client.ContainerPauseOptions{})
 	case "unpause":
-		return cli.ContainerUnpause(ctx, id)
+		_, err = cli.ContainerUnpause(ctx, id, client.ContainerUnpauseOptions{})
 	case "kill":
-		return cli.ContainerKill(ctx, id, "KILL")
+		_, err = cli.ContainerKill(ctx, id, client.ContainerKillOptions{Signal: "KILL"})
 	default:
 		return ErrUnknownAction
 	}
+	return err
 }
 
 // ListNetworks returns networks plus the set of containers attached to each,
@@ -165,25 +179,27 @@ func (m *Manager) ListNetworks(ctx context.Context, hostID int64) ([]NetworkSumm
 	if err != nil {
 		return nil, err
 	}
-	nets, err := cli.NetworkList(ctx, network.ListOptions{})
+	list, err := cli.NetworkList(ctx, client.NetworkListOptions{})
 	if err != nil {
 		return nil, err
 	}
+	nets := list.Items
 
 	out := make([]NetworkSummary, 0, len(nets))
 	for _, n := range nets {
 		// NetworkList is shallow; inspect to learn attached containers + IPAM.
-		full, err := cli.NetworkInspect(ctx, n.ID, network.InspectOptions{})
+		res, err := cli.NetworkInspect(ctx, n.ID, client.NetworkInspectOptions{})
 		if err != nil {
 			continue
 		}
+		full := res.Network
 		ns := NetworkSummary{
 			ID: full.ID, Name: full.Name, Driver: full.Driver,
 			Scope: full.Scope, Internal: full.Internal,
 		}
 		for _, cfg := range full.IPAM.Config {
-			if cfg.Subnet != "" {
-				ns.Subnets = append(ns.Subnets, cfg.Subnet)
+			if cfg.Subnet.IsValid() {
+				ns.Subnets = append(ns.Subnets, cfg.Subnet.String())
 			}
 		}
 		for cid := range full.Containers {
@@ -208,7 +224,8 @@ func (m *Manager) RemoveNetwork(ctx context.Context, hostID int64, id string) er
 	if err != nil {
 		return err
 	}
-	return cli.NetworkRemove(ctx, id)
+	_, err = cli.NetworkRemove(ctx, id, client.NetworkRemoveOptions{})
+	return err
 }
 
 // SystemInfo returns a summary of the Docker host.
@@ -220,7 +237,7 @@ func (m *Manager) Ping(ctx context.Context, hostID int64) error {
 	if err != nil {
 		return err
 	}
-	if _, err = cli.Ping(ctx); err != nil {
+	if _, err = cli.Ping(ctx, client.PingOptions{}); err != nil {
 		// Drop the cached client so the next call redials.
 		//
 		// An ssh client captures its SSH connection in the transport's dialer;
@@ -246,10 +263,11 @@ func (m *Manager) SystemInfo(ctx context.Context, hostID int64) (*SystemInfo, er
 	if err != nil {
 		return nil, err
 	}
-	info, err := cli.Info(ctx)
+	res, err := cli.Info(ctx, client.InfoOptions{})
 	if err != nil {
 		return nil, err
 	}
+	info := res.Info
 	return &SystemInfo{
 		HostName:          info.Name,
 		ServerVersion:     info.ServerVersion,

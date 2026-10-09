@@ -54,62 +54,92 @@ func (d *dispatcher) record(ctx context.Context, eventID int64, target string, o
 	}
 }
 
+// dispatch's send and the two bookkeeping calls after it each get their OWN
+// context (deliveryRetryWebhookTimeout for the send, deliveryRetryDBTimeout
+// for each store call) — mirroring retryOne in delivery_retry.go, and for the
+// same reason: sharing one budget across all three meant a slow-but-not-hung
+// endpoint could consume most of it in attempt()'s own client.Timeout,
+// leaving record()/enqueueRetry() racing real DB latency against an
+// almost-expired context and silently losing the delivery record or the
+// retry enqueue.
 func (d *dispatcher) dispatch(webhookID int64, ev *store.AlertEvent) {
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-		defer cancel()
+		sendCtx, sendCancel := context.WithTimeout(context.Background(), deliveryRetryWebhookTimeout)
+		ok, status, target, detail, retriable := d.attempt(sendCtx, webhookID, ev)
+		sendCancel()
 
-		wh, err := d.store.WebhookByID(ctx, webhookID)
-		if err != nil {
-			log.Printf("monitor: webhook %d not found: %v", webhookID, err)
-			d.record(ctx, ev.ID, sprintf("webhook #%d", webhookID), false, 0, "webhook not found: "+err.Error())
-			return
-		}
-		// Name plus host only. A webhook URL routinely carries a token in its
-		// path or query, and this lands in a table any alerts reader can see.
-		target := wh.Name + " (" + hostOf(wh.URL) + ")"
+		recordCtx, recordCancel := context.WithTimeout(context.Background(), deliveryRetryDBTimeout)
+		d.record(recordCtx, ev.ID, target, ok, status, detail)
+		recordCancel()
 
-		p := payload{
-			RuleName: ev.RuleName, Type: ev.Type, Severity: ev.Severity,
-			Container: ev.ContainerName, ContainerID: ev.ContainerID,
-			Message: ev.Message, Value: ev.Value,
-			Time: time.Now().UTC().Format(time.RFC3339),
+		if !ok && retriable {
+			enqueueCtx, enqueueCancel := context.WithTimeout(context.Background(), deliveryRetryDBTimeout)
+			d.enqueueRetry(enqueueCtx, ev.ID, webhookID, detail)
+			enqueueCancel()
 		}
-
-		body, contentType := renderBody(wh.BodyTemplate, p)
-		method := wh.Method
-		if method == "" {
-			method = http.MethodPost
-		}
-		req, err := http.NewRequestWithContext(ctx, method, wh.URL, bytes.NewReader(body))
-		if err != nil {
-			log.Printf("monitor: webhook request build: %v", err)
-			d.record(ctx, ev.ID, target, false, 0, "bad request: "+redactURL(err))
-			return
-		}
-		req.Header.Set("Content-Type", contentType)
-		for k, v := range wh.Headers {
-			req.Header.Set(k, v)
-		}
-
-		resp, err := d.client.Do(req)
-		if err != nil {
-			log.Printf("monitor: webhook %q POST failed: %v", wh.Name, err)
-			d.record(ctx, ev.ID, target, false, 0, redactURL(err))
-			return
-		}
-		defer resp.Body.Close()
-		// Keep a short excerpt: the endpoint's own words are usually what tells
-		// an operator why it refused. Capped so a chatty endpoint can't write a
-		// megabyte into our database.
-		excerpt, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		io.Copy(io.Discard, resp.Body)
-		ok := resp.StatusCode < 300
-		if !ok {
-			log.Printf("monitor: webhook %q returned %d", wh.Name, resp.StatusCode)
-		}
-		d.record(ctx, ev.ID, target, ok, resp.StatusCode, string(excerpt))
 	}()
+}
+
+// attempt performs ONE webhook POST, synchronously. Split out from dispatch
+// so the retry sweep (delivery_retry.go) can drive the exact same attempt —
+// build the request, read the response, decide what happened — without
+// re-implementing it or spawning its own goroutine (the sweep already runs
+// off its own loop).
+//
+// retriable distinguishes a failure worth trying again (no response at all,
+// or the endpoint itself said "try later": 429 or 5xx) from one that won't
+// fix itself (a bad webhook id, a malformed request, or a 4xx the endpoint
+// used to reject the payload/auth outright) — reattempting the latter
+// indefinitely would just hammer a misconfigured endpoint.
+func (d *dispatcher) attempt(ctx context.Context, webhookID int64, ev *store.AlertEvent) (ok bool, status int, target, detail string, retriable bool) {
+	wh, err := d.store.WebhookByID(ctx, webhookID)
+	if err != nil {
+		log.Printf("monitor: webhook %d not found: %v", webhookID, err)
+		return false, 0, sprintf("webhook #%d", webhookID), "webhook not found: " + err.Error(), false
+	}
+	// Name plus host only. A webhook URL routinely carries a token in its
+	// path or query, and this lands in a table any alerts reader can see.
+	target = wh.Name + " (" + hostOf(wh.URL) + ")"
+
+	p := payload{
+		RuleName: ev.RuleName, Type: ev.Type, Severity: ev.Severity,
+		Container: ev.ContainerName, ContainerID: ev.ContainerID,
+		Message: ev.Message, Value: ev.Value,
+		Time: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	body, contentType := renderBody(wh.BodyTemplate, p)
+	method := wh.Method
+	if method == "" {
+		method = http.MethodPost
+	}
+	req, err := http.NewRequestWithContext(ctx, method, wh.URL, bytes.NewReader(body))
+	if err != nil {
+		log.Printf("monitor: webhook request build: %v", err)
+		return false, 0, target, "bad request: " + redactURL(err), false
+	}
+	req.Header.Set("Content-Type", contentType)
+	for k, v := range wh.Headers {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := d.client.Do(req)
+	if err != nil {
+		log.Printf("monitor: webhook %q POST failed: %v", wh.Name, err)
+		return false, 0, target, redactURL(err), true
+	}
+	defer resp.Body.Close()
+	// Keep a short excerpt: the endpoint's own words are usually what tells
+	// an operator why it refused. Capped so a chatty endpoint can't write a
+	// megabyte into our database.
+	excerpt, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	io.Copy(io.Discard, resp.Body)
+	ok = resp.StatusCode < 300
+	if !ok {
+		log.Printf("monitor: webhook %q returned %d", wh.Name, resp.StatusCode)
+	}
+	retriable = resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500
+	return ok, resp.StatusCode, target, string(excerpt), retriable
 }
 
 // renderBody produces the request body. With no template, it sends the payload

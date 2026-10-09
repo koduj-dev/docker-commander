@@ -1,9 +1,14 @@
 package api
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/koduj-dev/docker-commander/internal/store"
 )
 
 // handleListStacks returns the Compose stacks on the selected host (containers
@@ -39,6 +44,9 @@ func (s *Server) handleStackCompose(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	if msg := s.managedByProject(r.Context(), hostID, project); msg != "" {
+		editable, reason = false, msg
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "path": path, "content": content,
 		"editable": editable, "readOnlyReason": reason,
@@ -62,6 +70,10 @@ func (s *Server) handleWriteStackCompose(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	project := chi.URLParam(r, "project")
+	if msg := s.managedByProject(r.Context(), hostID, project); msg != "" {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": msg})
+		return
+	}
 	path, err := s.docker.StackWriteComposeFile(r.Context(), hostID, project, body.Content)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
@@ -81,6 +93,10 @@ func (s *Server) handleRedeployStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	project := chi.URLParam(r, "project")
+	if msg := s.managedByProject(r.Context(), hostID, project); msg != "" {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": msg})
+		return
+	}
 	out, err := s.docker.StackRedeploy(r.Context(), hostID, project)
 	if err != nil {
 		s.audit(r, "stack.redeploy.failed", project, err.Error())
@@ -101,10 +117,61 @@ func (s *Server) handleStackAction(w http.ResponseWriter, r *http.Request) {
 	}
 	project := chi.URLParam(r, "project")
 	action := chi.URLParam(r, "action")
+	release, err := s.beginStackOp(r.Context(), hostID, project, "a stack "+action)
+	if err != nil {
+		code := http.StatusInternalServerError
+		if errors.Is(err, errBusy) {
+			code = http.StatusConflict
+		}
+		writeErr(w, code, err.Error())
+		return
+	}
+	defer release()
 	if err := s.docker.StackAction(r.Context(), hostID, project, action); err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
 	s.audit(r, "stack."+action, project, "")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// managedByProject returns why a stack can't be edited here because a Project
+// owns it, or "" when none does. A project deploys as the Compose project named
+// by its slug, on its target host (0 = the local daemon). Editing that stack's
+// file here would bypass the project: no revision, no policy check, and the next
+// project deploy would overwrite the change anyway.
+func (s *Server) managedByProject(ctx context.Context, hostID int64, stack string) string {
+	p, err := s.stackProject(ctx, hostID, stack)
+	if err != nil {
+		return "could not check whether a project owns this stack"
+	}
+	if p != nil {
+		return fmt.Sprintf("this stack belongs to the project %q; edit and deploy it in Projects", p.Name)
+	}
+	return ""
+}
+
+// stackProject returns the managed project that deploys a stack: the Compose
+// project named by its slug, on the same host (0 = the local daemon). nil when
+// no project does.
+func (s *Server) stackProject(ctx context.Context, hostID int64, stack string) (*store.Project, error) {
+	projects, err := s.store.ListProjects(ctx)
+	if err != nil {
+		return nil, err
+	}
+	host, err := s.docker.ResolveHostID(ctx, hostID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range projects {
+		p := projects[i]
+		if p.Slug != stack {
+			continue
+		}
+		ph, err := s.docker.ResolveHostID(ctx, p.HostID)
+		if err == nil && ph == host {
+			return &p, nil
+		}
+	}
+	return nil, nil
 }

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/koduj-dev/docker-commander/internal/store"
 )
 
 func TestApplyErrorMessage_ReadOnlyFilesystemGetsGuidance(t *testing.T) {
@@ -105,10 +107,16 @@ func TestHandleApplyDisabled(t *testing.T) {
 // allowed AND a restart hook is wired. The cache is pre-seeded so status()
 // returns without an outbound GitHub call.
 func TestStatusSelfUpdateFlag(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+
 	seed := func(enabled, selfUpd, hook bool) updateStatus {
 		u := newUpdateChecker("1.0.0", enabled, selfUpd)
 		u.ok, u.at, u.cached = true, time.Now(), updateStatus{Current: "1.0.0"}
-		srv := &Server{update: u}
+		srv := &Server{update: u, store: st}
 		if hook {
 			srv.OnRestart(func() {})
 		}
@@ -128,5 +136,39 @@ func TestStatusSelfUpdateFlag(t *testing.T) {
 	}
 	if seed(true, false, true).SelfUpdate {
 		t.Error("SelfUpdate must be false when self-update is disabled")
+	}
+}
+
+// A fresh store (no policy ever saved) must still advertise a valid
+// granularity — never "", which is not one of the three choices the editor's
+// <select> or handleSetSelfUpdatePolicy accept. Before this was fixed, a
+// pristine install's first "enable auto-apply and save without touching the
+// dropdown" attempt failed with 400.
+func TestStatusFreshStoreDefaultsGranularity(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	srv := &Server{update: newUpdateChecker("1.0.0", true, true), store: st}
+
+	w := httptest.NewRecorder()
+	srv.handleUpdateStatus(w, httptest.NewRequest("GET", "/api/update", nil))
+	var got updateStatus
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.SelfUpdatePolicy.Granularity != "minor" {
+		t.Fatalf("fresh store granularity = %q, want the documented default %q", got.SelfUpdatePolicy.Granularity, "minor")
+	}
+
+	// The exact save the reviewer flagged: enable without ever touching the
+	// granularity control. It must succeed, using the value the status
+	// endpoint just advertised.
+	body := strings.NewReader(`{"enabled":true,"granularity":"` + got.SelfUpdatePolicy.Granularity + `"}`)
+	w2 := httptest.NewRecorder()
+	srv.handleSetSelfUpdatePolicy(w2, httptest.NewRequest("PUT", "/api/update/policy", body))
+	if w2.Code != http.StatusOK {
+		t.Fatalf("save after a fresh-store load should succeed, got %d: %s", w2.Code, w2.Body.String())
 	}
 }

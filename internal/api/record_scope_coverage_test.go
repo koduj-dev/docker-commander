@@ -74,9 +74,13 @@ var recordRouteDecision = map[string]string{
 	// Likewise a second factor: it belongs to an account, names no host, and the
 	// delete is scoped by the caller's own user id (and needs their password).
 	"/api/auth/factors/{id}": "own authenticators only; a factor names no host",
+	// An MCP connector session belongs to an account, not to a Docker host,
+	// same as its own OAuth token/session-cookie counterparts above.
+	"/api/mcp/sessions/{id}": "own sessions only; a session names no host",
 	// Fleet-wide MCP administration is admin-only, and admins bypass host scope.
 	"/api/mcp-admin/tokens/{id}":        "admin-only prefix",
 	"/api/mcp-admin/oauth-clients/{id}": "admin-only prefix",
+	"/api/mcp-admin/sessions/{id}":      "admin-only prefix",
 	// Instance-wide alerting configuration: a rule, a webhook or a parse rule
 	// names no host — the alert EVENTS they produce do, and those are scoped.
 	"/api/alert-rules/{id}":        "an alert rule is instance-wide; it names no host",
@@ -84,6 +88,15 @@ var recordRouteDecision = map[string]string{
 	"/api/alert-rules/{id}/toggle": "an alert rule is instance-wide; it names no host",
 	"/api/webhooks/{id}":           "a webhook is instance-wide; it names no host",
 	"/api/parse-rules/{id}":        "a parse rule is instance-wide; it names no host",
+	// Unlike the instance-wide rows above, a maintenance window DOES carry
+	// host scope (HostIDs) — but it's enforced inside the handler itself
+	// (maintenanceWindowHostsAllowed/maintenanceWindowInReach), not by this
+	// generic {id}-vs-?host= sweep, because the scope is a caller-chosen LIST
+	// of hosts (or "every host"), not one owning host column the sweep's
+	// single-host convention can express. See the maintenance window
+	// host-scope pentests for the exercised property.
+	"/api/maintenance-windows/{id}":     "host-scoped inside the handler; see maintenance window host-scope pentests",
+	"/api/maintenance-windows/{id}/end": "host-scoped inside the handler; see maintenance window host-scope pentests",
 	// Installation-level authority, gated by the admin prefix or its own section;
 	// none of these rows carry a host column.
 	"/api/users/{id}":           "admin-only prefix; users carry no host",
@@ -107,6 +120,17 @@ var recordRouteDecision = map[string]string{
 	"/api/service-blocks/{id}/duplicate":    "builder content; names no host",
 	"/api/compose-fragments/{id}":           "builder content; names no host",
 	"/api/compose-fragments/{id}/duplicate": "builder content; names no host",
+	// A CVE id is a global identifier (the same vulnerability everywhere it
+	// turns up), and ignoring one is deliberately instance-wide, not scoped to
+	// whichever host's image happened to surface it.
+	"/api/images/ignored-cves/{id}": "an ignored CVE is instance-wide; it names no host",
+	// Backup jobs are admin-only (sectionForPath → "__admin"), and admins bypass
+	// host scope entirely — the same reasoning as mcp-admin/users/roles above.
+	// A project-scoped job's mounts are still resolved from the PROJECT's own
+	// host at run time (see backupjobs.resolveTarget), never trusted off the row.
+	"/api/backup-jobs/{id}":      "admin-only prefix; admins bypass host scope",
+	"/api/backup-jobs/{id}/run":  "admin-only prefix; admins bypass host scope",
+	"/api/backup-jobs/{id}/runs": "admin-only prefix; admins bypass host scope",
 }
 
 // TestEveryRecordAddressedRouteDecidesItsHost walks the real router, collects the

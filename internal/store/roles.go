@@ -74,7 +74,7 @@ func (g Grant) HasHost(hostID int64) bool {
 // rather than day-to-day work, so an Operator shouldn't get them by default.
 var operatorSections = []string{
 	"dashboard", "containers", "projects", "images", "volumes", "networks",
-	"topology", "logs", "events", "alerts",
+	"topology", "logs", "events", "alerts", "diagnostics",
 }
 
 // seedBuiltinRoles creates the built-in roles if absent. It never overwrites an

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, ShieldOff, LayoutGrid, Network, Send, Plus, Trash2, Mail } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { Loader2, ShieldOff, LayoutGrid, Network, Send, Plus, Trash2, Mail, ShieldCheck, Plug, HardDriveDownload, Database } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import type { LdapConfig, Role } from "../lib/types";
@@ -8,9 +9,15 @@ import { PageHeader } from "../layout/Shell";
 import { Spinner } from "../components/ui";
 import { Tabs } from "../components/Tabs";
 import { TokenPolicyEditor } from "../components/TokenPolicyEditor";
+import { SelfUpdatePolicyEditor } from "../components/SelfUpdatePolicyEditor";
 import { EmailConfig } from "../components/EmailConfig";
+import { RetentionSettings } from "../components/RetentionSettings";
+import { PolicyRules } from "./PolicyRules";
+import { MCPAdmin } from "./MCPAdmin";
+import { Recovery } from "./Recovery";
 
-type Tab = "features" | "security" | "ldap" | "email";
+type Tab = "features" | "security" | "policy" | "ldap" | "email" | "mcp" | "retention" | "recovery";
+const TABS: Tab[] = ["features", "security", "policy", "ldap", "email", "mcp", "retention", "recovery"];
 
 export function Settings() {
   const [all, setAll] = useState<string[]>([]);
@@ -25,7 +32,11 @@ export function Settings() {
   // ok as well as scope: a failure rendered in the success colour is worse than
   // no message at all — it says the setting was saved when it wasn't.
   const [msg, setMsg] = useState<{ scope: Tab; ok: boolean; text: string } | null>(null);
-  const [tab, setTab] = useState<Tab>("features");
+  // The tab is in the URL (?tab=) so a link — or a reload — lands on it.
+  const [params, setParams] = useSearchParams();
+  const asked = params.get("tab") as Tab | null;
+  const tab: Tab = asked && TABS.includes(asked) ? asked : "features";
+  const setTab = (t: Tab) => setParams(t === "features" ? {} : { tab: t }, { replace: true });
 
   const load = useCallback(() => {
     api.settings().then((s) => {
@@ -59,16 +70,25 @@ export function Settings() {
           tabs={[
             { key: "features", label: "Features", icon: <LayoutGrid className="h-4 w-4" />, count: all.length - disabled.size },
             { key: "security", label: "Security", icon: <ShieldOff className="h-4 w-4" /> },
+            { key: "policy", label: "Policy rules", icon: <ShieldCheck className="h-4 w-4" /> },
             { key: "ldap", label: "LDAP", icon: <Network className="h-4 w-4" /> },
             { key: "email", label: "Email", icon: <Mail className="h-4 w-4" /> },
+            { key: "mcp", label: "MCP Admin", icon: <Plug className="h-4 w-4" /> },
+            { key: "retention", label: "Data retention", icon: <Database className="h-4 w-4" /> },
+            { key: "recovery", label: "Recovery bundle", icon: <HardDriveDownload className="h-4 w-4" /> },
           ]}
         />
+
+        {tab === "policy" && <PolicyRules embedded />}
+        {tab === "mcp" && <MCPAdmin embedded />}
+        {tab === "retention" && <RetentionSettings />}
+        {tab === "recovery" && <Recovery embedded />}
 
         {tab === "features" && (
           <div className="space-y-4 max-w-2xl">
             <div className="card p-5 space-y-3">
               <div className="flex items-center gap-2 font-medium"><LayoutGrid className="h-4 w-4 text-accent" /> Enabled features</div>
-              <p className="text-xs text-muted">Turn off whole sections the team doesn&apos;t need. Disabled sections are hidden from the menu and their APIs are blocked for everyone.</p>
+              <p className="text-xs text-muted">Turn off whole sections the team doesn&apos;t need. Disabled sections are hidden from everyone&apos;s menu, and their APIs are blocked for everyone except admins.</p>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-1.5">
                 {all.map((s) => {
                   const enabled = !disabled.has(s);
@@ -122,6 +142,7 @@ export function Settings() {
                 MCP admin page stays the operational view — who holds a token,
                 and revoking it. */}
             <TokenPolicyEditor />
+            <SelfUpdatePolicyEditor />
           </div>
         )}
 

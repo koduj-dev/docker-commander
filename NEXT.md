@@ -31,13 +31,6 @@ The alert engine now tracks conditions with a lifetime (firing → escalated →
 resolved), which is the foundation the next two items assume. Building them on
 the old repeat-every-cooldown engine would have produced a timeline of noise.
 
-- **Maintenance windows and silences.** Suppress notifications during planned work
-  without turning monitoring off. Scope by host, project/stack, container, rule or
-  severity; one-off and recurring; a reason and an author; audited. An incident
-  should still be *recorded* while silenced — the point is to stop the paging, not
-  the observing. Also: automatic silence during a deploy, with a configurable grace
-  period afterwards. This is distinct from a **disabled host**, which is not
-  monitored at all.
 - **Incident timeline / correlation.** Join alerts, Docker events, deploys, log
   matches and metrics into one explainable incident: what changed, what broke, what
   it affected, and a link to the revision to roll back to. Feeds MCP tools
@@ -58,58 +51,56 @@ the old repeat-every-cooldown engine would have produced a timeline of noise.
   scoping narrowly (a new alert-rule *source*, reusing the existing
   rule/lifecycle/notification machinery) rather than growing into a general
   monitoring tool.
-- **Alert delivery retry.** Failures are now *recorded* but never re-attempted.
-  Retry needs a queue and a backoff policy, and silently retrying a webhook that
-  returns 500 for a good reason is its own hazard — worth doing deliberately.
-- **Per-session MCP token revocation.** Revoking is currently per OAuth *client*:
-  there is no "sign this one tool out", and a stolen token can't be killed
-  individually short of removing its client. A `jti` denylist would buy that, at
-  the cost of a lookup and a table to prune.
 
 ### Safe changes
 
-The next three items — plan/diff, drift detection, and revisions/rollback —
-share one underlying question: *what does the compose definition say, what is
-actually running, and what's the difference?* Worth designing as one internal
-state-diff model (current state + desired state → difference → plan →
-execution → verification → rollback) rather than three one-off features, so
-the same diff engine can back a pre-deploy preview, a drift check, and a
-rollback's "what will restoring this revision actually change" — and, later,
-feed the same model to the CLI/MCP instead of each surface re-deriving it.
+These items — drift detection and revisions/rollback — share one underlying
+question with the deployment plan/diff that already shipped (see CHANGELOG):
+*what does the compose definition say, what is actually running, and what's
+the difference?* They're designed to reuse that same state-diff engine
+(`internal/docker/preview.go` + `deployfields.go`: `ServiceSpec`/
+`ServiceChange`/`BuildDeployPreview`/`ExtendServiceComparison`) rather than
+re-deriving it — that engine already resolves a project's compose against
+what's running and reports added/removed/image/digest/env/ports/volumes/
+networks/restart/resources/healthcheck differences, with a per-change
+`recreates` (downtime-risk) flag, behind both a REST endpoint
+(`GET /api/projects/{id}/preview`) and the `preview_deploy` MCP tool.
 
-- **Deployment plan / diff.** Before a deploy or redeploy, show exactly what
-  is about to happen: which services get created / recreated / removed, image
-  tag **and digest** changes, env/port/volume/network changes, resource-limit
-  and healthcheck changes, and a downtime-risk callout (e.g. "backend will be
-  recreated"). Projects already show a **resolved config preview** (rendered
-  YAML) — this is a step beyond that: a structural diff against the *running*
-  state, not just the file. Should be a first-class UI screen, not only
-  something MCP callers see.
-- **Drift detection (desired vs. running state).** Compare a project's compose
-  definition against what's actually running — image digest, env, mounts,
-  restart policy, resource limits — and surface the delta (e.g. "restart:
-  unless-stopped ⟶ running as always ⚠"). Actions: reconcile the running
-  container to match the file, adopt the running config back into the file,
-  view the full diff, or explicitly ignore a drift. Nobody in this space does
-  this well — Terraform-style drift tooling exists because Terraform keeps a
-  state file; Compose has none, so nothing today compares "what's running" to
-  "what the file says" the way this would. Reuses the container-diff and
-  inspect infrastructure that already exists.
-- **Deployment revisions and rollback.** An immutable history of every project and
-  edited-stack deploy — compose file, sidecar files, resolved config, profiles,
-  target host, image references *and resolved digests*, validation result, output,
-  author, reason — with diff, preview and restore. Should include an **env/secret
-  diff** between two revisions (values stay redacted; only "changed/added/removed"
-  is shown). Notes that matter: roll back a
-  mutable tag using the stored **digest**; a revision must identify its remote bind
-  snapshots; rollback must not delete persistent named volumes; it should re-run
-  validation before applying; and a CLI-discovered stack must keep its original
-  working directory. **The highest-value item on this list.**
-- **Policy checks before deploy.** Refuse or warn on privileged containers, host
-  network/PID, docker-socket mounts, `:latest` in production, missing resource
-  limits, missing healthchecks. Some pieces exist already — compose validation,
-  the duplicate-host-port check, Dockerfile linting, Trivy scanning — but there is
-  no policy engine tying them to a decision.
+- ~~**Drift detection (desired vs. running state).**~~ **Shipped** (see
+  CHANGELOG): the deploy preview *is* this comparison, with three of its four
+  named actions — **view the full diff** (the preview itself), **reconcile**
+  (a "Reconcile now" button in that view, which is just Deploy from that
+  context), and **explicitly ignore a drift** (per service+kind, persisted,
+  reversible, excluded from the active count but never hidden). Still open:
+  **adopt** — write the running container's actual config back into the
+  compose file, the one action with no shipped equivalent. Scoped out on
+  purpose: it means generating a YAML edit against a file that may carry
+  anchors/comments/formatting a human wrote, which is a materially different
+  (and riskier) problem than reading and reporting a diff.
+- ~~**Deployment revisions and rollback.**~~ **Shipped for managed Projects**
+  (see CHANGELOG) — was the highest-value item on this list. Every successful
+  deploy records an immutable revision: compose file + every sidecar file (a
+  zip snapshot; resolved config is derived from it on demand rather than
+  stored twice), profiles, target host, image references *and* the digest
+  actually running, validation state, output, author and reason. Diff reuses
+  the plan/diff engine directly — a revision vs. what's running now, or
+  against another revision — including an env diff (key and value; asked
+  for as "redacted" originally, reversed after real use showed that made
+  the diff unable to answer its own question, for no actual protection —
+  the values are already visible in the compose file and the existing
+  Resolved preview at the same permission level; a real secrets store, when
+  one exists, is where redaction belongs). Restore re-validates the
+  snapshot in a scratch dir *before*
+  touching anything live, pins any service with a recorded digest so a
+  mutable tag can't quietly change what comes back, redeploys with the
+  revision's own profiles, and becomes a new revision itself rather than
+  rewriting history. Never touches named volumes (the only Docker operation
+  is `up`). Two things this deliberately does NOT cover: a **CLI-discovered
+  Stack** (edited-stack deploys) has no revision history yet — only
+  Projects do; and a remote deploy's revision records which host it targeted
+  but not a snapshot of what was copied into seeded bind volumes at the
+  time, so "restore" on a remote project rebuilds them from the restored
+  compose file rather than reverting them to their exact prior contents.
 - **Controlled image updates.** Detect that a newer image exists for a running
   workload, show what would change, and update deliberately. (Distinct from
   self-update, which is about the Docker Commander binary and already ships.)
@@ -138,18 +129,28 @@ feed the same model to the CLI/MCP instead of each surface re-deriving it.
   prune`), gated behind the post-deploy verification above succeeding first
   (so a bad update still has its old image to roll back to), and it must
   write an **audit log** entry exactly like a manual prune would.
-- **Self-update auto-apply policy.** Self-update (banner + one-tap +
-  `--self-upgrade`, SHA-256-verified atomic replace) already ships, but only
-  as something an admin triggers by hand. The same poll/policy/audit/notify
-  shape as **Controlled image updates** above, applied to DC's own binary
-  instead of a workload: an admin opts in and picks a granularity (major /
-  minor / patch — patch-and-minor-only is the common WordPress-style
-  default, not "auto-apply everything"), the existing update check already
-  running server-side applies the release automatically when it matches,
-  the event lands in the audit log the same way a manual `update.apply`
-  does today, and the next admin to log in sees a "you're now on vX.Y.Z —
-  applied automatically on <date>" notice rather than discovering it
-  silently. Off by default, same spirit as the image-update opt-in.
+
+  **Shipped so far (detection + notification, no auto-apply yet):** every
+  project's running services are checked on a schedule (every 6 hours)
+  against the registry's current digest for their compose-declared tag,
+  reusing the deploy preview's own digest-drift check
+  (`internal/docker/preview.go`'s `AugmentDigestDrift`) rather than
+  re-deriving it. A newly-observed digest raises an *info* `image_update`
+  alert once — dedup state lives in a new `project_image_update_state`
+  table, keyed by (project, service), storing only the last-notified
+  digest; a still-unresolved drift found again on a later poll never
+  renotifies, but a digest that moves again does. The notification path
+  itself (`Monitor.NotifySystem`) is new and shared: `fireHostAlert` (host
+  reachability) was refactored onto it too, so both are the same
+  ruleless-alert plumbing instead of two hand-rolled copies. **Still open,
+  in order:** per-image ignore controls (version / major / entire image) +
+  auto-apply + the policy gate + a minimum-age/cooldown gate; post-deploy
+  verification + auto-rollback; auto-prune of the superseded image; linking
+  the release notes in the notification. No opt-out setting exists yet for
+  the poll itself — deliberately deferred rather than adding a toggle Phase
+  3's richer per-project policy might reshape anyway; it runs whenever the
+  `docker compose` CLI is available, same as the on-demand preview already
+  does today, just on a schedule instead of only when a human opens it.
 
 ### GitOps and Compose sources
 
@@ -193,19 +194,14 @@ feed the same model to the CLI/MCP instead of each surface re-deriving it.
 
 ### Network statistics
 
-Phases 1 and 2 have shipped — per-container throughput, totals, packets, drops,
+Phases 1–3 have shipped — per-container throughput, totals, packets, drops,
 errors and a per-interface breakdown; endpoint totals on a network's detail; a
-host-wide summary on the dashboard — and so has phase 3's storage half: history
-keeps the **raw cumulative counters** and derives rates at read time. What is left
-is what you *do* with them.
+host-wide summary on the dashboard; history storing raw cumulative counters and
+deriving rates at read time; alert rules for throughput (absolute threshold)
+and drops/errors (alert on increase within a window, never the absolute
+value); and a Top Talkers ranking (dashboard widget + full page) averaged over
+a stored window, never a point-in-time sample. What is left is optional:
 
-- **Alert on network.** Rule metrics are still `cpu` / `cpu_total` / `mem` only.
-  Throughput needs a rule of its own, and drops and errors should be alerted on by
-  their **increase**, not their absolute value — a counter sitting at 12 since a
-  bad afternoon last month is not an incident.
-- **Top talkers.** Only readable over a window: point-in-time throughput reorders
-  itself on every poll, which is why the dashboard shows a host-wide time series
-  rather than a ranking. Rank over a stored interval, not over a sample.
 - **Phase 4 (optional) — a Linux collector** via netlink/eBPF for flows, protocols,
   connections and retransmits. Keep it an optional capability, never a condition of
   running Docker Commander: it is Linux-only, awkward under Docker Desktop and
@@ -218,28 +214,6 @@ Exact mapping needs MAC/namespace inspection via netlink — Linux-only and host
 to remote hosts. So the app sums across interfaces and says so, rather than
 publishing a per-network number that looks authoritative and is wrong.
 
-### Backup and disaster recovery
-
-- **Portable recovery bundle.** Export everything Docker Commander itself
-  knows as one file: project/stack compose + sidecar files, resolved project
-  config, host definitions, alert rules, registry definitions, image
-  digests, network/volume inventory, and DC's own config — no volume data.
-  Restore flow: import the bundle → pick a target host → a compatibility
-  check surfaces missing images/volumes/secrets → restore. This needs no new
-  storage engine, since it's exactly the state DC already keeps; it's the
-  single most-requested thing on this whole list — Portainer gates it behind
-  its paid Business Edition ([#1759](https://github.com/portainer/portainer/issues/1759),
-  78 👍; [#2901](https://github.com/portainer/portainer/issues/2901), 54 👍) —
-  and DC having no external DB of its own to restore is a real edge.
-- **Volume data: integrate, don't reinvent.** Deliberately *not* a backup
-  engine — no repositories, retention policies or storage backends of our
-  own. Instead, a **trigger-and-status wrapper**: run a user-supplied command
-  (their own `restic`/`borg`/whatever, already configured with its own repo
-  and encryption) per volume or project, on a schedule or on demand, and
-  surface "last backup: ok/failed, 3h ago" next to that volume/project in the
-  dashboard. The recovery bundle above says what infrastructure looked like;
-  this says whether its data was actually captured.
-
 ### Identity and access
 
 - **OIDC / SSO** — Google/Azure/Okta login. LDAP (including group→role) is step
@@ -250,19 +224,24 @@ publishing a per-network number that looks authoritative and is wrong.
 
 ### Configuration and secrets
 
-- **Project secrets.** A GitHub-Actions-secrets-style store: name a value once
-  (`DB_PASSWORD`, `API_TOKEN`…), reference it from compose/`.env` instead of
-  inlining it, and it never appears in plaintext again — not in the compose
-  file, not in a git-sourced repo, not in the resolved-config preview, not in
-  a deployment plan/diff, not in logs, not in a normal API response. Matters
-  more now that GitOps/build-from-source deploy is planned: a repo pulled
-  from git must never need a real secret committed to it to run. RBAC on who
-  can view/edit which secrets; audit *that* a secret changed, never its
-  value; detect a likely-secret pasted directly into a compose editor and
-  offer to move it. Storage stays DC's own encrypted-at-rest store for now
-  (matching the registry/SMTP/LDAP secret pattern already in place) — `.env`
-  import and an external provider (SOPS+age, Docker Secrets, Vault…) are
-  later, optional backends, not a prerequisite. Don't try to become Vault.
+- ~~**Project secrets.**~~ **Shipped**, except the compose-editor heuristic
+  below: name a value once (`DB_PASSWORD`, `API_TOKEN`…), reference it from
+  the compose file via plain `${NAME}` interpolation instead of inlining it —
+  DC supplies it as a process env var at deploy time only, never written to
+  `.env` or any file on disk. Never appears in plaintext again: not in the
+  resolved-config preview, not in a deployment plan/diff, not in a normal API
+  response, not in the audit log (which records *that* a secret changed, by
+  name, never its value) — everywhere a resolved value is shown, a stable
+  `secret:<fingerprint>` placeholder appears instead, so a diff can still
+  show *that* a secret changed without ever showing what it is. RBAC reuses
+  the project's own "projects" section grants (view lists names, write
+  manages them) rather than a new per-secret permission model. Storage is
+  DC's own encrypted-at-rest store, same pattern as registry/SMTP/LDAP
+  credentials. Still open: **detect a likely-secret pasted directly into the
+  compose editor and offer to move it** — deliberately deferred as a
+  fast-follow, orthogonal UI work. Also still open, now that this exists: a
+  git-sourced repo (GitOps deploy, not yet built) must never need a real
+  secret committed to it to run — revisit once that lands.
 - **Parameterized user templates.** Built-in presets support `{{.Var}}`;
   user-saved ones are literal snapshots. Add variables, validation and safe
   handling of generated secrets.
@@ -295,17 +274,66 @@ publishing a per-network number that looks authoritative and is wrong.
 
 ### Reverse proxy and ingress
 
-- **Per-container domain + TLS.** An optional embedded reverse proxy
-  (Go-native, e.g. Caddy-as-a-library — no new external process) that maps a
-  domain to a container's host port with automatic Let's Encrypt issuance,
-  so a deployed stack doesn't need a hand-rolled Traefik/nginx-proxy-manager
-  sitting next to it. This is the single most-cited draw pulling people from
-  Portainer/Dockge-class tools toward Coolify/CapRover, and it's asked for
-  directly against Dockge too
+- **Per-container domain + TLS.** An optional embedded reverse proxy that
+  maps a domain to a container's host port with automatic Let's Encrypt
+  issuance, so a deployed stack doesn't need a hand-rolled
+  Traefik/nginx-proxy-manager sitting next to it. This is the single
+  most-cited draw pulling people from Portainer/Dockge-class tools toward
+  Coolify/CapRover, and it's asked for directly against Dockge too
   ([discussion #292](https://github.com/louislam/dockge/discussions/292),
   [#553](https://github.com/louislam/dockge/issues/553)). DC already does
   ACME/native HTTPS for *itself*; this is the same capability, scoped
   per-deployed-container instead of per-DC-instance.
+
+  **Architecture decision:** built on `golang.org/x/crypto/acme/autocert`
+  (already a dependency, used for DC's own admin TLS) plus stdlib
+  `net/http/httputil.ReverseProxy`, **not** Caddy-as-a-library as originally
+  floated here. Pulling in Caddy (even just its certmagic sub-library) would
+  be a large new dependency tree for capability autocert already provides —
+  the same shape of regret already logged below for the rejected in-process
+  Compose engine. The one real design wrinkle: DC's own admin TLS and the
+  per-container proxy both want port 443; the plan is one shared listener
+  with an SNI-dispatching `GetCertificate`/handler (DC's own configured
+  admin domain(s) routes to DC's own chi mux + autocert manager, everything
+  else to the proxy's own autocert manager + `ReverseProxy`, each with its
+  own cert cache directory) rather than two listeners fighting over the
+  port.
+
+  **Shipped so far:** phase 1 — a project can record domain → service:port
+  mappings (**Domains** panel on a project's card), validated (real FQDN,
+  globally unique, doesn't collide with DC's own admin domain, target
+  service must exist in the compose file when the `docker compose` CLI is
+  available), audited, RBAC via the project's own section grant. Phase 2 —
+  **the actual proxy engine**: the shared-listener SNI dispatch above is
+  live, gated off by default behind its own opt-in flag
+  (`DC_PROXY_ENABLED`/`-proxy-enabled`) and only active when DC's own admin
+  domain is also in ACME mode. `ReverseProxy` routing is sourced from the
+  stored mappings, resolved to a container's actual **live, Docker-reported
+  port** (never the stored `targetPort` treated as a dial address directly —
+  it's only ever a matching key), **local-host projects only** (a
+  remote-host project's mapping is recorded but never served or issued a
+  certificate). A request whose TLS SNI disagrees with its HTTP Host is
+  rejected outright, and anything that's neither the admin domain nor a
+  currently-live local mapping gets a plain 404 rather than ever falling
+  through to the admin UI — a domain's ACME certificate can outlive the
+  mapping/project state it was issued under, so that fallback has to be
+  safe on its own, not just "correct at issuance time."
+
+  **Still open:** (1) remote-host reachability — `store.Host` has no field
+  today for "where this host's published ports are reachable from," only
+  its Docker daemon connection string, which isn't the same address for an
+  `ssh`-kind host; (2) polish — cert-expiry/status display, HTTP→HTTPS
+  redirect convenience, an optional http-01 fallback; (3) the proxy assumes
+  Docker Commander shares a network namespace with the daemon it manages —
+  it dials a container's published *host* port directly, so a
+  `DOCKER_HOST=tcp://…` pointed elsewhere is detected and refused cleanly,
+  but DC running containerized on the *same* machine as the daemon (see
+  [Option D](README.md#option-d--docker)) without `--network host` isn't
+  detectable the same way and isn't handled yet (see `docs/projects.md`).
+  Also open: whether `tlsMode` ever needs a `"none"` value (an external
+  terminator in front of DC's proxy) — the column already reserves the
+  value, nothing yet implements it — and mappings are Projects-only
+  (CLI-discovered Stacks are out of scope here, same as revisions).
 
 ### Multi-instance federation
 
@@ -354,14 +382,10 @@ the security property alone, independent of the NAT-traversal convenience.
 - **Log bookmarks** — save a time range plus filters, link it to an incident, share
   it with users who have the rights, export a small diagnostic bundle without
   secrets.
-- **Plain log download/export**, distinct from and much smaller than Log
-  bookmarks above — no incident/bookmark model needed, just a button that
-  saves the currently-filtered view as a file. Arcane gets asked for this
-  directly. Worth also considering **log forwarding** (push matched/filtered
-  lines to an external endpoint over WS or a webhook) as a separate,
-  optional extension for people who want lines to land somewhere other than
-  reading the `.log` file by hand — bigger scope than the plain download,
-  so don't block the small win on it.
+- **Log forwarding** — push matched/filtered lines to an external endpoint
+  over WS or a webhook, for people who want lines to land somewhere other
+  than reading the `.log` file by hand (the plain per-view download already
+  ships). Bigger scope than the download button was, so it stayed separate.
 - **Sub-path / base-path deployment** — run Docker Commander itself under a
   path prefix behind a reverse proxy (`https://host/dockercmd/`), not just
   on its own (sub)domain. Three independent asks for this shape across
@@ -373,36 +397,31 @@ the security property alone, independent of the NAT-traversal convenience.
   independently twice against Portainer. Archiving only pulls its weight if
   there's also a way back: an archive view and a restore action, not just a
   one-way hide.
-- **Bulk-ignore/dismiss known CVEs** across images from a Trivy scan —
-  scanning and a severity/CVE table already ship; there's no way to triage
-  a batch of already-reviewed, accepted findings today.
-- **Login form autocomplete attributes** — a password manager should be able
-  to fill the login form; likely a small, correct `autocomplete`/field-name
-  fix rather than a real feature.
 - **Native Slack / Teams / Discord notifications** as a UX layer over the generic
   webhook, which stays the base mechanism.
 - **Host maintenance mode**, as distinct from `disabled`: monitoring continues,
   events are still recorded, notifications are suppressed or tagged, and write
   operations can optionally be blocked. Overlaps with silences above — design them
   together.
-- **ACME / Let's Encrypt** for public hosts. Self-signed `--make-certs` ships;
-  lower priority because production usually sits behind a reverse proxy. Testable
-  locally against Pebble.
-
----
-
-## 📦 Backlog
-
-Plausible, deliberately not prioritized — different from 🧭 below, which is a
-closed question. Revisit if the reasoning changes, not on a timer.
-
-- **Docker Swarm support.** Real feature, real (shrinking) audience — usage
-  keeps moving toward plain Compose on one side and Kubernetes on the other,
-  and Swarm needs a genuinely new object model (services/tasks/nodes,
-  `docker stack deploy`, overlay networks, Swarm-native secrets) rather than
-  an incremental add. Not worth the build for a shrinking slice of users
-  right now. Parked here instead of rejected outright, since "shrinking" can
-  reverse.
+- **Standalone compose visualizer.** Paste or upload a bare `docker-compose.yml`
+  — no host, no Docker connection needed — and render it as an architecture
+  diagram: services classified by image name into a small icon set (database,
+  cache, queue, reverse-proxy/web, generic fallback), with networks and
+  `depends_on` drawn as edges. Reuses the Topology view's existing machinery
+  (`TopoGraph.tsx`'s React Flow + d3-force layout, same node/edge look) rather
+  than a new charting library or a hand-rolled SVG renderer — just a new node
+  "kind" with a swapped icon. Needs the compose parser extended past today's
+  `ServiceSpec` (name+image only) to also read networks/volumes/depends_on/ports.
+  Scope v1 to a single static file, best-effort — full multi-file/`extends`/
+  `profiles` resolution is more compose surface than a visualizer needs.
+- **Resources → Network: say what the numbers are.** The tab shows the
+  *average throughput* (bytes/s) over the chosen window (5 m / 15 m / 1 h),
+  computed from the stored cumulative counters — not an amount of data
+  transferred, and not the instantaneous rate the Containers tab shows — but
+  nothing on the page says so beyond one dense paragraph, and it reads as if
+  Received/Sent were totals. Rename the columns ("Avg received / Avg sent, per
+  second") with a tooltip, and consider a third "Transferred" column
+  (roughly average × window length) so "how much data was it" is answerable too.
 
 ---
 
@@ -462,3 +481,28 @@ Recorded so they don't get re-proposed.
 - **More plain Docker API CRUD wrappers.** The everyday management surface is
   covered. New work should aggregate, explain, protect a change, or make recovery
   possible.
+
+---
+
+## 🗺️ Working priority order
+
+Nothing is agreed for the next release yet. Everything that shipped in 1.7.0 is
+in the [CHANGELOG](CHANGELOG.md). The ranked candidates, in descending priority
+(original numbering kept as-is), no commitment yet; revisit before reshuffling:
+
+5. Incident timeline / correlation
+9. External / synthetic checks
+14. GitOps stack deploy
+15. Lightweight webhook redeploy
+16. OIDC / SSO
+17. Aggregated cross-host dashboard
+18. Host groups / tags
+22. Monorepo-aware mapping (depends on #14)
+23. Multi-instance federation
+24. Smaller well-scoped items (bulk-action per-host RBAC, log bookmarks/forwarding,
+    sub-path deployment, archive/hide stacks, Slack/Teams/Discord notifications,
+    host maintenance mode, standalone compose visualizer)
+25. Parameterized user templates / per-instance mount isolation / remote template catalog
+26. Backlog: Docker Swarm support
+27. Open questions to triage: automation API + CLI, "existing containers →
+    Compose project", Compose Watch / dev mode

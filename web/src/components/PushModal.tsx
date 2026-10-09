@@ -56,7 +56,7 @@ export function PushModal({ image, onClose, onDone }: { image: ImageSummary; onC
   const layerList = [...layers.values()];
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <form className="card w-full max-w-2xl" onClick={(e) => e.stopPropagation()} onSubmit={start}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <Upload className="h-4 w-4 text-accent" />

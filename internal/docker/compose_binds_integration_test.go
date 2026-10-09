@@ -10,8 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/client"
+	cerrdefs "github.com/containerd/errdefs"
+
+	"github.com/moby/moby/client"
 )
 
 // SeedProjectBinds is the piece that actually ships a project's files, so drive
@@ -158,7 +159,7 @@ func TestListAndRemoveSeedVolumes_Integration(t *testing.T) {
 	t.Cleanup(func() {
 		removeSeedVolume(t, m, 0, SeedVolumeName(mine, "html"))
 		removeSeedVolume(t, m, 0, SeedVolumeName(other, "html"))
-		_ = cli.VolumeRemove(context.Background(), decoy, true)
+		_, _ = cli.VolumeRemove(context.Background(), decoy, client.VolumeRemoveOptions{Force: true})
 	})
 
 	if err := m.SeedProjectBinds(ctx, 0, dir, mine, binds); err != nil {
@@ -168,7 +169,7 @@ func TestListAndRemoveSeedVolumes_Integration(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A volume whose NAME looks like a seed but carries no seed label.
-	if _, err := cli.VolumeCreate(ctx, volume.CreateOptions{Name: decoy}); err != nil {
+	if _, err := cli.VolumeCreate(ctx, client.VolumeCreateOptions{Name: decoy}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -187,14 +188,14 @@ func TestListAndRemoveSeedVolumes_Integration(t *testing.T) {
 	if len(removed) != 1 {
 		t.Errorf("expected 1 volume removed, got %v", removed)
 	}
-	if _, err := cli.VolumeInspect(ctx, SeedVolumeName(mine, "html")); err == nil {
+	if _, err := cli.VolumeInspect(ctx, SeedVolumeName(mine, "html"), client.VolumeInspectOptions{}); err == nil {
 		t.Error("the seed volume should be gone")
 	}
 	// The other project's seed and the unlabelled decoy must be untouched.
-	if _, err := cli.VolumeInspect(ctx, SeedVolumeName(other, "html")); err != nil {
+	if _, err := cli.VolumeInspect(ctx, SeedVolumeName(other, "html"), client.VolumeInspectOptions{}); err != nil {
 		t.Errorf("SECURITY/BUG: another project's seed volume was removed: %v", err)
 	}
-	if _, err := cli.VolumeInspect(ctx, decoy); err != nil {
+	if _, err := cli.VolumeInspect(ctx, decoy, client.VolumeInspectOptions{}); err != nil {
 		t.Errorf("SECURITY/BUG: an unlabelled volume with a seed-like name was removed: %v", err)
 	}
 
@@ -227,10 +228,10 @@ func removeSeedVolume(t *testing.T, m *Manager, hostID int64, name string) {
 	m.CloseVolumeBrowser(ctx, hostID, name)
 	var lastErr error
 	for i := 0; i < 25; i++ {
-		if lastErr = cli.VolumeRemove(ctx, name, true); lastErr == nil {
+		if _, lastErr = cli.VolumeRemove(ctx, name, client.VolumeRemoveOptions{Force: true}); lastErr == nil {
 			return
 		}
-		if client.IsErrNotFound(lastErr) {
+		if cerrdefs.IsNotFound(lastErr) {
 			return
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -288,13 +289,14 @@ func keys(m map[string]bool) []string {
 // assertVolumeLabels checks the seed labels, which is how a seeded volume is
 // recognised on the Volumes page.
 func assertVolumeLabels(ctx context.Context, t *testing.T, cli interface {
-	VolumeInspect(context.Context, string) (volume.Volume, error)
+	VolumeInspect(context.Context, string, client.VolumeInspectOptions) (client.VolumeInspectResult, error)
 }, name, slug, rel string) {
 	t.Helper()
-	v, err := cli.VolumeInspect(ctx, name)
+	res, err := cli.VolumeInspect(ctx, name, client.VolumeInspectOptions{})
 	if err != nil {
 		t.Fatalf("inspect %s: %v", name, err)
 	}
+	v := res.Volume
 	if v.Labels[seedVolLabel] != slug {
 		t.Errorf("volume %s label %s = %q, want %q", name, seedVolLabel, v.Labels[seedVolLabel], slug)
 	}

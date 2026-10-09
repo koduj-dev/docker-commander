@@ -77,4 +77,25 @@ func TestRedisStoreIntegration(t *testing.T) {
 	if pts, _ := s.Query(ctx, "c1", MetricCPU, now.Add(time.Hour)); len(pts) != 0 {
 		t.Errorf("future since should be empty, got %d", len(pts))
 	}
+
+	// QueryAll: a second container plus one that never reported.
+	if err := s.Record(ctx, []Sample{{ContainerID: "c2", Time: now, NetRx: 50}}); err != nil {
+		t.Fatalf("Record c2: %v", err)
+	}
+	if err := s.Record(ctx, []Sample{{ContainerID: "c1", Time: now, NetRx: 20}}); err != nil {
+		t.Fatalf("Record c1 netrx: %v", err)
+	}
+	all, err := s.QueryAll(ctx, MetricNetRx, now.Add(-time.Minute), []string{"c1", "c2", "never-reported"})
+	if err != nil {
+		t.Fatalf("QueryAll: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("expected 2 ids with data, got %d: %+v", len(all), all)
+	}
+	if _, ok := all["never-reported"]; ok {
+		t.Error("an id with no data must be absent from the result")
+	}
+	if len(all["c2"]) != 1 || all["c2"][0].V != 50 {
+		t.Errorf("c2's series wrong: %+v", all["c2"])
+	}
 }

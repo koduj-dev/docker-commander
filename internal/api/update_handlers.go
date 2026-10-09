@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/koduj-dev/docker-commander/internal/selfupdate"
+	"github.com/koduj-dev/docker-commander/internal/store"
 	"github.com/koduj-dev/docker-commander/internal/version"
 )
 
@@ -42,6 +43,11 @@ type updateStatus struct {
 	// (DC_SELF_UPDATE) AND the running process can restart itself — i.e. whether
 	// the UI should offer the one-tap button.
 	SelfUpdate bool `json:"selfUpdate"`
+	// SelfUpdatePolicy is the admin's auto-apply opt-in, and LastAutoUpdate (nil
+	// unless one has ever happened) is what drives the one-time "you're now on
+	// vX.Y.Z" notice shown to every admin at next login.
+	SelfUpdatePolicy store.SelfUpdatePolicy `json:"selfUpdatePolicy"`
+	LastAutoUpdate   *store.LastAutoUpdate  `json:"lastAutoUpdate,omitempty"`
 }
 
 // updateChecker polls the GitHub Releases API at most once per updateCacheTTL
@@ -159,12 +165,64 @@ func (u *updateChecker) apply(ctx context.Context) (selfupdate.Result, error) {
 	return res, err
 }
 
+// applyIfPolicyAllows is apply, but for the auto-apply path: allowed is
+// checked against the exact release this call resolves, never a value from
+// an earlier, possibly-stale check (see selfupdate.ApplyChecked) — so a
+// release published after the last policy evaluation can never slip past a
+// granularity ceiling.
+func (u *updateChecker) applyIfPolicyAllows(ctx context.Context, allowed func(latestTag string) bool) (selfupdate.Result, error) {
+	if !u.enabled || !u.selfUpdate {
+		return selfupdate.Result{}, errSelfUpdateDisabled
+	}
+	if !u.applyMu.TryLock() {
+		return selfupdate.Result{}, errUpdateInProgress
+	}
+	defer u.applyMu.Unlock()
+
+	res, err := selfupdate.ApplyChecked(ctx, u.current, allowed)
+	if err == nil {
+		u.invalidate()
+	}
+	return res, err
+}
+
 func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 	st := s.update.status(r.Context())
 	// The one-tap button is offered only when self-update is allowed and the
 	// process can actually restart itself (wired by main; nil e.g. on Windows).
 	st.SelfUpdate = s.update.enabled && s.update.selfUpdate && s.onRestart != nil
+	st.SelfUpdatePolicy, _ = s.store.SelfUpdatePolicy(r.Context())
+	st.LastAutoUpdate, _ = s.store.LastAutoUpdate(r.Context())
 	writeJSON(w, http.StatusOK, st)
+}
+
+// handleSetSelfUpdatePolicy persists the admin's auto-apply opt-in. Admin-gated
+// by the router (the "update" section maps to __admin), same as every other
+// endpoint under /api/update.
+func (s *Server) handleSetSelfUpdatePolicy(w http.ResponseWriter, r *http.Request) {
+	var body store.SelfUpdatePolicy
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	switch body.Granularity {
+	case "patch", "minor", "major":
+	case "":
+		if body.Enabled {
+			writeErr(w, http.StatusBadRequest, "granularity must be patch, minor or major")
+			return
+		}
+		body.Granularity = "minor" // harmless default while disabled
+	default:
+		writeErr(w, http.StatusBadRequest, "granularity must be patch, minor or major")
+		return
+	}
+	if err := s.store.SetSelfUpdatePolicy(r.Context(), body); err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed to save policy")
+		return
+	}
+	s.audit(r, "settings.update", "self_update_policy", body.Granularity)
+	writeJSON(w, http.StatusOK, body)
 }
 
 // handleApplyUpdate performs the verified download + binary swap. Admin-gated by

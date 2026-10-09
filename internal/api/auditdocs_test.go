@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -23,14 +24,22 @@ import (
 // This is the same shape as internal/config's TestManPageDocumentsAllFlags, which
 // has kept every CLI flag documented for the same reason.
 
-// auditCall matches an action literal in either form the code uses:
+// auditArgs skips the arguments before the action literal in an audit call: the
+// action is always the first string literal, but it can be preceded by a request,
+// a context, a principal and a host expression with calls of its own nested in it.
+const auditArgs = `\.audit(?:On|Project)?\((?:[^"()]|\((?:[^()]|\([^()]*\))*\))*?`
+
+// auditCall matches an action literal in any form the code uses:
 //
 //	s.audit(r, "image.pull", …)
+//	s.auditOn(r, s.daemonHost(r.Context(), id), "project.create", …)
+//	s.auditProject(r, p, "project.deploy", …)
+//	h.audit(ctx, p, "mcp.alert.ack", …)
 //	st.Audit(ctx, store.AuditEntry{… Action: "auth.password.reset" …})
-var auditCall = regexp.MustCompile(`(?:\.audit\([^,]+,\s*|Action:\s*)"([a-z0-9_]+(?:\.[a-z0-9_]+){1,3})"`)
+var auditCall = regexp.MustCompile(`(?:` + auditArgs + `|Action:\s*)"([a-z0-9_]+(?:\.[a-z0-9_]+){1,3})"`)
 
 // dynamicAction matches the families built at runtime, e.g. `"container." + action`.
-var dynamicAction = regexp.MustCompile(`\.audit\([^,]+,\s*"([a-z0-9_]+(?:\.[a-z0-9_]+)*\.)"\s*\+`)
+var dynamicAction = regexp.MustCompile(auditArgs + `"([a-z0-9_]+(?:\.[a-z0-9_]+)*\.)"\s*\+`)
 
 // dynamicFamilies are the actions assembled from a verb at runtime. The verbs come
 // from a switch the caller has already validated, so they cannot be scraped from
@@ -134,6 +143,28 @@ func TestDocumentedAuditActionsStillExist(t *testing.T) {
 	if len(stale) > 0 {
 		sort.Strings(stale)
 		t.Errorf("docs/audit.md documents action(s) the code never writes: %s", strings.Join(stale, ", "))
+	}
+}
+
+// docs/audit.md states its own count in prose ("All **N** of them") — a
+// number nothing enforced, so it silently drifted (a prior PR's review found
+// it several actions stale). The membership tests above already prove every
+// action is exactly the documented set; this proves the PRINTED NUMBER
+// agrees with that same set, so it can never drift again without the build
+// saying so.
+func TestAuditDocCountMatchesReality(t *testing.T) {
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "audit.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`All \*\*(\d+)\*\* of them`).FindStringSubmatch(string(doc))
+	if m == nil {
+		t.Fatal(`docs/audit.md no longer contains the expected "All **N** of them" sentence — update this test's regex to match its new wording`)
+	}
+	stated := m[1]
+	actual := len(auditActionsInSource(t))
+	if stated != strconv.Itoa(actual) {
+		t.Errorf(`docs/audit.md says "All **%s** of them", but the source currently audits %d distinct actions. Update the number in docs/audit.md to %d.`, stated, actual, actual)
 	}
 }
 

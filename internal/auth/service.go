@@ -186,6 +186,44 @@ func (s *Service) SetPassword(ctx context.Context, userID int64, password string
 	return s.store.BumpSessionEpoch(ctx, userID)
 }
 
+// ErrDirectoryPassword is returned when an account whose password this app does
+// not own (an LDAP account) tries to change it here. The directory checks that
+// password, so a hash stored here would never be read and the change would do
+// nothing.
+var ErrDirectoryPassword = errors.New("auth: this account's password is managed by your directory; change it there")
+
+// ChangeOwnPassword is SetPassword for the account holder, who proves the current
+// password first. Changing it ends every session of the account, the one asking
+// included, and returns a new session for the one asking, so the person who just
+// changed their password stays signed in here and nowhere else.
+//
+// The current password is checked against the step-up budget of rlKey, for the
+// reason VerifyUserPassword gives. A weak new password is refused before that,
+// so a typo in the new one doesn't spend the budget.
+func (s *Service) ChangeOwnPassword(ctx context.Context, rlKey string, u *store.User, current, password string, info SessionInfo) (*LoginResult, error) {
+	// An allowlist, like the passwordless switch: only a password stored here can
+	// be changed here, whatever other sources appear later.
+	if u.AuthSource != "" && u.AuthSource != "local" {
+		return nil, ErrDirectoryPassword
+	}
+	if len(password) < MinPasswordLength {
+		return nil, ErrWeakPassword
+	}
+	if err := s.VerifyUserPassword(ctx, rlKey, u, current); err != nil {
+		return nil, err
+	}
+	if err := s.SetPassword(ctx, u.ID, password); err != nil {
+		return nil, err
+	}
+	// Reloaded for the epoch SetPassword just bumped: a token carrying the old one
+	// would be refused at once.
+	fresh, err := s.store.UserByID(ctx, u.ID)
+	if err != nil {
+		return nil, err
+	}
+	return s.issueSession(ctx, fresh, info)
+}
+
 // Login verifies username+password. If the account has TOTP enabled it returns
 // an MFA challenge token; otherwise a full session token. rlKey is the rate
 // limit bucket (typically the client IP). exemptMFA skips the 2FA step (used

@@ -5,8 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/docker/docker/api/types/events"
-	"github.com/docker/docker/api/types/filters"
+	"github.com/moby/moby/client"
 )
 
 // Event is a simplified container lifecycle event for the monitor/alert engine.
@@ -16,6 +15,13 @@ type Event struct {
 	ContainerName string
 	Image         string
 	ExitCode      string
+	// Project is the container's compose project (stack) name, read from the
+	// event's own actor attributes — Docker includes the full label set on
+	// every container event, so this needs no extra call. Populated live,
+	// unlike a stats-snapshot lookup, so a container created moments ago (and
+	// not yet in any poll) still resolves correctly — see the alert engine's
+	// use of this for maintenance-window project scoping.
+	Project string
 }
 
 // WatchEvents streams container events from the host, invoking fn for each,
@@ -25,8 +31,9 @@ func (m *Manager) WatchEvents(ctx context.Context, hostID int64, fn func(Event))
 	if err != nil {
 		return err
 	}
-	f := filters.NewArgs(filters.Arg("type", "container"))
-	msgs, errs := cli.Events(ctx, events.ListOptions{Filters: f})
+	f := make(client.Filters).Add("type", "container")
+	ev := cli.Events(ctx, client.EventsListOptions{Filters: f})
+	msgs, errs := ev.Messages, ev.Err
 	for {
 		select {
 		case <-ctx.Done():
@@ -46,6 +53,7 @@ func (m *Manager) WatchEvents(ctx context.Context, hostID int64, fn func(Event))
 				ContainerName: strings.TrimPrefix(msg.Actor.Attributes["name"], "/"),
 				Image:         msg.Actor.Attributes["image"],
 				ExitCode:      msg.Actor.Attributes["exitCode"],
+				Project:       msg.Actor.Attributes[labelComposeProject],
 			})
 		}
 	}

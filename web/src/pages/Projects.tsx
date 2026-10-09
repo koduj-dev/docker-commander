@@ -4,11 +4,11 @@ import clsx from "clsx";
 import {
   FolderGit2, Plus, Rocket, Square, Trash2, X, FilePlus, FolderPlus, Upload, Loader2,
   ExternalLink, Save, FileText, FileBox, Folder, Terminal, Pencil, ChevronRight, Download, Search, CheckCircle2, AlertCircle, AlertTriangle, Eye, Boxes,
-  LayoutTemplate, Puzzle, KeyRound, Anchor, Server,
+  LayoutTemplate, Puzzle, KeyRound, Anchor, Server, GitCompare, History, RotateCcw, Lock, Globe,
 } from "lucide-react";
 import { bytes as fmtBytes } from "../lib/format";
 import { api, ApiError } from "../lib/api";
-import type { Project, ProjectFile, Stack, ComposeModel, ComposeService, ProjectTemplateMeta, ServiceBlockMeta, ComposeFragmentMeta, TemplateRef, TemplateVariable, Host } from "../lib/types";
+import type { Project, ProjectFile, Stack, ComposeModel, ComposeService, ProjectTemplateMeta, ServiceBlockMeta, ComposeFragmentMeta, TemplateRef, TemplateVariable, Host, DeployPreview, ServiceChange, ProjectRevision, ProjectSecret, DomainMapping, BackupJob } from "../lib/types";
 import type { ServerCheck } from "../components/CodeEditor";
 import { buildTree, TreeItem } from "../components/FileTree";
 import { PageHeader } from "../layout/Shell";
@@ -19,6 +19,7 @@ const CodeEditor = lazy(() => import("../components/CodeEditor").then((m) => ({ 
 import { getPref, setPref } from "../lib/prefs";
 import { useDockerEventTick } from "../lib/dockerEvents";
 import { composeOutputText } from "../lib/composeOutput";
+import { deployProjectWithPolicyGate, restoreRevisionWithPolicyGate } from "../lib/deployPolicy";
 import { resolveServiceState } from "../lib/composeState";
 
 type Output = { title: string; text: string; ok: boolean };
@@ -115,7 +116,7 @@ export function ComposeSummaryModal({ model, stack, lastDeployedProfiles, onClos
     ["Secrets", Object.keys(model.secrets ?? {})],
   ];
   return (
-    <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div className="card w-[70vw] max-w-3xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 p-4 border-b border-border">
           <Boxes className="h-4 w-4 text-accent" />
@@ -167,6 +168,607 @@ export function ComposeSummaryModal({ model, stack, lastDeployedProfiles, onClos
   );
 }
 
+// changeKindMeta labels and colors one ServiceChange's kind. "added"/"removed"
+// never recreate a running container (a brand-new one, or an orphan left
+// alone); every other kind does, which is why they share the warn treatment —
+// the color itself is half of the downtime-risk callout.
+function changeKindMeta(kind: ServiceChange["kind"]): { label: string; cls: string } {
+  switch (kind) {
+    case "added": return { label: "added", cls: "text-ok border-ok/40 bg-ok/10" };
+    case "removed": return { label: "orphaned", cls: "text-muted border-border" };
+    case "image": return { label: "image", cls: "text-accent border-accent/40 bg-accent/10" };
+    case "digest": return { label: "digest drift", cls: "text-accent border-accent/40 bg-accent/10" };
+    default: return { label: kind, cls: "text-warn border-warn/40 bg-warn/10" };
+  }
+}
+
+// truncateMono shortens a long value for compact display; the full value is
+// still in the title attr. A "sha256:<64 hex>" digest gets git/Docker-style
+// short-hash treatment (sha256: + 12 hex chars) rather than a blind length
+// cut — two 64-char hex blobs sitting side by side (from → to) are close to
+// unreadable as a diff no matter where they were cut, which is exactly why
+// git and Docker both default to a 12-char short hash instead of the full one.
+function truncateMono(s: string, max = 64): string {
+  const digest = /^sha256:([0-9a-f]{64})$/i.exec(s);
+  if (digest) return "sha256:" + digest[1].slice(0, 12);
+  return s.length > max ? s.slice(0, max) + "…" : s;
+}
+
+// DeployPreviewModal shows what deploying this project would actually change
+// — the same comparison the `preview_deploy` MCP tool exposes, as a
+// first-class screen rather than an MCP-only capability (see NEXT.md's
+// "Deployment plan / diff"). Doubles as the drift-detection view: a change
+// can be marked reviewed/accepted ("Ignore") so it stops counting toward
+// `active` without disappearing — still visible, still reversible — and
+// "Reconcile" is just Deploy from this context (recreating whatever drifted
+// to match the file). Exported for tests.
+export function DeployPreviewModal({
+  preview, projectId, projectName, onClose, onChanged, onReconcile, reconcileBusy,
+  title = "Deploy preview", allowIgnore = true,
+}: {
+  preview: DeployPreview; projectId: number; projectName: string; onClose: () => void;
+  onChanged: () => void; onReconcile?: () => void; reconcileBusy?: boolean;
+  // A revision-to-revision diff is a historical comparison, not the live
+  // drift view — "Ignore" (which persists against the project's CURRENT
+  // drift state) and a custom heading don't apply there.
+  title?: string; allowIgnore?: boolean;
+}) {
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const changes = preview.changes ?? [];
+  const active = typeof preview.active === "number" ? preview.active : changes.filter((c) => !c.ignored).length;
+  const ignoredCount = changes.length - active;
+
+  const toggleIgnore = async (c: ServiceChange) => {
+    const key = `${c.service}:${c.kind}`;
+    setBusyKey(key);
+    try {
+      if (c.ignored) await api.unignoreDrift(projectId, c.service, c.kind);
+      else await api.ignoreDrift(projectId, c.service, c.kind, c.from, c.to, c.detail);
+      onChanged();
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
+      <div className="card w-[70vw] max-w-3xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2 p-4 border-b border-border">
+          <GitCompare className="h-4 w-4 text-accent" />
+          <span className="font-medium">{title}</span>
+          <span className="text-xs text-muted font-mono">{projectName}</span>
+          <button className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-4 overflow-auto space-y-3">
+          {!preview.valid ? (
+            <div className="text-sm text-danger flex items-start gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" /> {preview.error || "could not compute a preview"}
+            </div>
+          ) : changes.length === 0 ? (
+            <div className="text-sm text-muted flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-ok" /> Nothing would change — {preview.unchanged ?? 0} service(s) already match.
+            </div>
+          ) : (
+            <>
+              <div className="text-xs text-muted">
+                {active} active change{active === 1 ? "" : "s"}
+                {allowIgnore && ignoredCount > 0 && <> — {ignoredCount} ignored</>}
+                {typeof preview.unchanged === "number" && preview.unchanged > 0 && <> — {preview.unchanged} unchanged</>}
+              </div>
+              {changes.map((c, i) => {
+                const meta = changeKindMeta(c.kind);
+                const key = `${c.service}:${c.kind}`;
+                return (
+                  <div key={i} className={clsx("border border-border rounded-md p-2.5 text-sm", c.ignored && "opacity-60")}>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium">{c.service}</span>
+                      <span className={clsx("text-[10px] uppercase tracking-wide border rounded px-1.5 py-0.5", meta.cls)}>{meta.label}</span>
+                      {c.recreates && (
+                        <span className="text-[10px] text-warn border border-warn/40 bg-warn/10 rounded px-1.5 py-0.5 flex items-center gap-1" title="Applying this recreates the running container">
+                          <AlertTriangle className="h-3 w-3" /> recreates
+                        </span>
+                      )}
+                      {allowIgnore && c.ignored && (
+                        <span className="text-[10px] text-muted border border-border rounded px-1.5 py-0.5" title="Reviewed and accepted — no longer counted as active drift">ignored</span>
+                      )}
+                      {allowIgnore && (
+                        <button
+                          className="btn-ghost px-2 py-0.5 text-[11px] ml-auto disabled:opacity-40"
+                          disabled={busyKey === key}
+                          onClick={() => toggleIgnore(c)}
+                          title={c.ignored ? "Count this drift again" : "Mark this drift reviewed and accepted"}
+                        >
+                          {busyKey === key ? <Loader2 className="h-3 w-3 animate-spin" /> : c.ignored ? "Unignore" : "Ignore"}
+                        </button>
+                      )}
+                    </div>
+                    {(c.from || c.to) && (
+                      <div className="mt-1 text-xs font-mono text-muted break-all">
+                        {c.from && <span className="line-through opacity-70" title={c.from}>{truncateMono(c.from)}</span>}
+                        {c.from && c.to && <span className="mx-1">→</span>}
+                        {c.to && <span className="text-text" title={c.to}>{truncateMono(c.to)}</span>}
+                      </div>
+                    )}
+                    {c.detail && <div className="mt-1 text-xs text-muted">{c.detail}</div>}
+                  </div>
+                );
+              })}
+            </>
+          )}
+        </div>
+        {preview.valid && active > 0 && onReconcile && (
+          <div className="flex justify-end gap-2 p-3 border-t border-border">
+            <button className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40" disabled={reconcileBusy} onClick={onReconcile} title="Deploy now to apply these changes">
+              {reconcileBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />} Reconcile now
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// RevisionHistoryModal lists a project's deploy history (see NEXT.md's
+// "Deployment revisions and rollback") — each entry immutable, with a diff
+// against what's currently running (reusing DeployPreviewModal, read-only:
+// a revision comparison isn't the live drift-ignore state) and a Restore
+// action that overwrites the project's files with that revision and
+// redeploys it, pinning any image with a recorded digest so a mutable tag
+// can't quietly change what comes back.
+export function RevisionHistoryModal({ project, onClose, onOutput, onRestored }: {
+  project: Project; onClose: () => void; onOutput: (o: Output) => void;
+  // Restore overwrites the project's files on disk (and redeploys with the
+  // restored revision's own profiles) out from under the editor sitting
+  // open behind this modal — without telling it to reload, the editor kept
+  // showing the pre-restore buffer and profile badges until closed and
+  // reopened, which reads as "restore didn't actually do anything" even
+  // though the live files and the running container were already correct.
+  onRestored?: (profiles: string[]) => void;
+}) {
+  const [revisions, setRevisions] = useState<ProjectRevision[] | null>(null);
+  const [diffFor, setDiffFor] = useState<ProjectRevision | null>(null);
+  const [diffPreview, setDiffPreview] = useState<DeployPreview | null>(null);
+  const [busy, setBusy] = useState("");
+  const dialogs = useDialogs();
+
+  const load = useCallback(() => {
+    api.listRevisions(project.id).then(setRevisions).catch(() => setRevisions([]));
+  }, [project.id]);
+  useEffect(() => { load(); }, [load]);
+
+  const openDiff = async (rev: ProjectRevision) => {
+    setBusy(`diff-${rev.revision}`);
+    try {
+      const d = await api.diffRevision(project.id, rev.revision, "current");
+      setDiffFor(rev);
+      setDiffPreview(d);
+    } catch (e) {
+      onOutput({ title: `Revision ${rev.revision} — diff`, text: e instanceof Error ? e.message : "failed", ok: false });
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const restore = async (rev: ProjectRevision) => {
+    if (!(await dialogs.confirm({
+      title: `Restore revision ${rev.revision}?`,
+      message: "This overwrites the project's current files with that revision's and redeploys it. Any unsaved edits in the editor will be lost.",
+      danger: true, confirmLabel: "Restore",
+    }))) return;
+    setBusy(`restore-${rev.revision}`);
+    try {
+      const r = await restoreRevisionWithPolicyGate(project.id, rev.revision, dialogs);
+      onOutput({ title: `${project.name} — restore to revision ${rev.revision}`, text: composeOutputText(r), ok: r.ok });
+      if (r.ok) { load(); onRestored?.(rev.profiles); onClose(); }
+    } catch (e) {
+      onOutput({ title: `${project.name} — restore`, text: e instanceof Error ? e.message : "failed", ok: false });
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
+      <div className="card w-[70vw] max-w-3xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2 p-4 border-b border-border">
+          <History className="h-4 w-4 text-accent" />
+          <span className="font-medium">Deploy history</span>
+          <span className="text-xs text-muted font-mono">{project.name}</span>
+          <button className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-4 overflow-auto space-y-2">
+          {revisions === null ? (
+            <div className="flex items-center gap-2 text-sm text-muted"><Spinner /> Loading…</div>
+          ) : revisions.length === 0 ? (
+            <div className="text-sm text-muted">No deploys recorded yet — the history starts with the next one.</div>
+          ) : revisions.map((rev) => (
+            <div key={rev.id} className="border border-border rounded-md p-3 text-sm">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-medium">Revision {rev.revision}</span>
+                {!rev.valid && (
+                  <span className="text-[10px] uppercase tracking-wide border border-danger/40 text-danger rounded px-1.5 py-0.5">invalid</span>
+                )}
+                <span className="text-xs text-muted ml-auto">{new Date(rev.createdAt).toLocaleString()}</span>
+              </div>
+              <div className="mt-1 text-xs text-muted">
+                {rev.author && <>by <span className="font-mono">{rev.author}</span> — </>}
+                {rev.profiles.length > 0 ? `profiles: ${rev.profiles.join(", ")}` : "no profiles"}
+              </div>
+              {rev.reason && <div className="mt-1 text-xs text-text/90">{rev.reason}</div>}
+              {rev.images.length > 0 && (
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {rev.images.map((img) => (
+                    <span key={img.service} className="text-[10px] font-mono bg-panel2 rounded px-1.5 py-0.5 text-muted" title={img.digest ? `${img.image}@${img.digest}` : img.image}>
+                      {img.service}: {img.image}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div className="mt-2 flex justify-end gap-2">
+                <button className="btn-ghost px-2 py-1 text-xs disabled:opacity-40" disabled={busy === `diff-${rev.revision}`} onClick={() => openDiff(rev)}>
+                  {busy === `diff-${rev.revision}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <GitCompare className="h-3.5 w-3.5" />} Diff vs current
+                </button>
+                <button className="btn-ghost px-2 py-1 text-xs text-warn disabled:opacity-40" disabled={busy === `restore-${rev.revision}`} onClick={() => restore(rev)}>
+                  {busy === `restore-${rev.revision}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />} Restore
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      {diffPreview && diffFor && (
+        <DeployPreviewModal
+          preview={diffPreview}
+          projectId={project.id}
+          projectName={project.name}
+          title={`Revision ${diffFor.revision} vs current`}
+          allowIgnore={false}
+          onClose={() => { setDiffPreview(null); setDiffFor(null); }}
+          onChanged={() => {}}
+        />
+      )}
+    </div>
+  );
+}
+
+// ProjectSecretsModal manages a project's named secrets (see NEXT.md's
+// "Project secrets"): reference one from the compose file via plain ${NAME}
+// interpolation. The value is write-only — the list never carries it, and
+// updating a secret asks for a fresh value rather than showing the old one.
+export function ProjectSecretsModal({ project, onClose }: { project: Project; onClose: () => void }) {
+  const [secrets, setSecrets] = useState<ProjectSecret[] | null>(null);
+  const [newName, setNewName] = useState("");
+  const [newValue, setNewValue] = useState("");
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const dialogs = useDialogs();
+
+  const load = useCallback(() => {
+    api.listProjectSecrets(project.id).then(setSecrets).catch(() => setSecrets([]));
+  }, [project.id]);
+  useEffect(() => { load(); }, [load]);
+
+  const create = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!newName.trim() || !newValue) return;
+    setBusy("create");
+    setErr("");
+    try {
+      await api.createProjectSecret(project.id, newName.trim(), newValue);
+      setNewName("");
+      setNewValue("");
+      load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "failed to create secret");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const saveEdit = async (name: string) => {
+    if (!editValue) return;
+    setBusy(`update-${name}`);
+    setErr("");
+    try {
+      await api.updateProjectSecret(project.id, name, editValue);
+      setEditing(null);
+      setEditValue("");
+      load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "failed to update secret");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const remove = async (name: string) => {
+    if (!(await dialogs.confirm({
+      title: `Delete secret "${name}"?`,
+      message: "Any compose service still referencing ${" + name + "} will fail to resolve on the next deploy.",
+      danger: true, confirmLabel: "Delete",
+    }))) return;
+    setBusy(`delete-${name}`);
+    try {
+      await api.deleteProjectSecret(project.id, name);
+      load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "failed to delete secret");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
+      <div className="card w-full max-w-2xl flex flex-col max-h-[88vh]" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2 p-4 border-b border-border">
+          <Lock className="h-4 w-4 text-accent" />
+          <span className="font-medium">Secrets</span>
+          <span className="text-xs text-muted font-mono">{project.name}</span>
+          <button className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-4 space-y-3 overflow-y-auto">
+          <p className="text-xs text-muted">
+            Reference a secret from the compose file with <code className="font-mono">${"{NAME}"}</code>, exactly
+            like any other environment variable. The value is encrypted at rest and never shown again after it's
+            saved — previews, diffs and revision history show a stable placeholder instead.
+          </p>
+          {err && (
+            <div className="text-sm text-danger flex items-center gap-2"><AlertCircle className="h-4 w-4 shrink-0" /> {err}</div>
+          )}
+          {secrets === null ? (
+            <div className="flex items-center gap-2 text-sm text-muted"><Spinner /> Loading…</div>
+          ) : secrets.length === 0 ? (
+            <div className="text-sm text-muted">No secrets yet.</div>
+          ) : (
+            <div className="space-y-2">
+              {secrets.map((sec) => (
+                <div key={sec.id} className="card p-3 flex items-start gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-mono text-sm">{sec.name}</div>
+                    <div className="text-xs text-muted">updated {new Date(sec.updatedAt).toLocaleString()}</div>
+                    {editing === sec.name && (
+                      <form className="mt-2 flex gap-2" onSubmit={(e) => { e.preventDefault(); saveEdit(sec.name); }}>
+                        <input
+                          type="password" autoFocus className="input flex-1 text-sm" placeholder="new value"
+                          value={editValue} onChange={(e) => setEditValue(e.target.value)}
+                        />
+                        <button type="submit" className="btn-primary px-2 py-1 text-xs disabled:opacity-40" disabled={!editValue || busy === `update-${sec.name}`}>
+                          {busy === `update-${sec.name}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                        </button>
+                        <button type="button" className="btn-ghost px-2 py-1 text-xs" onClick={() => { setEditing(null); setEditValue(""); }}>Cancel</button>
+                      </form>
+                    )}
+                  </div>
+                  <div className="shrink-0 flex items-center gap-1">
+                    <button className="btn-ghost px-2 py-1" title="Update value" onClick={() => { setEditing(sec.name); setEditValue(""); }}>
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                    <button
+                      className="btn-ghost px-2 py-1 text-danger disabled:opacity-40" title="Delete"
+                      disabled={busy === `delete-${sec.name}`} onClick={() => remove(sec.name)}
+                    >
+                      {busy === `delete-${sec.name}` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <form className="flex items-end gap-2 p-4 border-t border-border" onSubmit={create}>
+          <div className="flex-1">
+            <label className="label">Name</label>
+            <input
+              className="input w-full text-sm font-mono" placeholder="DB_PASSWORD"
+              value={newName} onChange={(e) => setNewName(e.target.value)}
+            />
+          </div>
+          <div className="flex-1">
+            <label className="label">Value</label>
+            <input
+              type="password" className="input w-full text-sm" placeholder="value"
+              value={newValue} onChange={(e) => setNewValue(e.target.value)}
+            />
+          </div>
+          <button type="submit" className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40" disabled={!newName.trim() || !newValue || busy === "create"}>
+            {busy === "create" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Add
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ProjectDomainsModal manages a project's domain -> service:port mappings. The
+// embedded reverse proxy routes them only when it is enabled (DC_PROXY_ENABLED
+// with ACME mode) and only for local-host projects, which the modal says up
+// front: a mapping on its own is not proof that anything is served.
+export function ProjectDomainsModal({ project, onClose }: { project: Project; onClose: () => void }) {
+  const [mappings, setMappings] = useState<DomainMapping[] | null>(null);
+  const [services, setServices] = useState<string[]>([]);
+  const [newDomain, setNewDomain] = useState("");
+  const [newService, setNewService] = useState("");
+  const [newPort, setNewPort] = useState("");
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const [editingID, setEditingID] = useState<number | null>(null);
+  const [editService, setEditService] = useState("");
+  const [editPort, setEditPort] = useState("");
+  const dialogs = useDialogs();
+
+  const load = useCallback(() => {
+    api.listDomainMappings(project.id).then(setMappings).catch(() => setMappings([]));
+  }, [project.id]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    api.listDomainMappingServices(project.id).then((res) => {
+      const names = res.services ?? [];
+      setServices(names);
+      setNewService((cur) => cur || names[0] || "");
+    }).catch(() => {});
+  }, [project.id]);
+
+  const create = async (e: FormEvent) => {
+    e.preventDefault();
+    const port = Number(newPort);
+    if (!newDomain.trim() || !newService || !port) return;
+    setBusy("create");
+    setErr("");
+    try {
+      await api.createDomainMapping(project.id, { domain: newDomain.trim(), service: newService, targetPort: port, tlsMode: "acme" });
+      setNewDomain("");
+      setNewPort("");
+      load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "failed to create domain mapping");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const startEdit = (m: DomainMapping) => {
+    setEditingID(m.id);
+    setEditService(m.service);
+    setEditPort(String(m.targetPort));
+    setErr("");
+  };
+
+  const saveEdit = async (m: DomainMapping) => {
+    const port = Number(editPort);
+    if (!editService || !port) return;
+    setBusy(`edit-${m.id}`);
+    setErr("");
+    try {
+      await api.updateDomainMapping(project.id, m.id, { domain: m.domain, service: editService, targetPort: port, tlsMode: "acme" });
+      setEditingID(null);
+      load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "failed to update domain mapping");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const remove = async (m: DomainMapping) => {
+    if (!(await dialogs.confirm({
+      title: `Delete domain "${m.domain}"?`,
+      message: "If the embedded reverse proxy is serving this domain, it stops being served as soon as the mapping is deleted.",
+      danger: true, confirmLabel: "Delete",
+    }))) return;
+    setBusy(`delete-${m.id}`);
+    try {
+      await api.deleteDomainMapping(project.id, m.id);
+      load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "failed to delete domain mapping");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
+      <div className="card w-full max-w-2xl flex flex-col max-h-[88vh]" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2 p-4 border-b border-border">
+          <Globe className="h-4 w-4 text-accent" />
+          <span className="font-medium">Domains</span>
+          <span className="text-xs text-muted font-mono">{project.name}</span>
+          <button className="btn-ghost px-2 py-1.5 ml-auto" onClick={onClose}><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-4 space-y-3 overflow-y-auto">
+          <p className="text-xs text-muted flex items-start gap-2">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-warn" />
+            <span>
+              These domains are served only when the server runs the embedded reverse proxy
+              (<code>DC_PROXY_ENABLED=1</code> with ACME mode) and only for projects on the local host.
+              Otherwise the mapping is just recorded and nothing listens on these domains.
+            </span>
+          </p>
+          {err && (
+            <div className="text-sm text-danger flex items-center gap-2"><AlertCircle className="h-4 w-4 shrink-0" /> {err}</div>
+          )}
+          {mappings === null ? (
+            <div className="flex items-center gap-2 text-sm text-muted"><Spinner /> Loading…</div>
+          ) : mappings.length === 0 ? (
+            <div className="text-sm text-muted">No domains yet.</div>
+          ) : (
+            <div className="space-y-2">
+              {mappings.map((m) => (
+                <div key={m.id} className="card p-3 flex items-start gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-mono text-sm">{m.domain}</div>
+                    {editingID === m.id ? (
+                      <form
+                        className="mt-2 flex items-end gap-2"
+                        onSubmit={(e) => { e.preventDefault(); saveEdit(m); }}
+                      >
+                        <select className="input text-xs" value={editService} onChange={(e) => setEditService(e.target.value)}>
+                          {services.length === 0 && <option value={editService}>{editService}</option>}
+                          {services.map((s) => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                        <input
+                          type="number" min={1} max={65535} className="input w-24 text-xs" placeholder="port"
+                          value={editPort} onChange={(e) => setEditPort(e.target.value)}
+                        />
+                        <button type="submit" className="btn-primary px-2 py-1 text-xs disabled:opacity-40" disabled={!editService || !editPort || busy === `edit-${m.id}`}>
+                          {busy === `edit-${m.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                        </button>
+                        <button type="button" className="btn-ghost px-2 py-1 text-xs" onClick={() => setEditingID(null)}>Cancel</button>
+                      </form>
+                    ) : (
+                      <div className="text-xs text-muted">{m.service}:{m.targetPort} · Let&apos;s Encrypt (automatic)</div>
+                    )}
+                  </div>
+                  <div className="shrink-0 flex items-center gap-1">
+                    <button className="btn-ghost px-2 py-1" title="Edit" onClick={() => startEdit(m)}>
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                    <button
+                      className="btn-ghost px-2 py-1 text-danger disabled:opacity-40" title="Delete"
+                      disabled={busy === `delete-${m.id}`} onClick={() => remove(m)}
+                    >
+                      {busy === `delete-${m.id}` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <form className="flex items-end gap-2 p-4 border-t border-border" onSubmit={create}>
+          <div className="flex-1">
+            <label className="label">Domain</label>
+            <input
+              className="input w-full text-sm font-mono" placeholder="app.example.com"
+              value={newDomain} onChange={(e) => setNewDomain(e.target.value)}
+            />
+          </div>
+          <div className="flex-1">
+            <label className="label">Service</label>
+            <select className="input w-full text-sm" value={newService} onChange={(e) => setNewService(e.target.value)}>
+              {services.length === 0 && <option value="">no services found</option>}
+              {services.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div className="w-28">
+            <label className="label">Port</label>
+            <input
+              type="number" min={1} max={65535} className="input w-full text-sm" placeholder="8080"
+              value={newPort} onChange={(e) => setNewPort(e.target.value)}
+            />
+          </div>
+          <button type="submit" className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40" disabled={!newDomain.trim() || !newService || !newPort || busy === "create"}>
+            {busy === "create" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Add
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // isDockerfile reports whether a file is a Dockerfile (Dockerfile, Dockerfile.*,
 // *.dockerfile) — these can live in subdirectories, unlike compose files.
 function isDockerfile(name: string): boolean {
@@ -192,6 +794,8 @@ export function Projects() {
   const [busy, setBusy] = useState(""); // slug acting
   const [editing, setEditing] = useState<Project | null>(null);
   const [editMeta, setEditMeta] = useState<Project | null>(null);
+  const [secretsFor, setSecretsFor] = useState<Project | null>(null);
+  const [domainsFor, setDomainsFor] = useState<Project | null>(null);
   const [hosts, setHosts] = useState<Host[]>([]);
   const [output, setOutput] = useState<Output | null>(null);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
@@ -200,11 +804,22 @@ export function Projects() {
   const [searchParams, setSearchParams] = useSearchParams();
   const dialogs = useDialogs();
   const tick = useDockerEventTick();
+  // Indexed by project id, for the small backup-status badge in each project's
+  // header row. Fetching fails silently (403) for a non-admin — backup jobs
+  // are admin-only — so the badge just doesn't render for them.
+  const [backupJobs, setBackupJobs] = useState<Map<number, BackupJob>>(new Map());
 
   const load = useCallback(() => {
     api.projects().then((r) => { setProjects(r.projects); setComposeAvailable(r.composeAvailable); }).catch(() => setProjects([]));
     api.stacks().then(setStacks).catch(() => {});
     api.hosts().then(setHosts).catch(() => {}); // best-effort: needs the "hosts" section
+    api.backupJobs()
+      .then((jobs) => {
+        const byProject = new Map<number, BackupJob>();
+        for (const j of jobs) if (j.scope === "project") byProject.set(j.projectId, j);
+        setBackupJobs(byProject);
+      })
+      .catch(() => {});
   }, []);
   useEffect(() => load(), [load, tick]);
 
@@ -233,7 +848,7 @@ export function Projects() {
   const runCompose = async (p: Project, kind: Kind) => {
     setBusy(p.slug);
     try {
-      const r = kind === "deploy" ? await api.deployProject(p.id, getPref<string[]>(`projects.profiles.${p.slug}`, []))
+      const r = kind === "deploy" ? await deployProjectWithPolicyGate(p.id, getPref<string[]>(`projects.profiles.${p.slug}`, []), dialogs)
         : kind === "down" ? await api.downProject(p.id) : await api.restartProject(p.id);
       setOutput({ title: `${p.name} — ${kind}`, text: composeOutputText(r), ok: r.ok });
       load();
@@ -320,6 +935,15 @@ export function Projects() {
                     <div className="font-medium truncate hover:text-accent flex items-center gap-1.5">
                       {p.name}
                       {p.hostName && <span className="text-[10px] font-normal bg-panel2 text-muted rounded px-1.5 py-0.5 inline-flex items-center gap-1"><Server className="h-3 w-3" />{p.hostName}</span>}
+                      {backupJobs.has(p.id) && (() => {
+                        const bj = backupJobs.get(p.id)!;
+                        const cls = bj.lastRunAt ? (bj.lastRunOk ? "bg-ok/15 text-ok" : "bg-danger/15 text-danger") : "bg-panel2 text-muted";
+                        return (
+                          <span className={`text-[10px] font-normal rounded px-1.5 py-0.5 ${cls}`} title={bj.lastRunDetail || undefined}>
+                            backup: {bj.lastRunAt ? (bj.lastRunOk ? "ok" : "failed") : "never run"}
+                          </span>
+                        );
+                      })()}
                     </div>
                     <div className="text-xs text-muted font-mono truncate">{p.slug}{stack ? ` · ${stack.running}/${stack.containers.length} running` : ""}</div>
                   </button>
@@ -328,6 +952,8 @@ export function Projects() {
                       <>
                         <button className="btn-ghost px-2 py-1" title="Edit files" onClick={() => setEditing(p)}><FileText className="h-4 w-4" /></button>
                         <button className="btn-ghost px-2 py-1" title="Settings (name, host)" onClick={() => setEditMeta(p)}><Pencil className="h-4 w-4" /></button>
+                        <button className="btn-ghost px-2 py-1" title="Secrets" onClick={() => setSecretsFor(p)}><Lock className="h-4 w-4" /></button>
+                        <button className="btn-ghost px-2 py-1" title="Domains" onClick={() => setDomainsFor(p)}><Globe className="h-4 w-4" /></button>
                         {st.deployed ? (
                           <>
                             <button className="btn-ghost px-2 py-1 text-accent disabled:opacity-40" title="Redeploy (docker compose up -d)" disabled={!composeAvailable} onClick={() => runCompose(p, "deploy")}><Rocket className="h-4 w-4" /></button>
@@ -373,6 +999,8 @@ export function Projects() {
 
       {showNew && <NewProjectModal hosts={hosts} onClose={() => setShowNew(false)} onCreated={onCreated} />}
       {editMeta && <EditProjectModal project={editMeta} hosts={hosts} deployed={projectState(stackBySlug.get(editMeta.slug)).deployed} onClose={() => setEditMeta(null)} onSaved={() => { setEditMeta(null); load(); }} />}
+      {secretsFor && <ProjectSecretsModal project={secretsFor} onClose={() => setSecretsFor(null)} />}
+      {domainsFor && <ProjectDomainsModal project={domainsFor} onClose={() => setDomainsFor(null)} />}
 
       {editing && (
         <ProjectEditor
@@ -386,7 +1014,7 @@ export function Projects() {
       )}
 
       {output && (
-        <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={() => setOutput(null)}>
+        <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); setOutput(null); }}>
           <div className="card w-[70vw] max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-3 p-4 border-b border-border">
               <Terminal className={`h-4 w-4 shrink-0 ${output.ok ? "text-ok" : "text-danger"}`} />
@@ -423,7 +1051,7 @@ function SaveAsTemplateModal({ projectId, onClose, onSaved }: { projectId: numbe
     }
   };
   return (
-    <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <form className="card w-full max-w-lg flex flex-col" onClick={(e) => e.stopPropagation()} onSubmit={save}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <LayoutTemplate className="h-4 w-4 text-accent" />
@@ -839,7 +1467,7 @@ function NewProjectModal({ hosts, onClose, onCreated }: { hosts: Host[]; onClose
   );
 
   return (
-    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-[55] bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <form className={clsx("card flex flex-col max-h-[90vh]", showPreview ? "w-[92vw] max-w-[1500px]" : "w-full max-w-2xl")} onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <div className="flex items-center gap-3 p-4 border-b border-border">
           <FolderGit2 className="h-4 w-4 text-accent" />
@@ -1028,7 +1656,7 @@ function NewProjectModal({ hosts, onClose, onCreated }: { hosts: Host[]; onClose
 }
 
 // ProjectEditor is a multi-file editor over the project folder.
-function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, onOutput }: {
+export function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, onOutput }: {
   project: Project; composeAvailable: boolean; deployed: boolean; stack?: Stack; onClose: () => void; onOutput: (o: Output) => void;
 }) {
   const [files, setFiles] = useState<ProjectFile[] | null>(null);
@@ -1048,6 +1676,9 @@ function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, on
   const [liveVal, setLiveVal] = useState<"idle" | "checking" | "ok" | "warning" | "error">("idle");
   const [serverCheck, setServerCheck] = useState<ServerCheck>(null);
   const [summary, setSummary] = useState<ComposeModel | null>(null);
+  const [deployPreview, setDeployPreview] = useState<DeployPreview | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
+  const [showSecrets, setShowSecrets] = useState(false);
   const [saveTpl, setSaveTpl] = useState(false);
   const valSeq = useRef(0);
   const dialogs = useDialogs();
@@ -1208,11 +1839,11 @@ function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, on
     }
   };
 
-  const runCompose = async (kind: Kind) => {
+  const runCompose = async (kind: Kind, opts?: { pull?: boolean }) => {
     if (dirty && !(await dialogs.confirm({ title: "Unsaved changes", message: "Continue with the last saved files?", confirmLabel: "Continue" }))) return;
     setBusy(kind);
     try {
-      const r = kind === "deploy" ? await api.deployProject(project.id, selectedProfiles) : kind === "down" ? await api.downProject(project.id) : await api.restartProject(project.id);
+      const r = kind === "deploy" ? await deployProjectWithPolicyGate(project.id, selectedProfiles, dialogs, opts) : kind === "down" ? await api.downProject(project.id) : await api.restartProject(project.id);
       if (kind === "deploy" && r.ok) setDeployedProfiles(selectedProfiles);
       onOutput({ title: `${project.name} — ${kind}`, text: composeOutputText(r), ok: r.ok });
     } catch (e) {
@@ -1244,10 +1875,30 @@ function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, on
     } finally { setBusy(""); }
   };
 
+  // showPreview fetches what a deploy would actually change — services
+  // added/recreated/left alone, plus (for anything already running)
+  // image/digest/env/ports/volumes/networks/restart/resources/healthcheck
+  // differences — and shows it before the operator commits to Deploy.
+  const showPreview = async () => {
+    // Preview reads the compose file from disk, exactly like Deploy does —
+    // an unsaved edit in the buffer below is invisible to it until Save.
+    // Deploy/Down/Restart already warn about this (see runCompose); Preview
+    // silently showing the stale on-disk file was the same trap without the
+    // warning.
+    if (dirty && !(await dialogs.confirm({ title: "Unsaved changes", message: "Preview reflects the last SAVED files, not what's in the editor. Continue?", confirmLabel: "Continue" }))) return;
+    setBusy("preview");
+    try {
+      const r = await api.previewProject(project.id);
+      setDeployPreview(r);
+    } catch (e) {
+      onOutput({ title: `${project.name} — deploy preview`, text: e instanceof Error ? e.message : "failed", ok: false });
+    } finally { setBusy(""); }
+  };
+
   const activeFile = files?.find((f) => f.name === active);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-6" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div className="card relative w-[92vw] h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         {busy === "delproj" && (
           <div className="absolute inset-0 z-10 bg-bg/70 grid place-items-center rounded-xl">
@@ -1262,7 +1913,14 @@ function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, on
           </div>
           <div className="flex items-center gap-1 ml-auto">
             <button className="btn-ghost px-2 h-8" title="Save as preset" onClick={() => setSaveTpl(true)}><LayoutTemplate className="h-4 w-4" /></button>
+            <button className="btn-ghost px-2 h-8" title="Secrets" onClick={() => setShowSecrets(true)}><Lock className="h-4 w-4" /></button>
             <a className="btn-ghost px-2 h-8" title="Download project as .zip" href={api.projectDownloadUrl(project.id)}><Download className="h-4 w-4" /></a>
+            <button className="btn-ghost px-3 h-8 text-sm disabled:opacity-40" disabled={!composeAvailable || busy === "preview"} onClick={showPreview} title="See what a deploy would change before running it">
+              {busy === "preview" ? <Loader2 className="h-4 w-4 animate-spin" /> : <GitCompare className="h-4 w-4" />} Preview
+            </button>
+            <button className="btn-ghost px-3 h-8 text-sm disabled:opacity-40" onClick={() => setShowHistory(true)} title="Deploy history — diff or restore an earlier revision">
+              <History className="h-4 w-4" /> History
+            </button>
             <button className="btn-primary px-3 h-8 text-sm disabled:opacity-40" disabled={!composeAvailable || busy === "deploy"} onClick={() => runCompose("deploy")} title={composeAvailable ? "docker compose up -d" : "docker compose CLI not available"}>
               {busy === "deploy" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />} {deployed ? "Redeploy" : "Deploy"}
             </button>
@@ -1389,7 +2047,31 @@ function ProjectEditor({ project, composeAvailable, deployed, stack, onClose, on
           onClose={() => setSummary(null)}
         />
       )}
+      {deployPreview && (
+        <DeployPreviewModal
+          preview={deployPreview}
+          projectId={project.id}
+          projectName={project.name}
+          onClose={() => setDeployPreview(null)}
+          onChanged={showPreview}
+          onReconcile={async () => { await runCompose("deploy", { pull: true }); setDeployPreview(null); }}
+          reconcileBusy={busy === "deploy"}
+        />
+      )}
+      {showHistory && (
+        <RevisionHistoryModal
+          project={project}
+          onClose={() => setShowHistory(false)}
+          onOutput={onOutput}
+          onRestored={(restoredProfiles) => {
+            loadFiles();
+            setDeployedProfiles(restoredProfiles);
+            api.projectProfiles(project.id).then((r) => setProfiles(r.profiles)).catch(() => {});
+          }}
+        />
+      )}
       {saveTpl && <SaveAsTemplateModal projectId={project.id} onClose={() => setSaveTpl(false)} onSaved={() => setSaveTpl(false)} />}
+      {showSecrets && <ProjectSecretsModal project={project} onClose={() => setShowSecrets(false)} />}
     </div>
   );
 }

@@ -82,6 +82,25 @@ async function reachTheCodeStep(methods: string[] = ["totp"], passkeyReady = met
   });
 }
 
+// A password manager fills a form by reading `autocomplete`/`name`, not by
+// guessing from placeholder text — without these a browser or manager has no
+// reliable way to offer to fill (or save) the login form at all.
+describe("password manager autofill attributes", () => {
+  it("marks the username and password fields so a manager can fill them", async () => {
+    const user = container.querySelector('input[name="username"]') as HTMLInputElement | null;
+    const pass = container.querySelector('input[name="password"]') as HTMLInputElement | null;
+    expect(user?.autocomplete).toBe("username");
+    expect(pass?.autocomplete).toBe("current-password");
+    expect(pass?.type).toBe("password");
+  });
+
+  it("marks the 2FA code field for one-time-code autofill", async () => {
+    await reachTheCodeStep();
+    const code = container.querySelector('input[name="otp"]') as HTMLInputElement | null;
+    expect(code?.autocomplete).toBe("one-time-code");
+  });
+});
+
 describe("the 2FA step with a passkey", () => {
   it("explains itself when the account has a passkey this connection cannot use", async () => {
     // A 2FA screen with no control on it is a lockout that looks like a bug.

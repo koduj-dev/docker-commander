@@ -36,6 +36,17 @@ every guard and the fixture traps that come with a real Docker daemon.
 
 ## Docker behaviour
 
+- **Reading a Dockerfile line by line gets it wrong.** A `# escape=` directive
+  changes the line-continuation character, and a heredoc body
+  (`COPY <<EOF … EOF`) can contain a line that looks exactly like `FROM`. A
+  hand-rolled reader that picks the registries a build needs missed both and
+  sent the build's daemon a credential it had no use for. `BuildRegistries`
+  therefore uses BuildKit's own parser (`moby/buildkit/frontend/dockerfile/parser`),
+  the one dependency in the tree that's there for one function. It is the only
+  importer, so it can be swapped for a smaller parser later: the table tests in
+  `dockerfile_registries_test.go` and the header pentest in
+  `build_auth_pentest_test.go` define the behaviour a replacement must keep.
+
 - **`docker stats` CPU is per-core: 100% is one core.** A container busy on four
   cores reads ~400%, so any fixed threshold or dashboard built on it is wrong on a
   multi-core host unless divided by the core count. The engine exposes the count
@@ -78,6 +89,15 @@ every guard and the fixture traps that come with a real Docker daemon.
   sole source, closing the gap where an operator's env or a project's `.env`
   could silently activate more than what gets persisted as "last deployed
   profiles".
+
+- **A non-streaming `ContainerStats` call needs `IncludePreviousSample`, or CPU
+  is a lifetime average.** The moby client sends `one-shot=true` unless you set
+  it. The daemon then returns an empty `precpu_stats`, and the usual
+  `(cpuDelta / sysDelta) * cpus * 100` is taken against zero. A container using
+  four cores shows as about 0.1%. Memory and network look fine, so it is easy to
+  miss. The old SDK call took the previous sample by default; the migration
+  (#256) lost that. The test in `internal/docker/stats_sample_test.go` fakes a
+  daemon that answers one-shot requests the way the real one does.
 
 ## HTTP timeouts and streaming
 
@@ -134,6 +154,44 @@ every guard and the fixture traps that come with a real Docker daemon.
   not under the service, which is what makes it confusing. Fixed by
   `Environment=DOCKER_CONFIG=/var/lib/dockercmd/.docker` in
   `deploy/dockercmd.service`; the `install-*` scripts cover each OS.
+
+- **The running server cannot obtain a certificate through a local Pebble
+  instance — two independent, stacked reasons.** `DC_ACME_DIRECTORY_URL`
+  pointed at Pebble (Let's Encrypt's own ACME **test** server) does not work
+  as an end-to-end way to exercise this app's real HTTPS-serving path, unlike
+  Let's Encrypt's *staging* directory, which does (its own API endpoint has
+  an ordinary trusted TLS cert; Pebble's is locally-generated and untrusted).
+  1. **Directory discovery fails closed.** `internal/acme.NewManager` never
+     sets a custom trust root or `InsecureSkipVerify` on the `*acme.Client`
+     it builds — correctly, since that client also targets the real Let's
+     Encrypt directory by default. Against Pebble's self-signed cert this
+     means the very first request fails: `tls: failed to verify certificate:
+     x509: certificate signed by unknown authority`. Confirmed by actually
+     starting the server with `DC_ACME_DIRECTORY_URL` pointed at a local
+     Pebble and watching the handshake fail this way.
+  2. **Even past that, `autocert.Manager.GetCertificate`'s order-polling
+     breaks against Pebble specifically.** `Post "": unsupported protocol
+     scheme ""`: its internal `CreateOrderCert` polls the order via the URI
+     from the finalize response's `Location` header, but Pebble doesn't
+     repeat `Location` on that response (only the original order-creation
+     response does, and RFC 8555 §7.4 doesn't require it to). The finalize
+     POST and the actual certificate issuance still succeed server-side
+     (visible in Pebble's own logs: "Issued certificate…") — only the
+     client's *subsequent poll* breaks, 100% reproducibly, independent of
+     `PEBBLE_VA_ALWAYS_VALID`/`PEBBLE_VA_NOSLEEP`. Real Let's Encrypt
+     (Boulder, staging included) doesn't hit this — if it did, it would
+     break `autocert` for effectively everyone.
+
+  Both are specific to Pebble, and neither is a bug in this app to fix:
+  (1) is `internal/acme` correctly refusing an unverifiable server, the same
+  as it should; (2) is Pebble's own response shape, not something a caller
+  of `autocert` controls. `internal/acme/pebble_integration_test.go` still
+  uses Pebble — but only for developing this package itself, driving the
+  lower-level `acme.Client` methods directly (with an explicit, test-only
+  `InsecureSkipVerify` client) and polling the order via its own real URI
+  (known from `AuthorizeOrder`, unaffected by gap 2) instead of going through
+  the convenience wrapper the real server relies on. Document `-acme-directory-url`
+  as staging-or-a-real-alternate-CA only; don't point a user at Pebble for it.
 
 ## Secrets
 

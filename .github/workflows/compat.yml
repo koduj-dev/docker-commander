@@ -48,9 +48,9 @@ name: Docker compatibility matrix
 # older majors are already effectively covered indirectly, since a Docker Hub
 # patch bump there would also show up as that major's own job going red.
 #
-# That's 5 + 2 + 2 = 9 jobs — same order of magnitude as the old 5 (or the 7
-# after the Compose pin) — instead of the 15+ a full cross product across all
-# three axes would be.
+# That's 6 + 2 + 2 = 10 jobs — same order of magnitude as the original 5 (or
+# the 7 after the Compose pin) — instead of the 18+ a full cross product
+# across all three axes would be.
 
 on:
   workflow_dispatch:
@@ -140,7 +140,7 @@ jobs:
 
           want="$INPUT_VERSIONS"
           if [ -z "$want" ]; then
-            want='["24","25","26","27","28"]'
+            want='["24","25","26","27","28","29"]'
           fi
           validate "versions" "$want" "$docker_re"
 
@@ -183,7 +183,7 @@ jobs:
             # majors — see the top-of-file comment for why not every patch
             # of every major. Bump these by hand as new patches ship; there
             # is no registry lookup here, same as the compose list above.
-            patch_want='["28.5.2","27.5.1"]'
+            patch_want='["29.7.2","28.5.2"]'
           fi
           validate_optional "patch_versions" "$patch_want" "$docker_re"
 

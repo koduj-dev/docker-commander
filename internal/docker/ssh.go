@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -73,9 +73,8 @@ func buildSSHClient(h *store.Host) (*client.Client, error) {
 	// WithHTTPClient must come LAST, ensuring our SSH-tunnelling transport (with
 	// its DialContext) is the one that survives — otherwise the client tries to
 	// resolve the "docker.ssh" placeholder over DNS and fails.
-	return client.NewClientWithOpts(
+	return client.New(
 		client.WithHost("tcp://docker.ssh:2375"), // placeholder; our DialContext ignores the address
-		client.WithAPIVersionNegotiation(),
 		client.WithHTTPClient(httpClient),
 	)
 }

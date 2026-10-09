@@ -31,7 +31,7 @@ const (
 )
 
 var (
-	validAlertTypes = map[string]bool{"state": true, "resource": true, "log": true, "restart": true}
+	validAlertTypes = map[string]bool{"state": true, "resource": true, "log": true, "restart": true, "network": true}
 	validSeverities = map[string]bool{"info": true, "warning": true, "critical": true}
 )
 

@@ -88,6 +88,33 @@ func (m *memoryStore) Query(_ context.Context, containerID, metric string, since
 	return out, nil
 }
 
+// QueryAll answers each id under the same RLock Query itself uses — cheap,
+// since it's just further map lookups over data already in memory.
+func (m *memoryStore) QueryAll(_ context.Context, metric string, since time.Time, containerIDs []string) (map[string][]Point, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	cutoff := since.UnixMilli()
+	out := make(map[string][]Point, len(containerIDs))
+	for _, cid := range containerIDs {
+		pts := m.series[cid][metric]
+		if len(pts) == 0 {
+			continue
+		}
+		filtered := make([]Point, 0, len(pts))
+		for _, p := range pts {
+			if p.T >= cutoff {
+				filtered = append(filtered, p)
+			}
+		}
+		if len(filtered) == 0 {
+			continue
+		}
+		sort.Slice(filtered, func(i, j int) bool { return filtered[i].T < filtered[j].T })
+		out[cid] = filtered
+	}
+	return out, nil
+}
+
 func (m *memoryStore) Close() error { return nil }
 
 func (m *memoryStore) HostFor(_ context.Context, containerID string) (int64, bool, error) {

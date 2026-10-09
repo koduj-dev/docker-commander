@@ -340,11 +340,11 @@ func TestAuditStackContainerResultsAuditsSuccessAndFailure(t *testing.T) {
 		{ID: "container-ok", OK: true},
 		{ID: "container-bad", OK: false, Error: "container is paused"},
 	}
-	if ok := h.auditStackContainerResults(p, "stop", results); ok {
+	if ok := h.auditStackContainerResults(context.Background(), p, "stop", results); ok {
 		t.Error("the overall result should be false when any container in the batch failed")
 	}
 
-	entries, err := h.deps.Store.RecentAudit(ctx, 500, 0)
+	entries, err := h.deps.Store.RecentAudit(ctx, 500, 0, nil, true)
 	if err != nil {
 		t.Fatalf("read audit: %v", err)
 	}
@@ -386,7 +386,7 @@ func TestAuditStackContainerResultsAllSucceed(t *testing.T) {
 	p := &principal{user: u}
 
 	results := []docker.BulkActionResult{{ID: "a", OK: true}, {ID: "b", OK: true}}
-	if ok := h.auditStackContainerResults(p, "restart", results); !ok {
+	if ok := h.auditStackContainerResults(context.Background(), p, "restart", results); !ok {
 		t.Error("the overall result should be true when every container succeeded")
 	}
 }

@@ -238,7 +238,7 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.audit(r, "project.create", slug, "")
+	s.auditOn(r, s.daemonHost(r.Context(), body.HostID), "project.create", slug, "")
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "slug": slug})
 }
 
@@ -282,6 +282,20 @@ func (s *Server) handleImportProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	count := extractZipToDir(zr, root)
+
+	s.auditOn(r, s.daemonHost(r.Context(), 0), "project.import", slug, "") // imports land on the local daemon
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "slug": slug, "files": count})
+}
+
+// extractZipToDir writes every file in zr under root, rejecting path
+// traversal/absolute entries (safeJoin), oversized files and anything past
+// maxProjectFiles. Shared by project import and revision restore — both are
+// "make this directory look like this zip", just with the zip coming from a
+// different place. Returns how many files were actually written; a per-file
+// failure (a bad path, a read error) is skipped rather than aborting the
+// whole extraction.
+func extractZipToDir(zr *zip.Reader, root string) int {
 	count := 0
 	for _, f := range zr.File {
 		if f.FileInfo().IsDir() || count >= maxProjectFiles {
@@ -304,9 +318,7 @@ func (s *Server) handleImportProject(w http.ResponseWriter, r *http.Request) {
 			count++
 		}
 	}
-
-	s.audit(r, "project.import", slug, "")
-	writeJSON(w, http.StatusOK, map[string]any{"id": id, "slug": slug, "files": count})
+	return count
 }
 
 // handleGetProject returns a single project's metadata.
@@ -325,6 +337,11 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	release, ok := projectOpOrConflict(w, p.ID, "deleting the project")
+	if !ok {
+		return
+	}
+	defer release()
 	force := r.URL.Query().Get("force") == "1"
 
 	if s.projectDeployed(r, p.Slug, p.HostID) {
@@ -347,7 +364,7 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "compose down failed: " + derr.Error(), "output": out})
 			return
 		}
-		s.audit(r, "project.down", p.Slug, "force-delete")
+		s.auditProject(r, p, "project.down", "force-delete")
 	}
 
 	// Seeded volumes on the target host are the project's data, so they are only
@@ -367,7 +384,7 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 			volumeErr = rerr.Error()
 		}
 		if len(removedVolumes) > 0 {
-			s.audit(r, "project.seed_volumes.remove", p.Slug, strings.Join(removedVolumes, ","))
+			s.auditProject(r, p, "project.seed_volumes.remove", strings.Join(removedVolumes, ","))
 		}
 	}
 
@@ -375,11 +392,21 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "could not remove files: "+err.Error())
 		return
 	}
+	// Revision snapshots (project_revisions.go's zipDir of the whole project
+	// directory, so potentially carrying .env/secrets just like the project
+	// root above) live in a SEPARATE directory that store.DeleteProject's own
+	// doc comment explicitly leaves to the caller — it only removes the DB
+	// rows. Skipping this leaves those files orphaned on disk forever, with
+	// no reachable DB record and outside what a routine backup captures.
+	if err := os.RemoveAll(s.projectRevisionsDir(p.ID)); err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not remove revision snapshots: "+err.Error())
+		return
+	}
 	if err := s.store.DeleteProject(r.Context(), p.ID); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.audit(r, "project.delete", p.Slug, "")
+	s.auditProject(r, p, "project.delete", "")
 	resp := map[string]any{"ok": true, "removedVolumes": removedVolumes}
 	if volumeErr != "" {
 		resp["volumeError"] = volumeErr
@@ -483,6 +510,11 @@ func (s *Server) handleWriteProjectFile(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	release, ok := projectOpOrConflict(w, p.ID, "a file save")
+	if !ok {
+		return
+	}
+	defer release()
 	var body struct {
 		Name    string `json:"name"`
 		Content string `json:"content"`
@@ -517,7 +549,7 @@ func (s *Server) handleWriteProjectFile(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	_ = s.store.TouchProject(r.Context(), p.ID)
-	s.audit(r, "project.file.write", p.Slug, body.Name)
+	s.auditProject(r, p, "project.file.write", body.Name)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -529,6 +561,11 @@ func (s *Server) handleUploadProjectFileRaw(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
+	release, ok := projectOpOrConflict(w, p.ID, "an upload")
+	if !ok {
+		return
+	}
+	defer release()
 	root := s.projectRoot(p.ID)
 	name := r.URL.Query().Get("path")
 	full, err := safeJoin(root, name)
@@ -561,7 +598,7 @@ func (s *Server) handleUploadProjectFileRaw(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	_ = s.store.TouchProject(r.Context(), p.ID)
-	s.audit(r, "project.file.upload", p.Slug, name)
+	s.auditProject(r, p, "project.file.upload", name)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "bytes": len(data)})
 }
 
@@ -589,7 +626,7 @@ func (s *Server) handleDownloadProjectFile(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusBadRequest, "not a file")
 		return
 	}
-	s.audit(r, "project.file.download", p.Slug, name)
+	s.auditProject(r, p, "project.file.download", name)
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+headerFilename(filepath.Base(full))+"\"")
 	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
@@ -613,6 +650,11 @@ func (s *Server) handleDeleteProjectFile(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	release, ok := projectOpOrConflict(w, p.ID, "a file delete")
+	if !ok {
+		return
+	}
+	defer release()
 	full, err := safeJoin(s.projectRoot(p.ID), r.URL.Query().Get("path"))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -623,7 +665,7 @@ func (s *Server) handleDeleteProjectFile(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	_ = s.store.TouchProject(r.Context(), p.ID)
-	s.audit(r, "project.file.delete", p.Slug, r.URL.Query().Get("path"))
+	s.auditProject(r, p, "project.file.delete", r.URL.Query().Get("path"))
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -633,6 +675,11 @@ func (s *Server) handleMakeProjectDir(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	release, ok := projectOpOrConflict(w, p.ID, "a new folder")
+	if !ok {
+		return
+	}
+	defer release()
 	var body struct {
 		Name string `json:"name"`
 	}
@@ -649,7 +696,7 @@ func (s *Server) handleMakeProjectDir(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.audit(r, "project.dir.create", p.Slug, body.Name)
+	s.auditProject(r, p, "project.dir.create", body.Name)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -660,6 +707,11 @@ func (s *Server) handleRenameProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	release, ok := projectOpOrConflict(w, p.ID, "a settings change")
+	if !ok {
+		return
+	}
+	defer release()
 	var body struct {
 		Name                 string `json:"name"`
 		HostID               int64  `json:"hostId"`
@@ -724,7 +776,11 @@ func (s *Server) handleRenameProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.audit(r, "project.rename", p.Slug, name)
+	// Logged under the host the project lives on from now on. Bringing it down
+	// on the old host is its own entry (project.down), under the old host.
+	moved := *p
+	moved.HostID = body.HostID
+	s.auditProject(r, &moved, "project.rename", name)
 	if body.HostID != p.HostID {
 		detail := "host " + strconv.FormatInt(p.HostID, 10) + " → " + strconv.FormatInt(body.HostID, 10)
 		if teardown != nil {
@@ -732,11 +788,11 @@ func (s *Server) handleRenameProject(w http.ResponseWriter, r *http.Request) {
 		} else {
 			detail += " (old host left running)"
 		}
-		s.audit(r, "project.retarget", p.Slug, detail)
+		s.auditProject(r, &moved, "project.retarget", detail)
 	}
 	if body.AllowRemoteHostPaths != p.AllowRemoteHostPaths {
 		// Audited separately: this one changes what the project may mount.
-		s.audit(r, "project.remote_host_paths", p.Slug, boolWord(body.AllowRemoteHostPaths))
+		s.auditProject(r, &moved, "project.remote_host_paths", boolWord(body.AllowRemoteHostPaths))
 	}
 	out := map[string]any{"ok": true}
 	if teardown != nil {
@@ -786,7 +842,7 @@ func (s *Server) tearDownOnHost(r *http.Request, p *store.Project, hostID int64)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", strings.TrimSpace(out), err)
 	}
-	s.audit(r, "project.down", p.Slug, "retarget from host "+strconv.FormatInt(hostID, 10))
+	s.auditOn(r, s.daemonHost(r.Context(), hostID), "project.down", p.Slug, "retarget from host "+strconv.FormatInt(hostID, 10))
 
 	res := &teardownResult{output: out}
 	if hostID != 0 {
@@ -796,7 +852,7 @@ func (s *Server) tearDownOnHost(r *http.Request, p *store.Project, hostID int64)
 			res.volumeErr = rerr.Error()
 		}
 		if len(removed) > 0 {
-			s.audit(r, "project.seed_volumes.remove", p.Slug, strings.Join(removed, ","))
+			s.auditProject(r, p, "project.seed_volumes.remove", strings.Join(removed, ","))
 		}
 	}
 	return res, nil
@@ -808,6 +864,11 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	release, ok := projectOpOrConflict(w, p.ID, "a deploy")
+	if !ok {
+		return
+	}
+	defer release()
 	if !docker.ComposeAvailable(r.Context()) {
 		writeErr(w, http.StatusPreconditionFailed, "the `docker compose` CLI is not available on the host running Docker Commander")
 		return
@@ -824,6 +885,25 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 		// the Dockerfile or its context changed. Sending false opts out for the
 		// rare case where re-sending a large context matters more than freshness.
 		Build *bool `json:"build"`
+		// Reason is an optional free-text note stored on the resulting revision
+		// (see captureRevision) — why this deploy happened, for whoever reads
+		// the history later. Blank is fine; a plain deploy usually has no story.
+		Reason string `json:"reason"`
+		// Pull forces `--pull always` (ComposeUpFilesPull instead of
+		// ComposeUpFiles) so a mutable tag whose registry digest moved on is
+		// actually re-pulled rather than silently reusing the stale local
+		// image — `up`'s own default policy only pulls an image that's
+		// missing entirely. Off by default: forcing a registry round trip on
+		// every ordinary deploy isn't something to opt production into
+		// silently. The Preview screen's "Reconcile now" sends this — it
+		// exists specifically to fix the "digest" drift it just reported.
+		Pull bool `json:"pull"`
+		// ConfirmPolicyWarnings acknowledges any warn-mode policy violation
+		// found on THIS deploy (see policyCheckOrRefuse below) — sent by the
+		// UI after the operator has seen the violation list and clicked
+		// through it. It never affects a block-mode violation, which has no
+		// per-deploy override.
+		ConfirmPolicyWarnings bool `json:"confirmPolicyWarnings"`
 	}
 	_ = decodeJSON(r, &body) // body is optional (empty → no profiles, rebuild)
 	// Normalized ONCE, here, and reused for the compose command, persistence
@@ -834,13 +914,29 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 	body.Profiles = docker.NormalizeProfiles(body.Profiles)
 	build := body.Build == nil || *body.Build
 	dir := s.projectRoot(p.ID)
-	env, files, note, cleanup, err := s.projectDeployEnv(r.Context(), p, dir)
+	env, files, note, cleanup, seed, err := s.projectDeployEnv(r.Context(), p, dir, body.Profiles)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	defer cleanup()
-	out, err := docker.ComposeUpFiles(r.Context(), dir, p.Slug, body.Profiles, env, files, build)
+	if resp, refused := s.policyCheckOrRefuse(r, p, dir, body.Profiles, env, files, body.ConfirmPolicyWarnings, policyKindDeploy); refused {
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	// Only after policy has passed does any remote-side write happen — see
+	// the seed doc comment on projectDeployEnv.
+	if seed != nil {
+		if err := seed.Run(r.Context()); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	upFn := docker.ComposeUpFiles
+	if body.Pull {
+		upFn = docker.ComposeUpFilesPull
+	}
+	out, err := upFn(r.Context(), dir, p.Slug, body.Profiles, env, files, build)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "output": out})
 		return
@@ -857,7 +953,9 @@ func (s *Server) handleDeployProject(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.SetLastDeployedProfiles(r.Context(), p.ID, body.Profiles); err != nil {
 		log.Printf("project deploy: persist last deployed profiles for %q: %v", p.Slug, err)
 	}
-	s.audit(r, "project.deploy", p.Slug, strings.Join(body.Profiles, ","))
+	s.captureRevision(r.Context(), p, body.Profiles, out, body.Reason, currentUsername(r))
+	s.auditProject(r, p, "project.deploy", strings.Join(body.Profiles, ","))
+	s.autoSilenceForDeploy(r.Context(), p)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out, "note": note})
 }
 
@@ -898,7 +996,12 @@ func (s *Server) handleValidateProject(w http.ResponseWriter, r *http.Request) {
 		dir = tmp
 	}
 
-	out, err := docker.ComposeConfig(r.Context(), dir, p.Slug)
+	_, masked, _, serr := s.projectSecretEnvs(r.Context(), p.ID)
+	if serr != nil {
+		writeErr(w, http.StatusInternalServerError, serr.Error())
+		return
+	}
+	out, err := docker.ComposeConfigEnv(r.Context(), dir, p.Slug, masked)
 	if err != nil {
 		msg := strings.TrimSpace(out)
 		if msg == "" {
@@ -942,12 +1045,96 @@ func (s *Server) handleResolveProject(w http.ResponseWriter, r *http.Request) {
 		defer os.RemoveAll(tmp)
 		dir = tmp
 	}
-	out, err := docker.ComposeResolvedConfig(r.Context(), dir, p.Slug)
+	_, masked, _, serr := s.projectSecretEnvs(r.Context(), p.ID)
+	if serr != nil {
+		writeErr(w, http.StatusInternalServerError, serr.Error())
+		return
+	}
+	out, err := docker.ComposeResolvedConfigEnv(r.Context(), dir, p.Slug, masked)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "config": out})
+}
+
+// handlePreviewProject reports what deploying this project would change,
+// without deploying it: which services would be created/recreated/left
+// alone, and — for anything already running — image/digest, env, ports,
+// volumes, networks, restart policy, resource limits and healthcheck
+// differences (see internal/docker/preview.go and deployfields.go). This is
+// the same comparison the `preview_deploy` MCP tool already exposed; the web
+// UI gets it as a first-class screen here rather than staying MCP-only.
+//
+// A GET, not a POST: it changes nothing, so it only needs read access to the
+// project, not the write permission loadProject would otherwise require.
+func (s *Server) handlePreviewProject(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	prev, err := s.mcpPreviewProject(r.Context(), p.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, prev)
+}
+
+// driftIgnoreBody identifies one (service, kind) drift from a preview's
+// ServiceChange — the same pair MarkIgnoredChanges matches on. From/To/Detail
+// are the change's own content, echoed back by the client so the server can
+// compute the same docker.ChangeFingerprint the preview did — the ignore is
+// scoped to that specific fingerprint, not just the (service, kind) pair, so
+// a later, different change of the same kind isn't silently also accepted.
+type driftIgnoreBody struct {
+	Service string `json:"service"`
+	Kind    string `json:"kind"`
+	From    string `json:"from"`
+	To      string `json:"to"`
+	Detail  string `json:"detail"`
+}
+
+// handleIgnoreDrift records that a specific drift on this project has been
+// reviewed and accepted, so future previews stop counting it as active (it
+// stays visible, marked "ignored" — see docker.ServiceChange.Ignored).
+func (s *Server) handleIgnoreDrift(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	var body driftIgnoreBody
+	if err := decodeJSON(r, &body); err != nil || body.Service == "" || body.Kind == "" {
+		writeErr(w, http.StatusBadRequest, "service and kind are required")
+		return
+	}
+	fp := docker.ChangeFingerprint(docker.ServiceChange{Kind: body.Kind, From: body.From, To: body.To, Detail: body.Detail})
+	if err := s.store.IgnoreDrift(r.Context(), p.ID, body.Service, body.Kind, fp); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.auditProject(r, p, "project.drift.ignore", body.Service+":"+body.Kind)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleUnignoreDrift reverses handleIgnoreDrift: the next preview counts
+// this drift again.
+func (s *Server) handleUnignoreDrift(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	var body driftIgnoreBody
+	if err := decodeJSON(r, &body); err != nil || body.Service == "" || body.Kind == "" {
+		writeErr(w, http.StatusBadRequest, "service and kind are required")
+		return
+	}
+	if err := s.store.UnignoreDrift(r.Context(), p.ID, body.Service, body.Kind); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.auditProject(r, p, "project.drift.unignore", body.Service+":"+body.Kind)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // overlayProject copies the project folder to a fresh temp dir and overlays the
@@ -1021,7 +1208,12 @@ func (s *Server) handleProjectSummary(w http.ResponseWriter, r *http.Request) {
 		defer os.RemoveAll(tmp)
 		dir = tmp
 	}
-	raw, err := docker.ComposeConfigJSON(r.Context(), dir, p.Slug)
+	_, masked, _, serr := s.projectSecretEnvs(r.Context(), p.ID)
+	if serr != nil {
+		writeErr(w, http.StatusInternalServerError, serr.Error())
+		return
+	}
+	raw, err := docker.ComposeConfigJSONFiles(r.Context(), dir, p.Slug, nil, masked, nil)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -1077,7 +1269,12 @@ func (s *Server) handleProjectProfiles(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"profiles": []string{}})
 		return
 	}
-	profiles, err := docker.ComposeProfiles(r.Context(), s.projectRoot(p.ID), p.Slug)
+	_, masked, _, serr := s.projectSecretEnvs(r.Context(), p.ID)
+	if serr != nil {
+		writeErr(w, http.StatusInternalServerError, serr.Error())
+		return
+	}
+	profiles, err := docker.ComposeProfilesEnv(r.Context(), s.projectRoot(p.ID), p.Slug, masked)
 	if err != nil {
 		// Best-effort: an invalid compose file just means no profiles to offer.
 		writeJSON(w, http.StatusOK, map[string]any{"profiles": []string{}, "error": err.Error()})
@@ -1153,6 +1350,11 @@ func (s *Server) runProjectCompose(w http.ResponseWriter, r *http.Request, fn fu
 	if !ok {
 		return
 	}
+	release, ok := projectOpOrConflict(w, p.ID, "a "+action)
+	if !ok {
+		return
+	}
+	defer release()
 	if !docker.ComposeAvailable(r.Context()) {
 		writeErr(w, http.StatusPreconditionFailed, "the `docker compose` CLI is not available on the host running Docker Commander")
 		return
@@ -1173,7 +1375,7 @@ func (s *Server) runProjectCompose(w http.ResponseWriter, r *http.Request, fn fu
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "output": out})
 		return
 	}
-	s.audit(r, "project."+action, p.Slug, "")
+	s.auditProject(r, p, "project."+action, "")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out})
 }
 
@@ -1274,15 +1476,32 @@ func boolWord(b bool) string {
 }
 
 // projectComposeEnv resolves the `docker compose` environment for a project's
-// target host (nil for the local daemon). The returned cleanup must always be
-// called (it removes any materialised TLS certs).
+// target host (host TLS vars only, for a remote one) PLUS the project's
+// secrets as their masked placeholders — every caller of this function only
+// parses/tears down the compose file (down, restart, force-delete,
+// retarget's teardown), never deploys it, so a real value is never needed,
+// only that ${NAME} interpolation succeeds instead of failing a required
+// (`${NAME:?...}`) variable. The returned cleanup must always be called (it
+// removes any materialised TLS certs).
 func (s *Server) projectComposeEnv(ctx context.Context, p *store.Project, dir string) ([]string, func(), error) {
 	noop := func() {}
-	h, err := s.projectHost(ctx, p)
-	if err != nil || h == nil {
+	var env []string
+	var cleanup func() = noop
+	if h, err := s.projectHost(ctx, p); err != nil {
+		return nil, noop, err
+	} else if h != nil {
+		hostEnv, hostCleanup, err := docker.ComposeHostEnv(h)
+		if err != nil {
+			return nil, noop, err
+		}
+		env, cleanup = hostEnv, hostCleanup
+	}
+	_, masked, _, err := s.projectSecretEnvs(ctx, p.ID)
+	if err != nil {
+		cleanup()
 		return nil, noop, err
 	}
-	return docker.ComposeHostEnv(h)
+	return append(env, masked...), cleanup, nil
 }
 
 // projectHost resolves a project's target host, or (nil, nil) for the local
@@ -1310,56 +1529,122 @@ func (s *Server) projectHost(ctx context.Context, p *store.Project) (*store.Host
 // a seeded named volume on that host and repointed by a generated override; binds
 // pointing outside the project folder are refused rather than mounted blind on
 // the remote. Returns the extra `-f` files (empty for a local deploy), a note to
-// show the user, and a cleanup that must always be called.
-func (s *Server) projectDeployEnv(ctx context.Context, p *store.Project, dir string) (env, files []string, note string, cleanup func(), err error) {
+// show the user, a cleanup that must always be called, and a seed.
+//
+// seed performs the one mutating, remote-side step (copying the project's bind
+// sources into their seeded volumes) and is deliberately NOT run here — it
+// is nil when there is nothing to seed (local deploy, or a remote deploy with
+// no internal binds). Every caller MUST run its policy check against the env
+// and files this returns and only run the seed after that check passes: the
+// resolved env/files (and the override file's content) never depend on the
+// seed having run, so a policy-blocked deploy/restore never mutates the
+// remote host at all — see the callers in project_handlers.go,
+// project_revisions_handlers.go and mcp_projects.go.
+//
+// The project's secrets are appended as real, decrypted "NAME=value" env
+// last — this is the one path that must receive the real value, since it's
+// what an actual deploy runs with.
+//
+// profiles is the set the CALLER is about to deploy/restore with — it must
+// be used to resolve bind classification below, not nil/none: Compose omits
+// a service gated behind an inactive profile from a zero-profile `compose
+// config`, so a bind mount on a profiled service would otherwise go
+// unclassified (neither internal nor external) whenever that profile is the
+// one actually being activated, silently skipping both the seed/override
+// step AND the external-bind opt-in refusal for that service's mount.
+func (s *Server) projectDeployEnv(ctx context.Context, p *store.Project, dir string, profiles []string) (env, files []string, note string, cleanup func(), seed *projectSeed, err error) {
+	env, files, note, cleanup, seed, err = s.projectDeployEnvBase(ctx, p, dir, profiles)
+	if err != nil {
+		return env, files, note, cleanup, seed, err
+	}
+	real, _, _, serr := s.projectSecretEnvs(ctx, p.ID)
+	if serr != nil {
+		cleanup()
+		return nil, nil, "", func() {}, nil, serr
+	}
+	env = append(env, real...)
+	// Credentials stored under Registries, so `compose` can pull private images.
+	// This runs for every target host: even for a remote one, the compose CLI runs
+	// here and hands the credentials to the remote daemon.
+	regEnv, regCleanup, warnings, rerr := s.composeRegistryEnv(ctx)
+	if rerr != nil {
+		cleanup()
+		return nil, nil, "", func() {}, nil, rerr
+	}
+	hostCleanup := cleanup
+	cleanup = func() { regCleanup(); hostCleanup() }
+	env = append(env, regEnv...)
+	for _, w := range warnings {
+		if note != "" {
+			note += "\n"
+		}
+		note += w
+	}
+	return env, files, note, cleanup, seed, nil
+}
+
+// composeRegistryEnv is the `docker compose` env that makes it log in with the
+// credentials stored under Registries, plus warnings for the deploy's output.
+// See docker.ComposeRegistryEnv.
+func (s *Server) composeRegistryEnv(ctx context.Context) ([]string, func(), []string, error) {
+	return docker.RegistryEnvFromStore(ctx, s.store)
+}
+
+func (s *Server) projectDeployEnvBase(ctx context.Context, p *store.Project, dir string, profiles []string) (env, files []string, note string, cleanup func(), seed *projectSeed, err error) {
 	noop := func() {}
 	h, err := s.projectHost(ctx, p)
 	if err != nil {
-		return nil, nil, "", noop, err
+		return nil, nil, "", noop, nil, err
 	}
 	if h == nil || h.Kind == "" || h.Kind == "local" {
 		env, cleanup, err = s.projectComposeEnv(ctx, p, dir)
-		return env, nil, "", cleanup, err
+		return env, nil, "", cleanup, nil, err
 	}
 	// Fail closed: without a resolved config we can't prove which paths this
-	// project would mount on the remote host, so don't deploy at all.
-	cfgJSON, err := docker.ComposeConfigJSON(ctx, dir, p.Slug)
+	// project would mount on the remote host, so don't deploy at all. Only
+	// the masked placeholder is needed here — this classifies bind mounts,
+	// it doesn't need a real secret value, just successful interpolation.
+	_, preflightMasked, _, err := s.projectSecretEnvs(ctx, p.ID)
 	if err != nil {
-		return nil, nil, "", noop, fmt.Errorf("cannot validate the compose file for remote deploy: %v", err)
+		return nil, nil, "", noop, nil, err
+	}
+	cfgJSON, err := docker.ComposeConfigJSONFiles(ctx, dir, p.Slug, profiles, preflightMasked, nil)
+	if err != nil {
+		return nil, nil, "", noop, nil, fmt.Errorf("cannot validate the compose file for remote deploy: %v", err)
 	}
 	internal, external, err := docker.ClassifyProjectBinds(cfgJSON, dir)
 	if err != nil {
-		return nil, nil, "", noop, fmt.Errorf("cannot inspect the project's bind mounts: %v", err)
+		return nil, nil, "", noop, nil, fmt.Errorf("cannot inspect the project's bind mounts: %v", err)
 	}
 	// Binds from outside the project folder address paths on the remote host, so
 	// they're refused unless the project was explicitly opted in (which needs the
 	// "hosts" permission). Opted in, they're passed through untouched — we can't
 	// ship what we can't see — and the note tells the user exactly which ones.
 	if len(external) > 0 && !p.AllowRemoteHostPaths {
-		return nil, nil, "", noop, fmt.Errorf("remote deploy to %q refuses bind mounts from outside the project folder, because they would mount paths on the remote host: %s — enable \"allow host paths\" in the project's settings if that is intended", h.Name, joinBinds(external))
+		return nil, nil, "", noop, nil, fmt.Errorf("remote deploy to %q refuses bind mounts from outside the project folder, because they would mount paths on the remote host: %s — enable \"allow host paths\" in the project's settings if that is intended", h.Name, joinBinds(external))
 	}
 	if env, cleanup, err = docker.ComposeHostEnv(h); err != nil {
-		return nil, nil, "", noop, err
+		return nil, nil, "", noop, nil, err
 	}
 	if len(internal) == 0 {
 		// Nothing to ship, but any passed-through host paths still need saying.
-		return env, nil, remoteBindNote(nil, external), cleanup, nil
+		return env, nil, remoteBindNote(nil, external), cleanup, nil, nil
 	}
-	if err = s.docker.SeedProjectBinds(ctx, p.HostID, dir, p.Slug, internal); err != nil {
-		cleanup()
-		return nil, nil, "", noop, fmt.Errorf("copying the project files to %q failed: %v", h.Name, err)
-	}
+	// BindOverrideJSON only needs the bind CLASSIFICATION (source/target/slug),
+	// never the seeded volume's actual content, so it — and everything the
+	// policy check resolves from it — can be computed before any remote
+	// write happens.
 	ov, err := docker.BindOverrideJSON(p.Slug, internal)
 	if err != nil {
 		cleanup()
-		return nil, nil, "", noop, err
+		return nil, nil, "", noop, nil, err
 	}
 	// Keep the override outside the project folder so it never shows up in the
 	// user's file tree or a .zip export.
 	f, err := os.CreateTemp("", "dc-bind-override-*.json")
 	if err != nil {
 		cleanup()
-		return nil, nil, "", noop, err
+		return nil, nil, "", noop, nil, err
 	}
 	path := f.Name()
 	_, werr := f.Write(ov)
@@ -1370,11 +1655,53 @@ func (s *Server) projectDeployEnv(ctx context.Context, p *store.Project, dir str
 	if werr != nil {
 		_ = os.Remove(path)
 		cleanup()
-		return nil, nil, "", noop, werr
+		return nil, nil, "", noop, nil, werr
 	}
 	tlsCleanup := cleanup
 	cleanup = func() { _ = os.Remove(path); tlsCleanup() }
-	return env, []string{p.ComposeFile, path}, remoteBindNote(internal, external), cleanup, nil
+	seed = &projectSeed{s: s, hostID: p.HostID, hostName: h.Name, slug: p.Slug, dir: dir, binds: internal}
+	return env, []string{p.ComposeFile, path}, remoteBindNote(internal, external), cleanup, seed, nil
+}
+
+// projectSeed copies a remote project's bind-mounted files into the volumes
+// that stand in for them on the target host.
+type projectSeed struct {
+	s        *Server
+	hostID   int64
+	hostName string
+	slug     string
+	dir      string
+	binds    []docker.ProjectBind
+}
+
+// Run seeds the volumes. A deploy's seed: the new files are what is wanted
+// whether or not `up` then succeeds.
+func (ps *projectSeed) Run(ctx context.Context) error {
+	if err := ps.s.docker.SeedProjectBinds(ctx, ps.hostID, ps.dir, ps.slug, ps.binds); err != nil {
+		return fmt.Errorf("copying the project files to %q failed: %v", ps.hostName, err)
+	}
+	return nil
+}
+
+// RunUndoable seeds like Run after saving what the volumes held, for a
+// restore, which promises that a failure leaves everything as it was. undo
+// puts the saved content back; done drops the saved copy and must always be
+// called. If the seed itself fails part-way, the volumes are put back before
+// it returns.
+func (ps *projectSeed) RunUndoable(ctx context.Context) (undo func(context.Context) error, done func(), err error) {
+	snap, err := ps.s.docker.SnapshotSeedVolumes(ctx, ps.hostID, ps.slug, ps.binds)
+	if err != nil {
+		return nil, nil, fmt.Errorf("saving the volumes on %q before the restore failed, nothing was changed: %v", ps.hostName, err)
+	}
+	done = func() { snap.Discard(context.Background()) }
+	if err := ps.Run(ctx); err != nil {
+		defer done()
+		if rerr := snap.Restore(context.WithoutCancel(ctx)); rerr != nil {
+			return nil, nil, fmt.Errorf("%v; putting the volumes back also failed: %v", err, rerr)
+		}
+		return nil, nil, fmt.Errorf("%v; the volumes were put back", err)
+	}
+	return snap.Restore, done, nil
 }
 
 // joinBinds renders binds for a user-facing error message.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"testing"
+	"time"
 
 	"github.com/koduj-dev/docker-commander/internal/crypto"
 )
@@ -218,6 +219,29 @@ func TestAccessSettings(t *testing.T) {
 	if on, _ := s.LocalhostNo2FA(ctx); !on {
 		t.Error("localhost-2FA should be on")
 	}
+
+	if pol, _ := s.SelfUpdatePolicy(ctx); pol.Enabled || pol.Granularity != "minor" {
+		t.Errorf("self-update auto-apply should default to off with granularity=minor, got %+v", pol)
+	}
+	if err := s.SetSelfUpdatePolicy(ctx, SelfUpdatePolicy{Enabled: true, Granularity: "minor"}); err != nil {
+		t.Fatal(err)
+	}
+	pol, _ := s.SelfUpdatePolicy(ctx)
+	if !pol.Enabled || pol.Granularity != "minor" {
+		t.Errorf("self-update policy round trip: %+v", pol)
+	}
+
+	if last, _ := s.LastAutoUpdate(ctx); last != nil {
+		t.Error("no auto-update recorded by default")
+	}
+	applied := time.Now().UTC().Truncate(time.Second)
+	if err := s.SetLastAutoUpdate(ctx, LastAutoUpdate{Version: "1.8.0", AppliedAt: applied}); err != nil {
+		t.Fatal(err)
+	}
+	last, _ := s.LastAutoUpdate(ctx)
+	if last == nil || last.Version != "1.8.0" || !last.AppliedAt.Equal(applied) {
+		t.Errorf("last auto-update round trip: %+v", last)
+	}
 }
 
 func TestAlertsCRUD(t *testing.T) {
@@ -297,12 +321,12 @@ func TestParseRulesAndSettingsAndAudit(t *testing.T) {
 		}
 	}
 	// Newest first, limited.
-	page1, _ := s.RecentAudit(ctx, 2, 0)
+	page1, _ := s.RecentAudit(ctx, 2, 0, nil, true)
 	if len(page1) != 2 || page1[0].Action != "a3" || page1[1].Action != "a2" {
 		t.Fatalf("audit page1: %+v", page1)
 	}
 	// Cursor: entries older than the last one returned.
-	page2, _ := s.RecentAudit(ctx, 2, page1[1].ID)
+	page2, _ := s.RecentAudit(ctx, 2, page1[1].ID, nil, true)
 	if len(page2) != 1 || page2[0].Action != "a1" {
 		t.Errorf("audit cursor page2: %+v", page2)
 	}

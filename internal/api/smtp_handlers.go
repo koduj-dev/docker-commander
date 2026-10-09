@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"github.com/koduj-dev/docker-commander/internal/monitor"
 	"github.com/koduj-dev/docker-commander/internal/store"
@@ -53,7 +55,9 @@ func (s *Server) handleTestSMTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "host, from and to are required"})
 		return
 	}
-	if err := monitor.SendMail(c, "Docker Commander test email", "This is a test message from Docker Commander.\n"); err != nil {
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	if err := monitor.SendMail(ctx, c, "Docker Commander test email", "This is a test message from Docker Commander.\n"); err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}

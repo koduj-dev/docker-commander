@@ -1,0 +1,296 @@
+package docker
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+func allModes(mode PolicyMode) map[PolicyRuleID]PolicyMode {
+	m := make(map[PolicyRuleID]PolicyMode, len(AllPolicyRules))
+	for _, r := range AllPolicyRules {
+		m[r] = mode
+	}
+	return m
+}
+
+func hasViolation(violations []PolicyViolation, rule PolicyRuleID, service string) bool {
+	for _, v := range violations {
+		if v.Rule == rule && v.Service == service {
+			return true
+		}
+	}
+	return false
+}
+
+func TestEvaluatePolicy_Privileged(t *testing.T) {
+	cfg := `{"services":{"web":{"image":"nginx:1.27","privileged":true}}}`
+	v, err := EvaluatePolicy([]byte(cfg), allModes(ModeBlock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasViolation(v, RulePrivileged, "web") {
+		t.Errorf("expected a privileged violation, got %+v", v)
+	}
+}
+
+func TestEvaluatePolicy_HostNetwork(t *testing.T) {
+	cfg := `{"services":{"web":{"image":"nginx:1.27","network_mode":"host"}}}`
+	v, _ := EvaluatePolicy([]byte(cfg), allModes(ModeBlock))
+	if !hasViolation(v, RuleHostNetwork, "web") {
+		t.Errorf("expected a host_network violation, got %+v", v)
+	}
+}
+
+func TestEvaluatePolicy_HostPID(t *testing.T) {
+	cfg := `{"services":{"web":{"image":"nginx:1.27","pid":"host"}}}`
+	v, _ := EvaluatePolicy([]byte(cfg), allModes(ModeBlock))
+	if !hasViolation(v, RuleHostPID, "web") {
+		t.Errorf("expected a host_pid violation, got %+v", v)
+	}
+}
+
+func TestEvaluatePolicy_DockerSocketMount(t *testing.T) {
+	cfg := `{"services":{"web":{"image":"nginx:1.27","volumes":[
+		{"type":"bind","source":"/var/run/docker.sock","target":"/var/run/docker.sock"}
+	]}}}`
+	v, _ := EvaluatePolicy([]byte(cfg), allModes(ModeBlock))
+	if !hasViolation(v, RuleDockerSocket, "web") {
+		t.Errorf("expected a docker_socket_mount violation, got %+v", v)
+	}
+}
+
+func TestEvaluatePolicy_DockerSocketMount_OrdinaryBindVolumeIsFine(t *testing.T) {
+	cfg := `{"services":{"web":{"image":"nginx:1.27","volumes":[
+		{"type":"bind","source":"/data","target":"/data"}
+	]}}}`
+	v, _ := EvaluatePolicy([]byte(cfg), allModes(ModeBlock))
+	if hasViolation(v, RuleDockerSocket, "web") {
+		t.Errorf("an ordinary bind mount must not trigger docker_socket_mount, got %+v", v)
+	}
+}
+
+// TestEvaluatePolicy_DockerSocketMount_ParentDirectoryBypass guards against a
+// regression of a real bypass: a bare suffix check on source/target only
+// catches a bind that names docker.sock directly. Binding an ANCESTOR
+// directory of the socket (e.g. host /var/run into the container) hands the
+// container a working docker.sock just the same, without either path string
+// ending in "docker.sock".
+func TestEvaluatePolicy_DockerSocketMount_ParentDirectoryBypass(t *testing.T) {
+	cases := []struct {
+		name   string
+		source string
+		target string
+	}{
+		{"var-run-self", "/var/run", "/var/run"},
+		{"var-run-renamed-target", "/var/run", "/host-run"},
+		{"run-self", "/run", "/run"},
+		{"run-trailing-slash", "/run/", "/host-run"},
+		{"root", "/", "/host"},
+		// Rootless dockerd's default socket lives at
+		// /run/user/<uid>/docker.sock — a SEPARATE tree from the rootful
+		// candidates above, so it needs its own ancestor coverage: neither
+		// "/run/user/1000" nor its parent "/run/user" is an ancestor of
+		// "/run/docker.sock" or "/var/run/docker.sock".
+		{"rootless-uid-dir", "/run/user/1000", "/run/user/1000"},
+		{"rootless-uid-dir-var-run", "/var/run/user/1000", "/host-run"},
+		{"rootless-user-dir-all-uids", "/run/user", "/host-run"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := `{"services":{"web":{"image":"nginx:1.27","volumes":[
+				{"type":"bind","source":"` + tc.source + `","target":"` + tc.target + `"}
+			]}}}`
+			v, _ := EvaluatePolicy([]byte(cfg), allModes(ModeBlock))
+			if !hasViolation(v, RuleDockerSocket, "web") {
+				t.Errorf("bind of %q (ancestor of docker.sock) must trigger docker_socket_mount, got %+v", tc.source, v)
+			}
+		})
+	}
+}
+
+// TestEvaluatePolicy_DockerSocketMount_UnrelatedDeepPathIsFine ensures the
+// ancestor check doesn't over-fire: a bind of some unrelated directory that
+// merely shares a path segment with a docker.sock location must not trip the
+// rule.
+func TestEvaluatePolicy_DockerSocketMount_UnrelatedDeepPathIsFine(t *testing.T) {
+	cfg := `{"services":{"web":{"image":"nginx:1.27","volumes":[
+		{"type":"bind","source":"/var/run/secrets/app","target":"/secrets"}
+	]}}}`
+	v, _ := EvaluatePolicy([]byte(cfg), allModes(ModeBlock))
+	if hasViolation(v, RuleDockerSocket, "web") {
+		t.Errorf("a bind of an unrelated directory under /var/run must not trigger docker_socket_mount, got %+v", v)
+	}
+}
+
+// A path that merely starts with the same characters as the rootless runtime
+// dir pattern (but isn't it) must not false-positive.
+func TestEvaluatePolicy_DockerSocketMount_RootlessLookalikeIsFine(t *testing.T) {
+	cases := []string{"/run/user-data", "/run/username", "/run/user/1000/app-data"}
+	for _, source := range cases {
+		t.Run(source, func(t *testing.T) {
+			cfg := `{"services":{"web":{"image":"nginx:1.27","volumes":[
+				{"type":"bind","source":"` + source + `","target":"/x"}
+			]}}}`
+			v, _ := EvaluatePolicy([]byte(cfg), allModes(ModeBlock))
+			if hasViolation(v, RuleDockerSocket, "web") {
+				t.Errorf("bind of %q must not trigger docker_socket_mount, got %+v", source, v)
+			}
+		})
+	}
+}
+
+func TestEvaluatePolicy_LatestTagVariants(t *testing.T) {
+	cases := []struct {
+		image      string
+		wantLatest bool
+	}{
+		{"nginx", true},
+		{"nginx:latest", true},
+		{"nginx:1.27", false},
+		{"registry:5000/repo", true},
+		{"registry:5000/repo:v1", false},
+		{"repo@sha256:abcd1234", false},
+		{"registry:5000/repo@sha256:abcd1234", false},
+	}
+	for _, c := range cases {
+		body := map[string]any{"services": map[string]any{"web": map[string]any{"image": c.image}}}
+		b, _ := json.Marshal(body)
+		v, err := EvaluatePolicy(b, allModes(ModeBlock))
+		if err != nil {
+			t.Fatalf("image %q: %v", c.image, err)
+		}
+		got := hasViolation(v, RuleLatestTag, "web")
+		if got != c.wantLatest {
+			t.Errorf("image %q: latest_tag violation = %v, want %v", c.image, got, c.wantLatest)
+		}
+	}
+}
+
+func TestEvaluatePolicy_MissingResourceLimits(t *testing.T) {
+	cfg := `{"services":{"web":{"image":"nginx:1.27"}}}`
+	v, _ := EvaluatePolicy([]byte(cfg), allModes(ModeBlock))
+	if !hasViolation(v, RuleMissingLimits, "web") {
+		t.Errorf("expected a missing_resource_limits violation, got %+v", v)
+	}
+}
+
+func TestEvaluatePolicy_PartialResourceLimitDoesNotTrigger(t *testing.T) {
+	cfg := `{"services":{"web":{"image":"nginx:1.27","deploy":{"resources":{"limits":{"cpus":"0.5"}}}}}}`
+	v, _ := EvaluatePolicy([]byte(cfg), allModes(ModeBlock))
+	if hasViolation(v, RuleMissingLimits, "web") {
+		t.Errorf("a partial (CPU-only) limit must not trigger missing_resource_limits, got %+v", v)
+	}
+}
+
+// TestEvaluatePolicy_ServiceLevelResourceLimitsSatisfyTheRule is the P2 fix:
+// Compose's short syntax (`cpus:`/`mem_limit:` directly on the service) is a
+// distinct field from the long `deploy.resources.limits` syntax the rule used
+// to check exclusively. A service using only the short syntax has a real
+// limit and must not be reported as missing one.
+func TestEvaluatePolicy_ServiceLevelResourceLimitsSatisfyTheRule(t *testing.T) {
+	cfg := `{"services":{"web":{"image":"nginx:1.27","cpus":"0.5","mem_limit":"64m"}}}`
+	v, err := EvaluatePolicy([]byte(cfg), allModes(ModeBlock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasViolation(v, RuleMissingLimits, "web") {
+		t.Errorf("service-level cpus/mem_limit must satisfy missing_resource_limits, got %+v", v)
+	}
+}
+
+func TestEvaluatePolicy_ServiceLevelCPUsAloneSatisfiesTheRule(t *testing.T) {
+	cfg := `{"services":{"web":{"image":"nginx:1.27","cpus":"0.5"}}}`
+	v, _ := EvaluatePolicy([]byte(cfg), allModes(ModeBlock))
+	if hasViolation(v, RuleMissingLimits, "web") {
+		t.Errorf("a service-level cpus limit alone must satisfy missing_resource_limits, got %+v", v)
+	}
+}
+
+func TestEvaluatePolicy_NoLimitsAtAllStillTriggers(t *testing.T) {
+	cfg := `{"services":{"web":{"image":"nginx:1.27","cpus":"0","mem_limit":"0"}}}`
+	v, _ := EvaluatePolicy([]byte(cfg), allModes(ModeBlock))
+	if !hasViolation(v, RuleMissingLimits, "web") {
+		t.Errorf("a zero-valued service-level limit must still count as missing, got %+v", v)
+	}
+}
+
+// TestEvaluatePolicy_DisabledHealthcheckStillTriggers is the P2 fix: Compose
+// resolves `healthcheck: { disable: true }` to a non-nil healthcheck object,
+// so a nil check alone would let a deliberately-disabled healthcheck satisfy
+// missing_healthcheck.
+func TestEvaluatePolicy_DisabledHealthcheckStillTriggers(t *testing.T) {
+	cfg := `{"services":{"web":{"image":"nginx:1.27","healthcheck":{"disable":true}}}}`
+	v, _ := EvaluatePolicy([]byte(cfg), allModes(ModeBlock))
+	if !hasViolation(v, RuleMissingHealthcheck, "web") {
+		t.Errorf("a disabled healthcheck must still trigger missing_healthcheck, got %+v", v)
+	}
+}
+
+func TestEvaluatePolicy_MissingHealthcheck(t *testing.T) {
+	cfg := `{"services":{"web":{"image":"nginx:1.27"}}}`
+	v, _ := EvaluatePolicy([]byte(cfg), allModes(ModeBlock))
+	if !hasViolation(v, RuleMissingHealthcheck, "web") {
+		t.Errorf("expected a missing_healthcheck violation, got %+v", v)
+	}
+}
+
+func TestEvaluatePolicy_HealthcheckPresentDoesNotTrigger(t *testing.T) {
+	cfg := `{"services":{"web":{"image":"nginx:1.27","healthcheck":{"test":["CMD","curl","-f","http://localhost"]}}}}`
+	v, _ := EvaluatePolicy([]byte(cfg), allModes(ModeBlock))
+	if hasViolation(v, RuleMissingHealthcheck, "web") {
+		t.Errorf("a declared healthcheck must not trigger missing_healthcheck, got %+v", v)
+	}
+}
+
+func TestEvaluatePolicy_AllOffProducesNoViolations(t *testing.T) {
+	cfg := `{"services":{"web":{"image":"nginx:latest","privileged":true,"network_mode":"host","pid":"host"}}}`
+	v, err := EvaluatePolicy([]byte(cfg), allModes(ModeOff))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v) != 0 {
+		t.Errorf("expected no violations with every rule off, got %+v", v)
+	}
+}
+
+func TestEvaluatePolicy_UnknownRuleDefaultsOff(t *testing.T) {
+	cfg := `{"services":{"web":{"image":"nginx:latest","privileged":true}}}`
+	v, err := EvaluatePolicy([]byte(cfg), map[PolicyRuleID]PolicyMode{}) // no modes configured at all
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v) != 0 {
+		t.Errorf("a rule missing from the modes map must default to off, got %+v", v)
+	}
+}
+
+func TestEvaluatePolicy_WarnModeIsReported(t *testing.T) {
+	cfg := `{"services":{"web":{"image":"nginx:1.27","privileged":true}}}`
+	v, _ := EvaluatePolicy([]byte(cfg), map[PolicyRuleID]PolicyMode{RulePrivileged: ModeWarn})
+	if len(v) != 1 || v[0].Mode != ModeWarn {
+		t.Errorf("expected exactly one warn-mode violation, got %+v", v)
+	}
+}
+
+func TestEvaluatePolicy_MultipleServicesSortedDeterministically(t *testing.T) {
+	cfg := `{"services":{
+		"zeta":{"image":"nginx:1.27","privileged":true},
+		"alpha":{"image":"nginx:1.27","privileged":true}
+	}}`
+	v, _ := EvaluatePolicy([]byte(cfg), allModes(ModeBlock))
+	var services []string
+	for _, x := range v {
+		if x.Rule == RulePrivileged {
+			services = append(services, x.Service)
+		}
+	}
+	if len(services) != 2 || services[0] != "alpha" || services[1] != "zeta" {
+		t.Errorf("expected violations sorted by service name [alpha zeta], got %v", services)
+	}
+}
+
+func TestEvaluatePolicy_InvalidJSONReturnsError(t *testing.T) {
+	if _, err := EvaluatePolicy([]byte("not json"), allModes(ModeBlock)); err == nil {
+		t.Error("expected an error for invalid compose config JSON")
+	}
+}

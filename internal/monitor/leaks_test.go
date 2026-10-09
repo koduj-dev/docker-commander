@@ -2,7 +2,6 @@ package monitor
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"io"
 	"net"
@@ -66,9 +65,9 @@ func TestRunFollowerCancelsWhenTheStreamFails(t *testing.T) {
 // than handing the socket to NewClient, would break it and this would say so.
 func TestSendMailClosesTheConnectionWhenTheGreetingFails(t *testing.T) {
 	ours, theirs := net.Pipe()
-	original := tlsDial
-	tlsDial = func(string, string, *tls.Config) (net.Conn, error) { return ours, nil }
-	t.Cleanup(func() { tlsDial = original })
+	original := smtpDial
+	smtpDial = func(context.Context, string, bool, string) (net.Conn, error) { return ours, nil }
+	t.Cleanup(func() { smtpDial = original })
 
 	// A server that refuses instead of greeting: smtp.NewClient reads this, gives
 	// up, and closes the socket itself on the way out (textproto.Conn.Close).
@@ -86,7 +85,7 @@ func TestSendMailClosesTheConnectionWhenTheGreetingFails(t *testing.T) {
 		served <- err
 	}()
 
-	err := SendMail(store.SMTPConfig{
+	err := SendMail(context.Background(), store.SMTPConfig{
 		Host: "smtp.example.com", Port: 465, TLS: true,
 		From: "a@example.com", To: "b@example.com",
 	}, "subject", "body")

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -44,6 +45,10 @@ type Server struct {
 	mcpSigningKey []byte
 	// mcpRateLimiter throttles the unauthenticated OAuth endpoints (DCR + token).
 	mcpRateLimiter *auth.LoginLimiter
+
+	// retentionMu makes a scheduled and a manual purge mutually exclusive: two at
+	// once would just fight over the single database connection.
+	retentionMu sync.Mutex
 }
 
 // NewServer constructs the API server.
@@ -72,6 +77,7 @@ func (s *Server) Handler() http.Handler {
 	}
 
 	r.Route("/api", func(r chi.Router) {
+		r.Use(withAuditHost) // lets audit() name the Docker host a request acted on
 		// Public auth endpoints (no session required).
 		r.Group(func(r chi.Router) {
 			r.Get("/auth/status", s.handleAuthStatus)
@@ -106,6 +112,8 @@ func (s *Server) Handler() http.Handler {
 			// Own alert address + own permission overview: self-service, and both
 			// read/write nothing but the signed-in account.
 			r.Put("/auth/me/email", s.handleSetMyEmail)
+			// Own password: needs the current one, and ends every other session.
+			r.Put("/auth/me/password", s.handleChangeMyPassword)
 			r.Get("/auth/me/access", s.handleMyAccess)
 			r.Post("/auth/totp/setup", s.handleTOTPSetup)
 			r.Post("/auth/totp/enable", s.handleTOTPEnable)
@@ -123,15 +131,22 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/mcp/tokens", s.handleListMCPTokens)
 			r.Post("/mcp/tokens", s.handleCreateMCPToken)
 			r.Delete("/mcp/tokens/{id}", s.handleRevokeMCPToken)
+			// Own OAuth connector sessions: a session can only ever be the
+			// caller's own, same narrowing as the tokens above.
+			r.Get("/mcp/sessions", s.handleListMCPSessions)
+			r.Delete("/mcp/sessions/{id}", s.handleRevokeMCPSession)
 
-			// MCP admin overview — every user's tokens + registered OAuth clients,
-			// with revoke/delete. Admin only (section "__admin").
+			// MCP admin overview — every user's tokens + registered OAuth clients
+			// + live connector sessions, with revoke/delete. Admin only (section
+			// "__admin").
 			r.Get("/mcp-admin/tokens", s.handleAdminListMCPTokens)
 			r.Delete("/mcp-admin/tokens/{id}", s.handleAdminRevokeMCPToken)
 			r.Get("/mcp-admin/token-policy", s.handleAdminGetMCPTokenPolicy)
 			r.Put("/mcp-admin/token-policy", s.handleAdminSetMCPTokenPolicy)
 			r.Get("/mcp-admin/oauth-clients", s.handleAdminListOAuthClients)
 			r.Delete("/mcp-admin/oauth-clients/{id}", s.handleAdminDeleteOAuthClient)
+			r.Get("/mcp-admin/sessions", s.handleAdminListMCPSessions)
+			r.Delete("/mcp-admin/sessions/{id}", s.handleAdminRevokeMCPSession)
 
 			// Roles: named bundles of section grants. Admin only (section
 			// "__admin") — editing a role widens authority, so this must never be
@@ -150,12 +165,30 @@ func (s *Server) Handler() http.Handler {
 			r.Delete("/users/{id}", s.handleDeleteUser)
 			r.Get("/settings", s.handleGetSettings)
 			r.Put("/settings", s.handleSetSettings)
+			r.Get("/settings/retention", s.handleGetRetention)
+			r.Put("/settings/retention", s.handleSetRetention)
+			r.Post("/settings/retention/purge", s.handlePurgeRetention)
 			r.Get("/ldap", s.handleGetLDAP)
 			r.Put("/ldap", s.handleSetLDAP)
 			r.Post("/ldap/test", s.handleTestLDAP)
-			r.Get("/update", s.handleUpdateStatus)     // admin-only (section "__admin")
-			r.Post("/update", s.handleApplyUpdate)     // admin-only: download + verify + swap
-			r.Post("/update/restart", s.handleRestart) // admin-only: re-exec the new binary
+			r.Get("/update", s.handleUpdateStatus)               // admin-only (section "__admin")
+			r.Post("/update", s.handleApplyUpdate)               // admin-only: download + verify + swap
+			r.Post("/update/restart", s.handleRestart)           // admin-only: re-exec the new binary
+			r.Put("/update/policy", s.handleSetSelfUpdatePolicy) // admin-only: auto-apply opt-in
+			r.Get("/policy-rules", s.handleGetPolicyRules)
+			r.Put("/policy-rules", s.handleSetPolicyRules)
+
+			// Volume backup jobs: a trigger-and-status wrapper around a
+			// user-supplied backup command. Admin-only — see
+			// access_middleware.go's sectionForPath.
+			r.Get("/backup-jobs", s.handleListBackupJobs)
+			r.Post("/backup-jobs", s.handleCreateBackupJob)
+			r.Get("/backup-jobs/{id}", s.handleGetBackupJob)
+			r.Put("/backup-jobs/{id}", s.handleUpdateBackupJob)
+			r.Patch("/backup-jobs/{id}", s.handleSetBackupJobEnabled)
+			r.Delete("/backup-jobs/{id}", s.handleDeleteBackupJob)
+			r.Post("/backup-jobs/{id}/run", s.handleRunBackupJob)
+			r.Get("/backup-jobs/{id}/runs", s.handleListBackupRuns)
 
 			r.Get("/hosts", s.handleListHosts)
 			r.Post("/hosts", s.handleCreateHost)
@@ -213,7 +246,34 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/projects/{id}/seed-volumes", s.handleProjectSeedVolumes)
 			r.Post("/projects/{id}/validate", s.handleValidateProject)
 			r.Post("/projects/{id}/resolve", s.handleResolveProject)
+			r.Get("/projects/{id}/preview", s.handlePreviewProject)
+			r.Post("/projects/{id}/drift/ignore", s.handleIgnoreDrift)
+			r.Post("/projects/{id}/drift/unignore", s.handleUnignoreDrift)
+			r.Get("/projects/{id}/revisions", s.handleListRevisions)
+			r.Get("/projects/{id}/revisions/{rev}", s.handleGetRevision)
+			r.Get("/projects/{id}/revisions/{rev}/diff", s.handleRevisionDiff)
+			r.Post("/projects/{id}/revisions/{rev}/restore", s.handleRestoreRevision)
 			r.Post("/projects/{id}/summary", s.handleProjectSummary)
+			r.Get("/projects/{id}/secrets", s.handleListProjectSecrets)
+			r.Post("/projects/{id}/secrets", s.handleCreateProjectSecret)
+			r.Put("/projects/{id}/secrets/{name}", s.handleUpdateProjectSecret)
+			r.Delete("/projects/{id}/secrets/{name}", s.handleDeleteProjectSecret)
+			// Domain mappings (see NEXT.md's "Per-container domain + TLS"): Phase 1
+			// only stores intent — no reverse proxy listens on these domains yet.
+			r.Get("/projects/{id}/domains", s.handleListDomainMappings)
+			r.Post("/projects/{id}/domains", s.handleCreateDomainMapping)
+			r.Put("/projects/{id}/domains/{domainID}", s.handleUpdateDomainMapping)
+			r.Delete("/projects/{id}/domains/{domainID}", s.handleDeleteDomainMapping)
+			// Every profile enabled, so a profile-gated service is still offered
+			// (and still accepted) — see resolvedComposeServices.
+			r.Get("/projects/{id}/domains/services", s.handleListDomainMappingServices)
+
+			// Portable recovery bundle: export/inspect/import an instance-wide
+			// snapshot (projects, hosts, registries, alert rules, settings).
+			// Admin-only — see access_middleware.go's sectionForPath.
+			r.Post("/recovery/export", s.handleExportRecoveryBundle)
+			r.Post("/recovery/inspect", s.handleInspectRecoveryBundle)
+			r.Post("/recovery/import", s.handleImportRecoveryBundle)
 			r.Post("/projects/{id}/dockerfile-check", s.handleCheckDockerfile)
 			r.Post("/projects/{id}/deploy", s.handleDeployProject)
 			r.Post("/projects/{id}/down", s.handleDownProject)
@@ -263,6 +323,9 @@ func (s *Server) Handler() http.Handler {
 			// round-trip cleanly through path matching/decoding.
 			r.Delete("/images", s.handleRemoveImage)
 			r.Post("/images/prune", s.handlePruneImages)
+			r.Get("/images/ignored-cves", s.handleListIgnoredCVEs)
+			r.Post("/images/ignored-cves", s.handleIgnoreCVEs)
+			r.Delete("/images/ignored-cves/{id}", s.handleUnignoreCVE)
 
 			// Registry credentials (secrets encrypted at rest).
 			r.Get("/registries", s.handleListRegistries)
@@ -300,9 +363,12 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/system", s.handleSystemInfo)
 			r.Get("/system/df", s.handleDiskUsage)
 			r.Get("/stats/overview", s.handleStatsOverview)
+			r.Get("/stats/disk", s.handleDiskReport)
 			r.Get("/stats/ports", s.handleHostPorts)
+			r.Get("/stats/top-talkers", s.handleTopTalkers)
 			r.Get("/metrics/history", s.handleMetricsHistory)
 			r.Get("/audit", s.handleAudit)
+			r.Post("/diagnostics/run", s.handleRunDiagnostics)
 
 			// Alerting: webhooks, rules, and the in-app event feed.
 			r.Get("/webhooks", s.handleListWebhooks)
@@ -319,6 +385,13 @@ func (s *Server) Handler() http.Handler {
 			// Static route before {id}, which would otherwise swallow "ack-all".
 			r.Post("/alerts/ack-all", s.handleAckAllAlertEvents)
 			r.Post("/alerts/{id}/ack", s.handleAckAlertEvent)
+			// Maintenance windows: suppress alert delivery for a scope/time,
+			// without stopping the engine from recording what happened.
+			r.Get("/maintenance-windows", s.handleListMaintenanceWindows)
+			r.Post("/maintenance-windows", s.handleCreateMaintenanceWindow)
+			r.Put("/maintenance-windows/{id}", s.handleUpdateMaintenanceWindow)
+			r.Post("/maintenance-windows/{id}/end", s.handleEndMaintenanceWindow)
+			r.Delete("/maintenance-windows/{id}", s.handleDeleteMaintenanceWindow)
 			// Saved log parsing rules (applied client-side in the Logs view).
 			r.Get("/parse-rules", s.handleListParseRules)
 			r.Post("/parse-rules", s.handleCreateParseRule)
@@ -378,6 +451,7 @@ func (s *Server) mountMCP(r chi.Router) {
 		ListProjects:   s.mcpListProjects,
 		DeployProject:  s.mcpDeployProject,
 		DownProject:    s.mcpDownProject,
+		BeginStackOp:   s.beginStackOp,
 		PreviewProject: s.mcpPreviewProject,
 	}
 	// OAuth (for interactive clients like Claude Desktop) needs a public URL for
@@ -427,6 +501,9 @@ func (s *Server) oauthThrottle(next http.HandlerFunc) http.HandlerFunc {
 
 // startOAuthSweeper periodically purges expired OAuth codes/refresh tokens so
 // the tables don't grow unbounded from issued-but-unredeemed grants.
+//
+// Finished maintenance windows are NOT pruned: they are the record of when
+// alerts were silenced and why, and are deleted only by hand.
 func (s *Server) startOAuthSweeper() {
 	go func() {
 		t := time.NewTicker(time.Hour)
@@ -454,8 +531,36 @@ func (s *Server) resolveHostID(r *http.Request) (int64, error) {
 	return 0, nil
 }
 
+// withAuditHost gives every API request a recorder that docker.Manager.Client
+// fills in with the host the request actually reached.
+func withAuditHost(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx, _ := docker.WithHostRecorder(r.Context())
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
 // audit records an action, ignoring failures (best-effort).
+//
+// The host is the one the request reached: whatever docker.Manager.Client
+// connected to, with "no host given" already resolved to the concrete default.
+// A request that never reached a daemon falls back to its ?host=, and to 0,
+// "no host", when there is none. Actions on something with a host of its own
+// that isn't reached through Client (a project deployed by the compose CLI, a
+// host being edited) name it with auditOn instead.
+//
+// The host is what scopes who may read the entry (handleAudit), so 0 must mean
+// "no host" and nothing else: before, the local daemon was recorded as 0 too.
 func (s *Server) audit(r *http.Request, action, target, detail string) {
+	hostID, ok := docker.HostRecorderFrom(r.Context()).Host()
+	if !ok {
+		hostID, _ = hostParam(r)
+	}
+	s.auditOn(r, hostID, action, target, detail)
+}
+
+// auditOn is audit with the host given explicitly.
+func (s *Server) auditOn(r *http.Request, hostID int64, action, target, detail string) {
 	var uid int64
 	var uname string
 	if c, ok := auth.ClaimsFrom(r.Context()); ok {
@@ -463,9 +568,27 @@ func (s *Server) audit(r *http.Request, action, target, detail string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	hostID, _ := hostParam(r) // 0 when the route names no host
 	_ = s.store.Audit(ctx, store.AuditEntry{
 		UserID: uid, Username: uname, Action: action, Target: target,
 		Detail: detail, IP: r.RemoteAddr, HostID: hostID,
 	})
+}
+
+// daemonHost turns a host reference where 0 means "the local daemon" (a
+// project's target, for instance) into the local host's own id, so an audit
+// entry never confuses it with "no host".
+func (s *Server) daemonHost(ctx context.Context, hostID int64) int64 {
+	if hostID > 0 {
+		return hostID
+	}
+	id, err := s.store.LocalHostID(ctx)
+	if err != nil {
+		return 0
+	}
+	return id
+}
+
+// auditProject records an action on a project under the host it deploys to.
+func (s *Server) auditProject(r *http.Request, p *store.Project, action, detail string) {
+	s.auditOn(r, s.daemonHost(r.Context(), p.HostID), action, p.Slug, detail)
 }

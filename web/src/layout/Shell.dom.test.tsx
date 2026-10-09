@@ -28,7 +28,7 @@ vi.mock("../auth/AuthContext", () => ({
       id: 1,
       username: "admin",
       role: "admin",
-      sections: ["dashboard", "containers", "projects", "images", "volumes", "networks", "topology", "logs", "events", "alerts", "hosts", "registries", "audit"],
+      sections: ["dashboard", "containers", "projects", "images", "volumes", "networks", "topology", "logs", "events", "alerts", "hosts", "registries", "audit", "diagnostics"],
     },
     logout: () => Promise.resolve(),
   }),
@@ -156,5 +156,25 @@ describe("sidebar group folding", () => {
 
     expect(hasLink("Networks")).toBe(false);
     expect(groupButton("Network").getAttribute("aria-expanded")).toBe("false");
+  });
+});
+
+// The System group used to hold every admin page (eleven links). Policy rules,
+// MCP Admin and Recovery bundle are Settings tabs now, and Backup jobs sits with
+// the storage it protects.
+describe("sidebar layout", () => {
+  const groupLinks = (title: string): string[] => {
+    const group = groupButton(title).parentElement as HTMLElement;
+    return [...group.querySelectorAll("a")].map((a) => a.textContent?.trim() ?? "");
+  };
+
+  it("keeps the System group to the pages that are not Settings tabs", async () => {
+    await renderShell();
+    expect(groupLinks("System")).toEqual(["Hosts", "Registries", "Audit log", "Troubleshooting", "MCP Access", "Users", "Settings"]);
+  });
+
+  it("puts Backup jobs in Storage next to Volumes", async () => {
+    await renderShell();
+    expect(groupLinks("Storage")).toEqual(["Images", "Volumes", "Backup jobs"]);
   });
 });
