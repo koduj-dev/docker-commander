@@ -10,6 +10,13 @@ We switched on GitHub's CodeQL code scanning only after 1.7.0 had shipped, so it
 first scan ran against a released version. This release fixes what that scan
 found, and from now on every change is scanned before it ships.
 
+### Changed
+- **The README is a short landing page.** What Docker Commander is for, the
+  features as one-line lists linking to the manual, and a quick start. The rest
+  moved into the manual: [Installing](docs/install.md),
+  [Configuration](docs/configuration.md), [Docker versions](docs/compatibility.md),
+  [Security model](docs/security.md) and [Architecture](docs/architecture.md).
+
 ## [1.7.0] — 2026-10-09
 
 ### Security
