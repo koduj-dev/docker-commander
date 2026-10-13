@@ -214,6 +214,20 @@ to disable.
 Comma-separated reverse-proxy IPs/CIDRs whose
 .B X-Forwarded-For
 is trusted (empty = trust none; use the real peer).
+.TP
+.BI \-base-path " path"
+URL path prefix the UI is published under behind a reverse proxy, e.g.
+.I /dockercmd
+(empty = the root). Requests are accepted with or without it.
+.TP
+.BI \-forwarded-prefix
+Honour the
+.B X-Forwarded-Prefix
+request header as the path prefix, overriding
+.BR \-base-path .
+On by default; set
+.B DC_FORWARDED_PREFIX=0
+to ignore the header.
 .SH ENVIRONMENT
 The
 .B DC_*
@@ -245,7 +259,9 @@ variables mirror the options above:
 .BR DC_PROXY_ENABLED ,
 .BR DC_PROXY_ACME_CACHE_DIR ,
 .BR DC_DEPLOY_SILENCE_GRACE ,
-.BR DC_TRUSTED_PROXIES .
+.BR DC_TRUSTED_PROXIES ,
+.BR DC_BASE_PATH ,
+.BR DC_FORWARDED_PREFIX .
 .B DC_REDIS_DB
 has no flag, and
 .B \-session-ttl

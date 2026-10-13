@@ -42,4 +42,6 @@ On/off variables are on only for exactly `1` (`DC_DEV`, `DC_MCP_ENABLED`,
 | `-pprof`             | `DC_PPROF=1`           | off                | Go profiling on a dedicated loopback listener, `127.0.0.1:6060`. |
 | `-update-check`      | `DC_UPDATE_CHECK`      | on                 | Check GitHub for newer releases; `0` disables. |
 | `-trusted-proxies`   | `DC_TRUSTED_PROXIES`   | (none)             | Reverse-proxy IPs/CIDRs whose `X-Forwarded-For` may be trusted. The client IP keys rate limits, the localhost 2FA exemption and audit records — **set it behind a proxy**, and never to a range you don't control. |
+| `-base-path`         | `DC_BASE_PATH`         | (root)             | URL path prefix the UI is published under behind a reverse proxy, e.g. `/dockercmd`. Requests work with or without it. See [Deployment](deployment.md#serving-under-a-path). |
+| `-forwarded-prefix`  | `DC_FORWARDED_PREFIX`  | on                 | Honour the `X-Forwarded-Prefix` request header as the path prefix (overrides `DC_BASE_PATH`). `0` ignores the header. |
 | `-self-update`       | `DC_SELF_UPDATE`       | on                 | Let admins apply an update from the web UI. `0` keeps the "update available" banner but forbids web-triggered self-replacement. |

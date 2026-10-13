@@ -419,10 +419,46 @@ location / {
 The **localhost 2FA exemption doesn't apply to a proxied request**: a proxy can't
 vouch that someone is at the machine. A request counts as proxied when its peer is
 listed in `DC_TRUSTED_PROXIES`, or when it carries any forwarding header
-(`Forwarded`, `X-Forwarded-For`/`-Host`/`-Proto`/`-Server`, `X-Real-Ip`, `Via`),
+(`Forwarded`, `X-Forwarded-For`/`-Host`/`-Proto`/`-Server`/`-Prefix`, `X-Real-Ip`, `Via`),
 even an empty one. A local proxy that is not listed and adds none of those headers
 makes every client look local, so behind a proxy set `DC_TRUSTED_PROXIES` or turn
 the exemption off. See [Settings](settings.md).
+
+#### Serving under a path
+
+When you can't give Docker Commander its own (sub)domain, publish it under a path
+of an existing host, e.g. `https://example.com/dockercmd/`. Tell it the prefix
+with `X-Forwarded-Prefix`:
+
+```nginx
+location /dockercmd/ {
+    proxy_pass http://127.0.0.1:8470/;   # trailing slash: nginx strips /dockercmd
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Prefix /dockercmd;
+}
+```
+
+- The proxy may strip the prefix (`proxy_pass …/;`) or pass the path as it is
+  (`proxy_pass http://127.0.0.1:8470;`). Either works.
+- The page, its assets, the API and WebSockets all stay under the prefix. The
+  session cookie is scoped to it (`Path=/dockercmd/`), so other apps on the same
+  host don't receive it.
+- A proxy that can't add the header: set `DC_BASE_PATH=/dockercmd` instead. The
+  header, when present, wins.
+- The header is honoured from any peer, not just `DC_TRUSTED_PROXIES`. Only a plain
+  path (`/a/b`, letters, digits and `-._~`) is accepted; anything else is ignored
+  as if absent. A client can at most change the links in its own response. To
+  ignore the header entirely, set `DC_FORWARDED_PREFIX=0`.
+- The MCP server lives under the prefix too (`https://example.com/dockercmd/mcp`),
+  and **bearer tokens** work there. **OAuth connectors don't yet:** clients look
+  up the authorization-server metadata at the root of the host
+  (`/.well-known/oauth-authorization-server/dockercmd`), which the proxy sends
+  to the other site, not here.
 
 ## Self-update
 

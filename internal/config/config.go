@@ -143,6 +143,18 @@ type Config struct {
 	// spoof its address. Set it (e.g. 127.0.0.1/32,::1/128) only for the actual
 	// proxy in front of this server.
 	TrustedProxies []*net.IPNet
+
+	// BasePath is the URL path prefix the UI and API are published under when
+	// the reverse proxy in front does not say so itself (e.g. "/dockercmd" for
+	// https://example.com/dockercmd/). Normalised: leading slash, no trailing
+	// one; "" means the root. Requests may arrive with or without it.
+	BasePath string
+	// ForwardedPrefix makes an X-Forwarded-Prefix request header override
+	// BasePath for that request. On by default (DC_FORWARDED_PREFIX=0 turns it
+	// off). The header is believed from any peer, but only a value made of
+	// plain path segments is accepted, so it can't inject markup or redirect
+	// off-site; at worst a client changes the links in its own response.
+	ForwardedPrefix bool
 }
 
 // DBPath is the path to the SQLite database file.
@@ -209,6 +221,8 @@ func Load() (Config, error) {
 	flag.StringVar(&c.LogFile, "log-file", lookup("DC_LOG_FILE"), "write the log to this file instead of stderr (rotated at 10 MiB, one older copy kept as <file>.1)")
 	flag.BoolVar(&c.PProf, "pprof", lookup("DC_PPROF") == "1", "expose net/http/pprof on a dedicated loopback listener, 127.0.0.1:6060 (for debugging)")
 	deploySilence := flag.Duration("deploy-silence-grace", envDuration("DC_DEPLOY_SILENCE_GRACE", 3*time.Minute), "automatically silence alert delivery for a project for this long after a successful deploy (0 disables)")
+	basePath := flag.String("base-path", lookup("DC_BASE_PATH"), "URL path prefix the UI is published under behind a reverse proxy, e.g. /dockercmd (empty = root)")
+	flag.BoolVar(&c.ForwardedPrefix, "forwarded-prefix", lookup("DC_FORWARDED_PREFIX") != "0", "honour the X-Forwarded-Prefix request header as the URL path prefix (set DC_FORWARDED_PREFIX=0 to ignore it)")
 	trustedProxies := flag.String("trusted-proxies", lookup("DC_TRUSTED_PROXIES"), "comma-separated reverse-proxy IPs/CIDRs whose X-Forwarded-For is trusted (empty = trust none; use the real peer)")
 	flag.Parse()
 
@@ -219,6 +233,10 @@ func Load() (Config, error) {
 		return c, err
 	}
 	c.TrustedProxies = nets
+
+	if c.BasePath, err = NormalizePathPrefix(*basePath); err != nil {
+		return c, fmt.Errorf("-base-path: %w", err)
+	}
 
 	// Listen address is host + port. A full -addr/DC_ADDR (legacy) still wins if
 	// set, so existing host:port configs keep working.
@@ -316,6 +334,42 @@ func parseCIDRs(raw string) ([]*net.IPNet, error) {
 		out = append(out, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
 	}
 	return out, nil
+}
+
+// maxPathPrefix bounds a path prefix; a real one is a segment or two.
+const maxPathPrefix = 256
+
+// NormalizePathPrefix turns a URL path prefix ("/dockercmd/", "dockercmd") into
+// its canonical form ("/dockercmd"); "" and "/" mean the root and return "".
+// Only plain segments of unreserved characters (RFC 3986: letters, digits and
+// -._~) are accepted, and "." / ".." are not segments. The result is written
+// into HTML, cookies and redirects, and this is what keeps that safe: there is
+// nothing in it to escape, and it can't start with "//" (a scheme-relative URL
+// pointing at another host).
+func NormalizePathPrefix(raw string) (string, error) {
+	p := strings.TrimSpace(raw)
+	if len(p) > maxPathPrefix {
+		return "", errors.New("path prefix is too long")
+	}
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	p = strings.TrimSuffix(p, "/")
+	if p == "" {
+		return "", nil
+	}
+	for _, seg := range strings.Split(p[1:], "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return "", fmt.Errorf("invalid path prefix %q", raw)
+		}
+		for _, ch := range seg {
+			if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' ||
+				ch == '-' || ch == '.' || ch == '_' || ch == '~') {
+				return "", fmt.Errorf("invalid path prefix %q", raw)
+			}
+		}
+	}
+	return p, nil
 }
 
 // splitCommaList splits a comma-separated flag value into trimmed, non-empty

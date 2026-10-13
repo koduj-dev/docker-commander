@@ -68,6 +68,7 @@ func (s *Server) OnRestart(fn func()) { s.onRestart = fn }
 // Handler builds the root http.Handler with all routes mounted.
 func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
+	r.Use(s.pathPrefix) // strips the reverse-proxy path prefix before routing
 	r.Use(middleware.RequestID)
 	r.Use(s.clientIP) // trusted-proxy-aware client IP (replaces spoofable RealIP)
 	r.Use(middleware.Recoverer)

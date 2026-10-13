@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -585,5 +586,66 @@ func TestLoadProxyACMECacheDirOverride(t *testing.T) {
 	c := loadProxyConfig(t, map[string]string{"DC_DATA_DIR": t.TempDir(), "DC_PROXY_ACME_CACHE_DIR": "/var/lib/dockercmd/proxy-cache"})
 	if c.ProxyACMECacheDir != "/var/lib/dockercmd/proxy-cache" {
 		t.Errorf("ProxyACMECacheDir = %q, want the explicit override preserved", c.ProxyACMECacheDir)
+	}
+}
+
+func TestNormalizePathPrefix(t *testing.T) {
+	ok := map[string]string{
+		"":                "",
+		"/":               "",
+		" /dockercmd/ ":   "/dockercmd",
+		"dockercmd":       "/dockercmd",
+		"/a/b-c_d.e~f/":   "/a/b-c_d.e~f",
+		"/Docker-Cmd2026": "/Docker-Cmd2026",
+	}
+	for in, want := range ok {
+		if got, err := NormalizePathPrefix(in); err != nil || got != want {
+			t.Errorf("NormalizePathPrefix(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	// Each of these would be dangerous written into <base href>, a cookie
+	// path or a form action: another host, markup, a traversal, an encoded
+	// separator, a CRLF.
+	bad := []string{
+		"//evil.example", "///x", "/a//b", "https://evil.example", "javascript:alert(1)",
+		`/"><script>alert(1)</script>`, "/a b", "/a/../b", "/..", "/.", "/a%2fb",
+		`\evil.example`, "/a\r\nSet-Cookie: x=1", "/ěšč", "/a?b", "/a#b",
+		"/" + strings.Repeat("a", maxPathPrefix),
+	}
+	for _, in := range bad {
+		if got, err := NormalizePathPrefix(in); err == nil {
+			t.Errorf("NormalizePathPrefix(%q) = %q, want an error", in, got)
+		}
+	}
+}
+
+func TestLoadPathPrefix(t *testing.T) {
+	load := func(t *testing.T, env map[string]string) (Config, error) {
+		oldArgs, oldFS := os.Args, flag.CommandLine
+		t.Cleanup(func() { os.Args, flag.CommandLine = oldArgs, oldFS })
+		flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+		os.Args = []string{"dockercmd"}
+		t.Setenv("DC_DATA_DIR", t.TempDir())
+		for k, v := range env {
+			t.Setenv(k, v)
+		}
+		return Load()
+	}
+	c, err := load(t, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.BasePath != "" || !c.ForwardedPrefix {
+		t.Errorf("defaults: base path %q, forwarded prefix %v; want root and on", c.BasePath, c.ForwardedPrefix)
+	}
+	c, err = load(t, map[string]string{"DC_BASE_PATH": "/dockercmd/", "DC_FORWARDED_PREFIX": "0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.BasePath != "/dockercmd" || c.ForwardedPrefix {
+		t.Errorf("env: base path %q, forwarded prefix %v; want /dockercmd and off", c.BasePath, c.ForwardedPrefix)
+	}
+	if _, err := load(t, map[string]string{"DC_BASE_PATH": "//evil.example"}); err == nil {
+		t.Error("an invalid DC_BASE_PATH must fail startup, not be ignored")
 	}
 }

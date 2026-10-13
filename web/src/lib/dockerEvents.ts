@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { hostParam } from "./host";
 import type { EventMsg } from "./types";
+import { wsUrl } from "./base";
 
 // useDockerEventTick subscribes to the Docker events stream (the WS we already
 // have) and returns a counter that bumps shortly after a relevant lifecycle
@@ -11,8 +12,7 @@ export function useDockerEventTick(): number {
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${proto}://${location.host}/api/events${hostParam("?")}`);
+    const ws = new WebSocket(wsUrl(`/api/events${hostParam("?")}`));
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     ws.onmessage = (ev) => {

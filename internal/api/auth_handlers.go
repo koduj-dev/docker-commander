@@ -281,7 +281,7 @@ func isLoopback(r *http.Request) bool {
 // sends on its own.
 var forwardingHeaders = []string{
 	"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto",
-	"X-Forwarded-Server", "X-Real-Ip", "Via",
+	"X-Forwarded-Server", "X-Forwarded-Prefix", "X-Real-Ip", "Via",
 }
 
 // hasForwardingHeaders reports whether the request carries any of them. It is
@@ -328,7 +328,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 // same attributes as the cookie it replaces, Secure included.
 func (s *Server) clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
-		Name: auth.SessionCookie, Value: "", Path: "/", MaxAge: -1,
+		Name: auth.SessionCookie, Value: "", Path: cookiePath(r), MaxAge: -1,
 		HttpOnly: true, Secure: s.cookieSecure(r), SameSite: http.SameSiteStrictMode,
 	})
 }
@@ -432,12 +432,19 @@ func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, token 
 	http.SetCookie(w, &http.Cookie{
 		Name:     auth.SessionCookie,
 		Value:    token,
-		Path:     "/",
+		Path:     cookiePath(r),
 		Expires:  exp,
 		HttpOnly: true,
 		Secure:   s.cookieSecure(r),
 		SameSite: http.SameSiteStrictMode,
 	})
+}
+
+// cookiePath scopes the session cookie to the path prefix the UI is served
+// under, so behind a shared host (https://example.com/dockercmd/) the browser
+// doesn't hand the session to every other app on that host.
+func cookiePath(r *http.Request) string {
+	return requestPrefix(r) + "/"
 }
 
 // cookieSecure reports whether the session cookie may be marked Secure.

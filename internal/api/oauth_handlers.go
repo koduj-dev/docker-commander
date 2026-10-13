@@ -163,6 +163,7 @@ func (s *Server) handleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 		"CodeChallenge": p.codeChallenge,
 		"Method":        p.method,
 		"Resource":      p.resource,
+		"Prefix":        requestPrefix(r),
 	})
 }
 
@@ -549,7 +550,7 @@ h1{font-size:18px;margin:0 0 8px}p{color:#8b97ad;font-size:14px;line-height:1.5}
 <div class="card"><h1>Authorize access</h1>
 <p><span class="who">{{.ClientName}}</span> is requesting access to Docker Commander as <span class="who">{{.User}}</span>.</p>
 <p>Granting access lets this tool read and control Docker through your permissions. Read-only restricts it to viewing.</p>
-<form method="post" action="/oauth/authorize">
+<form method="post" action="{{.Prefix}}/oauth/authorize">
 <input type="hidden" name="csrf" value="{{.CSRF}}">
 <input type="hidden" name="client_id" value="{{.ClientID}}">
 <input type="hidden" name="redirect_uri" value="{{.RedirectURI}}">

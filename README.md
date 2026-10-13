@@ -97,6 +97,7 @@ More screenshots are on each page of the [manual](docs/README.md).
 - **Users and roles:** per-section permissions, read-only accounts, optional LDAP. [Users & roles](docs/users.md)
 - **Sign-in:** passwords with TOTP or passkeys, revocable sessions, audit log. [Your profile](docs/profile.md)
 - **HTTPS:** your own certificate, a self-signed one, or Let's Encrypt. [Deployment](docs/deployment.md)
+- **Behind a reverse proxy:** at the root of a (sub)domain or under a path such as `/dockercmd/`. [Deployment](docs/deployment.md#serving-under-a-path)
 - **Self-update:** one click, or opt-in automatic updates within a version range. [Settings](docs/settings.md)
 
 **AI tools (MCP)**
