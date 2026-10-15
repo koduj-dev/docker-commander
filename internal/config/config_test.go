@@ -676,6 +676,8 @@ func TestPublicURLPath(t *testing.T) {
 		"https://host.example/{x}", "https://host.example/a*", "https://host.example/a%2Fb",
 		"https://host.example/a/../b", "https://host.example//a", "https://host.example/a?x=1",
 		"https://host.example/a#f", "https://host.example/a?", "http://[::1",
+		"docker.example.com", "docker.example.com/dockercmd", "//host.example/a",
+		"ftp://host.example/a", "https:///a", "https://",
 	} {
 		if got, err := PublicURLPath(in); err == nil {
 			t.Errorf("PublicURLPath(%q) = %q, want an error", in, got)

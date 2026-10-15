@@ -18,7 +18,8 @@ All notable changes to Docker Commander are documented here. The format follows
   where clients look for it (`/.well-known/oauth-authorization-server/dockercmd`);
   the proxy has to route those paths to it. A proxy that forwards only the path
   still works with clients that try OpenID Connect discovery under it.
-  A `DC_MCP_PUBLIC_URL` whose path isn't a plain path now fails startup.
+  `DC_MCP_PUBLIC_URL` is now checked at startup: it has to be an `http(s)` URL
+  with a host and a plain path, or the server won't start.
   See [Deployment](docs/deployment.md#serving-under-a-path).
 
 ### Security

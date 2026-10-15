@@ -379,9 +379,10 @@ func NormalizePathPrefix(raw string) (string, error) {
 
 // PublicURLPath returns the path of a public base URL (DC_MCP_PUBLIC_URL) in
 // the canonical form of NormalizePathPrefix: "" for https://host, "/dockercmd"
-// for https://host/dockercmd/. The path becomes the OAuth issuer's path and a
-// route pattern, so it must be a plain prefix too; a query or fragment has no
-// place in a base URL.
+// for https://host/dockercmd/. The URL is the OAuth issuer, so it needs an
+// http(s) scheme and a host: "docker.example.com" would otherwise parse as a
+// path. The path becomes a route pattern, so it must be a plain prefix too; a
+// query or fragment has no place in a base URL.
 func PublicURLPath(raw string) (string, error) {
 	if raw == "" {
 		return "", nil
@@ -389,6 +390,9 @@ func PublicURLPath(raw string) (string, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return "", err
+	}
+	if (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return "", fmt.Errorf("%q: want an http(s) URL with a host, e.g. https://docker.example.com", raw)
 	}
 	if u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
 		return "", fmt.Errorf("%q: a base URL takes no query or fragment", raw)

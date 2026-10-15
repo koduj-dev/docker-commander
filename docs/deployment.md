@@ -483,8 +483,8 @@ carries the fields OIDC requires. Two conditions apply:
 - Not every client tries the OIDC URL. If a connector still fails, add the root
   locations.
 
-`DC_MCP_PUBLIC_URL` takes a plain path only (letters, digits and `-._~`, no query
-or fragment). Anything else fails startup.
+`DC_MCP_PUBLIC_URL` must be an `http(s)` URL with a host. Its path may contain only
+letters, digits and `-._~`, with no query or fragment. Anything else fails startup.
 
 ## Self-update
 
