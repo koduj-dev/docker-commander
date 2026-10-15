@@ -6,7 +6,8 @@ Rules that watch your containers and notify you by webhook or e-mail. The
 engine runs on the **server** and watches **all configured hosts** around the
 clock, whether or not anyone has the UI open. The SMTP relay is set up by an
 admin under [Settings → Email](settings.md#email-smtp); rules only opt into
-e-mail here.
+e-mail here. Webhooks are also added by an admin; anyone with the Alerts section
+can then pick one for a rule.
 
 ![Alerts](images/alerts.png)
 
@@ -45,8 +46,16 @@ retried up to 5 times.
 
 Tabs: **Feed** (fired alerts), **Rules**, **Webhooks**, **Maintenance**. Rules
 can be created, edited, enabled/disabled, deleted, exported and imported.
-Webhooks can only be added and deleted; to change one, add a new one and switch
-the rules over.
+Webhooks can only be added and deleted, by an admin; to change one, add a new
+one and switch the rules over.
+
+A webhook URL usually carries its credential (a Slack or Discord token in the
+path, an `Authorization` header), so once saved it **never comes back**, not even
+to an admin. The list shows each webhook's name, method, host and header names,
+and the audit log records only the host. A webhook decides where the server sends
+requests, and the first bytes of each reply are kept on the alert. That's why only
+an admin can add one: from an Alerts grant it would reach internal services and
+read their answers.
 
 | Type | Fires when |
 |---|---|
