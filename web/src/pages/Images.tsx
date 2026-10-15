@@ -14,6 +14,7 @@ import { LoadModal, triggerDownload } from "../components/LoadModal";
 import { useDialogs } from "../components/Dialog";
 import { useListControls, SearchBar, Pager, type StatusOption } from "../components/ListControls";
 import { useCanWrite } from "../auth/access";
+import { wsUrl } from "../lib/base";
 
 const IMAGE_STATUSES: StatusOption<ImageSummary>[] = [
   { value: "all", label: "All images" },
@@ -468,8 +469,7 @@ function PullPanel({ onPulled }: { onPulled: () => void }) {
     setStatus("Connecting…");
     setError("");
 
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${proto}://${location.host}/api/images/pull?ref=${encodeURIComponent(image)}${hostParam("&")}`);
+    const ws = new WebSocket(wsUrl(`/api/images/pull?ref=${encodeURIComponent(image)}${hostParam("&")}`));
     wsRef.current = ws;
 
     ws.onmessage = (ev) => {

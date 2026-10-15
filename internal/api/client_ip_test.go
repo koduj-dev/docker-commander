@@ -170,6 +170,24 @@ func TestPentestLoopbackWithForwardingHeadersIsNotExempt(t *testing.T) {
 	}
 }
 
+// PENTEST: a proxy publishing the UI under a path may send X-Forwarded-Prefix
+// and nothing else. Named explicitly, not just through the loop above, which
+// iterates the very list it would be missing from.
+func TestPentestLoopbackWithForwardedPrefixIsNotExempt(t *testing.T) {
+	s := &Server{cfg: config.Config{ForwardedPrefix: true}}
+	var loop bool
+	handler := s.pathPrefix(s.clientIP(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		loop = isLoopback(r)
+	})))
+	req := httptest.NewRequest("GET", "/dockercmd/api/auth/login", nil)
+	req.RemoteAddr = "127.0.0.1:6000"
+	req.Header.Set("X-Forwarded-Prefix", "/dockercmd")
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+	if loop {
+		t.Error("SECURITY: a loopback request carrying X-Forwarded-Prefix qualifies for the 2FA exemption")
+	}
+}
+
 // runCookieSecure reports whether the session cookie would be marked Secure for
 // a request with the given transport shape.
 func runCookieSecure(t *testing.T, trusted []*net.IPNet, tlsCert, remoteAddr, xfProto string, overTLS bool) bool {

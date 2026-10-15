@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -585,5 +586,101 @@ func TestLoadProxyACMECacheDirOverride(t *testing.T) {
 	c := loadProxyConfig(t, map[string]string{"DC_DATA_DIR": t.TempDir(), "DC_PROXY_ACME_CACHE_DIR": "/var/lib/dockercmd/proxy-cache"})
 	if c.ProxyACMECacheDir != "/var/lib/dockercmd/proxy-cache" {
 		t.Errorf("ProxyACMECacheDir = %q, want the explicit override preserved", c.ProxyACMECacheDir)
+	}
+}
+
+func TestNormalizePathPrefix(t *testing.T) {
+	ok := map[string]string{
+		"":                "",
+		"/":               "",
+		" /dockercmd/ ":   "/dockercmd",
+		"dockercmd":       "/dockercmd",
+		"/a/b-c_d.e~f/":   "/a/b-c_d.e~f",
+		"/Docker-Cmd2026": "/Docker-Cmd2026",
+	}
+	for in, want := range ok {
+		if got, err := NormalizePathPrefix(in); err != nil || got != want {
+			t.Errorf("NormalizePathPrefix(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	// Each of these would be dangerous written into <base href>, a cookie
+	// path or a form action: another host, markup, a traversal, an encoded
+	// separator, a CRLF.
+	bad := []string{
+		"//evil.example", "///x", "/a//b", "https://evil.example", "javascript:alert(1)",
+		`/"><script>alert(1)</script>`, "/a b", "/a/../b", "/..", "/.", "/a%2fb",
+		`\evil.example`, "/a\r\nSet-Cookie: x=1", "/ěšč", "/a?b", "/a#b",
+		"/" + strings.Repeat("a", maxPathPrefix),
+	}
+	for _, in := range bad {
+		if got, err := NormalizePathPrefix(in); err == nil {
+			t.Errorf("NormalizePathPrefix(%q) = %q, want an error", in, got)
+		}
+	}
+}
+
+func TestLoadPathPrefix(t *testing.T) {
+	load := func(t *testing.T, env map[string]string) (Config, error) {
+		oldArgs, oldFS := os.Args, flag.CommandLine
+		t.Cleanup(func() { os.Args, flag.CommandLine = oldArgs, oldFS })
+		flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+		os.Args = []string{"dockercmd"}
+		t.Setenv("DC_DATA_DIR", t.TempDir())
+		for k, v := range env {
+			t.Setenv(k, v)
+		}
+		return Load()
+	}
+	c, err := load(t, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.BasePath != "" || !c.ForwardedPrefix {
+		t.Errorf("defaults: base path %q, forwarded prefix %v; want root and on", c.BasePath, c.ForwardedPrefix)
+	}
+	c, err = load(t, map[string]string{"DC_BASE_PATH": "/dockercmd/", "DC_FORWARDED_PREFIX": "0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.BasePath != "/dockercmd" || c.ForwardedPrefix {
+		t.Errorf("env: base path %q, forwarded prefix %v; want /dockercmd and off", c.BasePath, c.ForwardedPrefix)
+	}
+	if _, err := load(t, map[string]string{"DC_BASE_PATH": "//evil.example"}); err == nil {
+		t.Error("an invalid DC_BASE_PATH must fail startup, not be ignored")
+	}
+	// DC_BASE_PATH is reset: t.Setenv lasts for the whole test, and the bad
+	// value above would fail startup on its own.
+	_, err = load(t, map[string]string{"DC_BASE_PATH": "", "DC_MCP_PUBLIC_URL": "https://host.example/a b"})
+	if err == nil || !strings.Contains(err.Error(), "-mcp-public-url") {
+		t.Errorf("a DC_MCP_PUBLIC_URL path that isn't a plain prefix must fail startup, got %v", err)
+	}
+}
+
+func TestPublicURLPath(t *testing.T) {
+	good := map[string]string{
+		"":                                "",
+		"https://host.example":            "",
+		"https://host.example/":           "",
+		"https://host.example:8443/dc":    "/dc",
+		"https://host.example/dockercmd/": "/dockercmd",
+		"https://host.example/a/b":        "/a/b",
+	}
+	for in, want := range good {
+		if got, err := PublicURLPath(in); err != nil || got != want {
+			t.Errorf("PublicURLPath(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	// The path becomes a route pattern and the OAuth issuer: chi reads {x}
+	// and * as wildcards, and an escape or dot-segment isn't a plain path.
+	for _, in := range []string{
+		"https://host.example/{x}", "https://host.example/a*", "https://host.example/a%2Fb",
+		"https://host.example/a/../b", "https://host.example//a", "https://host.example/a?x=1",
+		"https://host.example/a#f", "https://host.example/a?", "http://[::1",
+		"docker.example.com", "docker.example.com/dockercmd", "//host.example/a",
+		"ftp://host.example/a", "https:///a", "https://",
+	} {
+		if got, err := PublicURLPath(in); err == nil {
+			t.Errorf("PublicURLPath(%q) = %q, want an error", in, got)
+		}
 	}
 }

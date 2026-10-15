@@ -4,6 +4,31 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Serving under a path.** Docker Commander can now run behind a reverse proxy at
+  a path of a shared host, e.g. `https://example.com/dockercmd/`, not only at the
+  root of its own (sub)domain. It reads the prefix from `X-Forwarded-Prefix`
+  (`DC_FORWARDED_PREFIX=0` ignores the header) or from the new `DC_BASE_PATH`.
+  The page, assets, API and WebSockets all stay under it.
+- **OAuth MCP connectors under a path.** Set `DC_MCP_PUBLIC_URL` to the URL with
+  the path. Docker Commander then answers OAuth discovery at the root of the host,
+  where clients look for it (`/.well-known/oauth-authorization-server/dockercmd`);
+  the proxy has to route those paths to it. A proxy that forwards only the path
+  still works with clients that try OpenID Connect discovery under it.
+  `DC_MCP_PUBLIC_URL` is now checked at startup: it has to be an `http(s)` URL
+  with a host and a plain path, or the server won't start.
+  See [Deployment](docs/deployment.md#serving-under-a-path).
+
+### Security
+
+- Behind a path prefix, the session cookie is scoped to that path, so other apps
+  on the same host don't receive it.
+- A request carrying `X-Forwarded-Prefix` counts as proxied, so it no longer
+  qualifies for the localhost 2FA exemption.
+
 ## [1.7.1] — 2026-10-09
 
 We switched on GitHub's CodeQL code scanning only after 1.7.0 had shipped, so its

@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import type { ImageSummary, PullProgress } from "../lib/types";
 import { hostParam } from "../lib/host";
 import { shortId } from "../lib/format";
+import { wsUrl } from "../lib/base";
 
 // PushModal tags a local image for a registry (if needed) and pushes it,
 // streaming per-layer progress over the push WebSocket.
@@ -38,8 +39,7 @@ export function PushModal({ image, onClose, onDone }: { image: ImageSummary; onC
     }
 
     setStatus("Connecting…");
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${proto}://${location.host}/api/images/push?ref=${encodeURIComponent(ref)}${hostParam("&")}`);
+    const ws = new WebSocket(wsUrl(`/api/images/push?ref=${encodeURIComponent(ref)}${hostParam("&")}`));
     wsRef.current = ws;
     ws.onmessage = (ev) => {
       let p: PullProgress;

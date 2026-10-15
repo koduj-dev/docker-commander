@@ -25,7 +25,7 @@ On/off variables are on only for exactly `1` (`DC_DEV`, `DC_MCP_ENABLED`,
 | `-acme-cache-dir`    | `DC_ACME_CACHE_DIR`    | `<data-dir>/acme`  | Where issued ACME certificate/account state is cached between restarts. |
 | `-acme-directory-url`| `DC_ACME_DIRECTORY_URL`| Let's Encrypt prod | Override the ACME directory — e.g. the staging directory. **Not** a local Pebble instance, which this server cannot obtain a certificate through — see [Deployment](deployment.md#https). |
 | `-mcp-enabled`       | `DC_MCP_ENABLED=1`     | off                | Enable the remote **MCP** server for AI tools. Off by default; serve behind HTTPS. See [MCP](mcp.md). |
-| `-mcp-public-url`    | `DC_MCP_PUBLIC_URL`    | (unset)            | Externally reachable base URL (`https://host`) — required for the MCP **OAuth** flow (bearer tokens work without it). |
+| `-mcp-public-url`    | `DC_MCP_PUBLIC_URL`    | (unset)            | Externally reachable base URL (`https://host`, or `https://host/path` [under a path](deployment.md#serving-under-a-path)) — required for the MCP **OAuth** flow (bearer tokens work without it). |
 | `-proxy-enabled`     | `DC_PROXY_ENABLED=1`   | off                | Embedded reverse proxy for projects' domain mappings, on port 443. Needs ACME mode. See [Projects](projects.md#domains). |
 | `-proxy-acme-cache-dir` | `DC_PROXY_ACME_CACHE_DIR` | `<data-dir>/proxy-acme` | Where the proxy's own ACME certificates are cached. |
 | `-config`            | `DC_CONFIG`            | `/etc/docker-commander/commander.conf` | Config file path. On Windows `%ProgramData%\docker-commander\commander.conf`. |
@@ -42,4 +42,6 @@ On/off variables are on only for exactly `1` (`DC_DEV`, `DC_MCP_ENABLED`,
 | `-pprof`             | `DC_PPROF=1`           | off                | Go profiling on a dedicated loopback listener, `127.0.0.1:6060`. |
 | `-update-check`      | `DC_UPDATE_CHECK`      | on                 | Check GitHub for newer releases; `0` disables. |
 | `-trusted-proxies`   | `DC_TRUSTED_PROXIES`   | (none)             | Reverse-proxy IPs/CIDRs whose `X-Forwarded-For` may be trusted. The client IP keys rate limits, the localhost 2FA exemption and audit records — **set it behind a proxy**, and never to a range you don't control. |
+| `-base-path`         | `DC_BASE_PATH`         | (root)             | URL path prefix the UI is published under behind a reverse proxy, e.g. `/dockercmd`. Requests work with or without it. See [Deployment](deployment.md#serving-under-a-path). |
+| `-forwarded-prefix`  | `DC_FORWARDED_PREFIX`  | on                 | Honour the `X-Forwarded-Prefix` request header as the path prefix (overrides `DC_BASE_PATH`). `0` ignores the header. |
 | `-self-update`       | `DC_SELF_UPDATE`       | on                 | Let admins apply an update from the web UI. `0` keeps the "update available" banner but forbids web-triggered self-replacement. |

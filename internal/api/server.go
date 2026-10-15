@@ -68,6 +68,7 @@ func (s *Server) OnRestart(fn func()) { s.onRestart = fn }
 // Handler builds the root http.Handler with all routes mounted.
 func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
+	r.Use(s.pathPrefix) // strips the reverse-proxy path prefix before routing
 	r.Use(middleware.RequestID)
 	r.Use(s.clientIP) // trusted-proxy-aware client IP (replaces spoofable RealIP)
 	r.Use(middleware.Recoverer)
@@ -474,6 +475,19 @@ func (s *Server) mountMCP(r chi.Router) {
 		r.Handle("/.well-known/oauth-protected-resource/mcp", metadataHandler)
 		r.Get("/.well-known/oauth-authorization-server", s.handleOAuthASMetadata)
 		r.Get("/.well-known/oauth-authorization-server/mcp", s.handleOAuthASMetadata)
+		// Published under a path (DC_MCP_PUBLIC_URL=https://host/dockercmd),
+		// clients look for the metadata at the host root with the path
+		// inserted (RFC 8414 §3.1, RFC 9728 §3.1). Those requests reach us
+		// only if the proxy routes the two paths here; the prefix isn't on
+		// them, so they aren't stripped. A proxy that forwards nothing but the
+		// prefix still gets the last URL MCP clients try: OIDC discovery with
+		// path appending, which arrives here stripped.
+		if p, _ := config.PublicURLPath(s.cfg.MCPPublicURL); p != "" {
+			r.Get("/.well-known/oauth-authorization-server"+p, s.handleOAuthASMetadata)
+			r.Handle("/.well-known/oauth-protected-resource"+p+"/mcp", metadataHandler)
+			r.Get("/.well-known/openid-configuration", s.handleOIDCDiscovery)
+			r.Get("/oauth/jwks", s.handleOAuthJWKS)
+		}
 		r.Post("/oauth/register", s.oauthThrottle(s.handleOAuthRegister))
 		r.Get("/oauth/authorize", s.handleOAuthAuthorize)
 		r.Post("/oauth/authorize", s.handleOAuthAuthorizeDecision)
