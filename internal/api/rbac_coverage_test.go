@@ -514,8 +514,9 @@ func TestPentestSMTPConfigIsAdminOnly(t *testing.T) {
 		t.Error("SECURITY: an alerts-only account can still rewrite the instance SMTP relay")
 	}
 	// …while the rest of the alerts surface still works for them, so the change is
-	// narrowly scoped rather than breaking alerting for non-admins.
-	for _, p := range []string{"/api/alerts", "/api/alert-rules", "/api/webhooks"} {
+	// narrowly scoped rather than breaking alerting for non-admins. (Webhook
+	// writes went the same way as SMTP; TestPentestWebhookWritesAreAdminOnly.)
+	for _, p := range []string{"/api/alerts", "/api/alert-rules"} {
 		if err := srv.checkAccess(ctx, u, sectionForPath(p), true, 0); err != nil {
 			t.Errorf("an alerts role should still manage %s: %v", p, err)
 		}

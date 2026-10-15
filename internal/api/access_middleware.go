@@ -95,6 +95,24 @@ func sectionForPath(path string) string {
 	}
 }
 
+// sectionForRequest is sectionForPath, raised to admin-only for the writes
+// whose reach goes beyond their section.
+//
+// Creating or deleting a webhook chooses where the server sends HTTP requests:
+// any URL, method, headers and body, with the reply's first bytes stored on the
+// alert for the alerts section to read. From an alerts grant that would probe
+// internal services and read what they answer. So, like the SMTP relay, the
+// destinations are an admin's call. Reading the list stays an alerts read, so
+// rule editors can still pick a webhook, and what it returns carries no secret
+// (webhookView).
+func sectionForRequest(r *http.Request) string {
+	section := sectionForPath(r.URL.Path)
+	if p := strings.TrimPrefix(r.URL.Path, "/api/"); (p == "webhooks" || strings.HasPrefix(p, "webhooks/")) && isWriteRequest(r) {
+		return "__admin"
+	}
+	return section
+}
+
 // sectionForInspectKind maps "inspect/{kind}" to the section that owns that kind.
 // An unrecognised kind falls back to "containers", the most privileged of them, so
 // a new kind fails closed rather than becoming readable by everyone.
@@ -236,7 +254,7 @@ func (s *Server) checkAccess(ctx context.Context, u *store.User, section string,
 // global feature flags. It runs after RequireSession (claims are present).
 func (s *Server) permissions(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		section := sectionForPath(r.URL.Path)
+		section := sectionForRequest(r)
 		hostID, hostErr := hostParam(r)
 		if section == "" {
 			// An ungated route can still NAME a host: /api/stats/overview,

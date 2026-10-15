@@ -773,6 +773,9 @@ CREATE TABLE IF NOT EXISTS project_image_update_state (
 	if err := s.enforceOneFactorPerSecret(ctx); err != nil {
 		return err
 	}
+	if err := s.redactWebhookAudit(ctx); err != nil {
+		return err
+	}
 	// Built-in roles come last: the tables above must exist first, and seeding is
 	// idempotent (an existing row is left untouched).
 	return s.seedBuiltinRoles(ctx)

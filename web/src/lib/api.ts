@@ -70,6 +70,7 @@ import type {
   Topology,
   User,
   Webhook,
+  WebhookInput,
   NetworkStats,
   AuthFactor,
   RecoveryManifestSummary,
@@ -899,7 +900,7 @@ export const api = {
 
   // Alerting
   webhooks: () => req<Webhook[]>("GET", "/api/webhooks"),
-  createWebhook: (w: Partial<Webhook>) => req<{ id: number }>("POST", "/api/webhooks", w),
+  createWebhook: (w: WebhookInput) => req<{ id: number }>("POST", "/api/webhooks", w),
   deleteWebhook: (id: number) => req<{ ok: boolean }>("DELETE", `/api/webhooks/${id}`),
 
   alertRules: () => req<AlertRule[]>("GET", "/api/alert-rules"),

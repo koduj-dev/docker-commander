@@ -181,8 +181,9 @@ is used in plain text, not refused. On an untrusted network, use implicit TLS.
 
 > **Admin only.** This used to be under [Alerts → Email](alerts.md), open to
 > anyone with the *alerts* section. Because it is one relay for the whole
-> instance, that let a non-admin redirect the installation's mail. Alert rules,
-> webhooks and the feed still only need the *alerts* section.
+> instance, that let a non-admin redirect the installation's mail. Alert rules
+> and the feed still only need the *alerts* section. Adding or deleting a webhook
+> is admin-only too, see [Alerts](alerts.md#rules).
 
 ## Policy rules
 

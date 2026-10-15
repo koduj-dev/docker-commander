@@ -24,6 +24,16 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ### Security
 
+- **Webhook URLs and header values are no longer shown.** The webhook list
+  returned them to anyone who could read Alerts, the built-in Viewer role
+  included, and `webhook.create` wrote the URL into the audit log. The list now
+  shows the name, method, host and header names only. Audit records keep just
+  the host, and records written before are cleaned up on the next start.
+- **Only an admin can add or delete a webhook.** A webhook picks where the server
+  sends requests, and the first bytes of the reply are stored on the alert. With
+  write access to Alerts it could reach internal services and read their answers.
+  Anyone with Alerts can still attach an existing webhook to a rule.
+
 - Behind a path prefix, the session cookie is scoped to that path, so other apps
   on the same host don't receive it.
 - A request carrying `X-Forwarded-Prefix` counts as proxied, so it no longer
