@@ -69,7 +69,7 @@ every key, and `dockercmd --help` every flag. The key ones:
 | `DC_PROXY_ENABLED` | (off) | enable the embedded **per-container reverse proxy** for `domain_mappings` (local-host projects only; requires `DC_ACME_DOMAINS`) — see [Projects → Domains](projects.md#domains) |
 | `DC_PROXY_ACME_CACHE_DIR` | `<data-dir>/proxy-acme` | cache dir for the proxy's own ACME certificate/account state, kept separate from `DC_ACME_CACHE_DIR` |
 | `DC_MCP_ENABLED` | (off) | enable the remote **MCP** server for AI tools (off by default; serve behind HTTPS) — see [MCP](mcp.md) |
-| `DC_MCP_PUBLIC_URL` | (unset) | externally reachable base URL (`https://host`) — required for the MCP **OAuth** flow (bearer tokens work without it) |
+| `DC_MCP_PUBLIC_URL` | (unset) | externally reachable base URL (`https://host`, or `https://host/path` [under a path](#serving-under-a-path)) — required for the MCP **OAuth** flow (bearer tokens work without it) |
 | `DC_DATA_DIR` | OS config dir | SQLite DB + signing/encryption keys |
 | `DC_METRICS_TOKEN` | (open) | token guarding `/metrics`, sent as a Bearer header or `?token=` |
 | `DC_REDIS_ADDR` | (memory) | Redis for metric history; empty keeps the in-memory ring buffer |
@@ -455,10 +455,36 @@ location /dockercmd/ {
   as if absent. A client can at most change the links in its own response. To
   ignore the header entirely, set `DC_FORWARDED_PREFIX=0`.
 - The MCP server lives under the prefix too (`https://example.com/dockercmd/mcp`),
-  and **bearer tokens** work there. **OAuth connectors don't yet:** clients look
-  up the authorization-server metadata at the root of the host
-  (`/.well-known/oauth-authorization-server/dockercmd`), which the proxy sends
-  to the other site, not here.
+  and **bearer tokens** work there. See below for OAuth connectors.
+
+**OAuth connectors under a path.** Set `DC_MCP_PUBLIC_URL` to the URL with the
+path: `DC_MCP_PUBLIC_URL=https://example.com/dockercmd`. Clients look up the
+OAuth metadata at the **root** of the host, with the path inserted after
+`/.well-known/…` (RFC 8414, RFC 9728). Route those two paths to Docker Commander
+too, next to the `location /dockercmd/` block:
+
+```nginx
+location = /.well-known/oauth-authorization-server/dockercmd {
+    proxy_pass http://127.0.0.1:8470;    # no trailing slash: the path stays as it is
+}
+location = /.well-known/oauth-protected-resource/dockercmd/mcp {
+    proxy_pass http://127.0.0.1:8470;
+}
+```
+
+If you can't add locations at the root of the host, it can still work without
+them. The last URL MCP clients try is OpenID Connect discovery under the path
+(`/dockercmd/.well-known/openid-configuration`), and Docker Commander answers it.
+Docker Commander doesn't issue OpenID Connect ID tokens. The document only
+carries the fields OIDC requires. Two conditions apply:
+
+- The root of the host must answer `404` for the root paths above. A site that
+  answers every path with `200` and its own page makes the client stop there.
+- Not every client tries the OIDC URL. If a connector still fails, add the root
+  locations.
+
+`DC_MCP_PUBLIC_URL` takes a plain path only (letters, digits and `-._~`, no query
+or fragment). Anything else fails startup.
 
 ## Self-update
 

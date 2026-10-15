@@ -12,8 +12,13 @@ All notable changes to Docker Commander are documented here. The format follows
   a path of a shared host, e.g. `https://example.com/dockercmd/`, not only at the
   root of its own (sub)domain. It reads the prefix from `X-Forwarded-Prefix`
   (`DC_FORWARDED_PREFIX=0` ignores the header) or from the new `DC_BASE_PATH`.
-  The page, assets, API and WebSockets all stay under it; OAuth MCP connectors
-  don't work under a path yet (bearer tokens do).
+  The page, assets, API and WebSockets all stay under it.
+- **OAuth MCP connectors under a path.** Set `DC_MCP_PUBLIC_URL` to the URL with
+  the path. Docker Commander then answers OAuth discovery at the root of the host,
+  where clients look for it (`/.well-known/oauth-authorization-server/dockercmd`);
+  the proxy has to route those paths to it. A proxy that forwards only the path
+  still works with clients that try OpenID Connect discovery under it.
+  A `DC_MCP_PUBLIC_URL` whose path isn't a plain path now fails startup.
   See [Deployment](docs/deployment.md#serving-under-a-path).
 
 ### Security

@@ -648,4 +648,37 @@ func TestLoadPathPrefix(t *testing.T) {
 	if _, err := load(t, map[string]string{"DC_BASE_PATH": "//evil.example"}); err == nil {
 		t.Error("an invalid DC_BASE_PATH must fail startup, not be ignored")
 	}
+	// DC_BASE_PATH is reset: t.Setenv lasts for the whole test, and the bad
+	// value above would fail startup on its own.
+	_, err = load(t, map[string]string{"DC_BASE_PATH": "", "DC_MCP_PUBLIC_URL": "https://host.example/a b"})
+	if err == nil || !strings.Contains(err.Error(), "-mcp-public-url") {
+		t.Errorf("a DC_MCP_PUBLIC_URL path that isn't a plain prefix must fail startup, got %v", err)
+	}
+}
+
+func TestPublicURLPath(t *testing.T) {
+	good := map[string]string{
+		"":                                "",
+		"https://host.example":            "",
+		"https://host.example/":           "",
+		"https://host.example:8443/dc":    "/dc",
+		"https://host.example/dockercmd/": "/dockercmd",
+		"https://host.example/a/b":        "/a/b",
+	}
+	for in, want := range good {
+		if got, err := PublicURLPath(in); err != nil || got != want {
+			t.Errorf("PublicURLPath(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	// The path becomes a route pattern and the OAuth issuer: chi reads {x}
+	// and * as wildcards, and an escape or dot-segment isn't a plain path.
+	for _, in := range []string{
+		"https://host.example/{x}", "https://host.example/a*", "https://host.example/a%2Fb",
+		"https://host.example/a/../b", "https://host.example//a", "https://host.example/a?x=1",
+		"https://host.example/a#f", "https://host.example/a?", "http://[::1",
+	} {
+		if got, err := PublicURLPath(in); err == nil {
+			t.Errorf("PublicURLPath(%q) = %q, want an error", in, got)
+		}
+	}
 }

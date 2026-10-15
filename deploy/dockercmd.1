@@ -165,7 +165,8 @@ obtain a certificate through.
 Enable the remote MCP server + OAuth endpoints (off by default; requires HTTPS).
 .TP
 .BI \-mcp-public-url " url"
-Externally reachable base URL (https://host[:port]) for the MCP OAuth flow.
+Externally reachable base URL (https://host[:port][/path]) for the MCP OAuth
+flow. Under a path, the path is the OAuth issuer's; it must be a plain path.
 .TP
 .B \-proxy-enabled
 Enable the embedded per-container reverse proxy for domain_mappings (off by

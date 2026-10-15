@@ -39,9 +39,13 @@ const (
 // ---- discovery: RFC 8414 authorization server metadata ----
 
 func (s *Server) handleOAuthASMetadata(w http.ResponseWriter, r *http.Request) {
-	base := s.mcpBase()
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeJSON(w, http.StatusOK, s.oauthASMetadata())
+}
+
+func (s *Server) oauthASMetadata() map[string]any {
+	base := s.mcpBase()
+	return map[string]any{
 		"issuer":                                         base,
 		"authorization_endpoint":                         base + "/oauth/authorize",
 		"token_endpoint":                                 base + "/oauth/token",
@@ -52,7 +56,31 @@ func (s *Server) handleOAuthASMetadata(w http.ResponseWriter, r *http.Request) {
 		"token_endpoint_auth_methods_supported":          []string{"none"},
 		"scopes_supported":                               []string{scopeFull, scopeReadOnly},
 		"authorization_response_iss_parameter_supported": true,
-	})
+	}
+}
+
+// handleOIDCDiscovery serves the same metadata as an OpenID Connect discovery
+// document, for a proxy that forwards only the path prefix: path-appended OIDC
+// discovery (<issuer>/.well-known/openid-configuration) is then the one URL an
+// MCP client tries that reaches us. Clients validate it as OIDC metadata, so
+// it adds the fields OIDC requires without claiming more: this server issues
+// no ID tokens ("openid" isn't among its scopes), the key set is empty, and
+// "none" is the algorithm OIDC Discovery allows when the authorization
+// endpoint returns no ID token, as in the code flow.
+func (s *Server) handleOIDCDiscovery(w http.ResponseWriter, r *http.Request) {
+	m := s.oauthASMetadata()
+	m["jwks_uri"] = s.mcpBase() + "/oauth/jwks"
+	m["subject_types_supported"] = []string{"public"}
+	m["id_token_signing_alg_values_supported"] = []string{"none"}
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	writeJSON(w, http.StatusOK, m)
+}
+
+// handleOAuthJWKS is the empty key set the OIDC document points at: access
+// tokens are validated only by this server, so no key is published.
+func (s *Server) handleOAuthJWKS(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	writeJSON(w, http.StatusOK, map[string]any{"keys": []any{}})
 }
 
 // ---- RFC 7591 dynamic client registration ----

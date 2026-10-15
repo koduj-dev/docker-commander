@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -79,7 +80,8 @@ type Config struct {
 	// HTTPS. Startup logs the resolved on/off state.
 	MCPEnabled bool
 	// MCPPublicURL is the externally reachable base URL of this server
-	// (e.g. https://docker.example.com), used as the canonical resource
+	// (e.g. https://docker.example.com, or https://example.com/dockercmd under
+	// a path), used as the canonical resource
 	// identifier for OAuth audience binding and the protected-resource metadata.
 	// Empty is fine for Bearer-only (Claude Code header) use; the OAuth flow
 	// needs it set.
@@ -211,7 +213,7 @@ func Load() (Config, error) {
 	flag.StringVar(&c.ACMECacheDir, "acme-cache-dir", lookup("DC_ACME_CACHE_DIR"), "directory to cache the ACME certificate/account state (default: <data-dir>/acme)")
 	flag.StringVar(&c.ACMEDirectoryURL, "acme-directory-url", lookup("DC_ACME_DIRECTORY_URL"), "override the ACME directory URL (default: Let's Encrypt production) — e.g. its staging directory; NOT a local Pebble instance, which this server cannot obtain a certificate through (see docs/gotchas.md)")
 	flag.BoolVar(&c.MCPEnabled, "mcp-enabled", lookup("DC_MCP_ENABLED") == "1", "enable the remote MCP server + OAuth endpoints (off by default; requires HTTPS)")
-	flag.StringVar(&c.MCPPublicURL, "mcp-public-url", lookup("DC_MCP_PUBLIC_URL"), "externally reachable base URL (https://host[:port]) for MCP OAuth audience/metadata")
+	flag.StringVar(&c.MCPPublicURL, "mcp-public-url", lookup("DC_MCP_PUBLIC_URL"), "externally reachable base URL (https://host[:port][/path]) for MCP OAuth audience/metadata")
 	flag.BoolVar(&c.ProxyEnabled, "proxy-enabled", lookup("DC_PROXY_ENABLED") == "1", "enable the embedded per-container reverse proxy for domain_mappings (off by default; requires ACME mode for DC's own admin domain)")
 	flag.StringVar(&c.ProxyACMECacheDir, "proxy-acme-cache-dir", lookup("DC_PROXY_ACME_CACHE_DIR"), "directory to cache the proxy's own ACME certificate/account state (default: <data-dir>/proxy-acme)")
 	flag.StringVar(&c.RedisAddr, "redis-addr", lookup("DC_REDIS_ADDR"), "Redis address (host:port) for metrics history; empty = in-memory")
@@ -236,6 +238,9 @@ func Load() (Config, error) {
 
 	if c.BasePath, err = NormalizePathPrefix(*basePath); err != nil {
 		return c, fmt.Errorf("-base-path: %w", err)
+	}
+	if _, err := PublicURLPath(c.MCPPublicURL); err != nil {
+		return c, fmt.Errorf("-mcp-public-url: %w", err)
 	}
 
 	// Listen address is host + port. A full -addr/DC_ADDR (legacy) still wins if
@@ -370,6 +375,25 @@ func NormalizePathPrefix(raw string) (string, error) {
 		}
 	}
 	return p, nil
+}
+
+// PublicURLPath returns the path of a public base URL (DC_MCP_PUBLIC_URL) in
+// the canonical form of NormalizePathPrefix: "" for https://host, "/dockercmd"
+// for https://host/dockercmd/. The path becomes the OAuth issuer's path and a
+// route pattern, so it must be a plain prefix too; a query or fragment has no
+// place in a base URL.
+func PublicURLPath(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	if u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
+		return "", fmt.Errorf("%q: a base URL takes no query or fragment", raw)
+	}
+	return NormalizePathPrefix(u.EscapedPath())
 }
 
 // splitCommaList splits a comma-separated flag value into trimmed, non-empty

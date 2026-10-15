@@ -25,7 +25,7 @@ On/off variables are on only for exactly `1` (`DC_DEV`, `DC_MCP_ENABLED`,
 | `-acme-cache-dir`    | `DC_ACME_CACHE_DIR`    | `<data-dir>/acme`  | Where issued ACME certificate/account state is cached between restarts. |
 | `-acme-directory-url`| `DC_ACME_DIRECTORY_URL`| Let's Encrypt prod | Override the ACME directory — e.g. the staging directory. **Not** a local Pebble instance, which this server cannot obtain a certificate through — see [Deployment](deployment.md#https). |
 | `-mcp-enabled`       | `DC_MCP_ENABLED=1`     | off                | Enable the remote **MCP** server for AI tools. Off by default; serve behind HTTPS. See [MCP](mcp.md). |
-| `-mcp-public-url`    | `DC_MCP_PUBLIC_URL`    | (unset)            | Externally reachable base URL (`https://host`) — required for the MCP **OAuth** flow (bearer tokens work without it). |
+| `-mcp-public-url`    | `DC_MCP_PUBLIC_URL`    | (unset)            | Externally reachable base URL (`https://host`, or `https://host/path` [under a path](deployment.md#serving-under-a-path)) — required for the MCP **OAuth** flow (bearer tokens work without it). |
 | `-proxy-enabled`     | `DC_PROXY_ENABLED=1`   | off                | Embedded reverse proxy for projects' domain mappings, on port 443. Needs ACME mode. See [Projects](projects.md#domains). |
 | `-proxy-acme-cache-dir` | `DC_PROXY_ACME_CACHE_DIR` | `<data-dir>/proxy-acme` | Where the proxy's own ACME certificates are cached. |
 | `-config`            | `DC_CONFIG`            | `/etc/docker-commander/commander.conf` | Config file path. On Windows `%ProgramData%\docker-commander\commander.conf`. |
