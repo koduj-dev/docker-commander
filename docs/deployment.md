@@ -86,8 +86,8 @@ every key, and `dockercmd --help` every flag. The key ones:
 | `DC_DEV` | (off) | development mode: serves the API only (no embedded UI; run the Vite dev server) and allows cross-origin requests from the dev server. Not for production |
 
 **On/off values.** `DC_DEV`, `DC_MCP_ENABLED`, `DC_PROXY_ENABLED` and `DC_PPROF` are on
-only for exactly `1`; `true` or `yes` leaves them off. `DC_UPDATE_CHECK` and
-`DC_SELF_UPDATE` are off only for exactly `0`. A port, number or duration that doesn't
+only for exactly `1`; `true` or `yes` leaves them off. `DC_UPDATE_CHECK`,
+`DC_SELF_UPDATE` and `DC_FORWARDED_PREFIX` are off only for exactly `0`. A port, number or duration that doesn't
 parse (e.g. `DC_METRICS_RETENTION=1d`) silently falls back to the default.
 
 The Docker connection honours `DOCKER_HOST` / `DOCKER_CERT_PATH`.
