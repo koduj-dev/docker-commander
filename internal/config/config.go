@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -108,6 +109,9 @@ type Config struct {
 	Version string
 	// ConfigFile is the config file that was loaded, or "" if none.
 	ConfigFile string
+	// Warnings are config-file problems that don't stop the server (a key it
+	// never reads, a line that isn't KEY=VALUE). main logs them at startup.
+	Warnings []string
 
 	// Metrics history backend. RedisAddr empty → in-memory ring buffer.
 	RedisAddr        string
@@ -179,7 +183,8 @@ func (c Config) TLSEnabled() bool {
 // Windows); a missing default file is ignored, a missing explicit one errors.
 func Load() (Config, error) {
 	cfgPath, explicit := resolveConfigPath()
-	vals, err := loadConfigFile(cfgPath)
+	settingErrs, lookedUp, flagKeys = nil, map[string]bool{}, map[string]string{}
+	vals, fileWarnings, err := loadConfigFile(cfgPath)
 	if err != nil {
 		if explicit || !errors.Is(err, os.ErrNotExist) {
 			return Config{}, err
@@ -197,14 +202,13 @@ func Load() (Config, error) {
 	var port int
 	flag.String("config", cfgPath, "path to a config file (KEY=VALUE, same keys as the environment)")
 	flag.StringVar(&host, "host", envOr("DC_HOST", "127.0.0.1"), "listen host/interface (use 0.0.0.0 for all)")
-	flag.IntVar(&port, "port", envInt("DC_PORT", 8470), "listen port")
-	flag.IntVar(&port, "p", envInt("DC_PORT", 8470), "shorthand for -port")
+	intFlag(&port, "DC_PORT", 8470, "listen port", "port", "p")
 	flag.StringVar(&addr, "addr", lookup("DC_ADDR"), "full listen address host:port (legacy; overrides -host/-port)")
 	flag.StringVar(&c.DataDir, "data-dir", envOr("DC_DATA_DIR", def), "directory for the database and secrets")
 	ttl := flag.Duration("session-ttl", 12*time.Hour, "session token lifetime")
-	flag.BoolVar(&c.Dev, "dev", lookup("DC_DEV") == "1", "enable development mode (permissive CORS)")
-	flag.BoolVar(&c.UpdateCheck, "update-check", lookup("DC_UPDATE_CHECK") != "0", "check GitHub for newer releases (set DC_UPDATE_CHECK=0 to disable)")
-	flag.BoolVar(&c.SelfUpdate, "self-update", lookup("DC_SELF_UPDATE") != "0", "allow admins to apply updates from the web UI (set DC_SELF_UPDATE=0 to disable)")
+	boolFlag(&c.Dev, "DC_DEV", false, "enable development mode (permissive CORS)", "dev")
+	boolFlag(&c.UpdateCheck, "DC_UPDATE_CHECK", true, "check GitHub for newer releases (set DC_UPDATE_CHECK=0 to disable)", "update-check")
+	boolFlag(&c.SelfUpdate, "DC_SELF_UPDATE", true, "allow admins to apply updates from the web UI (set DC_SELF_UPDATE=0 to disable)", "self-update")
 	flag.StringVar(&c.MetricsToken, "metrics-token", lookup("DC_METRICS_TOKEN"), "require this bearer token to scrape /metrics (empty = open)")
 	flag.StringVar(&c.TLSCert, "tls-cert", lookup("DC_TLS_CERT"), "PEM TLS certificate path (enables HTTPS together with -tls-key)")
 	flag.StringVar(&c.TLSKey, "tls-key", lookup("DC_TLS_KEY"), "PEM TLS private-key path")
@@ -212,21 +216,30 @@ func Load() (Config, error) {
 	flag.StringVar(&c.ACMEEmail, "acme-email", lookup("DC_ACME_EMAIL"), "contact email registered with the ACME account (optional)")
 	flag.StringVar(&c.ACMECacheDir, "acme-cache-dir", lookup("DC_ACME_CACHE_DIR"), "directory to cache the ACME certificate/account state (default: <data-dir>/acme)")
 	flag.StringVar(&c.ACMEDirectoryURL, "acme-directory-url", lookup("DC_ACME_DIRECTORY_URL"), "override the ACME directory URL (default: Let's Encrypt production) — e.g. its staging directory; NOT a local Pebble instance, which this server cannot obtain a certificate through (see docs/gotchas.md)")
-	flag.BoolVar(&c.MCPEnabled, "mcp-enabled", lookup("DC_MCP_ENABLED") == "1", "enable the remote MCP server + OAuth endpoints (off by default; requires HTTPS)")
+	boolFlag(&c.MCPEnabled, "DC_MCP_ENABLED", false, "enable the remote MCP server + OAuth endpoints (off by default; requires HTTPS)", "mcp-enabled")
 	flag.StringVar(&c.MCPPublicURL, "mcp-public-url", lookup("DC_MCP_PUBLIC_URL"), "externally reachable base URL (https://host[:port][/path]) for MCP OAuth audience/metadata")
-	flag.BoolVar(&c.ProxyEnabled, "proxy-enabled", lookup("DC_PROXY_ENABLED") == "1", "enable the embedded per-container reverse proxy for domain_mappings (off by default; requires ACME mode for DC's own admin domain)")
+	boolFlag(&c.ProxyEnabled, "DC_PROXY_ENABLED", false, "enable the embedded per-container reverse proxy for domain_mappings (off by default; requires ACME mode for DC's own admin domain)", "proxy-enabled")
 	flag.StringVar(&c.ProxyACMECacheDir, "proxy-acme-cache-dir", lookup("DC_PROXY_ACME_CACHE_DIR"), "directory to cache the proxy's own ACME certificate/account state (default: <data-dir>/proxy-acme)")
 	flag.StringVar(&c.RedisAddr, "redis-addr", lookup("DC_REDIS_ADDR"), "Redis address (host:port) for metrics history; empty = in-memory")
 	flag.StringVar(&c.RedisPassword, "redis-password", lookup("DC_REDIS_PASSWORD"), "Redis password")
-	retention := flag.Duration("metrics-retention", envDuration("DC_METRICS_RETENTION", 6*time.Hour), "how long to keep metric history")
-	interval := flag.Duration("metrics-interval", envDuration("DC_METRICS_INTERVAL", 15*time.Second), "how often to sample container stats (raise on hosts with many containers)")
+	retention := durationFlag("DC_METRICS_RETENTION", 6*time.Hour, "how long to keep metric history", "metrics-retention")
+	interval := durationFlag("DC_METRICS_INTERVAL", 15*time.Second, "how often to sample container stats (raise on hosts with many containers)", "metrics-interval")
 	flag.StringVar(&c.LogFile, "log-file", lookup("DC_LOG_FILE"), "write the log to this file instead of stderr (rotated at 10 MiB, one older copy kept as <file>.1)")
-	flag.BoolVar(&c.PProf, "pprof", lookup("DC_PPROF") == "1", "expose net/http/pprof on a dedicated loopback listener, 127.0.0.1:6060 (for debugging)")
-	deploySilence := flag.Duration("deploy-silence-grace", envDuration("DC_DEPLOY_SILENCE_GRACE", 3*time.Minute), "automatically silence alert delivery for a project for this long after a successful deploy (0 disables)")
+	boolFlag(&c.PProf, "DC_PPROF", false, "expose net/http/pprof on a dedicated loopback listener, 127.0.0.1:6060 (for debugging)", "pprof")
+	deploySilence := durationFlag("DC_DEPLOY_SILENCE_GRACE", 3*time.Minute, "automatically silence alert delivery for a project for this long after a successful deploy (0 disables)", "deploy-silence-grace")
 	basePath := flag.String("base-path", lookup("DC_BASE_PATH"), "URL path prefix the UI is published under behind a reverse proxy, e.g. /dockercmd (empty = root)")
-	flag.BoolVar(&c.ForwardedPrefix, "forwarded-prefix", lookup("DC_FORWARDED_PREFIX") != "0", "honour the X-Forwarded-Prefix request header as the URL path prefix (set DC_FORWARDED_PREFIX=0 to ignore it)")
+	boolFlag(&c.ForwardedPrefix, "DC_FORWARDED_PREFIX", true, "honour the X-Forwarded-Prefix request header as the URL path prefix (set DC_FORWARDED_PREFIX=0 to ignore it)", "forwarded-prefix")
 	trustedProxies := flag.String("trusted-proxies", lookup("DC_TRUSTED_PROXIES"), "comma-separated reverse-proxy IPs/CIDRs whose X-Forwarded-For is trusted (empty = trust none; use the real peer)")
 	flag.Parse()
+	c.RedisDB = envInt("DC_REDIS_DB", 0)
+	if err := effectiveSettingErrs(); err != nil {
+		return c, err
+	}
+	if c.ACMEDirectoryURL != "" {
+		if u, err := url.Parse(c.ACMEDirectoryURL); err != nil || u.Scheme != "https" || u.Host == "" {
+			return c, fmt.Errorf("-acme-directory-url: %q is not an https URL with a host", c.ACMEDirectoryURL)
+		}
+	}
 
 	// Parse the trusted-proxy list (IPs or CIDRs); a bad entry is a hard error
 	// rather than silently falling back to trusting everything or nothing.
@@ -251,7 +264,6 @@ func Load() (Config, error) {
 		c.Addr = net.JoinHostPort(host, strconv.Itoa(port))
 	}
 
-	c.RedisDB = envInt("DC_REDIS_DB", 0)
 	c.MetricsRetention = *retention
 	c.MetricsInterval = *interval
 	// A non-positive interval is meaningless (the monitor would ignore it); clamp
@@ -263,7 +275,7 @@ func Load() (Config, error) {
 	// Unlike MetricsInterval above, 0 here is a deliberate, valid choice (the
 	// flag's own help text promises "0 disables"), so it's assigned
 	// unconditionally rather than clamped to a default — the default already
-	// lives in the flag's own envDuration(...) call, which *deploySilence
+	// lives in the flag's own durationFlag(...) call, which *deploySilence
 	// resolves to whenever nothing overrides it.
 	c.DeploySilenceGrace = *deploySilence
 
@@ -307,7 +319,84 @@ func Load() (Config, error) {
 	if err := secureDataDir(c.DataDir); err != nil {
 		return c, fmt.Errorf("restrict data dir permissions: %w", err)
 	}
+	c.Warnings = append(fileWarnings, unreadFileKeys(cfgPath)...)
 	return c, nil
+}
+
+// settingErrs collects the settings whose value doesn't parse while Load reads
+// them, by key. Load refuses to start on any of them rather than run on a
+// default the admin didn't choose, unless a flag given on the command line
+// overrides that setting (flags > env > file). flagKeys maps a flag to the
+// setting that supplies its default. lookedUp records every key Load asks for,
+// so a config file key it never reads (a typo) can be reported.
+var (
+	settingErrs []settingErr
+	flagKeys    map[string]string
+	lookedUp    map[string]bool
+)
+
+type settingErr struct {
+	key string
+	err error
+}
+
+// effectiveSettingErrs joins the parse errors of the settings that are in
+// effect: one whose flag was given on the command line is overridden by it,
+// and its bad value never applies.
+func effectiveSettingErrs() error {
+	overridden := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) {
+		if key, ok := flagKeys[f.Name]; ok {
+			overridden[key] = true
+		}
+	})
+	var errs []error
+	for _, e := range settingErrs {
+		if !overridden[e.key] {
+			errs = append(errs, e.err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// boolFlag, intFlag and durationFlag define flags whose default comes from a
+// typed setting, recording which setting each flag overrides. Every typed
+// setting with a flag must go through them, or a bad env value would fail
+// startup despite a valid flag.
+func boolFlag(p *bool, key string, def bool, usage string, names ...string) {
+	v := envBool(key, def)
+	for _, n := range names {
+		flag.BoolVar(p, n, v, usage)
+		flagKeys[n] = key
+	}
+}
+
+func intFlag(p *int, key string, def int, usage string, names ...string) {
+	v := envInt(key, def)
+	for _, n := range names {
+		flag.IntVar(p, n, v, usage)
+		flagKeys[n] = key
+	}
+}
+
+func durationFlag(key string, def time.Duration, usage string, name string) *time.Duration {
+	p := flag.Duration(name, envDuration(key, def), usage)
+	flagKeys[name] = key
+	return p
+}
+
+// unreadFileKeys names the DC_ keys in the config file that Load never asked
+// for. Other keys are left alone: the file may double as a systemd
+// EnvironmentFile carrying e.g. DOCKER_HOST.
+func unreadFileKeys(path string) []string {
+	var out []string
+	for k := range fileVals {
+		if strings.HasPrefix(k, "DC_") && !lookedUp[k] {
+			out = append(out, fmt.Sprintf("%s: unknown setting %s is ignored", path, k))
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // parseCIDRs parses a comma-separated list of IPs and CIDRs into networks. A
@@ -434,6 +523,9 @@ var fileVals map[string]string
 // lookup returns a setting from the environment, falling back to the config
 // file. An empty/unset value yields "".
 func lookup(key string) string {
+	if lookedUp != nil {
+		lookedUp[key] = true
+	}
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
@@ -488,34 +580,35 @@ func defaultConfigPath() string {
 }
 
 // loadConfigFile parses a "KEY=VALUE" file (with "#" comments, optional quotes
-// and a tolerated "export " prefix). An empty path yields an empty map.
-func loadConfigFile(path string) (map[string]string, error) {
+// and a tolerated "export " prefix). An empty path yields an empty map. A line
+// that isn't KEY=VALUE is skipped with a warning naming its line number.
+func loadConfigFile(path string) (map[string]string, []string, error) {
 	out := map[string]string{}
 	if path == "" {
-		return out, nil
+		return out, nil, nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	for _, raw := range strings.Split(string(data), "\n") {
+	var warnings []string
+	for i, raw := range strings.Split(string(data), "\n") {
 		line := strings.TrimSpace(raw)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		line = strings.TrimPrefix(line, "export ")
 		k, v, ok := strings.Cut(line, "=")
-		if !ok {
+		k = strings.TrimSpace(k)
+		if !ok || k == "" {
+			warnings = append(warnings, fmt.Sprintf("%s:%d: not KEY=VALUE, ignored", path, i+1))
 			continue
 		}
-		k = strings.TrimSpace(k)
 		v = strings.TrimSpace(v)
 		v = strings.Trim(v, `"'`)
-		if k != "" {
-			out[k] = v
-		}
+		out[k] = v
 	}
-	return out, nil
+	return out, warnings, nil
 }
 
 func envOr(key, def string) string {
@@ -525,20 +618,46 @@ func envOr(key, def string) string {
 	return def
 }
 
+// envInt, envDuration and envBool read a typed setting; unset yields def. A
+// value that doesn't parse yields def too, and is recorded in settingErrs so
+// Load fails instead of running on it.
 func envInt(key string, def int) int {
-	if v := lookup(key); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
-		}
+	v := lookup(key)
+	if v == "" {
+		return def
 	}
-	return def
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		settingErrs = append(settingErrs, settingErr{key, fmt.Errorf("%s=%q: not a whole number", key, v)})
+		return def
+	}
+	return n
 }
 
 func envDuration(key string, def time.Duration) time.Duration {
-	if v := lookup(key); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			return d
-		}
+	v := lookup(key)
+	if v == "" {
+		return def
 	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		settingErrs = append(settingErrs, settingErr{key, fmt.Errorf("%s=%q: not a duration, e.g. 90s, 15m or 24h (there is no unit for days)", key, v)})
+		return def
+	}
+	return d
+}
+
+func envBool(key string, def bool) bool {
+	v := lookup(key)
+	if v == "" {
+		return def
+	}
+	switch strings.ToLower(v) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	}
+	settingErrs = append(settingErrs, settingErr{key, fmt.Errorf("%s=%q: want 1/0, true/false, yes/no or on/off", key, v)})
 	return def
 }

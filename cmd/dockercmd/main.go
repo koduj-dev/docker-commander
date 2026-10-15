@@ -528,6 +528,9 @@ func runServer(shutdownCtx context.Context) error {
 		return err
 	}
 	defer closeLog()
+	for _, w := range cfg.Warnings {
+		log.Printf("warning: %s", w)
+	}
 
 	st, err := store.Open(cfg.DBPath())
 	if err != nil {

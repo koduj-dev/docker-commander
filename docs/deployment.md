@@ -85,10 +85,14 @@ every key, and `dockercmd --help` every flag. The key ones:
 | `DC_DEPLOY_SILENCE_GRACE` | `3m` | silence alert delivery for a project this long after a successful deploy; `0` disables — see [Alerts](alerts.md) |
 | `DC_DEV` | (off) | development mode: serves the API only (no embedded UI; run the Vite dev server) and allows cross-origin requests from the dev server. Not for production |
 
-**On/off values.** `DC_DEV`, `DC_MCP_ENABLED`, `DC_PROXY_ENABLED` and `DC_PPROF` are on
-only for exactly `1`; `true` or `yes` leaves them off. `DC_UPDATE_CHECK`,
-`DC_SELF_UPDATE` and `DC_FORWARDED_PREFIX` are off only for exactly `0`. A port, number or duration that doesn't
-parse (e.g. `DC_METRICS_RETENTION=1d`) silently falls back to the default.
+**Values are checked at startup.** On/off settings take `1`/`0`, `true`/`false`,
+`yes`/`no` or `on`/`off`, in any case. Durations use Go's units (`90s`, `15m`,
+`24h`); there is no unit for days, so write `168h` for a week. A value that doesn't
+parse (`DC_SELF_UPDATE=never`, `DC_METRICS_RETENTION=1d`, `DC_PORT=84a0`) stops the
+server with an error that names the setting, unless a command-line flag overrides it
+(`--port=8470`). A `DC_…` key in the config file that
+Docker Commander doesn't know, usually a typo, and a line that isn't `KEY=VALUE` are
+logged as warnings at startup.
 
 The Docker connection honours `DOCKER_HOST` / `DOCKER_CERT_PATH`.
 
