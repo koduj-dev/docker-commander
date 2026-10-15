@@ -8,9 +8,9 @@ Every setting the server reads. For what they mean in a real deployment
 Options are flags with an environment-variable equivalent, and can also live in
 a config file — see [`deploy/commander.conf.example`](../deploy/commander.conf.example).
 Two exceptions: `-session-ttl` has no variable, and `DC_REDIS_DB` has no flag.
-On/off variables are on only for exactly `1` (`DC_DEV`, `DC_MCP_ENABLED`,
-`DC_PROXY_ENABLED`, `DC_PPROF`), or off only for exactly `0` (`DC_UPDATE_CHECK`,
-`DC_SELF_UPDATE`). The Docker connection also honours the standard `DOCKER_HOST` /
+On/off variables take `1`/`0`, `true`/`false`, `yes`/`no` or `on`/`off`. A value
+that doesn't parse stops startup unless a flag overrides it, and an unknown `DC_…` key in the config file is
+logged as a warning (see [Deployment](deployment.md#configuration)). The Docker connection also honours the standard `DOCKER_HOST` /
 `DOCKER_CERT_PATH` variables.
 
 | Flag                 | Env                    | Default            | Description |

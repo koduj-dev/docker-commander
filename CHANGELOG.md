@@ -22,6 +22,18 @@ All notable changes to Docker Commander are documented here. The format follows
   with a host and a plain path, or the server won't start.
   See [Deployment](docs/deployment.md#serving-under-a-path).
 
+### Changed
+
+- **Settings are checked at startup.** A value that doesn't parse used to fall
+  back to its default without a word, so `DC_SELF_UPDATE=false` left self-update
+  enabled and `DC_METRICS_RETENTION=1d` kept 6 hours. Such a value now stops the
+  server with an error naming the setting, unless a command-line flag overrides
+  it. On/off settings accept `1`/`0`, `true`/`false`, `yes`/`no` and `on`/`off`.
+  `DC_ACME_DIRECTORY_URL` must be an https URL.
+  See [Deployment](docs/deployment.md#configuration).
+- An unknown `DC_…` key in the config file (usually a typo) and a line that isn't
+  `KEY=VALUE` are logged as warnings at startup.
+
 ### Security
 
 - Behind a path prefix, the session cookie is scoped to that path, so other apps

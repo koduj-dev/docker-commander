@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -237,9 +238,12 @@ func TestLoadConfigFileParsing(t *testing.T) {
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	vals, err := loadConfigFile(path)
+	vals, warnings, err := loadConfigFile(path)
 	if err != nil {
 		t.Fatalf("loadConfigFile: %v", err)
+	}
+	if want := []string{path + ":6: not KEY=VALUE, ignored"}; !slices.Equal(warnings, want) {
+		t.Errorf("warnings = %q, want %q", warnings, want)
 	}
 	if vals["DC_ADDR"] != "10.0.0.1:8080" {
 		t.Errorf("trimmed value wrong: %q", vals["DC_ADDR"])
@@ -509,9 +513,16 @@ func TestEnvInt(t *testing.T) {
 	if got := envInt("DC_TEST_INT", 7); got != 42 {
 		t.Errorf("parsed int, got %d", got)
 	}
+	if len(settingErrs) != 0 {
+		t.Fatalf("errors for valid input: %v", settingErrs)
+	}
+	t.Cleanup(func() { settingErrs = nil })
 	t.Setenv("DC_TEST_INT_BAD", "notanumber")
 	if got := envInt("DC_TEST_INT_BAD", 7); got != 7 {
 		t.Errorf("unparseable → default, got %d", got)
+	}
+	if len(settingErrs) != 1 || !strings.Contains(settingErrs[0].err.Error(), "DC_TEST_INT_BAD") {
+		t.Errorf("unparseable value not recorded: %v", settingErrs)
 	}
 }
 
@@ -523,9 +534,228 @@ func TestEnvDuration(t *testing.T) {
 	if got := envDuration("DC_TEST_DUR", 6*time.Hour); got != 90*time.Minute {
 		t.Errorf("parsed duration, got %v", got)
 	}
-	t.Setenv("DC_TEST_DUR_BAD", "nonsense")
+	if len(settingErrs) != 0 {
+		t.Fatalf("errors for valid input: %v", settingErrs)
+	}
+	t.Cleanup(func() { settingErrs = nil })
+	t.Setenv("DC_TEST_DUR_BAD", "1d")
 	if got := envDuration("DC_TEST_DUR_BAD", 6*time.Hour); got != 6*time.Hour {
 		t.Errorf("unparseable → default, got %v", got)
+	}
+	if len(settingErrs) != 1 || !strings.Contains(settingErrs[0].err.Error(), "DC_TEST_DUR_BAD") {
+		t.Errorf("unparseable value not recorded: %v", settingErrs)
+	}
+}
+
+func TestEnvBool(t *testing.T) {
+	t.Cleanup(func() { settingErrs = nil })
+	for _, def := range []bool{true, false} {
+		if got := envBool("DC_TEST_BOOL_MISSING", def); got != def {
+			t.Errorf("missing → default %v, got %v", def, got)
+		}
+	}
+	for v, want := range map[string]bool{
+		"1": true, "true": true, "TRUE": true, "yes": true, "On": true,
+		"0": false, "false": false, "False": false, "no": false, "OFF": false,
+	} {
+		t.Setenv("DC_TEST_BOOL", v)
+		// The opposite default, so a value that fell back would show.
+		if got := envBool("DC_TEST_BOOL", !want); got != want {
+			t.Errorf("%q → %v, want %v", v, got, want)
+		}
+	}
+	if len(settingErrs) != 0 {
+		t.Fatalf("errors for valid input: %v", settingErrs)
+	}
+	t.Setenv("DC_TEST_BOOL", "disabled")
+	if got := envBool("DC_TEST_BOOL", true); got != true {
+		t.Errorf("unparseable → default, got %v", got)
+	}
+	if len(settingErrs) != 1 || !strings.Contains(settingErrs[0].err.Error(), "DC_TEST_BOOL") {
+		t.Errorf("unparseable value not recorded: %v", settingErrs)
+	}
+}
+
+// loadWith runs Load with only the given environment (plus a temp data dir)
+// and no config file unless env names one in DC_CONFIG.
+func loadWith(t *testing.T, env map[string]string, args ...string) (Config, error) {
+	t.Helper()
+	oldArgs, oldFS := os.Args, flag.CommandLine
+	t.Cleanup(func() { os.Args, flag.CommandLine = oldArgs, oldFS })
+	flag.CommandLine = flag.NewFlagSet("dockercmd", flag.ContinueOnError)
+	os.Args = append([]string{"dockercmd"}, args...)
+	t.Setenv("DC_DATA_DIR", t.TempDir())
+	t.Setenv("DC_CONFIG", filepath.Join(t.TempDir(), "none.conf"))
+	for k, v := range env {
+		t.Setenv(k, v)
+	}
+	if _, ok := env["DC_CONFIG"]; !ok {
+		// An explicit DC_CONFIG must exist; point at an empty one.
+		if err := os.WriteFile(os.Getenv("DC_CONFIG"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return Load()
+}
+
+// A setting that doesn't parse used to fall back to its default without a
+// word. For the on/off switches that default is often "on": DC_SELF_UPDATE=false
+// left self-update enabled. Each must now stop startup and name the setting.
+func TestLoadRejectsUnparseableSettings(t *testing.T) {
+	for key, v := range map[string]string{
+		"DC_DEV":                  "yes please",
+		"DC_UPDATE_CHECK":         "disabled",
+		"DC_SELF_UPDATE":          "never",
+		"DC_MCP_ENABLED":          "enable",
+		"DC_PROXY_ENABLED":        "2",
+		"DC_PPROF":                "y",
+		"DC_PORT":                 "84a0",
+		"DC_REDIS_DB":             "first",
+		"DC_METRICS_RETENTION":    "1d",
+		"DC_METRICS_INTERVAL":     "15",
+		"DC_DEPLOY_SILENCE_GRACE": "soon",
+		"DC_FORWARDED_PREFIX":     "nope",
+	} {
+		t.Run(key, func(t *testing.T) {
+			_, err := loadWith(t, map[string]string{key: v})
+			if err == nil || !strings.Contains(err.Error(), key) {
+				t.Errorf("%s=%q: want an error naming it, got %v", key, v, err)
+			}
+		})
+	}
+}
+
+// A flag on the command line wins over the environment and the config file, so
+// a bad value it overrides never applies and must not stop startup. Every typed
+// setting that has a flag is listed, for both lower layers.
+func TestLoadFlagOverridesUnparseableSetting(t *testing.T) {
+	cases := []struct {
+		key, bad, flag string
+		check          func(Config) bool
+	}{
+		{"DC_PORT", "bad", "--port=18470", func(c Config) bool { return strings.HasSuffix(c.Addr, ":18470") }},
+		{"DC_PORT", "bad", "-p=18470", func(c Config) bool { return strings.HasSuffix(c.Addr, ":18470") }},
+		{"DC_DEV", "maybe", "-dev=false", func(c Config) bool { return !c.Dev }},
+		{"DC_UPDATE_CHECK", "maybe", "-update-check=false", func(c Config) bool { return !c.UpdateCheck }},
+		{"DC_SELF_UPDATE", "maybe", "-self-update=false", func(c Config) bool { return !c.SelfUpdate }},
+		{"DC_MCP_ENABLED", "maybe", "-mcp-enabled", func(c Config) bool { return c.MCPEnabled }},
+		{"DC_PROXY_ENABLED", "maybe", "-proxy-enabled", func(c Config) bool { return c.ProxyEnabled }},
+		{"DC_PPROF", "maybe", "-pprof", func(c Config) bool { return c.PProf }},
+		{"DC_FORWARDED_PREFIX", "maybe", "-forwarded-prefix=false", func(c Config) bool { return !c.ForwardedPrefix }},
+		{"DC_METRICS_RETENTION", "1d", "-metrics-retention=24h", func(c Config) bool { return c.MetricsRetention == 24*time.Hour }},
+		{"DC_METRICS_INTERVAL", "15", "-metrics-interval=30s", func(c Config) bool { return c.MetricsInterval == 30*time.Second }},
+		{"DC_DEPLOY_SILENCE_GRACE", "soon", "-deploy-silence-grace=1m", func(c Config) bool { return c.DeploySilenceGrace == time.Minute }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.key+" env "+tc.flag, func(t *testing.T) {
+			c, err := loadWith(t, map[string]string{tc.key: tc.bad}, tc.flag)
+			if err != nil || !tc.check(c) {
+				t.Errorf("%s=%q with %s: err %v, flag value not applied", tc.key, tc.bad, tc.flag, err)
+			}
+		})
+		t.Run(tc.key+" file "+tc.flag, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "commander.conf")
+			if err := os.WriteFile(path, []byte(tc.key+"="+tc.bad+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			c, err := loadWith(t, map[string]string{"DC_CONFIG": path}, tc.flag)
+			if err != nil || !tc.check(c) {
+				t.Errorf("%s=%q in the file with %s: err %v, flag value not applied", tc.key, tc.bad, tc.flag, err)
+			}
+		})
+	}
+	// A flag overrides only its own setting: another bad one still fails.
+	if _, err := loadWith(t, map[string]string{"DC_PORT": "bad", "DC_SELF_UPDATE": "maybe"}, "--port=18470"); err == nil ||
+		!strings.Contains(err.Error(), "DC_SELF_UPDATE") || strings.Contains(err.Error(), "DC_PORT") {
+		t.Errorf("want only DC_SELF_UPDATE reported, got %v", err)
+	}
+}
+
+// Every typed setting that has a flag must be defined through boolFlag,
+// intFlag or durationFlag, or the override above silently stops working for
+// it. DC_REDIS_DB is the one typed setting without a flag.
+func TestTypedSettingsWithFlagsAreTracked(t *testing.T) {
+	bad := map[string]string{}
+	for _, k := range []string{"DC_DEV", "DC_UPDATE_CHECK", "DC_SELF_UPDATE", "DC_MCP_ENABLED", "DC_PROXY_ENABLED", "DC_PPROF", "DC_FORWARDED_PREFIX"} {
+		bad[k] = "maybe"
+	}
+	for _, k := range []string{"DC_PORT", "DC_REDIS_DB"} {
+		bad[k] = "x"
+	}
+	for _, k := range []string{"DC_METRICS_RETENTION", "DC_METRICS_INTERVAL", "DC_DEPLOY_SILENCE_GRACE"} {
+		bad[k] = "x"
+	}
+	if _, err := loadWith(t, bad); err == nil {
+		t.Fatal("want an error")
+	}
+	tracked := map[string]bool{}
+	for _, k := range flagKeys {
+		tracked[k] = true
+	}
+	for _, e := range settingErrs {
+		if !tracked[e.key] && e.key != "DC_REDIS_DB" {
+			t.Errorf("%s is parsed but no flag is recorded as overriding it", e.key)
+		}
+	}
+	if len(settingErrs) != len(bad) {
+		t.Errorf("parsed %d typed settings, the test lists %d", len(settingErrs), len(bad))
+	}
+}
+
+// Every bad setting is reported at once, not one per restart.
+func TestLoadReportsAllUnparseableSettings(t *testing.T) {
+	_, err := loadWith(t, map[string]string{"DC_SELF_UPDATE": "nope", "DC_METRICS_RETENTION": "1d"})
+	if err == nil || !strings.Contains(err.Error(), "DC_SELF_UPDATE") || !strings.Contains(err.Error(), "DC_METRICS_RETENTION") {
+		t.Errorf("want both settings named, got %v", err)
+	}
+}
+
+func TestLoadBoolSpellings(t *testing.T) {
+	c, err := loadWith(t, map[string]string{"DC_SELF_UPDATE": "false", "DC_UPDATE_CHECK": "off", "DC_MCP_ENABLED": "true", "DC_PPROF": "yes"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.SelfUpdate || c.UpdateCheck || !c.MCPEnabled || !c.PProf {
+		t.Errorf("self-update %v, update check %v, MCP %v, pprof %v; want off, off, on, on",
+			c.SelfUpdate, c.UpdateCheck, c.MCPEnabled, c.PProf)
+	}
+}
+
+func TestLoadACMEDirectoryURL(t *testing.T) {
+	c, err := loadWith(t, map[string]string{"DC_ACME_DIRECTORY_URL": "https://acme-staging-v02.api.letsencrypt.org/directory"})
+	if err != nil || c.ACMEDirectoryURL == "" {
+		t.Fatalf("staging directory: %v", err)
+	}
+	for _, v := range []string{"http://acme.example/directory", "acme.example/directory", "https:///directory", "https://[::1"} {
+		t.Run(v, func(t *testing.T) {
+			if _, err := loadWith(t, map[string]string{"DC_ACME_DIRECTORY_URL": v}); err == nil || !strings.Contains(err.Error(), "-acme-directory-url") {
+				t.Errorf("%q: want a startup error, got %v", v, err)
+			}
+		})
+	}
+}
+
+// A misspelt key in the config file is reported, not silently ignored. Keys
+// without the DC_ prefix belong to whatever else reads the file.
+func TestLoadWarnsAboutUnreadFileKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "commander.conf")
+	body := "DC_SELFUPDATE=0\nDC_PORT=9000\nDOCKER_HOST=unix:///run/docker.sock\nDC_MCP_ENABLED 1\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := loadWith(t, map[string]string{"DC_CONFIG": path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		path + ":4: not KEY=VALUE, ignored",
+		path + ": unknown setting DC_SELFUPDATE is ignored",
+	}
+	if !slices.Equal(c.Warnings, want) {
+		t.Errorf("warnings = %q, want %q", c.Warnings, want)
+	}
+	if !strings.HasSuffix(c.Addr, ":9000") {
+		t.Errorf("DC_PORT from the file not applied: %s", c.Addr)
 	}
 }
 
@@ -570,12 +800,16 @@ func TestLoadProxyDisabledByDefault(t *testing.T) {
 }
 
 func TestLoadProxyEnabledFromEnvAndFlag(t *testing.T) {
-	// Only "1" enables it — the same convention as DC_MCP_ENABLED.
+	// The same on/off spellings as every switch; one that isn't among them
+	// fails startup (TestLoadRejectsUnparseableSettings).
 	if c := loadProxyConfig(t, map[string]string{"DC_DATA_DIR": t.TempDir(), "DC_PROXY_ENABLED": "1"}); !c.ProxyEnabled {
 		t.Error("DC_PROXY_ENABLED=1 should enable the proxy")
 	}
-	if c := loadProxyConfig(t, map[string]string{"DC_DATA_DIR": t.TempDir(), "DC_PROXY_ENABLED": "true"}); c.ProxyEnabled {
-		t.Error(`DC_PROXY_ENABLED=true is not "1" and must not enable the proxy`)
+	if c := loadProxyConfig(t, map[string]string{"DC_DATA_DIR": t.TempDir(), "DC_PROXY_ENABLED": "true"}); !c.ProxyEnabled {
+		t.Error("DC_PROXY_ENABLED=true should enable the proxy")
+	}
+	if c := loadProxyConfig(t, map[string]string{"DC_DATA_DIR": t.TempDir(), "DC_PROXY_ENABLED": "0"}); c.ProxyEnabled {
+		t.Error("DC_PROXY_ENABLED=0 must leave the proxy off")
 	}
 	if c := loadProxyConfig(t, map[string]string{"DC_DATA_DIR": t.TempDir()}, "-proxy-enabled"); !c.ProxyEnabled {
 		t.Error("-proxy-enabled should enable the proxy")
