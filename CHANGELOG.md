@@ -33,6 +33,9 @@ All notable changes to Docker Commander are documented here. The format follows
   See [Deployment](docs/deployment.md#configuration).
 - An unknown `DC_…` key in the config file (usually a typo) and a line that isn't
   `KEY=VALUE` are logged as warnings at startup.
+- Routine Go, npm and GitHub Actions dependency updates (minor/patch, plus
+  `happy-dom` 21 for the frontend tests). `@codemirror/language` is now a direct
+  dependency at 6.13, which `@codemirror/legacy-modes` 6.5.5 requires.
 
 ### Security
 
