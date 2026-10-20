@@ -69,7 +69,7 @@ every key, and `dockercmd --help` every flag. The key ones:
 | `DC_PROXY_ENABLED` | (off) | enable the embedded **per-container reverse proxy** for `domain_mappings` (local-host projects only; requires `DC_ACME_DOMAINS`) — see [Projects → Domains](projects.md#domains) |
 | `DC_PROXY_ACME_CACHE_DIR` | `<data-dir>/proxy-acme` | cache dir for the proxy's own ACME certificate/account state, kept separate from `DC_ACME_CACHE_DIR` |
 | `DC_MCP_ENABLED` | (off) | enable the remote **MCP** server for AI tools (off by default; serve behind HTTPS) — see [MCP](mcp.md) |
-| `DC_MCP_PUBLIC_URL` | (unset) | externally reachable base URL (`https://host`) — required for the MCP **OAuth** flow (bearer tokens work without it) |
+| `DC_MCP_PUBLIC_URL` | (unset) | externally reachable base URL (`https://host`, or `https://host/path` [under a path](#serving-under-a-path)) — required for the MCP **OAuth** flow (bearer tokens work without it) |
 | `DC_DATA_DIR` | OS config dir | SQLite DB + signing/encryption keys |
 | `DC_METRICS_TOKEN` | (open) | token guarding `/metrics`, sent as a Bearer header or `?token=` |
 | `DC_REDIS_ADDR` | (memory) | Redis for metric history; empty keeps the in-memory ring buffer |
@@ -85,10 +85,14 @@ every key, and `dockercmd --help` every flag. The key ones:
 | `DC_DEPLOY_SILENCE_GRACE` | `3m` | silence alert delivery for a project this long after a successful deploy; `0` disables — see [Alerts](alerts.md) |
 | `DC_DEV` | (off) | development mode: serves the API only (no embedded UI; run the Vite dev server) and allows cross-origin requests from the dev server. Not for production |
 
-**On/off values.** `DC_DEV`, `DC_MCP_ENABLED`, `DC_PROXY_ENABLED` and `DC_PPROF` are on
-only for exactly `1`; `true` or `yes` leaves them off. `DC_UPDATE_CHECK` and
-`DC_SELF_UPDATE` are off only for exactly `0`. A port, number or duration that doesn't
-parse (e.g. `DC_METRICS_RETENTION=1d`) silently falls back to the default.
+**Values are checked at startup.** On/off settings take `1`/`0`, `true`/`false`,
+`yes`/`no` or `on`/`off`, in any case. Durations use Go's units (`90s`, `15m`,
+`24h`); there is no unit for days, so write `168h` for a week. A value that doesn't
+parse (`DC_SELF_UPDATE=never`, `DC_METRICS_RETENTION=1d`, `DC_PORT=84a0`) stops the
+server with an error that names the setting, unless a command-line flag overrides it
+(`--port=8470`). A `DC_…` key in the config file that
+Docker Commander doesn't know, usually a typo, and a line that isn't `KEY=VALUE` are
+logged as warnings at startup.
 
 The Docker connection honours `DOCKER_HOST` / `DOCKER_CERT_PATH`.
 
@@ -419,10 +423,72 @@ location / {
 The **localhost 2FA exemption doesn't apply to a proxied request**: a proxy can't
 vouch that someone is at the machine. A request counts as proxied when its peer is
 listed in `DC_TRUSTED_PROXIES`, or when it carries any forwarding header
-(`Forwarded`, `X-Forwarded-For`/`-Host`/`-Proto`/`-Server`, `X-Real-Ip`, `Via`),
+(`Forwarded`, `X-Forwarded-For`/`-Host`/`-Proto`/`-Server`/`-Prefix`, `X-Real-Ip`, `Via`),
 even an empty one. A local proxy that is not listed and adds none of those headers
 makes every client look local, so behind a proxy set `DC_TRUSTED_PROXIES` or turn
 the exemption off. See [Settings](settings.md).
+
+#### Serving under a path
+
+When you can't give Docker Commander its own (sub)domain, publish it under a path
+of an existing host, e.g. `https://example.com/dockercmd/`. Tell it the prefix
+with `X-Forwarded-Prefix`:
+
+```nginx
+location /dockercmd/ {
+    proxy_pass http://127.0.0.1:8470/;   # trailing slash: nginx strips /dockercmd
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Prefix /dockercmd;
+}
+```
+
+- The proxy may strip the prefix (`proxy_pass …/;`) or pass the path as it is
+  (`proxy_pass http://127.0.0.1:8470;`). Either works.
+- The page, its assets, the API and WebSockets all stay under the prefix. The
+  session cookie is scoped to it (`Path=/dockercmd/`), so other apps on the same
+  host don't receive it.
+- A proxy that can't add the header: set `DC_BASE_PATH=/dockercmd` instead. The
+  header, when present, wins.
+- The header is honoured from any peer, not just `DC_TRUSTED_PROXIES`. Only a plain
+  path (`/a/b`, letters, digits and `-._~`) is accepted; anything else is ignored
+  as if absent. A client can at most change the links in its own response. To
+  ignore the header entirely, set `DC_FORWARDED_PREFIX=0`.
+- The MCP server lives under the prefix too (`https://example.com/dockercmd/mcp`),
+  and **bearer tokens** work there. See below for OAuth connectors.
+
+**OAuth connectors under a path.** Set `DC_MCP_PUBLIC_URL` to the URL with the
+path: `DC_MCP_PUBLIC_URL=https://example.com/dockercmd`. Clients look up the
+OAuth metadata at the **root** of the host, with the path inserted after
+`/.well-known/…` (RFC 8414, RFC 9728). Route those two paths to Docker Commander
+too, next to the `location /dockercmd/` block:
+
+```nginx
+location = /.well-known/oauth-authorization-server/dockercmd {
+    proxy_pass http://127.0.0.1:8470;    # no trailing slash: the path stays as it is
+}
+location = /.well-known/oauth-protected-resource/dockercmd/mcp {
+    proxy_pass http://127.0.0.1:8470;
+}
+```
+
+If you can't add locations at the root of the host, it can still work without
+them. The last URL MCP clients try is OpenID Connect discovery under the path
+(`/dockercmd/.well-known/openid-configuration`), and Docker Commander answers it.
+Docker Commander doesn't issue OpenID Connect ID tokens. The document only
+carries the fields OIDC requires. Two conditions apply:
+
+- The root of the host must answer `404` for the root paths above. A site that
+  answers every path with `200` and its own page makes the client stop there.
+- Not every client tries the OIDC URL. If a connector still fails, add the root
+  locations.
+
+`DC_MCP_PUBLIC_URL` must be an `http(s)` URL with a host. Its path may contain only
+letters, digits and `-._~`, with no query or fragment. Anything else fails startup.
 
 ## Self-update
 

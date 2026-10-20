@@ -6,6 +6,10 @@ import react from "@vitejs/plugin-react";
 // in both dev and the embedded production build.
 export default defineConfig({
   plugins: [react()],
+  // Relative asset URLs: the server writes a <base href> naming the path
+  // prefix the UI is served under (DC_BASE_PATH / X-Forwarded-Prefix), and
+  // the assets resolve against it at any route depth.
+  base: "./",
   build: {
     outDir: "dist",
     emptyOutDir: true,

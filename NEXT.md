@@ -404,13 +404,6 @@ the security property alone, independent of the NAT-traversal convenience.
   over WS or a webhook, for people who want lines to land somewhere other
   than reading the `.log` file by hand (the plain per-view download already
   ships). Bigger scope than the download button was, so it stayed separate.
-- **Sub-path / base-path deployment** — run Docker Commander itself under a
-  path prefix behind a reverse proxy (`https://host/dockercmd/`), not just
-  on its own (sub)domain. Three independent asks for this shape across
-  Arcane, Dockge (a `trustProxy`-style setting) and Portainer (whose own
-  locale JSON loading breaks under a path prefix — a concrete failure mode
-  to test for, not just a routing nicety). Touches the frontend's asset/API
-  base path and cookie path, not just a config flag.
 - **Archive/hide inactive stacks and projects** from the main list — filed
   independently twice against Portainer. Archiving only pulls its weight if
   there's also a way back: an archive view and a restore action, not just a
@@ -518,7 +511,7 @@ in the [CHANGELOG](CHANGELOG.md). The ranked candidates, in descending priority
 22. Monorepo-aware mapping (depends on #14)
 23. Multi-instance federation
 24. Smaller well-scoped items (bulk-action per-host RBAC, log bookmarks/forwarding,
-    sub-path deployment, archive/hide stacks, Slack/Teams/Discord notifications,
+    archive/hide stacks, Slack/Teams/Discord notifications,
     host maintenance mode, standalone compose visualizer)
 25. Parameterized user templates / per-instance mount isolation / remote template catalog
 26. Backlog: Docker Swarm support

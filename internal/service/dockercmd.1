@@ -158,14 +158,15 @@ Directory to cache the ACME certificate/account state (default:
 .TP
 .BI \-acme-directory-url " url"
 Override the ACME directory URL (default: Let's Encrypt production) \(em e.g.
-its staging directory. Not a local Pebble instance, which this server cannot
-obtain a certificate through.
+its staging directory. Must be an https URL. Not a local Pebble instance, which
+this server cannot obtain a certificate through.
 .TP
 .B \-mcp-enabled
 Enable the remote MCP server + OAuth endpoints (off by default; requires HTTPS).
 .TP
 .BI \-mcp-public-url " url"
-Externally reachable base URL (https://host[:port]) for the MCP OAuth flow.
+Externally reachable base URL (https://host[:port][/path]) for the MCP OAuth
+flow. Under a path, the path is the OAuth issuer's; it must be a plain path.
 .TP
 .B \-proxy-enabled
 Enable the embedded per-container reverse proxy for domain_mappings (off by
@@ -214,6 +215,20 @@ to disable.
 Comma-separated reverse-proxy IPs/CIDRs whose
 .B X-Forwarded-For
 is trusted (empty = trust none; use the real peer).
+.TP
+.BI \-base-path " path"
+URL path prefix the UI is published under behind a reverse proxy, e.g.
+.I /dockercmd
+(empty = the root). Requests are accepted with or without it.
+.TP
+.BI \-forwarded-prefix
+Honour the
+.B X-Forwarded-Prefix
+request header as the path prefix, overriding
+.BR \-base-path .
+On by default; set
+.B DC_FORWARDED_PREFIX=0
+to ignore the header.
 .SH ENVIRONMENT
 The
 .B DC_*
@@ -245,7 +260,9 @@ variables mirror the options above:
 .BR DC_PROXY_ENABLED ,
 .BR DC_PROXY_ACME_CACHE_DIR ,
 .BR DC_DEPLOY_SILENCE_GRACE ,
-.BR DC_TRUSTED_PROXIES .
+.BR DC_TRUSTED_PROXIES ,
+.BR DC_BASE_PATH ,
+.BR DC_FORWARDED_PREFIX .
 .B DC_REDIS_DB
 has no flag, and
 .B \-session-ttl

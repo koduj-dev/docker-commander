@@ -792,14 +792,26 @@ export interface LogLine {
   timestamp?: string;
 }
 
+// What the API shows of a webhook. The URL's path and query and the header
+// values are its credentials, so they never come back; the host is enough to
+// tell webhooks apart.
 export interface Webhook {
   id: number;
+  name: string;
+  method: string;
+  host: string;
+  headerNames: string[];
+  hasBodyTemplate: boolean;
+  createdAt: string;
+}
+
+// What creating a webhook sends (admins only).
+export interface WebhookInput {
   name: string;
   url: string;
   method: string;
   headers: Record<string, string>;
   bodyTemplate: string;
-  createdAt: string;
 }
 
 export type AlertType = "state" | "resource" | "log" | "restart" | "network";

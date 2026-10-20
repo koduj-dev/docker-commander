@@ -3,8 +3,10 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -14,16 +16,49 @@ import (
 
 // ---- Webhooks ---------------------------------------------------------------
 
+// webhookView is what the API shows of a webhook: enough to recognise it and
+// pick it for a rule, nothing that authenticates to it. The URL's path and query
+// and the header values are where tokens live, and the list is readable by every
+// holder of the alerts section, the read-only Viewer role included. Nobody gets
+// them back, admins neither: a webhook can't be edited, only replaced, and the
+// recovery bundle (admin, opt-in secrets) is the one place that carries them.
+type webhookView struct {
+	ID              int64     `json:"id"`
+	Name            string    `json:"name"`
+	Method          string    `json:"method"`
+	Host            string    `json:"host"`
+	HeaderNames     []string  `json:"headerNames"`
+	HasBodyTemplate bool      `json:"hasBodyTemplate"`
+	CreatedAt       time.Time `json:"createdAt"`
+}
+
+func newWebhookView(wh store.Webhook) webhookView {
+	names := make([]string, 0, len(wh.Headers))
+	for k := range wh.Headers {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	method := wh.Method
+	if method == "" {
+		method = http.MethodPost
+	}
+	return webhookView{
+		ID: wh.ID, Name: wh.Name, Method: method, Host: store.WebhookHost(wh.URL),
+		HeaderNames: names, HasBodyTemplate: wh.BodyTemplate != "", CreatedAt: wh.CreatedAt,
+	}
+}
+
 func (s *Server) handleListWebhooks(w http.ResponseWriter, r *http.Request) {
 	hooks, err := s.store.ListWebhooks(r.Context())
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not list webhooks")
 		return
 	}
-	if hooks == nil {
-		hooks = []store.Webhook{}
+	views := make([]webhookView, 0, len(hooks))
+	for _, h := range hooks {
+		views = append(views, newWebhookView(h))
 	}
-	writeJSON(w, http.StatusOK, hooks)
+	writeJSON(w, http.StatusOK, views)
 }
 
 func (s *Server) handleCreateWebhook(w http.ResponseWriter, r *http.Request) {
@@ -41,7 +76,9 @@ func (s *Server) handleCreateWebhook(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "could not create webhook")
 		return
 	}
-	s.audit(r, "webhook.create", wh.Name, wh.URL)
+	// The host only: the audit log is readable by the audit section, and the
+	// rest of the URL is the credential.
+	s.audit(r, "webhook.create", wh.Name, store.WebhookHost(wh.URL))
 	writeJSON(w, http.StatusOK, map[string]int64{"id": id})
 }
 

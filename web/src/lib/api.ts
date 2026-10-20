@@ -1,6 +1,8 @@
 // Thin typed wrapper over fetch. The session lives in an httpOnly cookie, so we
 // just send credentials and never touch the token in JS.
 
+import { withBase, wsUrl } from "./base";
+
 import type {
   Session,
   AlertEvent,
@@ -68,6 +70,7 @@ import type {
   Topology,
   User,
   Webhook,
+  WebhookInput,
   NetworkStats,
   AuthFactor,
   RecoveryManifestSummary,
@@ -91,13 +94,18 @@ export class ApiError extends Error {
   }
 }
 
+// apiFetch is fetch for a root-relative API path, under the UI's path prefix.
+function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  return fetch(withBase(path), init);
+}
+
 async function req<T>(
   method: string,
   path: string,
   body?: unknown,
   extraHeaders?: Record<string, string>,
 ): Promise<T> {
-  const res = await fetch(path, {
+  const res = await apiFetch(path, {
     method,
     credentials: "same-origin",
     headers: {
@@ -154,7 +162,7 @@ function ldapPayload(c: LdapConfig & { bindPassword?: string }) {
 
 // uploadTar POSTs a tar file as a raw body (not JSON) for load/import.
 async function uploadTar(path: string, file: File): Promise<{ ok: boolean; error?: string; output?: string }> {
-  const res = await fetch(path, {
+  const res = await apiFetch(path, {
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/x-tar" },
@@ -177,7 +185,7 @@ function recoveryPassphraseHeader(passphrase: string): Record<string, string> {
 // uploadRecoveryBundle POSTs a bundle file as a raw body, the same shape as
 // uploadTar/importProject, plus the passphrase header.
 async function uploadRecoveryBundle<T>(path: string, file: File, passphrase: string): Promise<T> {
-  const res = await fetch(path, {
+  const res = await apiFetch(path, {
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/octet-stream", ...recoveryPassphraseHeader(passphrase) },
@@ -385,8 +393,7 @@ export const api = {
   // first message, not the URL: up to 200 full container ids would not
   // reliably fit in the request line/headers many reverse proxies cap.
   bulkPullImagesUrl: () => {
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    return `${proto}://${location.host}/api/containers/bulk-pull${hostParam("?")}`;
+    return wsUrl(`/api/containers/bulk-pull${hostParam("?")}`);
   },
   containerDiff: (id: string) => req<DiffEntry[]>("GET", `/api/containers/${id}/diff${hostParam()}`),
   containerTop: (id: string) => req<TopResult>("GET", `/api/containers/${id}/top${hostParam()}`),
@@ -402,13 +409,13 @@ export const api = {
     const params = new URLSearchParams({ path: p });
     const h = getHostId();
     if (h != null) params.set("host", String(h));
-    return `/api/containers/${id}/files/download?${params.toString()}`;
+    return withBase(`/api/containers/${id}/files/download?${params.toString()}`);
   },
   uploadFile: async (id: string, destDir: string, file: File) => {
     const params = new URLSearchParams({ path: destDir, name: file.name });
     const h = getHostId();
     if (h != null) params.set("host", String(h));
-    const res = await fetch(`/api/containers/${id}/files/upload?${params.toString()}`, {
+    const res = await apiFetch(`/api/containers/${id}/files/upload?${params.toString()}`, {
       method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/octet-stream" }, body: file,
     });
     const text = await res.text();
@@ -432,7 +439,7 @@ export const api = {
     const params = new URLSearchParams({ path: destDir, name: file.name });
     const h = getHostId();
     if (h != null) params.set("host", String(h));
-    const res = await fetch(`/api/containers/${id}/files/extract?${params.toString()}`, {
+    const res = await apiFetch(`/api/containers/${id}/files/extract?${params.toString()}`, {
       method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/octet-stream" }, body: file,
     });
     const text = await res.text();
@@ -452,13 +459,13 @@ export const api = {
     const params = new URLSearchParams({ path: p });
     const h = getHostId();
     if (h != null) params.set("host", String(h));
-    return `/api/volumes/${encodeURIComponent(name)}/files/download?${params.toString()}`;
+    return withBase(`/api/volumes/${encodeURIComponent(name)}/files/download?${params.toString()}`);
   },
   uploadVolumeFile: async (name: string, destDir: string, file: File) => {
     const params = new URLSearchParams({ path: destDir, name: file.name });
     const h = getHostId();
     if (h != null) params.set("host", String(h));
-    const res = await fetch(`/api/volumes/${encodeURIComponent(name)}/files/upload?${params.toString()}`, {
+    const res = await apiFetch(`/api/volumes/${encodeURIComponent(name)}/files/upload?${params.toString()}`, {
       method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/octet-stream" }, body: file,
     });
     const text = await res.text();
@@ -482,7 +489,7 @@ export const api = {
     const params = new URLSearchParams({ path: destDir, name: file.name });
     const h = getHostId();
     if (h != null) params.set("host", String(h));
-    const res = await fetch(`/api/volumes/${encodeURIComponent(name)}/files/extract?${params.toString()}`, {
+    const res = await apiFetch(`/api/volumes/${encodeURIComponent(name)}/files/extract?${params.toString()}`, {
       method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/octet-stream" }, body: file,
     });
     const text = await res.text();
@@ -539,7 +546,7 @@ export const api = {
     },
   ) => req<{ id: number; slug: string }>("POST", "/api/projects", { name, ...opts }),
   importProject: async (name: string, file: File) => {
-    const res = await fetch(`/api/projects/import?name=${encodeURIComponent(name)}`, {
+    const res = await apiFetch(`/api/projects/import?name=${encodeURIComponent(name)}`, {
       method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/zip" }, body: file,
     });
     const text = await res.text();
@@ -571,9 +578,9 @@ export const api = {
   // Raw (octet-stream) upload + download for binary/data files that can't go
   // through the JSON text editor. Projects are local-only — no host param.
   projectFileDownloadUrl: (id: number, name: string) =>
-    `/api/projects/${id}/files/raw?path=${encodeURIComponent(name)}`,
+    withBase(`/api/projects/${id}/files/raw?path=${encodeURIComponent(name)}`),
   uploadProjectFile: async (id: number, name: string, file: File) => {
-    const res = await fetch(`/api/projects/${id}/files/raw?path=${encodeURIComponent(name)}`, {
+    const res = await apiFetch(`/api/projects/${id}/files/raw?path=${encodeURIComponent(name)}`, {
       method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/octet-stream" }, body: file,
     });
     const text = await res.text();
@@ -665,7 +672,7 @@ export const api = {
     req<{ ok: boolean; output?: string; error?: string }>("POST", `/api/projects/${id}/down`),
   restartProject: (id: number) =>
     req<{ ok: boolean; output?: string; error?: string }>("POST", `/api/projects/${id}/restart`),
-  projectDownloadUrl: (id: number) => `/api/projects/${id}/download`,
+  projectDownloadUrl: (id: number) => withBase(`/api/projects/${id}/download`),
 
   // Project templates (presets) + builder service blocks — builtin + user merged.
   projectTemplates: () => req<ProjectTemplateMeta[]>("GET", "/api/project-templates"),
@@ -699,9 +706,9 @@ export const api = {
   deleteTemplateFile: (id: string, path: string) =>
     req<{ ok: boolean }>("DELETE", `/api/project-templates/${id}/files?path=${encodeURIComponent(path)}`),
   templateFileDownloadUrl: (id: string, name: string) =>
-    `/api/project-templates/${id}/files/raw?path=${encodeURIComponent(name)}`,
+    withBase(`/api/project-templates/${id}/files/raw?path=${encodeURIComponent(name)}`),
   uploadTemplateFile: async (id: string, name: string, file: File) => {
-    const res = await fetch(`/api/project-templates/${id}/files/raw?path=${encodeURIComponent(name)}`, {
+    const res = await apiFetch(`/api/project-templates/${id}/files/raw?path=${encodeURIComponent(name)}`, {
       method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/octet-stream" }, body: file,
     });
     const text = await res.text();
@@ -709,7 +716,7 @@ export const api = {
     if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText);
     return data as { ok: boolean; error?: string; bytes?: number };
   },
-  templateDownloadUrl: (id: string) => `/api/project-templates/${id}/download`,
+  templateDownloadUrl: (id: string) => withBase(`/api/project-templates/${id}/download`),
   createServiceBlock: (b: { name: string; description: string; service: string; serviceYaml: string; volumes: string[] }) =>
     req<{ id: number; slug: string }>("POST", "/api/service-blocks", b),
   serviceBlock: (id: string) => req<ServiceBlockDetail>("GET", `/api/service-blocks/${id}`),
@@ -791,9 +798,9 @@ export const api = {
     const p = new URLSearchParams({ ref });
     const h = getHostId();
     if (h != null) p.set("host", String(h));
-    return `/api/images/save?${p.toString()}`;
+    return withBase(`/api/images/save?${p.toString()}`);
   },
-  exportContainerUrl: (id: string) => `/api/containers/${id}/export${hostParam()}`,
+  exportContainerUrl: (id: string) => withBase(`/api/containers/${id}/export${hostParam()}`),
   loadImage: (file: File) => uploadTar(`/api/images/load${hostParam()}`, file),
   importImage: (ref: string, file: File) => {
     const p = new URLSearchParams({ ref });
@@ -893,7 +900,7 @@ export const api = {
 
   // Alerting
   webhooks: () => req<Webhook[]>("GET", "/api/webhooks"),
-  createWebhook: (w: Partial<Webhook>) => req<{ id: number }>("POST", "/api/webhooks", w),
+  createWebhook: (w: WebhookInput) => req<{ id: number }>("POST", "/api/webhooks", w),
   deleteWebhook: (id: number) => req<{ ok: boolean }>("DELETE", `/api/webhooks/${id}`),
 
   alertRules: () => req<AlertRule[]>("GET", "/api/alert-rules"),
@@ -916,7 +923,7 @@ export const api = {
   toggleAlertRule: (id: number, enabled: boolean) =>
     req<{ ok: boolean }>("PATCH", `/api/alert-rules/${id}`, { enabled }),
   deleteAlertRule: (id: number) => req<{ ok: boolean }>("DELETE", `/api/alert-rules/${id}`),
-  exportAlertRulesUrl: () => "/api/alert-rules/export",
+  exportAlertRulesUrl: () => withBase("/api/alert-rules/export"),
   importAlertRules: (bundle: unknown) =>
     req<{ imported: number; warnings: string[] }>("POST", "/api/alert-rules/import", bundle),
 
@@ -983,7 +990,7 @@ export const api = {
   // in a header, kept out of query strings/access logs — and is only ever
   // held in memory on this page, never persisted.
   exportRecoveryBundle: async (opts: { includeSecrets: boolean; projectIds?: number[] }, passphrase: string): Promise<Blob> => {
-    const res = await fetch("/api/recovery/export", {
+    const res = await apiFetch("/api/recovery/export", {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json", ...recoveryPassphraseHeader(passphrase) },

@@ -5,9 +5,57 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"strings"
 	"time"
 )
+
+// WebhookHost returns only the host of a webhook URL, the part that is safe to
+// show or record: a webhook URL routinely carries its credential in the path or
+// query (Slack, Discord, ntfy tokens). A value that is already a bare host is
+// returned as is; anything else that has no host yields "".
+func WebhookHost(raw string) string {
+	if u, err := url.Parse(raw); err == nil && u.Host != "" {
+		return u.Host
+	}
+	if raw != "" && !strings.ContainsAny(raw, "/?#@") {
+		return raw
+	}
+	return ""
+}
+
+// redactWebhookAudit strips webhook URLs from audit records written before
+// webhook.create recorded only the host. Those rows hold the full URL, token
+// included, in a log that every holder of the audit section can read. It runs on
+// every start and touches only rows that still need it.
+func (s *Store) redactWebhookAudit(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, detail FROM audit_log WHERE action = 'webhook.create' AND detail != ''`)
+	if err != nil {
+		return err
+	}
+	fix := map[int64]string{}
+	for rows.Next() {
+		var id int64
+		var detail string
+		if err := rows.Scan(&id, &detail); err != nil {
+			rows.Close()
+			return err
+		}
+		if h := WebhookHost(detail); h != detail {
+			fix[id] = h
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for id, h := range fix {
+		if _, err := s.db.ExecContext(ctx, `UPDATE audit_log SET detail = ? WHERE id = ?`, h, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // Webhook is a generic HTTP destination an alert rule can fire to. body_template
 // is a Go text/template rendered against the alert event.

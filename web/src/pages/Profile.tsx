@@ -13,6 +13,7 @@ import { useAuth } from "../auth/AuthContext";
 import { useDialogs } from "../components/Dialog";
 import { describeClient, sinceLabel, type ClientKind } from "../lib/userAgent";
 import { createPasskey, describePasskeyError, passkeysSupported } from "../lib/webauthn";
+import { withBase } from "../lib/base";
 
 type Tab = "account" | "security" | "access" | "prefs";
 
@@ -459,7 +460,7 @@ function SessionsCard() {
       // the browser somewhere that expects that rather than letting the page
       // discover it as a random failure.
       if (s.current) {
-        window.location.assign("/");
+        window.location.assign(withBase("/"));
         return;
       }
       load();

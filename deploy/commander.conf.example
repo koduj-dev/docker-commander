@@ -47,6 +47,13 @@ DC_PORT=8470
 # never set it to a range you don't control. See docs/deployment.md.
 # DC_TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12
 
+# Publishing under a path on a shared host (https://example.com/dockercmd/):
+# the proxy's X-Forwarded-Prefix header is honoured by default, so usually
+# nothing needs setting here. DC_BASE_PATH is for a proxy that can't send it;
+# DC_FORWARDED_PREFIX=0 ignores the header. See docs/deployment.md.
+# DC_BASE_PATH=/dockercmd
+# DC_FORWARDED_PREFIX=0
+
 # Optional: remote MCP server for AI tools (Claude Code/Desktop, Cursor).
 # Off by default; serve it behind HTTPS. DC_MCP_PUBLIC_URL is the externally
 # reachable base URL and is required only for the OAuth flow (bearer API tokens,

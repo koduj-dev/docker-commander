@@ -6,10 +6,11 @@ import { DialogProvider } from "./components/Dialog";
 import { ToastProvider } from "./components/Toasts";
 import App from "./App";
 import "./index.css";
+import { BASE_PATH } from "./lib/base";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <BrowserRouter>
+    <BrowserRouter basename={BASE_PATH || undefined}>
       <AuthProvider>
         <DialogProvider>
           <ToastProvider>

@@ -10,6 +10,7 @@ import { Tabs } from "../components/Tabs";
 import { EmptyState, Spinner } from "../components/ui";
 import { useDialogs } from "../components/Dialog";
 import { SECTION_LABELS, sectionLabel } from "../lib/sections";
+import { BASE_PATH } from "../lib/base";
 
 // Canonical section list (keys mirror the backend's store.Sections). Admins may
 // scope a token to any of these; other users only to their own sections.
@@ -274,7 +275,7 @@ function SecretModal({ secret, onClose }: { secret: string; onClose: () => void 
   const copy = async (text: string) => {
     try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* ignore */ }
   };
-  const cmd = `claude mcp add --transport http docker-commander ${window.location.origin}/mcp --header "Authorization: Bearer ${secret}"`;
+  const cmd = `claude mcp add --transport http docker-commander ${window.location.origin}${BASE_PATH}/mcp --header "Authorization: Bearer ${secret}"`;
 
   return (
     <div className="fixed inset-0 bg-black/60 grid place-items-center z-50 p-4" onClick={(e) => { e.stopPropagation(); onClose(); }}>

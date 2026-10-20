@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Hammer, X, Loader2, CheckCircle2 } from "lucide-react";
 import clsx from "clsx";
 import { getHostId } from "../lib/host";
+import { withBase } from "../lib/base";
 
 // BuildModal uploads a tar build context and streams the daemon's build output
 // (newline-delimited JSON) live into a log pane.
@@ -40,7 +41,7 @@ export function BuildModal({ onClose, onDone }: { onClose: () => void; onDone: (
     if (h != null) params.set("host", String(h));
 
     try {
-      const res = await fetch(`/api/images/build?${params.toString()}`, {
+      const res = await fetch(withBase(`/api/images/build?${params.toString()}`), {
         method: "POST",
         headers: { "Content-Type": "application/x-tar" },
         credentials: "same-origin",

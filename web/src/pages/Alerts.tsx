@@ -983,8 +983,12 @@ function RuleForm({ hooks, existing, onDone }: { hooks: Webhook[]; existing?: Al
 
 // ---- Webhooks ---------------------------------------------------------------
 
-function Webhooks() {
+export function Webhooks() {
   const [hooks, setHooks] = useState<Webhook[] | null>(null);
+  // Adding and deleting a webhook is an admin's call: it decides where the
+  // server sends requests. Everyone with alerts can still pick one for a rule.
+  const { user: me } = useAuth();
+  const isAdmin = me?.role === "admin";
   const [showForm, setShowForm] = useState(false);
 
   const load = useCallback(() => {
@@ -1008,11 +1012,15 @@ function Webhooks() {
           Fire alerts to any HTTP endpoint (Slack, Discord, Grafana, n8n…). Also scrape{" "}
           <code className="text-accent">/metrics</code> with Prometheus for Grafana dashboards.
         </p>
-        <button className="btn-primary shrink-0" onClick={() => setShowForm((v) => !v)}>
-          <Plus className="h-4 w-4" /> New webhook
-        </button>
+        {isAdmin ? (
+          <button className="btn-primary shrink-0" onClick={() => setShowForm((v) => !v)}>
+            <Plus className="h-4 w-4" /> New webhook
+          </button>
+        ) : (
+          <span className="text-xs text-muted shrink-0">Only an admin can add or remove webhooks.</span>
+        )}
       </div>
-      {showForm && <WebhookForm onDone={() => { setShowForm(false); load(); }} />}
+      {isAdmin && showForm && <WebhookForm onDone={() => { setShowForm(false); load(); }} />}
       {hooks.length === 0 ? (
         <EmptyState title="No webhooks" hint="Add a destination to receive alert notifications." />
       ) : (
@@ -1023,11 +1031,20 @@ function Webhooks() {
                 <div className="flex items-center gap-2 font-medium">
                   <WebhookIcon className="h-4 w-4 text-accent" /> {h.name}
                 </div>
-                <div className="text-xs text-muted font-mono mt-1 break-all">{h.method} {h.url}</div>
+                <div className="text-xs text-muted font-mono mt-1 break-all">{h.method} {h.host}</div>
+                {(h.headerNames.length > 0 || h.hasBodyTemplate) && (
+                  <div className="text-xs text-muted mt-1">
+                    {h.headerNames.length > 0 && <>Headers: <span className="font-mono">{h.headerNames.join(", ")}</span></>}
+                    {h.headerNames.length > 0 && h.hasBodyTemplate && " · "}
+                    {h.hasBodyTemplate && "Custom body"}
+                  </div>
+                )}
               </div>
-              <button className="btn-ghost px-2 py-1 text-danger" title="Delete" onClick={() => del(h)}>
-                <Trash2 className="h-4 w-4" />
-              </button>
+              {isAdmin && (
+                <button className="btn-ghost px-2 py-1 text-danger" title="Delete" onClick={() => del(h)}>
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              )}
             </div>
           ))}
         </div>

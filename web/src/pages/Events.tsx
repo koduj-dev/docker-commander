@@ -4,6 +4,7 @@ import clsx from "clsx";
 import type { EventMsg } from "../lib/types";
 import { hostParam } from "../lib/host";
 import { PageHeader } from "../layout/Shell";
+import { wsUrl } from "../lib/base";
 
 const MAX_EVENTS = 2000;
 
@@ -47,8 +48,7 @@ export function Events() {
     let closedByUnmount = false;
 
     const open = () => {
-      const proto = location.protocol === "https:" ? "wss" : "ws";
-      ws = new WebSocket(`${proto}://${location.host}/api/events${hostParam("?")}`);
+      ws = new WebSocket(wsUrl(`/api/events${hostParam("?")}`));
       ws.onopen = () => setConnected(true);
       ws.onmessage = (ev) => {
         try {

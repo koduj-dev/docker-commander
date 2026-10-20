@@ -4,6 +4,55 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [1.7.2] — 2026-10-20
+
+### Added
+
+- **Serving under a path.** Docker Commander can now run behind a reverse proxy at
+  a path of a shared host, e.g. `https://example.com/dockercmd/`, not only at the
+  root of its own (sub)domain. It reads the prefix from `X-Forwarded-Prefix`
+  (`DC_FORWARDED_PREFIX=0` ignores the header) or from the new `DC_BASE_PATH`.
+  The page, assets, API and WebSockets all stay under it.
+- **OAuth MCP connectors under a path.** Set `DC_MCP_PUBLIC_URL` to the URL with
+  the path. Docker Commander then answers OAuth discovery at the root of the host,
+  where clients look for it (`/.well-known/oauth-authorization-server/dockercmd`);
+  the proxy has to route those paths to it. A proxy that forwards only the path
+  still works with clients that try OpenID Connect discovery under it.
+  `DC_MCP_PUBLIC_URL` is now checked at startup: it has to be an `http(s)` URL
+  with a host and a plain path, or the server won't start.
+  See [Deployment](docs/deployment.md#serving-under-a-path).
+
+### Changed
+
+- **Settings are checked at startup.** A value that doesn't parse used to fall
+  back to its default without a word, so `DC_SELF_UPDATE=false` left self-update
+  enabled and `DC_METRICS_RETENTION=1d` kept 6 hours. Such a value now stops the
+  server with an error naming the setting, unless a command-line flag overrides
+  it. On/off settings accept `1`/`0`, `true`/`false`, `yes`/`no` and `on`/`off`.
+  `DC_ACME_DIRECTORY_URL` must be an https URL.
+  See [Deployment](docs/deployment.md#configuration).
+- An unknown `DC_…` key in the config file (usually a typo) and a line that isn't
+  `KEY=VALUE` are logged as warnings at startup.
+- Routine Go, npm and GitHub Actions dependency updates (minor/patch, plus
+  `happy-dom` 21 for the frontend tests). `@codemirror/language` is now a direct
+  dependency at 6.13, which `@codemirror/legacy-modes` 6.5.5 requires.
+
+### Security
+
+- **Webhook URLs and header values are no longer shown.** The webhook list
+  returned them to anyone who could read Alerts, the built-in Viewer role
+  included, and `webhook.create` wrote the URL into the audit log. The list now
+  shows the name, method, host and header names only. Audit records keep just
+  the host, and records written before are cleaned up on the next start.
+- **Only an admin can add or delete a webhook.** A webhook picks where the server
+  sends requests, and the first bytes of the reply are stored on the alert. With
+  write access to Alerts it could reach internal services and read their answers.
+  Anyone with Alerts can still attach an existing webhook to a rule.
+- Behind a path prefix, the session cookie is scoped to that path, so other apps
+  on the same host don't receive it.
+- A request carrying `X-Forwarded-Prefix` counts as proxied, so it no longer
+  qualifies for the localhost 2FA exemption.
+
 ## [1.7.1] — 2026-10-09
 
 We switched on GitHub's CodeQL code scanning only after 1.7.0 had shipped, so its
@@ -2571,6 +2620,7 @@ Initial release: a single CGO-free Go binary with an embedded React UI.
   per-section permissions / read-only, feature flags, audit log, optional LDAP;
   secrets encrypted at rest.
 
+[1.7.2]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.7.2
 [1.7.1]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.7.1
 [1.7.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.7.0
 [1.6.6]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.6

@@ -2,6 +2,7 @@
 // many subscriptions (stats/logs), each identified by a caller-chosen subId.
 
 import { hostIdOrZero } from "./host";
+import { wsUrl } from "./base";
 
 type Frame =
   | { type: "stats"; subId: string; data: unknown }
@@ -21,8 +22,7 @@ export class LiveSocket {
 
   connect() {
     this.closedByUser = false;
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${proto}://${location.host}/api/ws`);
+    const ws = new WebSocket(wsUrl("/api/ws"));
     this.ws = ws;
 
     ws.onopen = () => {
