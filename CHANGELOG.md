@@ -4,7 +4,7 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.7.2] — 2026-10-20
 
 ### Added
 
@@ -48,7 +48,6 @@ All notable changes to Docker Commander are documented here. The format follows
   sends requests, and the first bytes of the reply are stored on the alert. With
   write access to Alerts it could reach internal services and read their answers.
   Anyone with Alerts can still attach an existing webhook to a rule.
-
 - Behind a path prefix, the session cookie is scoped to that path, so other apps
   on the same host don't receive it.
 - A request carrying `X-Forwarded-Prefix` counts as proxied, so it no longer
@@ -2621,6 +2620,7 @@ Initial release: a single CGO-free Go binary with an embedded React UI.
   per-section permissions / read-only, feature flags, audit log, optional LDAP;
   secrets encrypted at rest.
 
+[1.7.2]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.7.2
 [1.7.1]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.7.1
 [1.7.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.7.0
 [1.6.6]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.6.6
