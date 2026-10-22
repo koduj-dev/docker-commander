@@ -35,6 +35,10 @@ All notable changes to Docker Commander are documented here. The format follows
   `open …: permission denied`. The error now says which user can't reach the file
   and why, and [Deployment](docs/deployment.md#linux-systemd) shows how to
   allow the directory. A failed save explains `ProtectSystem=strict` the same way.
+- **Stacks offered an editor for a compose file it couldn't save.** A file the
+  server can read but not write back (another owner, or `ProtectSystem=strict`)
+  now opens clearly marked **Read-only**, with the reason, and without Save.
+  Redeploy stays available.
 
 ## [1.7.2] — 2026-10-20
 

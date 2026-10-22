@@ -520,7 +520,7 @@ export const api = {
   stackAction: (project: string, action: string) =>
     req<{ ok: boolean; error?: string }>("POST", `/api/stacks/${encodeURIComponent(project)}/${action}${hostParam()}`),
   stackCompose: (project: string) =>
-    req<{ ok: boolean; path?: string; content?: string; error?: string; editable?: boolean; readOnlyReason?: string }>(
+    req<{ ok: boolean; path?: string; content?: string; error?: string; editable?: boolean; redeployable?: boolean; readOnlyReason?: string }>(
       "GET",
       `/api/stacks/${encodeURIComponent(project)}/compose${hostParam()}`,
     ),

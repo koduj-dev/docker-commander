@@ -138,3 +138,42 @@ func TestWriteLocalUnwritableExplains(t *testing.T) {
 		t.Errorf("error %q carries no hint about the service user", err)
 	}
 }
+
+// TestWritableReason: a compose file this process can read but not replace opens
+// read-only with the reason, instead of offering an editor whose Save can only
+// fail.
+func TestWritableReason(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes into a 0555 directory anyway")
+	}
+	writable := t.TempDir()
+	locked := t.TempDir()
+	if err := os.Chmod(locked, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	cases := []struct {
+		name, kind, path, want string
+	}{
+		{name: "writable directory", kind: "local", path: filepath.Join(writable, "compose.yml")},
+		{name: "read-only directory", kind: "local", path: filepath.Join(locked, "compose.yml"), want: "Docker Commander runs as"},
+		{name: "empty kind is local", kind: "", path: filepath.Join(locked, "compose.yml"), want: "permission denied"},
+		{name: "ssh hosts aren't probed", kind: "ssh", path: filepath.Join(locked, "compose.yml")},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tg := &stackTarget{host: &store.Host{Kind: c.kind}, path: c.path}
+			got := tg.writableReason()
+			if c.want == "" {
+				if got != "" {
+					t.Fatalf("expected writable, got %q", got)
+				}
+				return
+			}
+			if !strings.Contains(got, c.want) {
+				t.Fatalf("reason %q does not mention %q", got, c.want)
+			}
+		})
+	}
+}

@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -35,6 +36,19 @@ import (
 // worse than making none.
 const dcBackupSuffix = ".dc-prev"
 
+// StackComposeView is a stack's compose file plus what the app may do with it.
+type StackComposeView struct {
+	Path    string
+	Content string
+	// Editable is whether Save can succeed. Redeployable is whether Redeploy can:
+	// it needs the same reachable, contained file but no write access, so a file
+	// the app can only read still redeploys.
+	Editable     bool
+	Redeployable bool
+	// ReadOnlyReason says why Editable is false, for the UI to show.
+	ReadOnlyReason string
+}
+
 // StackCompose reads a stack's compose file and reports whether the app can write
 // it back, with the reason when it can't — the UI needs the reason to explain why
 // an editor isn't on offer rather than silently omitting it.
@@ -42,13 +56,42 @@ const dcBackupSuffix = ".dc-prev"
 // Read and editability come from one call because resolving a stack costs a
 // container list plus a file read, and over SSH that is a network round trip
 // each. Answering both from a single resolution keeps opening the viewer to one.
-func (m *Manager) StackCompose(ctx context.Context, hostID int64, project string) (path, content string, editable bool, reason string, err error) {
+func (m *Manager) StackCompose(ctx context.Context, hostID int64, project string) (StackComposeView, error) {
 	t, err := m.resolveStack(ctx, hostID, project)
 	if err != nil {
-		return "", "", false, "", err
+		return StackComposeView{}, err
 	}
-	reason = t.editableReason()
-	return t.path, t.content, reason == "", reason, nil
+	reason := t.editableReason()
+	redeployable := reason == ""
+	if reason == "" {
+		reason = t.writableReason()
+	}
+	return StackComposeView{
+		Path: t.path, Content: t.content,
+		Editable: reason == "", Redeployable: redeployable, ReadOnlyReason: reason,
+	}, nil
+}
+
+// writableReason returns why the app can't write the compose file back, or "".
+//
+// Save replaces the file by renaming a sibling temp file over it, so what it
+// needs is write access to the directory. Asking up front turns a Save that
+// could only fail (a file owned by someone else, or ProtectSystem=strict making
+// the tree read-only for the service) into a read-only viewer that says why.
+//
+// Only the local host is checked: on an ssh host it would cost another round
+// trip, and a failed save there already reports the remote error.
+func (t *stackTarget) writableReason() string {
+	switch t.host.Kind {
+	case "local", "":
+	default:
+		return ""
+	}
+	dir := filepath.Dir(t.path)
+	if err := dirWritable(dir); err != nil {
+		return localAccessHint(&fs.PathError{Op: "write", Path: dir, Err: err}).Error()
+	}
+	return ""
 }
 
 // editableReason returns why this stack can't be edited in place, or "".
@@ -87,6 +130,9 @@ func (m *Manager) StackWriteComposeFile(ctx context.Context, hostID int64, proje
 		return "", err
 	}
 	if reason := t.editableReason(); reason != "" {
+		return "", fmt.Errorf("%s", reason)
+	}
+	if reason := t.writableReason(); reason != "" {
 		return "", fmt.Errorf("%s", reason)
 	}
 	if strings.TrimSpace(content) == "" {

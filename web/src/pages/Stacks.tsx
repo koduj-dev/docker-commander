@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Blocks, Play, Square, RotateCw, Trash2, Loader2, FileText, X, ChevronRight, Search, Copy, Check, Download, FolderGit2, Save } from "lucide-react";
+import { Blocks, Play, Square, RotateCw, Trash2, Loader2, FileText, X, ChevronRight, Search, Copy, Check, Download, FolderGit2, Save, Lock } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import type { Stack, StackContainer } from "../lib/types";
@@ -17,10 +17,13 @@ type ComposeView = {
   path?: string;
   content?: string;
   error?: string;
-  // editable is false for a TCP host (no filesystem to reach) or a stack with no
-  // working_dir label; readOnlyReason says which, so the modal can explain itself
-  // instead of just hiding the editor.
+  // editable is false for a TCP host (no filesystem to reach), a stack with no
+  // working_dir label, or a file the server can't write; readOnlyReason says
+  // which, so the modal can explain itself instead of just hiding the editor.
+  // redeployable stays true for a file that is only unwritable: compose up
+  // reads it, so Redeploy still works.
   editable?: boolean;
+  redeployable?: boolean;
   readOnlyReason?: string;
 };
 type Hover = { c: StackContainer; x: number; y: number };
@@ -131,7 +134,7 @@ export function Stacks() {
     try {
       const r = await api.stackCompose(project);
       if (r.ok) {
-        setCompose({ project, loading: false, path: r.path, content: r.content, editable: r.editable, readOnlyReason: r.readOnlyReason });
+        setCompose({ project, loading: false, path: r.path, content: r.content, editable: r.editable, redeployable: r.redeployable, readOnlyReason: r.readOnlyReason });
         setDraft(r.content ?? "");
       } else {
         setCompose({ project, loading: false, error: r.error });
@@ -398,6 +401,11 @@ export function Stacks() {
                 <div className="font-medium">{compose.project}</div>
                 {compose.path && <div className="text-xs text-muted font-mono break-all">{compose.path}</div>}
               </div>
+              {!compose.loading && !compose.error && !compose.editable && (
+                <span className="shrink-0 flex items-center gap-1 text-[10px] uppercase tracking-wide text-warn border border-warn/40 rounded px-1.5 py-0.5">
+                  <Lock className="h-3 w-3" /> Read-only
+                </span>
+              )}
               <div className="flex items-center gap-1 ml-auto">
                 {!compose.loading && !compose.error && (
                   <>
@@ -424,8 +432,14 @@ export function Stacks() {
                 />
               ) : (
                 <>
+                  <p role="status" className="flex items-start gap-2 text-xs text-warn bg-warn/10 border border-warn/30 rounded-md p-2">
+                    <Lock className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                    <span>
+                      <strong>Read-only, can't be saved from here.</strong>
+                      {compose.readOnlyReason && <> {compose.readOnlyReason}</>}
+                    </span>
+                  </p>
                   <pre className="text-xs font-mono whitespace-pre overflow-x-auto bg-panel2 rounded-lg p-3">{compose.content}</pre>
-                  {compose.readOnlyReason && <p className="text-xs text-muted">Read-only — {compose.readOnlyReason}</p>}
                 </>
               )}
               {deployOut && (
@@ -439,23 +453,29 @@ export function Stacks() {
                 </pre>
               )}
             </div>
-            {!compose.loading && !compose.error && compose.editable && (
+            {!compose.loading && !compose.error && (compose.editable || compose.redeployable) && (
               <div className="flex items-center gap-2 p-4 border-t border-border">
-                <span className="text-xs text-muted">
-                  {dirty ? "Unsaved changes" : "Saved"}
-                  {" · edits apply to the file on the host"}
-                </span>
+                {compose.editable && (
+                  <span className="text-xs text-muted">
+                    {dirty ? "Unsaved changes" : "Saved"}
+                    {" · edits apply to the file on the host"}
+                  </span>
+                )}
                 <div className="flex items-center gap-2 ml-auto">
-                  <button
-                    className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40"
-                    disabled={!dirty || saving}
-                    onClick={() => setDraft(compose.content ?? "")}
-                  >
-                    Revert
-                  </button>
-                  <button className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40" disabled={!dirty || saving} onClick={saveCompose}>
-                    {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save
-                  </button>
+                  {compose.editable && (
+                    <>
+                      <button
+                        className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40"
+                        disabled={!dirty || saving}
+                        onClick={() => setDraft(compose.content ?? "")}
+                      >
+                        Revert
+                      </button>
+                      <button className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40" disabled={!dirty || saving} onClick={saveCompose}>
+                        {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save
+                      </button>
+                    </>
+                  )}
                   <button className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40" disabled={deploying || saving} onClick={redeploy}>
                     {deploying ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCw className="h-4 w-4" />} Redeploy
                   </button>
