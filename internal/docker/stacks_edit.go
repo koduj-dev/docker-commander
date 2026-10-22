@@ -170,7 +170,7 @@ func (t *stackTarget) writeLocal(ctx context.Context, content string) error {
 	// and (b) compose resolves the same relative paths while validating it.
 	tmp, err := os.CreateTemp(dir, ".dc-compose-*.yml")
 	if err != nil {
-		return fmt.Errorf("cannot write next to the compose file (%s): %w", dir, err)
+		return fmt.Errorf("cannot write next to the compose file (%s): %w", dir, localAccessHint(err))
 	}
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName) // no-op once renamed away

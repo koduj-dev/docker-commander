@@ -29,6 +29,12 @@ All notable changes to Docker Commander are documented here. The format follows
   Auto-apply stays off there instead of failing every six hours. A packaged binary
   is never replaced by self-update, from the web UI or `--self-upgrade`; the
   package manager owns it. See [Deployment](docs/deployment.md#self-update).
+- **Compose file of a stack under `/home` couldn't be opened, with no hint why.**
+  Under the systemd unit the server runs as `dockercmd` with `ProtectHome=true`,
+  so a stack started from a home directory failed with a bare
+  `open …: permission denied`. The error now says which user can't reach the file
+  and why, and [Deployment](docs/deployment.md#linux-systemd) shows how to
+  allow the directory. A failed save explains `ProtectSystem=strict` the same way.
 
 ## [1.7.2] — 2026-10-20
 

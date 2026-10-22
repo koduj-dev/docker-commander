@@ -241,6 +241,26 @@ sudo systemctl daemon-reload && sudo systemctl enable --now dockercmd
 > outside the protected home). In your own unit, add that line, then
 > `systemctl daemon-reload && systemctl restart dockercmd`.
 
+> **Stacks says it can't open a compose file under `/home` or `/root`?** The same
+> hardening hides home directories from the service, and `ProtectSystem=strict`
+> makes everything outside `/var/lib/dockercmd` read-only, so a stack started
+> from your home can't be viewed or saved. The simplest fix is to keep stacks
+> outside home, e.g. in `/srv/<app>` owned by a group `dockercmd` is in. To keep
+> them where they are, allow the directory with a drop-in
+> (`sudo systemctl edit dockercmd`):
+>
+> ```ini
+> [Service]
+> ProtectHome=read-only
+> ReadWritePaths=/home/filip/apps
+> ```
+>
+> Then give the service user access, e.g.
+> `sudo setfacl -m u:dockercmd:x /home/filip` and
+> `sudo setfacl -R -m u:dockercmd:rwX,d:u:dockercmd:rwX /home/filip/apps`, and
+> restart. `ProtectHome=read-only` makes every home directory readable to the
+> service as far as file permissions allow, so it is weaker than the default.
+
 ### macOS (launchd)
 
 `install-macos.sh` installs a **per-user LaunchAgent**

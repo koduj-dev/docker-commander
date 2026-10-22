@@ -57,6 +57,10 @@ containers run, yellow when only some run or one is unhealthy, red when stopped.
 
 The compose file is read directly for the local daemon and over **SSH** for SSH
 hosts. On plain-TCP hosts it can't be opened at all; the viewer says why.
+For the local daemon, the file is opened by the Docker Commander process, not by
+Docker, so it has to be readable by the user the server runs as. Under the
+shipped systemd unit that rules out `/home` and `/root`; see
+[Deployment → Linux (systemd)](deployment.md#linux-systemd).
 
 ## Editing and redeploying a CLI stack
 For a stack the app didn't create, the viewer is also an **editor**. **Save**
