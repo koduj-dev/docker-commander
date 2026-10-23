@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { FileSearch, Network as NetworkIcon, Trash2, X, Plus, Eraser, Loader2, Share2, List, Plug } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
+import { useDockerEventTick } from "../lib/dockerEvents";
 import { bytes } from "../lib/format";
 import type { NetworkSummary, Topology , NetworkStats} from "../lib/types";
 import { PageHeader } from "../layout/Shell";
@@ -41,7 +42,9 @@ export function Networks() {
     api.networks().then(setNets).catch(() => setNets([]));
     api.topology().then(setTopo).catch(() => setTopo(null));
   }, []);
-  useEffect(() => load(), [load]);
+  // Reload on Docker events, so changes made elsewhere (CLI, compose) show up.
+  const tick = useDockerEventTick();
+  useEffect(() => load(), [load, tick]);
 
   const controls = useListControls(nets ?? [], matchNetwork, { storageKey: "networks", statuses: NETWORK_STATUSES });
 

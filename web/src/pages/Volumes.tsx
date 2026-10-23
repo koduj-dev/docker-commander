@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Database, Trash2, Loader2, Eraser, FileSearch, Plus, Boxes, FolderOpen, X } from "lucide-react";
 import { api, fileApiForVolume } from "../lib/api";
+import { useDockerEventTick } from "../lib/dockerEvents";
 import type { BackupJob, VolumeSummary } from "../lib/types";
 import { relTime } from "../lib/format";
 import { getHostId } from "../lib/host";
@@ -70,7 +71,9 @@ export function Volumes() {
       })
       .catch(() => {});
   }, []);
-  useEffect(() => load(), [load]);
+  // Reload on Docker events, so changes made elsewhere (CLI, compose) show up.
+  const tick = useDockerEventTick();
+  useEffect(() => load(), [load, tick]);
 
   const controls = useListControls(vols ?? [], matchVolume, { storageKey: "volumes", statuses: VOLUME_STATUSES });
 

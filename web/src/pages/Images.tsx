@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, Trash2, Layers, Loader2, X, Boxes, Eraser, FileSearch, History, Upload, Hammer, HardDriveDownload, ShieldAlert, EyeOff, Eye, BellOff } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../lib/api";
+import { useDockerEventTick } from "../lib/dockerEvents";
 import type { HistoryEntry, ImageSummary, IgnoredCVE, PullProgress, ScanResult } from "../lib/types";
 import { hostParam } from "../lib/host";
 import { bytes, relTime, shortId } from "../lib/format";
@@ -49,7 +50,9 @@ export function Images() {
   const load = useCallback(() => {
     api.images().then(setImages).catch(() => setImages([]));
   }, []);
-  useEffect(() => load(), [load]);
+  // Reload on Docker events, so changes made elsewhere (CLI, compose) show up.
+  const tick = useDockerEventTick();
+  useEffect(() => load(), [load, tick]);
 
   const controls = useListControls(images ?? [], matchImage, { storageKey: "images", statuses: IMAGE_STATUSES });
 
