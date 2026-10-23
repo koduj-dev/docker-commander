@@ -43,6 +43,11 @@ type updateStatus struct {
 	// (DC_SELF_UPDATE) AND the running process can restart itself — i.e. whether
 	// the UI should offer the one-tap button.
 	SelfUpdate bool `json:"selfUpdate"`
+	// SelfUpdateBlocked explains why the in-app update is not offered although
+	// it is enabled: the binary comes from a package, or its directory isn't
+	// writable here. UpdateCommand is then how to update by hand instead.
+	SelfUpdateBlocked string `json:"selfUpdateBlocked,omitempty"`
+	UpdateCommand     string `json:"updateCommand,omitempty"`
 	// SelfUpdatePolicy is the admin's auto-apply opt-in, and LastAutoUpdate (nil
 	// unless one has ever happened) is what drives the one-time "you're now on
 	// vX.Y.Z" notice shown to every admin at next login.
@@ -65,7 +70,18 @@ type updateChecker struct {
 	ok     bool
 
 	applyMu sync.Mutex // serialises apply so two upgrades can't race
+
+	// precheck is selfupdate.Precheck (overridable in tests). Its answer only
+	// changes when someone reinstalls or edits the unit, so it is kept for
+	// precheckTTL rather than re-run on every banner load.
+	precheck   func() error
+	preMu      sync.Mutex
+	preErr     error
+	preAt      time.Time
+	preChecked bool
 }
+
+const precheckTTL = time.Minute
 
 func newUpdateChecker(current string, enabled, selfUpdate bool) *updateChecker {
 	return &updateChecker{
@@ -73,6 +89,34 @@ func newUpdateChecker(current string, enabled, selfUpdate bool) *updateChecker {
 		enabled:    enabled,
 		selfUpdate: selfUpdate,
 		httpc:      &http.Client{Timeout: updateTimeout},
+		precheck:   selfupdate.Precheck,
+	}
+}
+
+// blocked returns why an in-place install can't or mustn't run here (see
+// selfupdate.Precheck), or nil.
+func (u *updateChecker) blocked() error {
+	u.preMu.Lock()
+	defer u.preMu.Unlock()
+	if !u.preChecked || time.Since(u.preAt) >= precheckTTL {
+		u.preErr, u.preAt, u.preChecked = u.precheck(), time.Now(), true
+	}
+	return u.preErr
+}
+
+// blockedReason turns a precheck failure into the sentence the UI shows in
+// place of the button, plus the command that updates by hand.
+func blockedReason(err error) (reason, command string) {
+	var pkg *selfupdate.ErrPackageManaged
+	var nw *selfupdate.ErrNotWritable
+	switch {
+	case errors.As(err, &pkg):
+		return "Installed from a package, so the package manager updates it.", pkg.Command()
+	case errors.As(err, &nw):
+		return "The binary's directory (" + nw.Dir + ") isn't writable by the service, so it can't update " +
+			"itself. Update from a shell, then restart the service.", "sudo dockercmd --self-upgrade"
+	default:
+		return "The in-app update can't run here: " + err.Error(), ""
 	}
 }
 
@@ -191,6 +235,14 @@ func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 	// The one-tap button is offered only when self-update is allowed and the
 	// process can actually restart itself (wired by main; nil e.g. on Windows).
 	st.SelfUpdate = s.update.enabled && s.update.selfUpdate && s.onRestart != nil
+	// …and only when the install would actually go through. Offering a button
+	// that is bound to fail is worse than not offering it.
+	if st.SelfUpdate {
+		if err := s.update.blocked(); err != nil {
+			st.SelfUpdate = false
+			st.SelfUpdateBlocked, st.UpdateCommand = blockedReason(err)
+		}
+	}
 	st.SelfUpdatePolicy, _ = s.store.SelfUpdatePolicy(r.Context())
 	st.LastAutoUpdate, _ = s.store.LastAutoUpdate(r.Context())
 	writeJSON(w, http.StatusOK, st)

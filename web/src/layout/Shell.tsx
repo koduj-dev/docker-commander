@@ -385,6 +385,13 @@ function UpdateBanner({ admin }: { admin?: boolean }) {
         Docker Commander <span className="font-semibold">{st.latest}</span> is available
         <span className="text-muted"> — you're on {st.current}</span>
         {err && <span className="text-danger"> — {err}</span>}
+        {/* No button when the install can't run here; say how to update instead. */}
+        {!st.selfUpdate && st.selfUpdateBlocked && (
+          <span className="block text-xs text-muted mt-0.5">
+            {st.selfUpdateBlocked}
+            {st.updateCommand && <> Run: <code className="font-mono text-text bg-panel2 px-1 py-0.5 rounded select-all">{st.updateCommand}</code></>}
+          </span>
+        )}
       </span>
       <div className="flex items-center gap-2 ml-auto">
         {phase === "updating" && <span className="text-muted inline-flex items-center gap-1"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Downloading &amp; verifying…</span>}

@@ -73,11 +73,13 @@ func (s *Server) autoApply(ctx context.Context, applyFn func(context.Context, fu
 
 // autoApplyEnabled is the pure, network-free half of the decision: self-update
 // must be enabled, the process must be able to restart itself, and an admin
-// must have opted into the policy. (Whether an update actually exists, and
+// must have opted into the policy, and the install must be possible here at
+// all (not a packaged binary, directory writable — see selfupdate.Precheck).
+// (Whether an update actually exists, and
 // whether its granularity is within the chosen ceiling, is checked later by
 // applyFn against the release it actually resolves — see autoApply's doc.)
 func (s *Server) autoApplyEnabled(pol store.SelfUpdatePolicy) bool {
-	return s.update.enabled && s.update.selfUpdate && s.onRestart != nil && pol.Enabled
+	return s.update.enabled && s.update.selfUpdate && s.onRestart != nil && pol.Enabled && s.update.blocked() == nil
 }
 
 // granularityAllows reports whether delta ("major"/"minor"/"patch") is within

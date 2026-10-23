@@ -83,6 +83,19 @@ describe("SelfUpdatePolicyEditor", () => {
     expect(container.textContent).toContain("DC_SELF_UPDATE=0");
   });
 
+  it("says why when the install itself can't run here (packaged binary), with the manual command", async () => {
+    await renderEditor({
+      disabled: false,
+      selfUpdate: false,
+      selfUpdateBlocked: "Installed from a package, so the package manager updates it.",
+      updateCommand: "sudo apt update && sudo apt install --only-upgrade dockercmd",
+    });
+    expect(checkbox().disabled).toBe(true);
+    expect(container.textContent).toContain("Installed from a package");
+    expect(container.textContent).toContain("sudo apt update && sudo apt install --only-upgrade dockercmd");
+    expect(container.textContent).not.toContain("DC_SELF_UPDATE=0");
+  });
+
   it("never sends a save request while unavailable, even if a stale click slips through", async () => {
     await renderEditor({ disabled: false, selfUpdate: false });
     // The button is disabled, but assert the guard is in the logic too, not

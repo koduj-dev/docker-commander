@@ -4,6 +4,21 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **No "Update & restart" button that can't work.** On a .deb/.rpm install the
+  in-app update always failed with "read-only file system": the packaged unit only
+  makes `/usr/local/bin` writable, and the binary lives in `/usr/bin`. Docker
+  Commander now checks first, without writing anything. When the install can't run,
+  the banner still announces the release, but says how to update instead of
+  offering the button: the `apt`/`dnf` command for a package install,
+  `sudo dockercmd --self-upgrade` when the binary's directory isn't writable.
+  Auto-apply stays off there instead of failing every six hours. A packaged binary
+  is never replaced by self-update, from the web UI or `--self-upgrade`; the
+  package manager owns it. See [Deployment](docs/deployment.md#self-update).
+
 ## [1.7.2] — 2026-10-20
 
 ### Added

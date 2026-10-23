@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -81,6 +82,94 @@ func preflightWritable(dir string) error {
 	name := f.Name()
 	_ = f.Close()
 	_ = os.Remove(name)
+	return nil
+}
+
+// ErrPackageManaged is returned when the executable belongs to a .deb/.rpm
+// package. Replacing it in place would leave the package manager believing an
+// older version is installed (and fight it on the next upgrade), and making
+// /usr/bin writable for the service so the in-app path could do it would hand
+// the service every system binary. So it is never attempted, from the web UI
+// or the CLI: the package manager updates it instead.
+type ErrPackageManaged struct {
+	Exe     string
+	Manager string // "apt" or "dnf"
+}
+
+func (e *ErrPackageManaged) Error() string {
+	return fmt.Sprintf("%s is installed from a package; update it with %s", e.Exe, e.Command())
+}
+
+// Command is the package-manager command that updates dockercmd.
+func (e *ErrPackageManaged) Command() string {
+	if e.Manager == "dnf" {
+		return "sudo dnf upgrade dockercmd"
+	}
+	return "sudo apt update && sudo apt install --only-upgrade dockercmd"
+}
+
+// Where the packages put the binary and how to tell which manager owns it.
+// Overridable for tests.
+var (
+	dpkgFileList   = "/var/lib/dpkg/info/dockercmd.list"
+	rpmDBDirs      = []string{"/var/lib/rpm", "/usr/lib/sysimage/rpm"}
+	packageBinDirs = []string{"/usr/bin", "/usr/sbin"}
+)
+
+// packageManager names the package manager that owns exe, or "" for a binary
+// installed by hand (install script, release tarball, go install). dpkg lists
+// the files of each package, so a .deb install is recognised exactly. rpm keeps
+// that in a database there's no cheap way to read, so on an rpm system a binary
+// in /usr/bin — where only packages put it — counts as packaged.
+func packageManager(exe string) string {
+	if b, err := os.ReadFile(dpkgFileList); err == nil {
+		for _, line := range strings.Split(string(b), "\n") {
+			if strings.TrimSpace(line) == exe {
+				return "apt"
+			}
+		}
+	}
+	if !slices.Contains(packageBinDirs, filepath.Dir(exe)) {
+		return ""
+	}
+	for _, d := range rpmDBDirs {
+		if fi, err := os.Stat(d); err == nil && fi.IsDir() {
+			return "dnf"
+		}
+	}
+	return ""
+}
+
+// resolvedExecutable is the running binary's path with symlinks resolved — the
+// file the swap would actually replace.
+func resolvedExecutable() (string, error) {
+	exe, err := osExecutable()
+	if err != nil {
+		return "", err
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	return exe, nil
+}
+
+// Precheck reports why installing an update in place would fail or must not
+// be attempted, without downloading or writing anything: *ErrPackageManaged
+// for a packaged binary, *ErrNotWritable when the binary's directory can't be
+// written (e.g. systemd's ProtectSystem=strict without it in ReadWritePaths).
+// nil means an install may go ahead. The UI uses it to decide whether to offer
+// the in-app update at all, instead of offering one that is bound to fail.
+func Precheck() error {
+	exe, err := resolvedExecutable()
+	if err != nil {
+		return err
+	}
+	if m := packageManager(exe); m != "" {
+		return &ErrPackageManaged{Exe: exe, Manager: m}
+	}
+	if err := dirWritable(filepath.Dir(exe)); err != nil {
+		return &ErrNotWritable{Dir: filepath.Dir(exe), Err: err}
+	}
 	return nil
 }
 
@@ -189,12 +278,12 @@ func installRelease(ctx context.Context, current string, rel *ghRelease, w io.Wr
 		return Result{}, err
 	}
 
-	exe, err := osExecutable()
+	exe, err := resolvedExecutable()
 	if err != nil {
 		return Result{}, err
 	}
-	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = resolved
+	if m := packageManager(exe); m != "" {
+		return Result{}, &ErrPackageManaged{Exe: exe, Manager: m}
 	}
 	if err := preflightWritable(filepath.Dir(exe)); err != nil {
 		return Result{}, err
