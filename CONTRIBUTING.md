@@ -12,7 +12,10 @@ By participating you agree to follow our [Code of Conduct](CODE_OF_CONDUCT.md).
   [SECURITY.md](SECURITY.md).
 - **Improve docs** under [`docs/`](docs/) or the README.
 - **Send pull requests** — for anything non-trivial, please open an issue first
-  so we can agree on the approach.
+  so we can agree on the approach. **Every bug fix has a bug report**, even when
+  the bug was found and fixed in one go: open the issue (cause, steps to
+  reproduce, workaround) and put `Closes #N` in the PR. The issue closes when
+  the release that carries the fix reaches `main`.
 
 ## Project layout
 

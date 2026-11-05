@@ -38,9 +38,13 @@ body:
     attributes:
       label: How are you running it?
       options:
-        - Release binary
-        - systemd service
-        - Built from source
+        - .deb / .rpm package (APT / DNF)
+        - Docker image
+        - Homebrew
+        - Install script / release binary + systemd service
+        - Release binary (no service)
+        - Built from source / go install
+        - Not deployment-specific
         - Other (describe below)
     validations:
       required: true
@@ -72,3 +76,8 @@ body:
       label: Relevant logs
       description: Server logs (`journalctl -u dockercmd` / stderr) and any browser console errors.
       render: shell
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Workaround (if any)
+      description: Anything that gets around the problem until it's fixed.

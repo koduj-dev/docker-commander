@@ -1,6 +1,6 @@
 ---
 name: git-workflow
-description: MANDATORY GATE — run before creating any branch, and again before any push/tag/merge, in this repo. Two checkpoints (spelled out under "Gate" in this file): (1) before branching, check whether a `release/vX.Y.Z` branch exists — dev-cycle work bases off THAT, not `main`, so `main` only ever holds what's shipped; (2) before push/merge, verify the PR's base branch is actually correct, run the diff-appropriate checks, confirm CI is green (not just started), and confirm with the user. Also captures: commit subjects start with a bracketed action (`[add]`, `[fix]`, `[docs]`) and stay terse because they feed changelog generation, with NO Co-Authored-By / Claude trailer (and none in PR bodies either); PR bodies MUST follow .github/PULL_REQUEST_TEMPLATE.md; the gofmt gate runs AFTER git add; web/dist is committed whenever web/src changes (regenerate via `make ui`, never hand-merge it); CHANGELOG accumulates under [Unreleased] then becomes [x.y.z] + a link def at release; pushing a vX.Y.Z tag on main triggers release.yml; hotfixes and Dependabot are the two exceptions that base off `main` directly. Read it before touching git — every time, not just once per session.
+description: MANDATORY GATE — run before creating any branch, and again before any push/tag/merge, in this repo. Two checkpoints (spelled out under "Gate" in this file): (1) before branching, check whether a `release/vX.Y.Z` branch exists — dev-cycle work bases off THAT, not `main`, so `main` only ever holds what's shipped; (2) before push/merge, verify the PR's base branch is actually correct, run the diff-appropriate checks, confirm CI is green (not just started), and confirm with the user. Also captures: commit subjects start with a bracketed action (`[add]`, `[fix]`, `[docs]`) and stay terse because they feed changelog generation, with NO Co-Authored-By / Claude trailer (and none in PR bodies either); PR bodies MUST follow .github/PULL_REQUEST_TEMPLATE.md; the gofmt gate runs AFTER git add; web/dist is committed whenever web/src changes (regenerate via `make ui`, never hand-merge it); CHANGELOG accumulates under [Unreleased] then becomes [x.y.z] + a link def at release; pushing a vX.Y.Z tag on main triggers release.yml; hotfixes and Dependabot are the two exceptions that base off `main` directly; every bug fix — even one asked for in chat — is filed automatically as a meaningful GitHub bug report (template fields, cause, workaround) and the PR says `Closes #N`. Read it before touching git — every time, not just once per session.
 ---
 
 # Docker Commander — git & release conventions
@@ -120,6 +120,38 @@ just check out that branch.
 - **NO `Co-Authored-By` and NO "Generated with Claude Code" trailer** — not in
   commit messages and not in PR bodies. The maintainer keeps the history clean.
 - Body (optional) explains *what* and *why*, wrapped ~72 cols.
+
+## Every bug fix gets a GitHub issue
+
+The maintainer's rule: **every bug fix is recorded as a meaningful bug report in
+GitHub Issues**, including bugs the maintainer reports to you directly in chat.
+Someone who hits the same error searches issues, not PRs or the CHANGELOG, and
+the issue is the lasting record of why a fix was made.
+
+- **Open it automatically, without asking.** This is the one outward-facing step
+  that has standing approval. Do it once the bug is diagnosed (you know the
+  cause), before or while you branch. Pushing and opening the PR still need the
+  usual confirmation.
+- **Meaningful means a real bug report**, written in English and following
+  `.github/ISSUE_TEMPLATE/bug_report.yml` (label `bug`):
+  - **What happened**, with the exact error text, and what was expected.
+  - **Steps to reproduce.**
+  - **Version** and **how it's run** (package, systemd, image…), **host kind**.
+  - **Cause**, once known (file/line or mechanism, not a guess).
+  - **Workaround**, if there is one. A user may find it before the release.
+  - **Fix**: the branch or PR, and the release branch it targets.
+  Not a one-liner, and not a copy of the commit subject.
+- **Link both ways.** The PR body says `Closes #N` at the top of **Summary**.
+  GitHub closes issues only on a merge into the default branch, so the issue
+  stays open through `release/vX.Y.Z` and closes when the release reaches
+  `main`. That is the right moment, because that's when the fix ships.
+- **Security vulnerabilities never go into a public issue.** They go to a private
+  security advisory (see `SECURITY.md`).
+- **The one exception:** a defect in code that hasn't shipped yet, found while
+  its own PR is still open or the same release cycle is still running. No user
+  can hit it. Fix it in that PR and mention it there.
+- A broader follow-up (an audit, a "sweep the class" task) gets its own issue
+  with label `enhancement` and a checklist, linked from the bug.
 
 ## Pull requests
 
