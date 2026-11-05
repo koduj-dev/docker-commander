@@ -56,7 +56,9 @@ export function SelfUpdatePolicyEditor() {
           <span>
             {status.disabled
               ? "The update check itself is disabled on this server (DC_UPDATE_CHECK=0) — auto-apply can never run until it's turned back on."
-              : "Self-update isn't available on this server (DC_SELF_UPDATE=0, or a run mode that can't restart itself, e.g. Windows) — auto-apply can never run here."}
+              : status.selfUpdateBlocked
+                ? <>{status.selfUpdateBlocked} Auto-apply can't run here.{status.updateCommand && <> Run: <code className="font-mono select-all">{status.updateCommand}</code></>}</>
+                : "Self-update isn't available on this server (DC_SELF_UPDATE=0, or a run mode that can't restart itself, e.g. Windows) — auto-apply can never run here."}
           </span>
         </p>
       )}

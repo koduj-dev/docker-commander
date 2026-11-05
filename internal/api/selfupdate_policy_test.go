@@ -39,6 +39,7 @@ func TestGranularityAllows(t *testing.T) {
 func TestAutoApplyEnabled(t *testing.T) {
 	t.Run("all gates pass", func(t *testing.T) {
 		srv := &Server{update: newUpdateChecker("1.0.0", true, true)}
+		srv.update.precheck = func() error { return nil }
 		srv.OnRestart(func() {})
 		if !srv.autoApplyEnabled(store.SelfUpdatePolicy{Enabled: true, Granularity: "minor"}) {
 			t.Error("expected true when every gate passes")
@@ -62,6 +63,14 @@ func TestAutoApplyEnabled(t *testing.T) {
 		srv := &Server{update: newUpdateChecker("1.0.0", true, true)} // OnRestart never called
 		if srv.autoApplyEnabled(store.SelfUpdatePolicy{Enabled: true, Granularity: "minor"}) {
 			t.Error("must be false without a restart hook — auto-apply would swap the binary and never restart")
+		}
+	})
+	t.Run("install blocked here", func(t *testing.T) {
+		srv := &Server{update: newUpdateChecker("1.0.0", true, true)}
+		srv.update.precheck = func() error { return &selfupdate.ErrPackageManaged{Exe: "/usr/bin/dockercmd", Manager: "apt"} }
+		srv.OnRestart(func() {})
+		if srv.autoApplyEnabled(store.SelfUpdatePolicy{Enabled: true, Granularity: "minor"}) {
+			t.Error("must be false when the binary can't be replaced in place — it would only fail every 6 hours")
 		}
 	})
 	t.Run("policy disabled", func(t *testing.T) {
@@ -98,6 +107,7 @@ func newAutoApplyTestServer(t *testing.T) (*Server, *store.Store) {
 	}
 	t.Cleanup(func() { st.Close() })
 	srv := &Server{store: st, update: newUpdateChecker("1.0.0", true, true)}
+	srv.update.precheck = func() error { return nil }
 	srv.OnRestart(func() {})
 	return srv, st
 }
