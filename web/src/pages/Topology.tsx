@@ -7,6 +7,7 @@ import type { Topology as Topo } from "../lib/types";
 import { PageHeader } from "../layout/Shell";
 import { Spinner, EmptyState } from "../components/ui";
 import { getPref, setPref } from "../lib/prefs";
+import { useDockerEventTick } from "../lib/dockerEvents";
 import { TopoGraph, TopoList, topoStats, type TopoFilters } from "../components/TopoGraph";
 
 type TopoPrefs = { hideEmptyNetworks?: boolean; showStopped?: boolean; stack?: string; view?: "graph" | "list" };
@@ -43,9 +44,20 @@ export function Topology() {
   );
   const stats = useMemo(() => (topo ? topoStats(topo, effFilters) : { networks: 0, containers: 0 }), [topo, effFilters]);
 
+  // Re-read on every relevant Docker event. Keep the old object when nothing
+  // changed (a healthcheck or an unrelated image pull), so the graph is not
+  // re-laid out and nodes the user dragged stay where they are.
+  const tick = useDockerEventTick();
   useEffect(() => {
-    api.topology().then(setTopo).catch(() => setTopo({ networks: [], containers: [], links: [] }));
-  }, []);
+    let alive = true;
+    api
+      .topology()
+      .then((t) => alive && setTopo((prev) => (prev && JSON.stringify(prev) === JSON.stringify(t) ? prev : t)))
+      .catch(() => alive && setTopo((prev) => prev ?? { networks: [], containers: [], links: [] }));
+    return () => {
+      alive = false;
+    };
+  }, [tick]);
 
   const toggleFullscreen = () => {
     const el = wrapRef.current;

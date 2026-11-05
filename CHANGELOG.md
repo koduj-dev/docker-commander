@@ -4,6 +4,22 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Pages update when something changes outside them.** Topology, Images,
+  Volumes and Networks loaded once and then stayed as they were, so a container
+  started from a terminal or a compose deploy only showed up after a reload. They
+  now refresh on Docker events, like the dashboard already did, and Containers
+  refreshes on them too instead of waiting for its poll. Topology keeps the graph
+  as it is when nothing in it changed, so dragged nodes stay put.
+- **Live updates survive a restart.** When the Docker daemon or Docker Commander
+  restarted, the events stream ended and views stopped updating until a page
+  reload. It now reconnects (backing off up to 15 s) and refreshes the open view
+  once it is back, since events from the gap are lost. All views share one
+  connection instead of opening one each.
+
 ## [1.7.2] — 2026-10-20
 
 ### Added

@@ -10,6 +10,7 @@ import { useListControls, SearchBar, Pager, type StatusOption } from "../compone
 import { CreateContainerModal } from "../components/CreateContainerModal";
 import { useDialogs } from "../components/Dialog";
 import { LayerRow } from "./Images";
+import { useDockerEventTick } from "../lib/dockerEvents";
 
 const CONTAINER_STATUSES: StatusOption<ContainerSummary>[] = [
   { value: "all", label: "All states" },
@@ -486,11 +487,12 @@ function IconBtn({ children, onClick, title, danger }: { children: React.ReactNo
 export function Containers() {
   const [showCreate, setShowCreate] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const tick = useDockerEventTick();
   return (
     <>
       <PageHeader title="Containers" actions={<button className="btn-primary" onClick={() => setShowCreate(true)}><Plus className="h-4 w-4" /> Create container</button>} />
       <div className="p-6">
-        <ContainerTable withControls key={reloadKey} />
+        <ContainerTable withControls key={reloadKey} refreshSignal={tick} />
       </div>
       {showCreate && <CreateContainerModal onClose={() => setShowCreate(false)} onDone={() => { setShowCreate(false); setReloadKey((k) => k + 1); }} />}
     </>
