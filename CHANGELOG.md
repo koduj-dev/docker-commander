@@ -6,6 +6,13 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Routine Go, npm and GitHub Actions dependency updates (minor/patch only).
+  `happy-dom`, used only by the frontend tests and not shipped, goes to 21.0.4,
+  which fixes GHSA-834v-8h66-3h79 (code execution through an import alias when
+  parsing untrusted HTML).
+
 ### Fixed
 
 - **Pages update when something changes outside them.** Topology, Images,
