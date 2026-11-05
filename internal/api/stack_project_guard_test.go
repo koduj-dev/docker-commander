@@ -92,6 +92,9 @@ func TestStacksShowAProjectsStackReadOnly(t *testing.T) {
 	if out["editable"] != false || !strings.Contains(reason, "Projects") {
 		t.Fatalf("a project's stack must open read-only with the reason, got editable=%v reason=%q", out["editable"], reason)
 	}
+	if out["redeployable"] != false {
+		t.Fatalf("a project's stack is redeployed from Projects, not Stacks, got redeployable=%v", out["redeployable"])
+	}
 }
 
 // When the projects can't be listed, the guard refuses rather than letting the

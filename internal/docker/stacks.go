@@ -2,12 +2,16 @@ package docker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"os/user"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/moby/moby/client"
 
@@ -308,7 +312,7 @@ func (m *Manager) readHostFile(ctx context.Context, hostID int64, h *store.Host,
 	case "local", "":
 		f, err := os.Open(path)
 		if err != nil {
-			return "", err
+			return "", localAccessHint(err)
 		}
 		defer f.Close()
 		data, err := io.ReadAll(io.LimitReader(f, maxComposeBytes))
@@ -337,6 +341,47 @@ func (m *Manager) readHostFile(ctx context.Context, hostID int64, h *store.Host,
 	default:
 		return "", fmt.Errorf("the compose file lives on the host and isn't reachable over a %s connection — open it on the host", h.Kind)
 	}
+}
+
+// localAccessHint adds the likely cause and the fix to a local compose-file
+// read or write failure.
+//
+// The label hands us a path the docker CLI could read, but this process is the
+// one opening it, and the shipped systemd unit runs it as an unprivileged user
+// with ProtectHome=true and ProtectSystem=strict. A stack started from someone's
+// home directory then fails with a bare "permission denied" that reads like a
+// bug, so name the user and the hardening instead. The original error stays
+// wrapped for errors.Is.
+func localAccessHint(err error) error {
+	var pe *fs.PathError
+	if !errors.As(err, &pe) {
+		return err
+	}
+	runAs := "this user"
+	if u, uerr := user.Current(); uerr == nil {
+		runAs = fmt.Sprintf("user %q", u.Username)
+	}
+	switch {
+	case errors.Is(err, fs.ErrPermission) && underHome(pe.Path):
+		return fmt.Errorf("%w — Docker Commander runs as %s and can't reach it: under systemd the shipped unit's ProtectHome=true hides /home, /root and /run/user. Move the stack out of the home directory (e.g. to /srv) or allow the path with a drop-in, see docs/deployment.md", err, runAs)
+	case errors.Is(err, fs.ErrPermission):
+		return fmt.Errorf("%w — Docker Commander runs as %s, which has no access to it. Grant that user read access (and write access to save edits)", err, runAs)
+	case errors.Is(err, syscall.EROFS):
+		return fmt.Errorf("%w — under systemd the shipped unit's ProtectSystem=strict leaves only its ReadWritePaths writable. Add the stack's directory there with a drop-in, see docs/deployment.md", err)
+	case errors.Is(err, fs.ErrNotExist):
+		return fmt.Errorf("%w — the file isn't visible to the Docker Commander process. If it runs in a container, bind-mount the stack's directory at the same path", err)
+	}
+	return err
+}
+
+// underHome reports whether p lies in a tree that systemd's ProtectHome hides.
+func underHome(p string) bool {
+	for _, root := range []string{"/home", "/root", "/run/user"} {
+		if remoteWithin(root, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // shellQuote single-quotes a string for safe use in a remote shell command.
