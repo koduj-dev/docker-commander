@@ -4,6 +4,49 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [1.7.3] — 2026-11-06
+
+### Changed
+
+- Routine Go, npm and GitHub Actions dependency updates (minor/patch only).
+  `happy-dom`, used only by the frontend tests and not shipped, goes to 21.0.4,
+  which fixes GHSA-834v-8h66-3h79 (code execution through an import alias when
+  parsing untrusted HTML).
+
+### Fixed
+
+- **Pages update when something changes outside them.** Topology, Images,
+  Volumes and Networks loaded once and then stayed as they were, so a container
+  started from a terminal or a compose deploy only showed up after a reload. They
+  now refresh on Docker events, like the dashboard already did, and Containers
+  refreshes on them too instead of waiting for its poll. Topology keeps the graph
+  as it is when nothing in it changed, so dragged nodes stay put.
+- **Live updates survive a restart.** When the Docker daemon or Docker Commander
+  restarted, the events stream ended and views stopped updating until a page
+  reload. It now reconnects (backing off up to 15 s) and refreshes the open view
+  once it is back, since events from the gap are lost. All views share one
+  connection instead of opening one each.
+- **No "Update & restart" button that can't work.** On a .deb/.rpm install the
+  in-app update always failed with "read-only file system": the packaged unit only
+  makes `/usr/local/bin` writable, and the binary lives in `/usr/bin`. Docker
+  Commander now checks first, without writing anything. When the install can't run,
+  the banner still announces the release, but says how to update instead of
+  offering the button: the `apt`/`dnf` command for a package install,
+  `sudo dockercmd --self-upgrade` when the binary's directory isn't writable.
+  Auto-apply stays off there instead of failing every six hours. A packaged binary
+  is never replaced by self-update, from the web UI or `--self-upgrade`; the
+  package manager owns it. See [Deployment](docs/deployment.md#self-update).
+- **Compose file of a stack under `/home` couldn't be opened, with no hint why.**
+  Under the systemd unit the server runs as `dockercmd` with `ProtectHome=true`,
+  so a stack started from a home directory failed with a bare
+  `open …: permission denied`. The error now says which user can't reach the file
+  and why, and [Deployment](docs/deployment.md#linux-systemd) shows how to
+  allow the directory. A failed save explains `ProtectSystem=strict` the same way.
+- **Stacks offered an editor for a compose file it couldn't save.** A file the
+  server can read but not write back (another owner, or `ProtectSystem=strict`)
+  now opens clearly marked **Read-only**, with the reason, and without Save.
+  Redeploy stays available.
+
 ## [1.7.2] — 2026-10-20
 
 ### Added
@@ -2620,6 +2663,7 @@ Initial release: a single CGO-free Go binary with an embedded React UI.
   per-section permissions / read-only, feature flags, audit log, optional LDAP;
   secrets encrypted at rest.
 
+[1.7.3]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.7.3
 [1.7.2]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.7.2
 [1.7.1]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.7.1
 [1.7.0]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.7.0

@@ -241,6 +241,26 @@ sudo systemctl daemon-reload && sudo systemctl enable --now dockercmd
 > outside the protected home). In your own unit, add that line, then
 > `systemctl daemon-reload && systemctl restart dockercmd`.
 
+> **Stacks says it can't open a compose file under `/home` or `/root`?** The same
+> hardening hides home directories from the service, and `ProtectSystem=strict`
+> makes everything outside `/var/lib/dockercmd` read-only, so a stack started
+> from your home can't be viewed or saved. The simplest fix is to keep stacks
+> outside home, e.g. in `/srv/<app>` owned by a group `dockercmd` is in. To keep
+> them where they are, allow the directory with a drop-in
+> (`sudo systemctl edit dockercmd`):
+>
+> ```ini
+> [Service]
+> ProtectHome=read-only
+> ReadWritePaths=/home/filip/apps
+> ```
+>
+> Then give the service user access, e.g.
+> `sudo setfacl -m u:dockercmd:x /home/filip` and
+> `sudo setfacl -R -m u:dockercmd:rwX,d:u:dockercmd:rwX /home/filip/apps`, and
+> restart. `ProtectHome=read-only` makes every home directory readable to the
+> service as far as file permissions allow, so it is weaker than the default.
+
 ### macOS (launchd)
 
 `install-macos.sh` installs a **per-user LaunchAgent**
@@ -510,6 +530,17 @@ installs unverified code), atomically replaces the binary and restarts **in plac
   directory *not* listed, the button fails with "read-only file system" even though
   the binary's permissions look fine. Remove it from `ReadWritePaths` if you'd
   rather require `sudo dockercmd --self-upgrade` outside the service.
+- The button is only offered when the install would go through. Before showing it,
+  Docker Commander checks (without writing anything) that the binary's directory is
+  writable and that the binary isn't from a package. Otherwise the banner still
+  announces the release and says how to update instead: the `apt`/`dnf` command for
+  a package install, `sudo dockercmd --self-upgrade` for an unwritable directory.
+  Auto-apply stays off in both cases.
+- **Installed from the .deb/.rpm package?** The package manager updates it
+  (`sudo apt update && sudo apt install --only-upgrade dockercmd`, or
+  `sudo dnf upgrade dockercmd`). Self-update never replaces a packaged binary, from
+  the web UI or the CLI, and the packaged unit doesn't make `/usr/bin` writable:
+  that would let the service overwrite every system binary.
 - `DC_SELF_UPDATE=0` disables web-triggered updates (the banner still shows).
 - Not offered on Windows: restart the service manually after updating.
 
@@ -532,8 +563,8 @@ It **verifies the SHA-256** and atomically replaces the binary, keeping its
 permissions; **restart** the service afterwards. The binary must be writable by the
 invoking user, and that is checked **before** the multi-MiB download. Without the
 permission, in an interactive terminal it offers to re-exec elevated (`sudo` on
-Linux/macOS, UAC on Windows) via an explicit `[y/N]` prompt. Installed from a
-package manager? Update through that instead.
+Linux/macOS, UAC on Windows) via an explicit `[y/N]` prompt. A binary installed
+from the .deb/.rpm package is refused with the package-manager command instead.
 
 ## Locked out
 

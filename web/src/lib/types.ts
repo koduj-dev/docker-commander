@@ -107,6 +107,10 @@ export interface UpdateStatus {
   error?: string;
   /** True when the in-app one-tap "Update & restart" is offered (admin + allowed + restartable). */
   selfUpdate?: boolean;
+  /** Why the one-tap update isn't offered although enabled (packaged binary, unwritable directory). */
+  selfUpdateBlocked?: string;
+  /** How to update by hand when selfUpdateBlocked is set. */
+  updateCommand?: string;
   selfUpdatePolicy: SelfUpdatePolicy;
   lastAutoUpdate?: LastAutoUpdate;
 }
