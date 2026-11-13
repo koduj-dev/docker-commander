@@ -24,7 +24,7 @@
     "@xyflow/react": "^12.12.1",
     "clsx": "^2.1.1",
     "d3-force": "^3.0.1",
-    "lucide-react": "^1.70.0",
+    "lucide-react": "^1.71.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-router-dom": "^7.18.5",
@@ -32,15 +32,15 @@
     "yaml": "^2.9.1"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.3.4",
+    "@tailwindcss/postcss": "^4.3.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "@vitejs/plugin-react": "^6.2.1",
+    "@vitejs/plugin-react": "^6.3.0",
     "happy-dom": "^21.0.4",
     "postcss": "^8.5.32",
     "tailwindcss": "^4.3.4",
     "typescript": "^7.0.2",
-    "vite": "^8.3.5",
+    "vite": "^8.3.7",
     "vitest": "^5.1.0"
   }
 }
