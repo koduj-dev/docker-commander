@@ -113,3 +113,38 @@ describe("pages re-read on Docker events", () => {
     expect(fetch.mock.calls.length).toBeGreaterThan(before);
   });
 });
+
+// A reload doesn't cancel the one before it. When the older request answers
+// last (a slow or remote host), its stale snapshot must not replace the newer
+// one: the list has to settle on the latest answer.
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => (resolve = r));
+  return { promise, resolve };
+}
+
+describe("an older answer arriving last doesn't win", () => {
+  const image = (tag: string) => ({ id: `sha256:${tag}`, repoTags: [`${tag}:1`], repoDigests: [], size: 1, created: 0, containers: 0 });
+  const volume = (name: string) => ({ name, driver: "local", mountpoint: `/v/${name}`, createdAt: "", labels: {}, scope: "local" });
+  const network = (name: string) => ({ id: `id-${name}`, name, driver: "bridge", scope: "local", internal: false, subnets: [], containers: 0 });
+  const ctr = (name: string) => ({ id: `id-${name}`, name, image: "nginx", state: "running", status: "Up", ports: [], labels: {}, created: 0 });
+
+  it.each([
+    ["Images", () => <Images />, api.images, image],
+    ["Volumes", () => <Volumes />, api.volumes, volume],
+    ["Networks", () => <Networks />, api.networks, network],
+    ["Containers", () => <Containers />, api.containers, ctr],
+  ] as const)("%s", async (_name, el, fetch, make) => {
+    const first = deferred<unknown[]>();
+    const second = deferred<unknown[]>();
+    fetch.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    await render(el());
+    await dockerEvent(); // a second reload starts while the first is in flight
+
+    await act(async () => second.resolve([make("fresh")]));
+    await act(async () => first.resolve([make("stale")]));
+
+    expect(container.textContent).toContain("fresh");
+    expect(container.textContent).not.toContain("stale");
+  });
+});

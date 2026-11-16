@@ -4,6 +4,7 @@ import { FileSearch, Network as NetworkIcon, Trash2, X, Plus, Eraser, Loader2, S
 import clsx from "clsx";
 import { api } from "../lib/api";
 import { useDockerEventTick } from "../lib/dockerEvents";
+import { useLatestRequest } from "../lib/latestRequest";
 import { bytes } from "../lib/format";
 import type { NetworkSummary, Topology , NetworkStats} from "../lib/types";
 import { PageHeader } from "../layout/Shell";
@@ -38,10 +39,18 @@ export function Networks() {
   const [notice, setNotice] = useState("");
   const dialogs = useDialogs();
 
+  const begin = useLatestRequest();
   const load = useCallback(() => {
-    api.networks().then(setNets).catch(() => setNets([]));
-    api.topology().then(setTopo).catch(() => setTopo(null));
-  }, []);
+    const latest = begin();
+    api
+      .networks()
+      .then((r) => latest() && setNets(r))
+      .catch(() => latest() && setNets([]));
+    api
+      .topology()
+      .then((t) => latest() && setTopo(t))
+      .catch(() => latest() && setTopo(null));
+  }, [begin]);
   // Reload on Docker events, so changes made elsewhere (CLI, compose) show up.
   const tick = useDockerEventTick();
   useEffect(() => load(), [load, tick]);

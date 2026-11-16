@@ -30,6 +30,11 @@ All notable changes to Docker Commander are documented here. The format follows
   and a binary replaced inside a container is lost when it's recreated. It now says
   the instance runs in a container and to pull the new image and recreate it, and
   the in-app install is refused there before anything is downloaded (#364).
+- **Live-refreshed lists no longer jump back to an older state.** Images,
+  Networks, Volumes and Containers reload on every Docker event (and Containers
+  also every 4 s). When an older reload answered after a newer one, as can happen
+  with a slow or remote host, it overwrote it, and a removed object could
+  reappear until the next event. Only the latest answer is applied now (#367).
 - **Write-access checks count a directory's execute bit.** The checks that open
   a stack read-only when its compose file can't be saved, and that hide Update &
   restart when the binary can't be replaced, asked only for write permission on

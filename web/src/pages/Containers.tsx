@@ -11,6 +11,7 @@ import { CreateContainerModal } from "../components/CreateContainerModal";
 import { useDialogs } from "../components/Dialog";
 import { LayerRow } from "./Images";
 import { useDockerEventTick } from "../lib/dockerEvents";
+import { useLatestRequest } from "../lib/latestRequest";
 
 const CONTAINER_STATUSES: StatusOption<ContainerSummary>[] = [
   { value: "all", label: "All states" },
@@ -43,14 +44,17 @@ export function ContainerTable({ runningOnly = false, withControls = false, refr
   // Set while a bulk pull's progress modal is open; null otherwise.
   const [pullTargets, setPullTargets] = useState<ContainerSummary[] | null>(null);
 
+  // The 4 s poll and Docker events both reload; only the newest answer counts.
+  const begin = useLatestRequest();
   const load = useCallback(async () => {
+    const latest = begin();
     try {
       const all = await api.containers();
-      setList(runningOnly ? all.filter((c) => c.state === "running") : all);
+      if (latest()) setList(runningOnly ? all.filter((c) => c.state === "running") : all);
     } catch {
-      setList([]);
+      if (latest()) setList([]);
     }
-  }, [runningOnly]);
+  }, [runningOnly, begin]);
 
   // refreshSignal (Docker events) triggers an immediate reload on top of the poll.
   useEffect(() => {
