@@ -169,6 +169,24 @@ func TestPrecheck(t *testing.T) {
 		}
 	})
 
+	t.Run("a directory without execute permission isn't writable", func(t *testing.T) {
+		if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+			t.Skip("needs chmod-based permission denial")
+		}
+		dir := t.TempDir()
+		exeIn(t, dir)
+		fakePackaging(t, "", t.TempDir(), false)
+		// 0222: W_OK passes, but no file can be created without x.
+		if err := os.Chmod(dir, 0o222); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+		var nw *ErrNotWritable
+		if err := Precheck(); !errors.As(err, &nw) {
+			t.Fatalf("Precheck = %v, want *ErrNotWritable", err)
+		}
+	})
+
 	t.Run("unwritable dir is reported before any install", func(t *testing.T) {
 		if runtime.GOOS == "windows" {
 			t.Skip("access(2)-based check is a no-op on Windows")

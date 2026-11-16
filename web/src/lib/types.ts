@@ -1019,6 +1019,12 @@ export interface DiagnosticsReport {
   checks: CheckResult[];
 }
 
+// Docker Commander's own diagnostics: not tied to a host.
+export interface InstanceDiagnostics {
+  generatedAt: string;
+  checks: CheckResult[];
+}
+
 // MCP access token (self-service personal token for the remote MCP server).
 // The secret is returned only once at creation and never again.
 export interface MCPToken {
