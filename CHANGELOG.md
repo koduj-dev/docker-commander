@@ -6,6 +6,16 @@ All notable changes to Docker Commander are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Diagnostics for Docker Commander itself.** Admins get a Docker Commander group
+  on the Troubleshooting page. It shows how the instance is installed and whether
+  Update & restart can run, what the systemd sandbox hides, data-directory paths
+  the service can't write (e.g. root-owned after a restore), access to the local
+  Docker socket, which local stacks' compose files it can't read or save, and
+  whether `docker compose`, `buildx` and `trivy` are found. It runs even when the
+  host checks fail, and only reads.
+
 ### Changed
 
 - Routine Go, npm and GitHub Actions dependency updates (minor/patch only).
@@ -20,6 +30,14 @@ All notable changes to Docker Commander are documented here. The format follows
   and a binary replaced inside a container is lost when it's recreated. It now says
   the instance runs in a container and to pull the new image and recreate it, and
   the in-app install is refused there before anything is downloaded (#364).
+- **Write-access checks count a directory's execute bit.** The checks that open
+  a stack read-only when its compose file can't be saved, and that hide Update &
+  restart when the binary can't be replaced, asked only for write permission on
+  the directory. A directory without the execute (search) bit passed, and the
+  Save or update then failed with "permission denied" (#369).
+- **Clearer hint for a missing stack compose file.** It used to suggest only a
+  missing bind mount in a container; it now also says the file may have been moved
+  or deleted since the stack was started, which is the usual case.
 
 ## [1.7.3] — 2026-11-06
 

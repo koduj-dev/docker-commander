@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Loader2, MinusCircle, RefreshCw, Stethoscope, XCircle } from "lucide-react";
 import { api } from "../lib/api";
-import type { CheckResult, CheckStatus, DiagnosticsReport } from "../lib/types";
+import type { CheckResult, CheckStatus, DiagnosticsReport, InstanceDiagnostics } from "../lib/types";
+import { useAuth } from "../auth/AuthContext";
 import { PageHeader } from "../layout/Shell";
 import { EmptyState, Spinner, StatCard } from "../components/ui";
 import { getPref, setPref } from "../lib/prefs";
@@ -107,25 +108,58 @@ function CheckRow({ check }: { check: CheckResult }) {
   );
 }
 
+// One titled group of checks. The page shows Docker Commander's own checks
+// (admins only) and the selected host's checks as two groups, each with its own
+// error, so a host that can't be reached still leaves the instance checks
+// readable, which is when they matter most.
+function CheckGroup({ title, checks, error }: { title: string; checks?: CheckResult[]; error?: string | null }) {
+  return (
+    <section className="space-y-2" aria-label={title}>
+      <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">{title}</h2>
+      {checks ? (
+        checks.map((c) => <CheckRow key={`${c.id}:${c.status}`} check={c} />)
+      ) : error ? (
+        <EmptyState icon={<Stethoscope className="h-4 w-4" />} title="Could not run these checks" hint={error} />
+      ) : null}
+    </section>
+  );
+}
+
 export function Troubleshooting() {
+  // The instance checks name the binary, the service user and local paths:
+  // admin only, like the update banner. Others never request them.
+  const isAdmin = useAuth()?.user?.role === "admin";
   const [report, setReport] = useState<DiagnosticsReport | null>(null);
+  const [instance, setInstance] = useState<InstanceDiagnostics | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [instanceError, setInstanceError] = useState<string | null>(null);
 
   const run = useCallback(() => {
     setBusy(true);
     setError(null);
-    api
+    setInstanceError(null);
+    const message = (e: unknown, fallback: string) => (e instanceof Error ? e.message : fallback);
+    const host = api
       .runDiagnostics()
       .then(setReport)
-      .catch((e) => setError(e instanceof Error ? e.message : "could not run diagnostics"))
-      .finally(() => setBusy(false));
-  }, []);
+      .catch((e) => setError(message(e, "could not run diagnostics")));
+    const self = isAdmin
+      ? api
+          .instanceDiagnostics()
+          .then(setInstance)
+          .catch((e) => setInstanceError(message(e, "could not run diagnostics")))
+      : Promise.resolve();
+    Promise.allSettled([host, self]).finally(() => setBusy(false));
+  }, [isAdmin]);
 
   useEffect(() => {
     run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const loaded = report || instance;
+  const allChecks = [...(instance?.checks ?? []), ...(report?.checks ?? [])];
 
   return (
     <>
@@ -138,24 +172,31 @@ export function Troubleshooting() {
         }
       />
       <div className="p-6 space-y-3">
-        {!report && busy ? (
+        {!loaded && busy ? (
           <div className="flex items-center gap-2 text-muted">
             <Spinner /> Running diagnostics…
           </div>
-        ) : error && !report ? (
+        ) : error && !loaded ? (
           <EmptyState
             icon={<Stethoscope className="h-4 w-4" />}
             title="Could not run diagnostics"
             hint={error}
           />
-        ) : report ? (
+        ) : loaded ? (
           <>
-            <KPIStrip checks={report.checks} />
-            <div className="space-y-2">
-              {report.checks.map((c) => (
-                <CheckRow key={`${c.id}:${c.status}`} check={c} />
-              ))}
-            </div>
+            <KPIStrip checks={allChecks} />
+            {isAdmin ? (
+              <div className="space-y-5">
+                <CheckGroup title="Docker Commander" checks={instance?.checks} error={instanceError} />
+                <CheckGroup title="Docker host" checks={report?.checks} error={error} />
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {report?.checks.map((c) => (
+                  <CheckRow key={`${c.id}:${c.status}`} check={c} />
+                ))}
+              </div>
+            )}
           </>
         ) : null}
       </div>
