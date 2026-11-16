@@ -370,6 +370,7 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/metrics/history", s.handleMetricsHistory)
 			r.Get("/audit", s.handleAudit)
 			r.Post("/diagnostics/run", s.handleRunDiagnostics)
+			r.Post("/instance/diagnostics", s.handleInstanceDiagnostics) // admin-only (section "__admin")
 
 			// Alerting: webhooks, rules, and the in-app event feed.
 			r.Get("/webhooks", s.handleListWebhooks)

@@ -57,6 +57,11 @@ func sectionForPath(path string) string {
 		return "diagnostics"
 	case "users", "roles", "settings", "ldap", "update", "mcp-admin", "policy-rules":
 		return "__admin"
+	case "instance":
+		// Diagnostics of Docker Commander itself: the binary, the service user,
+		// the data directory and local stack paths. About the installation, like
+		// "update", not about a host a scoped "diagnostics" grant covers.
+		return "__admin"
 	case "recovery":
 		// A recovery bundle can aggregate host TLS keys, registry passwords,
 		// SMTP/LDAP credentials and every project's files across the whole
