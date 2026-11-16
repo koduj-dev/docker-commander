@@ -108,6 +108,39 @@ func (e *ErrPackageManaged) Command() string {
 	return "sudo apt update && sudo apt install --only-upgrade dockercmd"
 }
 
+// ErrInContainer is returned when Docker Commander runs in a container. The
+// binary belongs to the image: a copy replaced inside the container is gone
+// the next time it is recreated, and the published image runs as a user that
+// can't write it anyway. The image is updated instead (pull, recreate), so an
+// in-place install is never attempted, from the web UI or the CLI.
+type ErrInContainer struct{}
+
+func (e *ErrInContainer) Error() string {
+	return "running in a container; update it by pulling the new image and recreating the container"
+}
+
+// Command pulls the latest published image. Recreating the container from it
+// is up to however it was started (docker run, Compose), so it isn't part of
+// the command.
+func (e *ErrInContainer) Command() string {
+	return "docker pull ghcr.io/koduj-dev/docker-commander:latest"
+}
+
+// containerMarkers are files a container runtime creates inside every
+// container: Docker's /.dockerenv and Podman's /run/.containerenv.
+// Overridable for tests.
+var containerMarkers = []string{"/.dockerenv", "/run/.containerenv"}
+
+// inContainer reports whether this process runs in a container.
+func inContainer() bool {
+	for _, p := range containerMarkers {
+		if _, err := os.Stat(p); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // Where the packages put the binary and how to tell which manager owns it.
 // Overridable for tests.
 var (
@@ -155,7 +188,7 @@ func resolvedExecutable() (string, error) {
 
 // Precheck reports why installing an update in place would fail or must not
 // be attempted, without downloading or writing anything: *ErrPackageManaged
-// for a packaged binary, *ErrNotWritable when the binary's directory can't be
+// for a packaged binary, *ErrInContainer in a container, *ErrNotWritable when the binary's directory can't be
 // written (e.g. systemd's ProtectSystem=strict without it in ReadWritePaths).
 // nil means an install may go ahead. The UI uses it to decide whether to offer
 // the in-app update at all, instead of offering one that is bound to fail.
@@ -166,6 +199,9 @@ func Precheck() error {
 	}
 	if m := packageManager(exe); m != "" {
 		return &ErrPackageManaged{Exe: exe, Manager: m}
+	}
+	if inContainer() {
+		return &ErrInContainer{}
 	}
 	if err := dirWritable(filepath.Dir(exe)); err != nil {
 		return &ErrNotWritable{Dir: filepath.Dir(exe), Err: err}
@@ -284,6 +320,12 @@ func installRelease(ctx context.Context, current string, rel *ghRelease, w io.Wr
 	}
 	if m := packageManager(exe); m != "" {
 		return Result{}, &ErrPackageManaged{Exe: exe, Manager: m}
+	}
+	// Like a package, never an ErrNotWritable: the CLI would offer to re-run
+	// with sudo, and a root process in the container would then "succeed" at
+	// an update the next recreate silently throws away.
+	if inContainer() {
+		return Result{}, &ErrInContainer{}
 	}
 	if err := preflightWritable(filepath.Dir(exe)); err != nil {
 		return Result{}, err
