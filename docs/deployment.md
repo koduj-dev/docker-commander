@@ -532,15 +532,22 @@ installs unverified code), atomically replaces the binary and restarts **in plac
   rather require `sudo dockercmd --self-upgrade` outside the service.
 - The button is only offered when the install would go through. Before showing it,
   Docker Commander checks (without writing anything) that the binary's directory is
-  writable and that the binary isn't from a package. Otherwise the banner still
-  announces the release and says how to update instead: the `apt`/`dnf` command for
-  a package install, `sudo dockercmd --self-upgrade` for an unwritable directory.
-  Auto-apply stays off in both cases.
+  writable, that the binary isn't from a package and that it doesn't run in a
+  container. Otherwise the banner still announces the release and says how to update
+  instead: the `apt`/`dnf` command for a package install, pulling the image for a
+  container, `sudo dockercmd --self-upgrade` for an unwritable directory. Auto-apply
+  stays off in all of these cases.
 - **Installed from the .deb/.rpm package?** The package manager updates it
   (`sudo apt update && sudo apt install --only-upgrade dockercmd`, or
   `sudo dnf upgrade dockercmd`). Self-update never replaces a packaged binary, from
   the web UI or the CLI, and the packaged unit doesn't make `/usr/bin` writable:
   that would let the service overwrite every system binary.
+- **Running the Docker image?** A new image updates it:
+  `docker pull ghcr.io/koduj-dev/docker-commander:latest`, then recreate the
+  container (with Compose: `docker compose pull && docker compose up -d`). A binary
+  replaced inside the container would be lost on the next recreate, so self-update
+  never tries, from the web UI or the CLI. A container is recognised by
+  `/.dockerenv` (Docker) or `/run/.containerenv` (Podman).
 - `DC_SELF_UPDATE=0` disables web-triggered updates (the banner still shows).
 - Not offered on Windows: restart the service manually after updating.
 
@@ -564,7 +571,8 @@ permissions; **restart** the service afterwards. The binary must be writable by 
 invoking user, and that is checked **before** the multi-MiB download. Without the
 permission, in an interactive terminal it offers to re-exec elevated (`sudo` on
 Linux/macOS, UAC on Windows) via an explicit `[y/N]` prompt. A binary installed
-from the .deb/.rpm package is refused with the package-manager command instead.
+from the .deb/.rpm package is refused with the package-manager command instead,
+and one in a container with the advice to pull the image.
 
 ## Locked out
 

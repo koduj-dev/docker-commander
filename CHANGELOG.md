@@ -12,6 +12,15 @@ All notable changes to Docker Commander are documented here. The format follows
   The indirect OpenTelemetry modules go to 1.47.0, which fixes
   GHSA-q7gw-24fr-5p69 (an attribute length limit that could be bypassed).
 
+### Fixed
+
+- **Update advice in the Docker image.** When a newer release was out, the banner
+  in the Docker image said the binary's directory wasn't writable and suggested
+  `sudo dockercmd --self-upgrade`, which can't work there: the image has no `sudo`,
+  and a binary replaced inside a container is lost when it's recreated. It now says
+  the instance runs in a container and to pull the new image and recreate it, and
+  the in-app install is refused there before anything is downloaded (#364).
+
 ## [1.7.3] — 2026-11-06
 
 ### Changed

@@ -87,6 +87,22 @@ func TestUpdateStatus_UnwritableDirExplainsAndOffersCLI(t *testing.T) {
 	}
 }
 
+func TestUpdateStatus_ContainerPointsAtTheImage(t *testing.T) {
+	st := getStatus(t, statusServer(t, func() error { return &selfupdate.ErrInContainer{} }))
+	if st.SelfUpdate {
+		t.Error("the button must not be offered in a container")
+	}
+	if !strings.Contains(st.SelfUpdateBlocked, "container") || !strings.Contains(st.SelfUpdateBlocked, "recreate") {
+		t.Errorf("reason = %q, want it to say pull the image and recreate the container", st.SelfUpdateBlocked)
+	}
+	if st.UpdateCommand != "docker pull ghcr.io/koduj-dev/docker-commander:latest" {
+		t.Errorf("command = %q", st.UpdateCommand)
+	}
+	if strings.Contains(st.SelfUpdateBlocked+st.UpdateCommand, "sudo") {
+		t.Error("the image has no sudo; container advice must not suggest it")
+	}
+}
+
 func TestUpdateStatus_NoPrecheckWhenSelfUpdateIsOff(t *testing.T) {
 	srv := statusServer(t, func() error { t.Error("precheck must not run when self-update is off"); return nil })
 	srv.update.selfUpdate = false
