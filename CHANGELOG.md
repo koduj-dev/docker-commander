@@ -4,6 +4,14 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- Routine Go, npm and GitHub Actions dependency updates (minor/patch only).
+  The indirect OpenTelemetry modules go to 1.47.0, which fixes
+  GHSA-q7gw-24fr-5p69 (an attribute length limit that could be bypassed).
+
 ## [1.7.3] — 2026-11-06
 
 ### Changed
