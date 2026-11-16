@@ -37,6 +37,22 @@ func fakePackaging(t *testing.T, dpkgList, binDir string, rpmDB bool) {
 		}
 	}
 	packageBinDirs = []string{binDir}
+	fakeContainer(t, false)
+}
+
+// fakeContainer decides whether this test runs "in a container", whatever the
+// machine running the tests is.
+func fakeContainer(t *testing.T, in bool) {
+	t.Helper()
+	prev := containerMarkers
+	t.Cleanup(func() { containerMarkers = prev })
+	marker := filepath.Join(t.TempDir(), ".dockerenv")
+	if in {
+		if err := os.WriteFile(marker, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	containerMarkers = []string{filepath.Join(t.TempDir(), "absent"), marker}
 }
 
 // exeIn creates a fake dockercmd in dir and points osExecutable at it.
@@ -123,6 +139,54 @@ func TestPrecheck(t *testing.T) {
 		}
 	})
 
+	t.Run("in a container it's refused even when writable", func(t *testing.T) {
+		exeIn(t, t.TempDir())
+		fakePackaging(t, "", t.TempDir(), false)
+		fakeContainer(t, true)
+		var ctr *ErrInContainer
+		if err := Precheck(); !errors.As(err, &ctr) {
+			t.Fatalf("Precheck = %v, want *ErrInContainer", err)
+		}
+	})
+
+	t.Run("in a container an unwritable dir still says container", func(t *testing.T) {
+		if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+			t.Skip("needs chmod-based permission denial")
+		}
+		dir := t.TempDir()
+		exeIn(t, dir)
+		fakePackaging(t, "", t.TempDir(), false)
+		fakeContainer(t, true)
+		if err := os.Chmod(dir, 0o555); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+		// The published image: /usr/local/bin isn't writable for nonroot. The
+		// reason must be the container, not the shell advice for a directory.
+		var ctr *ErrInContainer
+		if err := Precheck(); !errors.As(err, &ctr) {
+			t.Fatalf("Precheck = %v, want *ErrInContainer", err)
+		}
+	})
+
+	t.Run("a directory without execute permission isn't writable", func(t *testing.T) {
+		if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+			t.Skip("needs chmod-based permission denial")
+		}
+		dir := t.TempDir()
+		exeIn(t, dir)
+		fakePackaging(t, "", t.TempDir(), false)
+		// 0222: W_OK passes, but no file can be created without x.
+		if err := os.Chmod(dir, 0o222); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+		var nw *ErrNotWritable
+		if err := Precheck(); !errors.As(err, &nw) {
+			t.Fatalf("Precheck = %v, want *ErrNotWritable", err)
+		}
+	})
+
 	t.Run("unwritable dir is reported before any install", func(t *testing.T) {
 		if runtime.GOOS == "windows" {
 			t.Skip("access(2)-based check is a no-op on Windows")
@@ -191,5 +255,51 @@ func TestApplyNeverReplacesPackagedBinary(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(exe); string(got) != "OLD" {
 		t.Errorf("packaged binary was replaced: %q", got)
+	}
+}
+
+// PENTEST-adjacent: in a container the binary belongs to the image. Even a
+// root process that could write it must not swap it: the next recreate would
+// silently undo the update. It must not be an ErrNotWritable either, or the CLI
+// offers to re-run with sudo.
+func TestApplyNeverReplacesBinaryInContainer(t *testing.T) {
+	downloaded := false
+	var base string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if filepath.Base(r.URL.Path) == "download" {
+			downloaded = true
+			_, _ = w.Write([]byte("NEW"))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"tag_name": "v9.9.9", "assets": []map[string]any{
+				{"name": platformAsset(), "browser_download_url": base + "/download", "digest": "sha256:deadbeef"},
+			},
+		})
+	}))
+	defer srv.Close()
+	base = srv.URL
+	prevBase := apiBaseURL
+	apiBaseURL = srv.URL
+	t.Cleanup(func() { apiBaseURL = prevBase })
+
+	exe := exeIn(t, t.TempDir())
+	fakePackaging(t, "", t.TempDir(), false)
+	fakeContainer(t, true)
+
+	_, err := Apply(context.Background(), "1.0.0")
+	var ctr *ErrInContainer
+	if !errors.As(err, &ctr) {
+		t.Fatalf("Apply err = %v, want *ErrInContainer", err)
+	}
+	var nw *ErrNotWritable
+	if errors.As(err, &nw) {
+		t.Error("must not be ErrNotWritable — the CLI would then offer to re-run with sudo")
+	}
+	if downloaded {
+		t.Error("the release asset was downloaded inside a container")
+	}
+	if got, _ := os.ReadFile(exe); string(got) != "OLD" {
+		t.Errorf("binary in the container was replaced: %q", got)
 	}
 }

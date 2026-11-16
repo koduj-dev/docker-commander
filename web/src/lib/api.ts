@@ -15,6 +15,7 @@ import type {
   ComposeModel,
   AuditEntry,
   DiagnosticsReport,
+  InstanceDiagnostics,
   LdapConfig,
   ManagedUser,
   ContainerDetail,
@@ -897,6 +898,8 @@ export const api = {
   audit: (limit = 50, before?: number) =>
     req<AuditEntry[]>("GET", `/api/audit?limit=${limit}${before ? `&before=${before}` : ""}`),
   runDiagnostics: () => req<DiagnosticsReport>("POST", `/api/diagnostics/run${hostParam()}`),
+  // Docker Commander's own diagnostics (install, sandbox, data dir, local stacks). Admin only.
+  instanceDiagnostics: () => req<InstanceDiagnostics>("POST", "/api/instance/diagnostics"),
 
   // Alerting
   webhooks: () => req<Webhook[]>("GET", "/api/webhooks"),

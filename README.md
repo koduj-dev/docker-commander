@@ -90,7 +90,7 @@ More screenshots are on each page of the [manual](docs/README.md).
 - **Logs and events:** many containers in one stream, regex search, parsing rules. [Logs](docs/logs.md)
 - **Alerts:** state, resource, network, log and crash-loop rules; webhooks, e-mail, Prometheus. [Alerts](docs/alerts.md)
 - **Maintenance windows:** silence delivery during planned work; deploys silence themselves. [Alerts](docs/alerts.md)
-- **Troubleshooting:** subnet overlaps, MTU, duplicate ports, log rotation, disk space. [Troubleshooting](docs/troubleshooting.md)
+- **Troubleshooting:** subnet overlaps, MTU, duplicate ports, log rotation, disk space, plus Docker Commander's own setup (updates, systemd sandbox, data directory, stack file access). [Troubleshooting](docs/troubleshooting.md)
 
 **Hosts and access**
 - **Multi-host:** local, TCP+TLS and SSH daemons, with SSH host-key verification. [Hosts](docs/hosts.md)

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Database, Trash2, Loader2, Eraser, FileSearch, Plus, Boxes, FolderOpen, X } from "lucide-react";
 import { api, fileApiForVolume } from "../lib/api";
 import { useDockerEventTick } from "../lib/dockerEvents";
+import { useLatestRequest } from "../lib/latestRequest";
 import type { BackupJob, VolumeSummary } from "../lib/types";
 import { relTime } from "../lib/format";
 import { getHostId } from "../lib/host";
@@ -58,10 +59,16 @@ export function Volumes() {
     setBrowse(null);
   };
 
+  const begin = useLatestRequest();
   const load = useCallback(() => {
-    api.volumes().then(setVols).catch(() => setVols([]));
+    const latest = begin();
+    api
+      .volumes()
+      .then((r) => latest() && setVols(r))
+      .catch(() => latest() && setVols([]));
     api.backupJobs()
       .then((jobs) => {
+        if (!latest()) return;
         const activeHost = getHostId() ?? 0;
         const byVolume = new Map<string, BackupJob>();
         for (const j of jobs) {
@@ -70,7 +77,7 @@ export function Volumes() {
         setBackupJobs(byVolume);
       })
       .catch(() => {});
-  }, []);
+  }, [begin]);
   // Reload on Docker events, so changes made elsewhere (CLI, compose) show up.
   const tick = useDockerEventTick();
   useEffect(() => load(), [load, tick]);

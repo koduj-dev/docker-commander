@@ -369,7 +369,7 @@ func localAccessHint(err error) error {
 	case errors.Is(err, syscall.EROFS):
 		return fmt.Errorf("%w — under systemd the shipped unit's ProtectSystem=strict leaves only its ReadWritePaths writable. Add the stack's directory there with a drop-in, see docs/deployment.md", err)
 	case errors.Is(err, fs.ErrNotExist):
-		return fmt.Errorf("%w — the file isn't visible to the Docker Commander process. If it runs in a container, bind-mount the stack's directory at the same path", err)
+		return fmt.Errorf("%w — the file isn't visible to the Docker Commander process: it was moved or deleted since the stack was started, or, if Docker Commander runs in a container, the stack's directory isn't bind-mounted at the same path", err)
 	}
 	return err
 }

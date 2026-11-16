@@ -59,7 +59,7 @@ func TestLocalAccessHint(t *testing.T) {
 		{
 			name: "missing file hints at a container without the bind mount",
 			err:  &fs.PathError{Op: "open", Path: "/srv/app/compose.yml", Err: syscall.ENOENT},
-			want: []string{"bind-mount"},
+			want: []string{"moved or deleted", "bind-mount"},
 			is:   fs.ErrNotExist,
 		},
 	}

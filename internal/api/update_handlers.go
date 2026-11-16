@@ -108,10 +108,14 @@ func (u *updateChecker) blocked() error {
 // place of the button, plus the command that updates by hand.
 func blockedReason(err error) (reason, command string) {
 	var pkg *selfupdate.ErrPackageManaged
+	var ctr *selfupdate.ErrInContainer
 	var nw *selfupdate.ErrNotWritable
 	switch {
 	case errors.As(err, &pkg):
 		return "Installed from a package, so the package manager updates it.", pkg.Command()
+	case errors.As(err, &ctr):
+		return "Runs in a container, so a new image updates it: pull it, then recreate the container " +
+			"(with Compose: docker compose pull && docker compose up -d).", ctr.Command()
 	case errors.As(err, &nw):
 		return "The binary's directory (" + nw.Dir + ") isn't writable by the service, so it can't update " +
 			"itself. Update from a shell, then restart the service.", "sudo dockercmd --self-upgrade"

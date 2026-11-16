@@ -4,6 +4,46 @@ All notable changes to Docker Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [1.7.4] — 2026-11-16
+
+### Added
+
+- **Diagnostics for Docker Commander itself.** Admins get a Docker Commander group
+  on the Troubleshooting page. It shows how the instance is installed and whether
+  Update & restart can run, what the systemd sandbox hides, data-directory paths
+  the service can't write (e.g. root-owned after a restore), access to the local
+  Docker socket, which local stacks' compose files it can't read or save, and
+  whether `docker compose`, `buildx` and `trivy` are found. It runs even when the
+  host checks fail, and only reads.
+
+### Changed
+
+- Routine Go, npm and GitHub Actions dependency updates (minor/patch only).
+  The indirect OpenTelemetry modules go to 1.47.0, which fixes
+  GHSA-q7gw-24fr-5p69 (an attribute length limit that could be bypassed).
+
+### Fixed
+
+- **Update advice in the Docker image.** When a newer release was out, the banner
+  in the Docker image said the binary's directory wasn't writable and suggested
+  `sudo dockercmd --self-upgrade`, which can't work there: the image has no `sudo`,
+  and a binary replaced inside a container is lost when it's recreated. It now says
+  the instance runs in a container and to pull the new image and recreate it, and
+  the in-app install is refused there before anything is downloaded (#364).
+- **Live-refreshed lists no longer jump back to an older state.** Images,
+  Networks, Volumes and Containers reload on every Docker event (and Containers
+  also every 4 s). When an older reload answered after a newer one, as can happen
+  with a slow or remote host, it overwrote it, and a removed object could
+  reappear until the next event. Only the latest answer is applied now (#367).
+- **Write-access checks count a directory's execute bit.** The checks that open
+  a stack read-only when its compose file can't be saved, and that hide Update &
+  restart when the binary can't be replaced, asked only for write permission on
+  the directory. A directory without the execute (search) bit passed, and the
+  Save or update then failed with "permission denied" (#369).
+- **Clearer hint for a missing stack compose file.** It used to suggest only a
+  missing bind mount in a container; it now also says the file may have been moved
+  or deleted since the stack was started, which is the usual case.
+
 ## [1.7.3] — 2026-11-06
 
 ### Changed
@@ -2663,6 +2703,7 @@ Initial release: a single CGO-free Go binary with an embedded React UI.
   per-section permissions / read-only, feature flags, audit log, optional LDAP;
   secrets encrypted at rest.
 
+[1.7.4]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.7.4
 [1.7.3]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.7.3
 [1.7.2]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.7.2
 [1.7.1]: https://github.com/koduj-dev/docker-commander/releases/tag/v1.7.1

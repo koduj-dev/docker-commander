@@ -3,6 +3,7 @@ import { Download, Trash2, Layers, Loader2, X, Boxes, Eraser, FileSearch, Histor
 import clsx from "clsx";
 import { api } from "../lib/api";
 import { useDockerEventTick } from "../lib/dockerEvents";
+import { useLatestRequest } from "../lib/latestRequest";
 import type { HistoryEntry, ImageSummary, IgnoredCVE, PullProgress, ScanResult } from "../lib/types";
 import { hostParam } from "../lib/host";
 import { bytes, relTime, shortId } from "../lib/format";
@@ -47,9 +48,14 @@ export function Images() {
   const [showLoad, setShowLoad] = useState(false);
   const dialogs = useDialogs();
 
+  const begin = useLatestRequest();
   const load = useCallback(() => {
-    api.images().then(setImages).catch(() => setImages([]));
-  }, []);
+    const latest = begin();
+    api
+      .images()
+      .then((r) => latest() && setImages(r))
+      .catch(() => latest() && setImages([]));
+  }, [begin]);
   // Reload on Docker events, so changes made elsewhere (CLI, compose) show up.
   const tick = useDockerEventTick();
   useEffect(() => load(), [load, tick]);
