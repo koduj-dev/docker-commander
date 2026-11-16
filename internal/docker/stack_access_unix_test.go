@@ -3,6 +3,7 @@
 package docker
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -29,5 +30,30 @@ func TestStackFileAccess_FIFOIsNeverOpened(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("the check blocked opening a FIFO")
+	}
+}
+
+// Creating a file in a directory needs search (x) permission as well as write.
+// A 0222 directory passes a W_OK-only access(2) and still refuses the create.
+func TestPathWritable_DirectoryNeedsExecute(t *testing.T) {
+	needsPermissionDenial(t)
+	dir := filepath.Join(t.TempDir(), "noexec")
+	if err := os.Mkdir(dir, 0o222); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	if err := PathWritable(dir); err == nil {
+		t.Error("a write-only directory (no x) was reported writable")
+	}
+	if err := dirWritable(dir); err == nil {
+		t.Error("dirWritable (stack Save precheck) reported a write-only directory writable")
+	}
+	// A plain writable file is writable without any x bit.
+	f := filepath.Join(t.TempDir(), "f")
+	if err := os.WriteFile(f, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := PathWritable(f); err != nil {
+		t.Errorf("writable file: %v", err)
 	}
 }

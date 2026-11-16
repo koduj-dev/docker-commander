@@ -58,11 +58,13 @@ type instanceEnv struct {
 	dataDirPaths []string // the data dir and the entries checked under it
 	dataDirMore  bool     // dataDirPaths was cut at dataDirCheckMax
 	writable     func(string) error
+	writeCheck   bool // writable answers for real (not on Windows)
 
-	hasLocal  bool
-	dockerErr error // reaching the local daemon
-	stacks    []docker.StackFileAccess
-	stacksErr error
+	hasLocal      bool
+	localDisabled bool  // the local host is switched off in Hosts
+	dockerErr     error // reaching the local daemon
+	stacks        []docker.StackFileAccess
+	stacksErr     error
 
 	compose, buildx, trivy bool
 }
@@ -94,6 +96,7 @@ func (s *Server) gatherInstanceEnv(ctx context.Context) instanceEnv {
 		precheck:   s.update.blocked(),
 		dataDir:    s.cfg.DataDir,
 		writable:   docker.PathWritable,
+		writeCheck: docker.WriteCheckSupported,
 		compose:    docker.ComposeAvailable(ctx),
 		buildx:     docker.BuildCheckAvailable(ctx),
 		trivy:      docker.TrivyAvailable(ctx),
@@ -123,6 +126,13 @@ func (s *Server) gatherInstanceEnv(ctx context.Context) instanceEnv {
 			continue
 		}
 		e.hasLocal = true
+		// Switched off in Hosts (a remote-only install keeps the seeded local
+		// host that way, often with no local daemon at all): not a failure, and
+		// nothing to contact.
+		if h.Disabled {
+			e.localDisabled = true
+			break
+		}
 		if _, err := s.docker.SystemInfo(ctx, h.ID); err != nil {
 			e.dockerErr = err
 			break
@@ -223,16 +233,32 @@ func checkSandbox(e instanceEnv) docker.CheckResult {
 		r.Status, r.Message = docker.CheckSkipped, "The systemd sandbox only applies on Linux."
 		return r
 	}
-	if errors.Is(e.homeErr, fs.ErrPermission) {
-		r.Details = append(r.Details, "/home, /root and /run/user are hidden from the service (systemd ProtectHome). Stacks and build contexts there can't be read.")
-	}
-	if errors.Is(e.etcErr, syscall.EROFS) {
-		r.Details = append(r.Details, "The system is read-only for the service apart from its ReadWritePaths (systemd ProtectSystem=strict).")
+	homeHidden := errors.Is(e.homeErr, fs.ErrPermission)
+	readOnly := errors.Is(e.etcErr, syscall.EROFS)
+	// Only under systemd are these the unit's ProtectHome/ProtectSystem, with a
+	// drop-in as the fix. Elsewhere (a container, a read-only root) say what is
+	// observed and leave the cause open.
+	if e.systemd {
+		if homeHidden {
+			r.Details = append(r.Details, "/home, /root and /run/user are hidden from the service (systemd ProtectHome). Stacks and build contexts there can't be read.")
+		}
+		if readOnly {
+			r.Details = append(r.Details, "The system is read-only for the service apart from its ReadWritePaths (systemd ProtectSystem=strict).")
+		}
+	} else {
+		if homeHidden {
+			r.Details = append(r.Details, "/home isn't readable for this process, so stacks and build contexts there can't be read.")
+		}
+		if readOnly {
+			r.Details = append(r.Details, "The root filesystem is read-only for this process (for example a container started with a read-only filesystem).")
+		}
 	}
 	switch {
-	case len(r.Details) > 0:
+	case len(r.Details) > 0 && e.systemd:
 		r.Message = "Docker Commander runs sandboxed. Paths outside what the sandbox allows can't be read or written; the checks below name any that matter."
 		r.Details = append(r.Details, "To allow a path, add a drop-in (sudo systemctl edit dockercmd), see docs/deployment.md.")
+	case len(r.Details) > 0:
+		r.Message = "Not a systemd service, but some paths are off limits to Docker Commander; the checks below name any that matter."
 	case e.systemd:
 		r.Message = "Runs under systemd with no filesystem sandbox detected."
 	default:
@@ -245,6 +271,10 @@ func checkDataDir(e instanceEnv) docker.CheckResult {
 	r := docker.CheckResult{ID: "dc_data_dir", Name: "Data directory", Status: docker.CheckOK}
 	if e.dataDir == "" {
 		r.Status, r.Message = docker.CheckSkipped, "No data directory is configured."
+		return r
+	}
+	if !e.writeCheck {
+		r.Status, r.Message = docker.CheckSkipped, "Write access can't be checked on this platform (Windows ACLs decide). A save that fails reports its own error."
 		return r
 	}
 	var bad []string
@@ -276,6 +306,8 @@ func checkDockerAccess(e instanceEnv) docker.CheckResult {
 		r.Status, r.Message = docker.CheckSkipped, "Could not read the host list: "+e.dockerErr.Error()
 	case !e.hasLocal:
 		r.Status, r.Message = docker.CheckSkipped, "No local Docker host is configured."
+	case e.localDisabled:
+		r.Status, r.Message = docker.CheckSkipped, "The local Docker host is disabled in Hosts."
 	case e.dockerErr == nil:
 		r.Message = "Connected to the local Docker daemon."
 	case strings.Contains(strings.ToLower(e.dockerErr.Error()), "permission denied"):
@@ -300,6 +332,9 @@ func checkStackFiles(e instanceEnv) docker.CheckResult {
 	case !e.hasLocal:
 		r.Status, r.Message = docker.CheckSkipped, "No local Docker host is configured. Stacks on SSH hosts are checked when opened."
 		return r
+	case e.localDisabled:
+		r.Status, r.Message = docker.CheckSkipped, "The local Docker host is disabled in Hosts."
+		return r
 	case e.dockerErr != nil:
 		r.Status, r.Message = docker.CheckSkipped, "The local Docker daemon isn't reachable, so its stacks can't be listed."
 		return r
@@ -317,7 +352,7 @@ func checkStackFiles(e instanceEnv) docker.CheckResult {
 		switch {
 		case !a.Readable:
 			unreadable = append(unreadable, a.Project+": "+a.Reason)
-		case !a.Writable:
+		case !a.Writable && e.writeCheck:
 			readOnly = append(readOnly, a.Project+" (read-only): "+a.Reason)
 		}
 	}
@@ -328,6 +363,8 @@ func checkStackFiles(e instanceEnv) docker.CheckResult {
 		r.Message = fmt.Sprintf("%d of %d stacks have a compose file Docker Commander can't read: they can't be viewed, edited or redeployed here.", len(unreadable), n)
 	case len(readOnly) > 0:
 		r.Message = fmt.Sprintf("All %d compose files are readable; %d open read-only (no Save, Redeploy still works).", n, len(readOnly))
+	case !e.writeCheck:
+		r.Message = fmt.Sprintf("All %d compose files are readable. Write access can't be checked on this platform.", n)
 	default:
 		r.Message = fmt.Sprintf("All %d compose files are readable and writable.", n)
 	}

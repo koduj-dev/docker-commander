@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -60,10 +59,18 @@ func stackFileAccess(st *Stack) StackFileAccess {
 		if a.Path == "" {
 			a.Path = p // reported even when nothing opens
 		}
-		// Only a regular file is opened. The path comes from a container label,
-		// and opening a FIFO given a .yml name would block this check, and with
-		// it the whole diagnostics request, until something writes to it.
-		fi, err := os.Stat(p)
+		// The path comes from a container label. A FIFO given a .yml name would
+		// make a plain open block until something writes to it, hanging this
+		// check and the whole diagnostics request. So open without blocking and
+		// check the type on the opened descriptor itself: a stat before the open
+		// would leave a window to swap the file for a FIFO in between.
+		f, err := openNoBlock(p)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		fi, err := f.Stat()
+		_ = f.Close()
 		if err != nil {
 			lastErr = err
 			continue
@@ -72,12 +79,6 @@ func stackFileAccess(st *Stack) StackFileAccess {
 			lastErr = errNotRegular
 			continue
 		}
-		f, err := os.Open(p)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		_ = f.Close()
 		a.Path, a.Readable = p, true
 		break
 	}
@@ -101,6 +102,10 @@ func stackFileAccess(st *Stack) StackFileAccess {
 }
 
 // PathWritable reports, without writing anything, whether this process may
-// write path (a file, or a directory to create files in). nil on Windows,
-// where the access(2)-style check doesn't exist.
-func PathWritable(path string) error { return dirWritable(path) }
+// write path: write access for a file, write and search access for a directory
+// (to create files in it). Always nil where WriteCheckSupported is false.
+func PathWritable(path string) error { return pathWritable(path) }
+
+// WriteCheckSupported reports whether PathWritable and the write half of
+// LocalStackFileAccess answer for real on this platform (not on Windows).
+const WriteCheckSupported = writeCheckSupported

@@ -64,10 +64,10 @@ off limits, which is one of the things they catch).
 | Check | Fails or warns when |
 |---|---|
 | **Installation and updates** | Update & restart can't run because the binary's directory isn't writable (warning). A package install, a container, `DC_SELF_UPDATE=0` and Windows are OK, with the way to update instead. Details name the version, the binary, the service user and whether systemd or a container started it. |
-| **Service sandbox** | Never fails: it reports what the systemd unit hides or makes read-only (`ProtectHome`, `ProtectSystem=strict`), so the failures below make sense. |
-| **Data directory** | The data directory, an entry in it, or a per-project directory isn't writable (fail), typically files left owned by root after a restore run with `sudo`. Shows the `chown` that fixes it. Looks at up to 500 paths. |
-| **Local Docker access** | The local Docker daemon can't be reached (fail), with "permission denied" on the socket explained as a missing `docker` group membership. |
-| **Local stack compose files** | A local stack's compose file can't be read (warning). Files that can be read but not saved are listed too; they open read-only and still redeploy. Stacks on SSH hosts are checked when opened. |
+| **Service sandbox** | Never fails: it reports what the systemd unit hides or makes read-only (`ProtectHome`, `ProtectSystem=strict`), so the failures below make sense. Outside systemd (a container, a read-only root) it reports the same limits without blaming systemd. |
+| **Data directory** | The data directory, an entry in it, or a per-project directory isn't writable (fail), typically files left owned by root after a restore run with `sudo`. Shows the `chown` that fixes it. Looks at up to 500 paths. Skipped on Windows, where write access can't be checked without trying. |
+| **Local Docker access** | The local Docker daemon can't be reached (fail), with "permission denied" on the socket explained as a missing `docker` group membership. Skipped when the local host is disabled in Hosts (a remote-only install). |
+| **Local stack compose files** | A local stack's compose file can't be read (warning). Files that can be read but not saved are listed too; they open read-only and still redeploy (not checked on Windows). Stacks on SSH hosts are checked when opened. |
 | **Command-line tools** | `docker compose` isn't found (warning): Projects can't deploy and stacks can't redeploy. Also lists `docker buildx` (Dockerfile checks) and the optional `trivy` (image Scan). Each is looked up once per process, so restart after installing one. |
 
 Every check only reads: it opens, lists and asks `access(2)`, and never writes a

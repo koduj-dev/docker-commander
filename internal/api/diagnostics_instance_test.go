@@ -25,7 +25,7 @@ func baseEnv() instanceEnv {
 		version: "1.7.4", exe: "/usr/local/bin/dockercmd", runAs: "dockercmd",
 		systemd: true, goos: "linux", selfUpdate: true, canRestart: true,
 		dataDir: "/var/lib/dockercmd", dataDirPaths: []string{"/var/lib/dockercmd"},
-		writable: func(string) error { return nil },
+		writable: func(string) error { return nil }, writeCheck: true,
 		hasLocal: true, compose: true, buildx: true, trivy: false,
 	}
 }
@@ -146,6 +146,20 @@ func TestCheckSandbox(t *testing.T) {
 			t.Errorf("got %+v", r)
 		}
 	})
+	t.Run("outside systemd the same probes aren't blamed on systemd", func(t *testing.T) {
+		e := baseEnv()
+		e.systemd = false // e.g. a container with a read-only root
+		e.homeErr = &fs.PathError{Op: "open", Path: "/home", Err: fs.ErrPermission}
+		e.etcErr = syscall.EROFS
+		r := checkSandbox(e)
+		all := r.Message + strings.Join(r.Details, " ")
+		if strings.Contains(all, "(systemd") || strings.Contains(all, "Protect") || strings.Contains(all, "systemctl") {
+			t.Errorf("non-systemd process got systemd causes/fixes: %+v", r)
+		}
+		if !hasDetail(r, "/home isn't readable") || !hasDetail(r, "read-only for this process") {
+			t.Errorf("details = %v, want the observed limits", r.Details)
+		}
+	})
 	t.Run("not under systemd", func(t *testing.T) {
 		e := baseEnv()
 		e.systemd = false
@@ -183,6 +197,13 @@ func TestCheckDataDir(t *testing.T) {
 		r := checkDataDir(e)
 		if r.Status != docker.CheckFail || !hasDetail(r, bad) || !hasDetail(r, "sudo chown -R dockercmd: /var/lib/dockercmd") {
 			t.Errorf("got %+v", r)
+		}
+	})
+	t.Run("not claimed writable where it can't be checked", func(t *testing.T) {
+		e := baseEnv()
+		e.writeCheck = false // Windows: the helper always says yes
+		if r := checkDataDir(e); r.Status != docker.CheckSkipped {
+			t.Errorf("got %+v, want skipped rather than a false OK", r)
 		}
 	})
 	t.Run("no data dir", func(t *testing.T) {
@@ -257,6 +278,7 @@ func TestCheckDockerAccess(t *testing.T) {
 			e.dockerErr = errors.New("dial unix /var/run/docker.sock: connect: permission denied")
 		}, docker.CheckFail, `(user "dockercmd") isn't allowed`},
 		{"daemon down", func(e *instanceEnv) { e.dockerErr = errors.New("connection refused") }, docker.CheckFail, "Can't reach"},
+		{"local host disabled", func(e *instanceEnv) { e.localDisabled = true }, docker.CheckSkipped, "disabled in Hosts"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -306,6 +328,22 @@ func TestCheckStackFiles(t *testing.T) {
 			t.Errorf("got %+v", r)
 		}
 	})
+	t.Run("write access not claimed where it can't be checked", func(t *testing.T) {
+		e := baseEnv()
+		e.writeCheck = false
+		e.stacks = []docker.StackFileAccess{ok}
+		r := checkStackFiles(e)
+		if r.Status != docker.CheckOK || strings.Contains(r.Message, "writable") || !strings.Contains(r.Message, "can't be checked") {
+			t.Errorf("got %+v", r)
+		}
+	})
+	t.Run("skipped when the local host is disabled", func(t *testing.T) {
+		e := baseEnv()
+		e.localDisabled = true
+		if r := checkStackFiles(e); r.Status != docker.CheckSkipped || !strings.Contains(r.Message, "disabled") {
+			t.Errorf("got %+v", r)
+		}
+	})
 	t.Run("skipped without a reachable local daemon", func(t *testing.T) {
 		e := baseEnv()
 		e.dockerErr = errors.New("permission denied")
@@ -323,5 +361,37 @@ func TestCheckTools(t *testing.T) {
 	e.compose = false
 	if r := checkTools(e); r.Status != docker.CheckWarn || !strings.Contains(r.Message, "Projects can't be deployed") {
 		t.Errorf("got %+v", r)
+	}
+}
+
+// A remote-only install keeps the seeded local host disabled, often with no
+// local daemon. Gathering must not contact it at all: here the server has no
+// Docker manager, so any call into it would panic.
+func TestGatherInstanceEnv_DisabledLocalHostIsNotContacted(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	ctx := context.Background()
+	if err := st.EnsureLocalHost(ctx); err != nil {
+		t.Fatal(err)
+	}
+	id, err := st.LocalHostID(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetHostDisabled(ctx, id, true); err != nil {
+		t.Fatal(err)
+	}
+	u := newUpdateChecker("1.7.4", true, true)
+	u.precheck = func() error { return nil }
+	srv := &Server{store: st, update: u} // docker: nil on purpose
+	e := srv.gatherInstanceEnv(ctx)
+	if !e.hasLocal || !e.localDisabled || e.dockerErr != nil {
+		t.Fatalf("hasLocal=%v localDisabled=%v dockerErr=%v", e.hasLocal, e.localDisabled, e.dockerErr)
+	}
+	if r := checkDockerAccess(e); r.Status != docker.CheckSkipped {
+		t.Errorf("Local Docker access = %s %q, want skipped", r.Status, r.Message)
 	}
 }
